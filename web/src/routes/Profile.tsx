@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOut, Pencil, Radio, Truck } from "lucide-react";
+import { Fingerprint, LogOut, Pencil, Radio, Truck } from "lucide-react";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
 import { getBalance } from "../holochain/zomes/ledger";
@@ -14,7 +14,7 @@ import { formatCents } from "../lib/format";
 import type { ProviderCredential, ReputationSummary, Review } from "../holochain/types";
 
 export function ProfilePage() {
-  const { profile, profileActionHash, agentPubKey, signOut, refreshProfile } = useSession();
+  const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile } = useSession();
   const [balance, setBalance] = useState<number | null>(null);
   const [rep, setRep] = useState<ReputationSummary | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -185,6 +185,12 @@ export function ProfilePage() {
         <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "—"}</p>
         <p className="mt-2 text-xs text-ink-400">
           This is your actual cryptographic identity on the DHT — there's no separate account behind it, and nobody but you holds the private key.
+        </p>
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
+          <Fingerprint size={13} className={hasDeviceLock ? "text-presence-600" : "text-ink-300"} />
+          {hasDeviceLock
+            ? "Device lock enabled — reconnecting on this device requires your passkey (Face ID / Touch ID / Windows Hello)."
+            : "Device lock not set up — this device has no passkey gate, so reconnecting here doesn't ask for one."}
         </p>
       </Card>
 
