@@ -9,6 +9,11 @@ import { actionHash, bytesToHex } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
+// A driver's bid can be anywhere up to this cap (validate_new_bid rejects
+// anything higher) -- letting the customer set it, rather than hardcoding
+// `max_delivery_fee: null`, is what actually gives them cost certainty at
+// checkout instead of an unbounded "set by driver bid" placeholder.
+const DELIVERY_FEE_PRESETS_CENTS = [400, 600, 900, 1200];
 
 export function Cart() {
   const cart = useCart();
@@ -19,8 +24,11 @@ export function Cart() {
   const [instructions, setInstructions] = useState("");
   const [tipPercent, setTipPercent] = useState<number | null>(15);
   const [customTip, setCustomTip] = useState("");
+  const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
+  const [customFee, setCustomFee] = useState("");
 
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
+  const maxFeeCents = feePreset !== null ? feePreset : Math.round(Number(customFee || 0) * 100);
 
   if (cart.lines.length === 0) {
     return (
@@ -44,7 +52,7 @@ export function Cart() {
         item_refs: cart.lines.map((l) => l.itemRef),
         order_total: cart.total(),
         dropoff: { lat: location.lat, lon: location.lon },
-        max_delivery_fee: null,
+        max_delivery_fee: maxFeeCents,
         special_instructions: instructions.trim(),
         tip_cents: tipCents,
       });
@@ -102,6 +110,37 @@ export function Cart() {
       </div>
 
       <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Delivery fee cap</p>
+        <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount — you're only ever charged what the winning bid actually offers, never more.</p>
+        <div className="flex flex-wrap gap-2">
+          {DELIVERY_FEE_PRESETS_CENTS.map((cents) => (
+            <button
+              key={cents}
+              onClick={() => {
+                setFeePreset(cents);
+                setCustomFee("");
+              }}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${feePreset === cents ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+            >
+              {formatCents(cents)}
+            </button>
+          ))}
+          <input
+            type="number"
+            min={0}
+            step={0.5}
+            value={customFee}
+            onChange={(e) => {
+              setCustomFee(e.target.value);
+              setFeePreset(null);
+            }}
+            placeholder="Custom $"
+            className="w-24 rounded-full border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-1.5 text-xs outline-none focus:border-relay-400"
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Tip your driver</p>
         <div className="flex flex-wrap gap-2">
           {TIP_PRESETS_PERCENT.map((p) => (
@@ -138,15 +177,15 @@ export function Cart() {
         </div>
         <div className="flex justify-between text-ink-400">
           <span>Delivery fee</span>
-          <span>Set by driver bid</span>
+          <span>up to {formatCents(maxFeeCents)}</span>
         </div>
         <div className="flex justify-between text-ink-400">
           <span>Tip</span>
           <span>{formatCents(tipCents)}</span>
         </div>
         <div className="mt-1 flex justify-between border-t border-ink-100 dark:border-ink-800 pt-2 text-base font-bold text-ink-900 dark:text-ink-50">
-          <span>Total (before delivery fee)</span>
-          <span>{formatCents(cart.total() + tipCents)}</span>
+          <span>Estimated total</span>
+          <span>up to {formatCents(cart.total() + tipCents + maxFeeCents)}</span>
         </div>
       </div>
 
@@ -158,8 +197,8 @@ export function Cart() {
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
-        <Button className="w-full" loading={placing} onClick={placeOrder}>
-          Place order · {formatCents(cart.total() + tipCents)}
+        <Button className="w-full" loading={placing} disabled={maxFeeCents <= 0} onClick={placeOrder}>
+          Place order · up to {formatCents(cart.total() + tipCents + maxFeeCents)}
         </Button>
       </div>
     </div>
