@@ -1,0 +1,15 @@
+[package]
+name = "dispute_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "dispute"
+
+[dependencies]
+hdk.workspace = true
+hdi.workspace = true
+serde.workspace = true
+dispute_integrity = { path = "../integrity" }
+relay_coordinator_support.workspace = true

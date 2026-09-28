@@ -1,0 +1,11 @@
+[target.wasm32-unknown-unknown]
+# "unsupported" backend: hdi pulls in getrandom for wasm32 but our zome code
+# never actually calls it at runtime (Holochain's own host provides real
+# randomness where it's needed) -- "wasm_js" was the wrong choice here, since
+# it expects wasm-bindgen/browser JS glue that Holochain's wasmer-based
+# ribosome doesn't provide. "unsupported" just compiles clean and would only
+# error if something genuinely tried to call getrandom at runtime.
+rustflags = [
+    "--cfg", "getrandom_backend=\"unsupported\"",
+    "-C", "link-arg=--import-undefined",
+]

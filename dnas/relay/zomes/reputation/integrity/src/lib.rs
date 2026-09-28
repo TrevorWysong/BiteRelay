@@ -1,0 +1,208 @@
+//! Integrity zome for reputation: append-only `ReputationEvent`s -- see the
+//! type's doc comment for why this is a cache, not the trust source of
+//! truth, and why append-only rather than a mutable score.
+
+use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus};
+use hdi::prelude::*;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum ReputationRole {
+    Requester,
+    Provider,
+    Merchant,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum ReputationEventKind {
+    OrderCompleted { subject_role: ReputationRole },
+    OrderCancelledByThem,
+    DisputeRaised,
+    DisputeResolvedAgainst,
+    CollateralForfeited { amount: u64 },
+}
+
+/// Append-only by design (see architecture plan §2): a single mutable
+/// "score" entry would invite concurrent-update races when two orders
+/// complete near-simultaneously. "Score" is always a derived read over these
+/// events, never stored.
+///
+/// IMPORTANT, per the plan: treat this whole event log as a UI-display
+/// cache, not the trust source of truth -- it's self-authored (by the
+/// counterparty, see validation below) and so is a single-party claim in
+/// isolation. A real accept-bid decision should check the counterparty's
+/// actual `get_agent_activity` chain for genuine ReceiptAttestation entries
+/// and any outstanding warrants, not just this log.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct ReputationEvent {
+    pub subject: AgentPubKey,
+    pub counterparty: AgentPubKey,
+    pub order_ref: ActionHash,
+    pub kind: ReputationEventKind,
+    pub recorded_at: Timestamp,
+}
+
+/// A periodic, append-only "summary as of `related_event`" breadcrumb --
+/// the exact same pattern, for the exact same reasons, as `ledger`'s
+/// `BalanceCheckpoint` (architecture plan §9.4): `get_reputation_summary`
+/// finds the most recent one instead of rescanning an agent's *entire*
+/// event history on every read, written *roughly* every
+/// `CHECKPOINT_INTERVAL` events (deterministic, counting-free trigger in
+/// the coordinator), giving O(n/K) reads, not O(1) -- named honestly, not
+/// oversold, same as `ledger`'s. Append-only for the same reason too: a
+/// mutable shared summary entry would reintroduce the exact concurrent-
+/// write race this whole event log was designed to avoid in the first
+/// place (see `ReputationEvent`'s doc comment above).
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct ReputationCheckpoint {
+    pub subject: AgentPubKey,
+    pub completed_count: u32,
+    pub cancelled_by_them_count: u32,
+    pub dispute_raised_count: u32,
+    pub dispute_resolved_against_count: u32,
+    pub total_collateral_forfeited: u64,
+    pub related_event: ActionHash,
+    pub recorded_at: Timestamp,
+}
+
+/// A star rating + free-text comment against a real, completed order --
+/// deliberately its own entry type rather than a `ReputationEventKind`
+/// variant, since a review is customer-facing content (shown on a
+/// merchant's storefront, a driver's profile), not an internal trust
+/// signal like the existing event log. Same posture as that log, though:
+/// self-authored by the reviewer, so it's a UI-display feature, not a
+/// cryptographically-enforced fact -- nothing stops a rating from being
+/// unfair, only from being fabricated by someone who wasn't a party to the
+/// order at all (see `validate_review` below).
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct Review {
+    pub subject: AgentPubKey,
+    pub author: AgentPubKey,
+    pub order_ref: ActionHash,
+    pub rating: u8,
+    pub comment: String,
+    pub created_at: Timestamp,
+}
+
+#[hdk_entry_types]
+#[unit_enum(UnitEntryTypes)]
+pub enum EntryTypes {
+    ReputationEvent(ReputationEvent),
+    ReputationCheckpoint(ReputationCheckpoint),
+    Review(Review),
+}
+
+#[hdk_link_types]
+pub enum LinkTypes {
+    SubjectToEvent,
+    SubjectToReputationCheckpoint,
+    SubjectToReview,
+}
+
+#[hdk_extern]
+pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
+    match op.flattened::<EntryTypes, LinkTypes>()? {
+        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+            EntryTypes::ReputationEvent(event) => validate_event(&event, action.author()),
+            EntryTypes::ReputationCheckpoint(checkpoint) => validate_checkpoint(&checkpoint, action.author()),
+            EntryTypes::Review(review) => validate_review(&review, action.author()),
+        },
+        _ => Ok(ValidateCallbackResult::Valid),
+    }
+}
+
+/// Only the order's requester may review, only about the order's actual
+/// merchant or accepted driver, and only once the order is genuinely
+/// `Delivered` -- `order_ref` is the order's *original* creation action, so
+/// `must_get_valid_record` on it alone would only ever show the as-created
+/// `Open` record (the same literalness this codebase has hit repeatedly --
+/// see `HOLOCHAIN_ISSUES.md` #4). There's no non-deterministic "current
+/// status" query available in validate() to work around that with, so the
+/// caller is trusted to pass the order's *own latest update action* here as
+/// `order_ref` -- `must_get_valid_record` on that specific, named action is
+/// still fully deterministic (a fixed, content-addressed hash), it's just
+/// the coordinator's job to have resolved it to the right one first.
+fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if review.rating < 1 || review.rating > 5 {
+        return Ok(ValidateCallbackResult::Invalid("rating must be between 1 and 5".into()));
+    }
+    if &review.author != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a review's author field must match the actual action author".into(),
+        ));
+    }
+    let order_record = must_get_valid_record(review.order_ref.clone())?;
+    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+        return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
+    };
+    if order.status != DeliveryStatus::Delivered {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a review can only be left against a Delivered order".into(),
+        ));
+    }
+    if &order.requester != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "only the order's requester may leave a review".into(),
+        ));
+    }
+    let bidder = match &order.accepted_bid {
+        Some(bid_ref) => {
+            let bid_record = must_get_valid_record(bid_ref.clone())?;
+            let Some(bid): Option<Bid> = bid_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+                return Ok(ValidateCallbackResult::Invalid("accepted_bid does not point at a Bid entry".into()));
+            };
+            Some(bid.bidder)
+        }
+        None => None,
+    };
+    if review.subject != order.merchant && Some(review.subject.clone()) != bidder {
+        return Ok(ValidateCallbackResult::Invalid(
+            "subject must be either the order's merchant or its accepted driver".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// Same discipline as `ledger`'s `validate_checkpoint`: a checkpoint can't
+/// be fabricated independent of a real, already-validated event -- it must
+/// reference one via `related_event`, name that event's own subject, and be
+/// authored by whoever `validate_event` already trusts to author it (the
+/// counterparty), reusing the exact same rule rather than a looser one.
+fn validate_checkpoint(checkpoint: &ReputationCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    let event_record = must_get_valid_record(checkpoint.related_event.clone())?;
+    let Some(event): Option<ReputationEvent> = event_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+        return Ok(ValidateCallbackResult::Invalid("related_event does not point at a ReputationEvent entry".into()));
+    };
+    if checkpoint.subject != event.subject {
+        return Ok(ValidateCallbackResult::Invalid(
+            "checkpoint subject must match related_event's own subject".into(),
+        ));
+    }
+    if author != &event.counterparty {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a checkpoint can only be authored by related_event's own counterparty".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if event.subject == event.counterparty {
+        return Ok(ValidateCallbackResult::Invalid(
+            "subject and counterparty must be different agents".into(),
+        ));
+    }
+    // Only the counterparty may record an event about someone -- never the
+    // subject about themselves. This stops self-flattery but is still just a
+    // single-party claim; see the doc comment above on why it's a cache, not
+    // ground truth.
+    if author != &event.counterparty {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a reputation event can only be authored by the counterparty, not the subject".into(),
+        ));
+    }
+    must_get_valid_record(event.order_ref.clone())?;
+    Ok(ValidateCallbackResult::Valid)
+}

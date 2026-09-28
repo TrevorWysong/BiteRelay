@@ -1,0 +1,10 @@
+[package]
+name = "relay_types"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde.workspace = true

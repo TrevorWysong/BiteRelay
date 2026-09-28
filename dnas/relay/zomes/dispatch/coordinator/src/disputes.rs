@@ -1,0 +1,580 @@
+//! The two dispatch-side halves of the dispute/arbitration subsystem
+//! (architecture plan §8): raising a dispute against an order in `PickedUp`
+//! or `Delivered`, and -- once an arbitrator has ruled, via `dispute`'s own
+//! `submit_resolution` -- applying that ruling's consequences (payment,
+//! forfeiture, reputation) and flipping the order to its terminal status.
+//!
+//! Both cross-zome-call into `dispute` (for the case entry itself) and
+//! `ledger`/`reputation` (reusing the exact same functions
+//! `complete_delivery` already uses -- `ledger::release_on_completion` and
+//! the previously-unused `ledger::forfeit`, plus reputation event kinds
+//! that were speculatively designed in the original architecture pass and
+//! never wired up until now).
+
+use crate::orders::{RecordEventInputWire, ReputationEventKindWire, SettleInputWire};
+use dispatch_integrity::*;
+use hdk::prelude::*;
+use relay_coordinator_support::resolve_latest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DisputeReasonWire {
+    NeverDelivered,
+    WrongOrIncompleteItems,
+    ProviderAbandoned,
+    UnjustCancellation,
+    Other,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct OpenDisputeInputWire {
+    order_ref: ActionHash,
+    respondent: AgentPubKey,
+    reason: DisputeReasonWire,
+    description: String,
+    evidence_refs: Vec<ActionHash>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RaiseDisputeInput {
+    pub order_original_action: ActionHash,
+    pub reason: DisputeReasonWire,
+    pub description: String,
+    pub evidence_refs: Vec<ActionHash>,
+}
+
+/// Derives `respondent` from the order's actual parties rather than trusting
+/// client input -- whichever side didn't raise the dispute. Cross-zome-calls
+/// `dispute::open_dispute` first (executes in this same agent's context, so
+/// its own `raised_by` and this update's author agree), records a
+/// `DisputeRaised` reputation event against the respondent (informational,
+/// not punitive -- only losing the ruling is), then updates the order to
+/// `Disputed` + `dispute_ref`.
+#[hdk_extern]
+pub fn raise_dispute(input: RaiseDisputeInput) -> ExternResult<Record> {
+    let order_record = resolve_latest(input.order_original_action.clone())?;
+    let order: DeliveryOrder = order_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+
+    let me = agent_info()?.agent_initial_pubkey;
+    let accepted_bid_ref = order
+        .accepted_bid
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid to dispute".into())))?;
+    let bid_record = resolve_latest(accepted_bid_ref)?;
+    let bid: Bid = bid_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+
+    let respondent = if me == bid.bidder {
+        order.requester.clone()
+    } else if me == order.requester || me == order.merchant {
+        bid.bidder.clone()
+    } else {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "only the order's requester, merchant, or accepted provider may raise a dispute".into()
+        )));
+    };
+
+    let open_response = call(
+        CallTargetCell::Local,
+        "dispute",
+        "open_dispute".into(),
+        None,
+        OpenDisputeInputWire {
+            order_ref: input.order_original_action.clone(),
+            respondent: respondent.clone(),
+            reason: input.reason,
+            description: input.description,
+            evidence_refs: input.evidence_refs,
+        },
+    )?;
+    let ZomeCallResponse::Ok(extern_io) = open_response else {
+        return Err(wasm_error!(WasmErrorInner::Guest("dispute::open_dispute cross-zome call failed".into())));
+    };
+    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
+    let dispute_ref = dispute_record.action_address().clone();
+
+    // Best-effort, informational -- see doc comment above.
+    let _ = call(
+        CallTargetCell::Local,
+        "reputation",
+        "record_event".into(),
+        None,
+        RecordEventInputWire {
+            subject: respondent,
+            order_ref: input.order_original_action.clone(),
+            kind: ReputationEventKindWire::DisputeRaised,
+        },
+    );
+
+    let mut updated_order = order;
+    updated_order.status = DeliveryStatus::Disputed;
+    updated_order.dispute_ref = Some(dispute_ref);
+    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back disputed order".into())))
+}
+
+// Reading back `dispute::get_dispute`'s entry uses the real `dispute_types`
+// crate directly (not a hand-rolled wire mirror like the call-*input*
+// mirrors above): decoding an entry via `to_app_option` requires the
+// `TryFrom<SerializedBytes>` impl `#[hdk_entry_helper]` generates, which
+// `dispute_types::Dispute` already has, correctly wired up in that crate's
+// own Cargo.toml -- reusing it here is simpler than re-deriving the same
+// machinery on a mirror struct. This is safe (no wasm-export collision risk)
+// because `dispute_types` has zero `#[hdk_extern]`s, unlike `dispute_integrity`.
+use dispute_types::{Dispute, DisputeOutcome};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ApplyDisputeResolutionInput {
+    pub order_original_action: ActionHash,
+}
+
+/// Called by the arbitrator after `dispute::submit_resolution`. Reads the
+/// now-resolved outcome, applies its consequences, then updates the order to
+/// the matching terminal status -- validated per `dispatch_integrity`'s
+/// `validate_dispute_resolution_matches`, so this coordinator's own
+/// bookkeeping is a fast-fail convenience, not the actual enforcement, same
+/// posture as `complete_delivery` post-fix.
+#[hdk_extern]
+pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternResult<Record> {
+    // Explicit, synchronous gate -- deliberately checked here rather than
+    // left to dispatch_integrity's validate() alone. update_entry does not
+    // validate synchronously: it stages the write, and self-validation only
+    // runs when this whole extern call returns and Holochain commits every
+    // staged write together. Code written *after* update_entry in this
+    // function (the ledger/reputation `call()`s below) still executes even
+    // when that eventual commit will be rejected -- and those nested calls
+    // are separate, independent zome invocations that commit immediately,
+    // for real, regardless of what the outer commit later decides. So an
+    // unauthorized caller whose own update_entry is destined to fail can
+    // still leak real reputation events (and, if they happen to be a party
+    // to the ledger transaction, real payments) before that failure is ever
+    // discovered. Found by testing the cancellation-dispute sibling
+    // (apply_cancellation_dispute_resolution) against a real non-arbitrator
+    // caller -- this function has the identical shape and the identical
+    // exposure, just never exercised by a test that used a real
+    // unauthorized caller instead of the isolated bypass extern.
+    if !relay_governance::is_arbitrator(&agent_info()?.agent_initial_pubkey)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("only an arbitrator may apply a dispute resolution".into())));
+    }
+    let order_record = resolve_latest(input.order_original_action.clone())?;
+    let order: DeliveryOrder = order_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    if order.status != DeliveryStatus::Disputed {
+        return Err(wasm_error!(WasmErrorInner::Guest("an order can only have its dispute resolution applied from Disputed".into())));
+    }
+    let dispute_ref = order
+        .dispute_ref
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no dispute_ref".into())))?;
+    let accepted_bid_ref = order
+        .accepted_bid
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
+    let bid_record = resolve_latest(accepted_bid_ref)?;
+    let bid: Bid = bid_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+
+    let get_response = call(CallTargetCell::Local, "dispute", "get_dispute".into(), None, dispute_ref)?;
+    let ZomeCallResponse::Ok(extern_io) = get_response else {
+        return Err(wasm_error!(WasmErrorInner::Guest("dispute::get_dispute cross-zome call failed".into())));
+    };
+    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
+    let dispute: Dispute = dispute_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Dispute".into())))?;
+    let outcome = dispute
+        .outcome
+        .ok_or(wasm_error!(WasmErrorInner::Guest("dispute has no outcome yet -- call dispute::submit_resolution first".into())))?;
+
+    let requester = order.requester.clone();
+    let target_status = match &outcome {
+        DisputeOutcome::FavorProvider { .. } => DeliveryStatus::Delivered,
+        DisputeOutcome::FavorRequester { .. } => DeliveryStatus::Cancelled,
+    };
+    let mut updated_order = order;
+    updated_order.status = target_status;
+    // Advance dispute_ref from the dispute's original creation hash to its
+    // resolved-update hash: `must_get_valid_record` in `dispatch_integrity`'s
+    // validate() is literal, not latest-resolving, so it needs a reference
+    // that already points directly at the Resolved content, not the
+    // Open-status creation record `dispute_record.action_address()` here is
+    // exactly that -- `dispute::get_dispute` already resolved it to latest.
+    updated_order.dispute_ref = Some(dispute_record.action_address().clone());
+    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
+
+    match outcome {
+        DisputeOutcome::FavorProvider { forfeit_amount } => {
+            let settle_response = call(
+                CallTargetCell::Local,
+                "ledger",
+                "release_on_completion".into(),
+                None,
+                SettleInputWire {
+                    order_ref: input.order_original_action.clone(),
+                    from: requester.clone(),
+                    to: bid.bidder.clone(),
+                    amount: bid.price_offer,
+                },
+            )?;
+            if !matches!(settle_response, ZomeCallResponse::Ok(_)) {
+                return Err(wasm_error!(WasmErrorInner::Guest("payment settlement failed".into())));
+            }
+            if forfeit_amount > 0 {
+                let _ = call(
+                    CallTargetCell::Local,
+                    "ledger",
+                    "forfeit".into(),
+                    None,
+                    SettleInputWire {
+                        order_ref: input.order_original_action.clone(),
+                        from: requester.clone(),
+                        to: bid.bidder.clone(),
+                        amount: forfeit_amount,
+                    },
+                );
+            }
+            let _ = call(
+                CallTargetCell::Local,
+                "reputation",
+                "record_event".into(),
+                None,
+                RecordEventInputWire {
+                    subject: requester,
+                    order_ref: input.order_original_action.clone(),
+                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
+                },
+            );
+        }
+        DisputeOutcome::FavorRequester { forfeit_amount } => {
+            if forfeit_amount > 0 {
+                let forfeit_response = call(
+                    CallTargetCell::Local,
+                    "ledger",
+                    "forfeit".into(),
+                    None,
+                    SettleInputWire {
+                        order_ref: input.order_original_action.clone(),
+                        from: bid.bidder.clone(),
+                        to: requester,
+                        amount: forfeit_amount,
+                    },
+                )?;
+                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
+                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
+                }
+            }
+            let _ = call(
+                CallTargetCell::Local,
+                "reputation",
+                "record_event".into(),
+                None,
+                RecordEventInputWire {
+                    subject: bid.bidder.clone(),
+                    order_ref: input.order_original_action.clone(),
+                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
+                },
+            );
+            if forfeit_amount > 0 {
+                let _ = call(
+                    CallTargetCell::Local,
+                    "reputation",
+                    "record_event".into(),
+                    None,
+                    RecordEventInputWire {
+                        subject: bid.bidder,
+                        order_ref: input.order_original_action.clone(),
+                        kind: ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                    },
+                );
+            }
+        }
+    }
+
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back resolved order".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RaiseCancellationDisputeInput {
+    pub order_original_action: ActionHash,
+    pub description: String,
+    pub evidence_refs: Vec<ActionHash>,
+}
+
+/// Cancellation-fairness disputes (architecture plan §11.1) -- unlike
+/// `raise_dispute`, this requires the order to *already* be `Cancelled`
+/// (not `PickedUp`/`Delivered`) and never moves it to `Disputed`: the order
+/// is already terminal, there's no status left to change, only
+/// compensation to adjudicate. Sets `dispute_ref` via the same-status
+/// `Cancelled -> Cancelled` "transition" `dispatch_integrity` allows
+/// specifically for this case, reusing the exact same `validate_new_dispute_ref`
+/// check `raise_dispute` relies on.
+#[hdk_extern]
+pub fn raise_cancellation_dispute(input: RaiseCancellationDisputeInput) -> ExternResult<Record> {
+    let order_record = resolve_latest(input.order_original_action.clone())?;
+    let order: DeliveryOrder = order_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    if order.status != DeliveryStatus::Cancelled {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "a cancellation-fairness dispute can only be raised against an already-Cancelled order".into()
+        )));
+    }
+
+    let me = agent_info()?.agent_initial_pubkey;
+    let accepted_bid_ref = order
+        .accepted_bid
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("an order that never had an accepted bid cannot have a cancellation-fairness dispute -- there was no provider to be unfair to".into())))?;
+    let bid_record = resolve_latest(accepted_bid_ref)?;
+    let bid: Bid = bid_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+
+    let respondent = if me == bid.bidder {
+        order.requester.clone()
+    } else if me == order.requester || me == order.merchant {
+        bid.bidder.clone()
+    } else {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "only the order's requester, merchant, or accepted provider may raise a cancellation-fairness dispute".into()
+        )));
+    };
+
+    let open_response = call(
+        CallTargetCell::Local,
+        "dispute",
+        "open_dispute".into(),
+        None,
+        OpenDisputeInputWire {
+            order_ref: input.order_original_action.clone(),
+            respondent: respondent.clone(),
+            reason: DisputeReasonWire::UnjustCancellation,
+            description: input.description,
+            evidence_refs: input.evidence_refs,
+        },
+    )?;
+    let ZomeCallResponse::Ok(extern_io) = open_response else {
+        return Err(wasm_error!(WasmErrorInner::Guest("dispute::open_dispute cross-zome call failed".into())));
+    };
+    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
+    let dispute_ref = dispute_record.action_address().clone();
+
+    let _ = call(
+        CallTargetCell::Local,
+        "reputation",
+        "record_event".into(),
+        None,
+        RecordEventInputWire {
+            subject: respondent,
+            order_ref: input.order_original_action.clone(),
+            kind: ReputationEventKindWire::DisputeRaised,
+        },
+    );
+
+    let mut updated_order = order;
+    // status is deliberately left as Cancelled -- only dispute_ref changes.
+    updated_order.dispute_ref = Some(dispute_ref);
+    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back order with cancellation dispute raised".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ApplyCancellationDisputeResolutionInput {
+    pub order_original_action: ActionHash,
+}
+
+/// Applies a cancellation-fairness ruling's consequences. Unlike
+/// `apply_dispute_resolution`, the order's *status* never changes (already
+/// correctly `Cancelled`, no status left to change) -- but `dispute_ref`
+/// still advances from the dispute's creation hash to its resolved-update
+/// hash, exactly as the original design does for `Disputed ->
+/// Delivered`/`Cancelled`. That advance is what closes a real replay gap:
+/// without it, nothing in `dispatch_integrity::validate()` would ever run
+/// for this call (no status change to gate), and the winning party --
+/// legitimately "a party" to the resulting ledger transaction, so
+/// `ledger_integrity`'s own check alone wouldn't catch it -- could call
+/// this repeatedly to multiply the forfeiture. `update_entry` is
+/// deliberately attempted *before* the ledger calls: if validation rejects
+/// the advance for any reason, nothing gets paid out. There's no
+/// `release_on_completion` call either way: a cancelled order was never
+/// delivered, so there's no underlying payment to release, only
+/// compensation for the unfairness itself.
+#[hdk_extern]
+pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeResolutionInput) -> ExternResult<()> {
+    // See the identical comment in apply_dispute_resolution above: update_entry's
+    // own validation is deferred to commit time (when this whole extern
+    // returns), so it cannot be relied on to stop the ledger/reputation
+    // `call()`s below from executing and committing for real. Both the
+    // authorization check and the already-applied check below must run
+    // here, synchronously, before anything side-effecting.
+    if !relay_governance::is_arbitrator(&agent_info()?.agent_initial_pubkey)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("only an arbitrator may apply a cancellation-dispute resolution".into())));
+    }
+    let order_record = resolve_latest(input.order_original_action.clone())?;
+    let order: DeliveryOrder = order_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    if order.status != DeliveryStatus::Cancelled {
+        return Err(wasm_error!(WasmErrorInner::Guest("a cancellation dispute resolution can only be applied to a Cancelled order".into())));
+    }
+    let dispute_ref = order
+        .dispute_ref
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no dispute_ref".into())))?;
+    let accepted_bid_ref = order
+        .accepted_bid
+        .clone()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
+    let bid_record = resolve_latest(accepted_bid_ref)?;
+    let bid: Bid = bid_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+
+    let get_response = call(CallTargetCell::Local, "dispute", "get_dispute".into(), None, dispute_ref)?;
+    let ZomeCallResponse::Ok(extern_io) = get_response else {
+        return Err(wasm_error!(WasmErrorInner::Guest("dispute::get_dispute cross-zome call failed".into())));
+    };
+    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
+    let dispute: Dispute = dispute_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Dispute".into())))?;
+    let outcome = dispute
+        .outcome
+        .ok_or(wasm_error!(WasmErrorInner::Guest("dispute has no outcome yet -- call dispute::submit_resolution first".into())))?;
+
+    // Explicit, synchronous replay check -- order.status never changes for a
+    // cancellation-fairness dispute (it was already Cancelled and stays
+    // that way), so unlike apply_dispute_resolution's own top-of-function
+    // status check, there's no natural "already applied" signal to read
+    // from order.status on a fresh call. dispute_ref is that signal
+    // instead: it starts out pointing at the dispute's original creation
+    // hash (set by raise_cancellation_dispute) and only ever advances to
+    // the resolved hash via a successful call to this function. If it
+    // already equals the resolved hash, this has already been applied.
+    if order.dispute_ref.as_ref() == Some(dispute_record.action_address()) {
+        return Err(wasm_error!(WasmErrorInner::Guest("this cancellation-dispute resolution has already been applied".into())));
+    }
+
+    let requester = order.requester.clone();
+    let mut updated_order = order;
+    updated_order.dispute_ref = Some(dispute_record.action_address().clone());
+    update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
+
+    match outcome {
+        // The cancellation was unfair to the provider: the requester
+        // compensates them, same forfeit-only shape as the FavorRequester
+        // branch below just with from/to swapped.
+        DisputeOutcome::FavorProvider { forfeit_amount } => {
+            if forfeit_amount > 0 {
+                let forfeit_response = call(
+                    CallTargetCell::Local,
+                    "ledger",
+                    "forfeit".into(),
+                    None,
+                    SettleInputWire {
+                        order_ref: input.order_original_action.clone(),
+                        from: requester.clone(),
+                        to: bid.bidder.clone(),
+                        amount: forfeit_amount,
+                    },
+                )?;
+                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
+                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
+                }
+            }
+            // The requester lost this ruling (the cancellation was found
+            // unfair to the provider) -- DisputeResolvedAgainst belongs on
+            // them, not on the provider who just won. Mirrors
+            // apply_dispute_resolution's own FavorProvider branch, which
+            // correctly records this against `requester`.
+            let _ = call(
+                CallTargetCell::Local,
+                "reputation",
+                "record_event".into(),
+                None,
+                RecordEventInputWire {
+                    subject: requester,
+                    order_ref: input.order_original_action.clone(),
+                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
+                },
+            );
+        }
+        // The cancellation was fine (or the provider themselves caused it):
+        // the provider compensates the requester, if anything is owed.
+        DisputeOutcome::FavorRequester { forfeit_amount } => {
+            if forfeit_amount > 0 {
+                let forfeit_response = call(
+                    CallTargetCell::Local,
+                    "ledger",
+                    "forfeit".into(),
+                    None,
+                    SettleInputWire {
+                        order_ref: input.order_original_action.clone(),
+                        from: bid.bidder.clone(),
+                        to: requester,
+                        amount: forfeit_amount,
+                    },
+                )?;
+                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
+                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
+                }
+            }
+            // Unconditional -- the provider lost this ruling regardless of
+            // whether any amount was actually forfeited (mirrors
+            // apply_dispute_resolution's identical FavorRequester shape).
+            let _ = call(
+                CallTargetCell::Local,
+                "reputation",
+                "record_event".into(),
+                None,
+                RecordEventInputWire {
+                    subject: bid.bidder.clone(),
+                    order_ref: input.order_original_action.clone(),
+                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
+                },
+            );
+            if forfeit_amount > 0 {
+                let _ = call(
+                    CallTargetCell::Local,
+                    "reputation",
+                    "record_event".into(),
+                    None,
+                    RecordEventInputWire {
+                        subject: bid.bidder,
+                        order_ref: input.order_original_action.clone(),
+                        kind: ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(())
+}

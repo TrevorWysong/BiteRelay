@@ -1,0 +1,14 @@
+[package]
+name = "profiles_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "profiles"
+
+[dependencies]
+hdk.workspace = true
+serde.workspace = true
+relay_coordinator_support.workspace = true
+profiles_integrity = { path = "../integrity" }

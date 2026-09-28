@@ -1,0 +1,14 @@
+manifest_version: "0"
+name: relay
+description: "Relay -- a decentralized UberEats-style food delivery marketplace on Holochain"
+roles:
+  - name: relay
+    provisioning:
+      strategy: create
+      deferred: false
+    dna:
+      path: ../dnas/relay/workdir/relay.dna
+      modifiers:
+        properties: ~
+        network_seed: ~
+      clone_limit: 0

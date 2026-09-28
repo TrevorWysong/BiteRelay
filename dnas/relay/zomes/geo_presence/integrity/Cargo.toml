@@ -1,0 +1,13 @@
+[package]
+name = "geo_presence_integrity"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hdi.workspace = true
+serde.workspace = true
+holochain_serialized_bytes.workspace = true
+relay_types.workspace = true

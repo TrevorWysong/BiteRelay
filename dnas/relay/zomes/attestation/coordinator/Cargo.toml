@@ -1,0 +1,19 @@
+[package]
+name = "attestation_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "attestation"
+
+# NOTE: countersigning is gated behind hdk's "unstable-countersigning"
+# feature in this release -- it is not considered stable HDK surface. This
+# corroborates the architecture plan's own flagged risk that countersigning
+# needs an isolated spike before shipping; this zome is that spike.
+[dependencies]
+hdk = { workspace = true, features = ["unstable-countersigning"] }
+hdi.workspace = true
+serde.workspace = true
+relay_types.workspace = true
+attestation_integrity = { path = "../integrity" }

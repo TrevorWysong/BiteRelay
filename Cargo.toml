@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "dnas/relay/types",
+    "dnas/relay/coordinator_support",
+    "dnas/relay/governance",
+    "dnas/relay/zomes/profiles/integrity",
+    "dnas/relay/zomes/profiles/coordinator",
+    "dnas/relay/zomes/catalog/integrity",
+    "dnas/relay/zomes/catalog/coordinator",
+    "dnas/relay/zomes/geo_presence/integrity",
+    "dnas/relay/zomes/geo_presence/coordinator",
+    "dnas/relay/zomes/dispatch/types",
+    "dnas/relay/zomes/dispatch/integrity",
+    "dnas/relay/zomes/dispatch/coordinator",
+    "dnas/relay/zomes/dispute/types",
+    "dnas/relay/zomes/dispute/integrity",
+    "dnas/relay/zomes/dispute/coordinator",
+    "dnas/relay/zomes/attestation/types",
+    "dnas/relay/zomes/attestation/integrity",
+    "dnas/relay/zomes/attestation/coordinator",
+    "dnas/relay/zomes/ledger/integrity",
+    "dnas/relay/zomes/ledger/coordinator",
+    "dnas/relay/zomes/reputation/integrity",
+    "dnas/relay/zomes/reputation/coordinator",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+
+# Pinned to what's actually installed/verified working (hc CLI 0.6.3) as of
+# implementation start (Sept 2026) -- re-verify against the current `hc
+# --version` before ever bumping. NOTE: hdk and hdi are NOT version-locked to
+# each other despite matching numbers elsewhere -- hdk 0.6.3 itself depends
+# on hdi =0.7.3, confirmed by `cargo check`, not assumed.
+[workspace.dependencies]
+hdi = "0.8.0"
+hdk = "0.7.0"
+serde = { version = "1", features = ["derive"] }
+holochain_serialized_bytes = "0.0.57"
+relay_types = { path = "dnas/relay/types" }
+relay_coordinator_support = { path = "dnas/relay/coordinator_support" }
+attestation_types = { path = "dnas/relay/zomes/attestation/types" }
+relay_governance = { path = "dnas/relay/governance" }
+dispatch_types = { path = "dnas/relay/zomes/dispatch/types" }
+dispute_types = { path = "dnas/relay/zomes/dispute/types" }
+
+[profile.release]
+opt-level = "z"
+lto = true

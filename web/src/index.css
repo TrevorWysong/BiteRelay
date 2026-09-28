@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+
+  /* Ink -- a full neutral warm-gray scale (surfaces + text), used with
+     dark: variants throughout components/ui.tsx and AppShell. Tailwind v4's
+     default dark: strategy follows prefers-color-scheme, so this app's dark
+     mode is automatic, not a manual toggle. */
+  --color-ink-50: #f7f6f5;
+  --color-ink-100: #ece9e6;
+  --color-ink-200: #d8d3cc;
+  --color-ink-300: #b8b0a5;
+  --color-ink-400: #8f8578;
+  --color-ink-500: #6b6255;
+  --color-ink-600: #524a40;
+  --color-ink-700: #3f3931;
+  --color-ink-800: #2b2721;
+  --color-ink-900: #1c1916;
+  --color-ink-950: #111010;
+  --color-ink: #14161a;
+  --color-ink-soft: #3a3d44;
+  --color-cream: #fbf8f4;
+  --color-cream-deep: #f2ecE3;
+
+  /* Relay brand accent -- warm, appetite-forward, distinct from DoorDash red / Uber Eats green */
+  --color-relay-50: #fff3ee;
+  --color-relay-100: #ffe1d3;
+  --color-relay-200: #ffc0a3;
+  --color-relay-300: #ff9a6e;
+  --color-relay-400: #ff7a47;
+  --color-relay-500: #ff5a2b;
+  --color-relay-600: #f0431a;
+  --color-relay-700: #c73312;
+  --color-relay-800: #9e2913;
+  --color-relay-900: #7d2413;
+
+  /* Presence green -- reserved specifically for "online" / p2p-live semantics,
+     never used as a generic brand color, so it stays meaningful. */
+  --color-presence-400: #4ade80;
+  --color-presence-500: #22c55e;
+  --color-presence-600: #16a34a;
+
+  --shadow-card: 0 1px 2px rgba(20, 22, 26, 0.04), 0 8px 24px -8px rgba(20, 22, 26, 0.12);
+  --shadow-float: 0 12px 32px -8px rgba(20, 22, 26, 0.28);
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    background-color: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  * {
+    scrollbar-width: thin;
+  }
+  @media (prefers-color-scheme: dark) {
+    body {
+      background-color: var(--color-ink-950);
+      color: var(--color-ink-50);
+    }
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "relay-tryorama-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:matching": "tsx src/matching.test.ts",
+    "test:attestation": "tsx src/attestation.test.ts",
+    "test:lifecycle": "tsx src/full-lifecycle.test.ts",
+    "test:authorization": "tsx src/authorization.test.ts",
+    "test:completion-gate": "tsx src/completion-gate.test.ts",
+    "test:dispute": "tsx src/dispute.test.ts",
+    "test:dispute-bypass": "tsx src/dispute-bypass.test.ts",
+    "test:scale-anchors": "tsx src/scale-anchors.test.ts",
+    "test:checkpoint": "tsx src/checkpoint.test.ts",
+    "test:cancellation-dispute": "tsx src/cancellation-dispute.test.ts",
+    "test:warrants": "tsx src/warrants.test.ts",
+    "test:reviews": "tsx src/reviews.test.ts",
+    "test:storefront-details": "tsx src/storefront-details.test.ts",
+    "test": "npm run test:matching && npm run test:attestation && npm run test:lifecycle && npm run test:authorization && npm run test:completion-gate && npm run test:dispute && npm run test:dispute-bypass && npm run test:scale-anchors && npm run test:checkpoint && npm run test:cancellation-dispute && npm run test:warrants && npm run test:reviews && npm run test:storefront-details",
+    "load-test": "tsx src/load-test.ts"
+  },
+  "devDependencies": {
+    "@holochain/client": "^0.21.0",
+    "@msgpack/msgpack": "^3.0.0",
+    "@holochain-open-dev/tryorama": "^0.20.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

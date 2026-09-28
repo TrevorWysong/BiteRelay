@@ -1,0 +1,14 @@
+[package]
+name = "ledger_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "ledger"
+
+[dependencies]
+hdk.workspace = true
+serde.workspace = true
+relay_types.workspace = true
+ledger_integrity = { path = "../integrity" }
