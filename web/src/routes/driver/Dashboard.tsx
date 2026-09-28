@@ -21,15 +21,26 @@ interface OrderRow {
 }
 
 const POLL_MS = 8000;
+// Nothing in the backend caps concurrent deliveries per driver -- checked
+// directly: `accept_bid`/`validate_new_bid` never require the bidder be
+// otherwise free, and `get_nearby_providers`/`get_open_orders_near` never
+// exclude an already-busy driver. The gap named in the architecture plan's
+// §7 ("offer an active driver a 3rd delivery on their route") was entirely
+// client-side: this dashboard used to track and render only the *first*
+// active order it found. This constant is a deliberate, modest, named cap
+// -- not real route optimization (still a genuine v2 gap, unaddressed) --
+// just enough to let a driver already on one or two deliveries pick up
+// another that's genuinely on their way, without overcommitting past what
+// one person can reasonably carry at once.
+const MAX_CONCURRENT_DELIVERIES = 3;
 
 export function DriverDashboard() {
   const location = useSession((s) => s.location);
   const driverKey = myAgentPubKey();
   const [online, setOnline] = useState(false);
   const [nearby, setNearby] = useState<OrderRow[] | null>(null);
-  const [active, setActive] = useState<OrderRow | null>(null);
+  const [activeOrders, setActiveOrders] = useState<OrderRow[]>([]);
   const [bidding, setBidding] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
 
@@ -43,16 +54,24 @@ export function DriverDashboard() {
 
   const refreshNearby = useCallback(async () => {
     const records = await getOpenOrdersNear(geohash);
-    setNearby(records.map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) })));
-  }, [geohash]);
+    const rows = records.map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) }));
+    // A requester/merchant can't legally deliver their own order (enforced
+    // network-wide in dispatch_integrity's validate_new_bid) -- filtered
+    // here too so this agent never sees a "Bid" button on it in the first
+    // place, rather than discovering the rejection only after tapping Bid.
+    setNearby(rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey)));
+  }, [geohash, driverKey]);
 
-  // "Which order am I currently delivering" has no dedicated backend read --
+  // "Which orders am I currently delivering" has no dedicated backend read --
   // it's derived from two real ones: `list_my_bids` (this driver's own
   // authored Bid entries, a purely local source-chain query, no gossip
   // needed) crossed against each referenced order's current `accepted_bid`,
-  // to find the one bid of theirs that actually won and hasn't finished yet.
-  const refreshActive = useCallback(async () => {
+  // collecting *every* bid of theirs that won and hasn't finished yet (not
+  // just the first) -- a driver can legitimately be delivering more than
+  // one order at once, see `MAX_CONCURRENT_DELIVERIES` above.
+  const refreshActiveOrders = useCallback(async () => {
     const bidRecords = await listMyBids();
+    const rows: OrderRow[] = [];
     for (const bidRecord of bidRecords) {
       const bid = decodeEntry<Bid>(bidRecord);
       try {
@@ -60,27 +79,26 @@ export function DriverDashboard() {
         const order = decodeEntry<DeliveryOrder>(orderRecord);
         const isMine = order.accepted_bid && bytesEqual(order.accepted_bid, actionHash(bidRecord));
         if (isMine && !["Delivered", "Cancelled"].includes(order.status)) {
-          setActive({ hash: actionHash(orderRecord), order, bid });
-          return;
+          rows.push({ hash: actionHash(orderRecord), order, bid });
         }
       } catch {
         // order not found / not readable yet -- skip
       }
     }
-    setActive(null);
+    setActiveOrders(rows);
   }, []);
 
   useEffect(() => {
-    refreshActive();
-    const interval = setInterval(refreshActive, POLL_MS);
+    refreshActiveOrders();
+    const interval = setInterval(refreshActiveOrders, POLL_MS);
     const unsub = onLocalSignal((s) => {
-      if ("BidAccepted" in s || "BidReleased" in s) refreshActive();
+      if ("BidAccepted" in s || "BidReleased" in s) refreshActiveOrders();
     });
     return () => {
       clearInterval(interval);
       unsub();
     };
-  }, [refreshActive]);
+  }, [refreshActiveOrders]);
 
   useEffect(() => {
     if (!online) {
@@ -127,29 +145,6 @@ export function DriverDashboard() {
     }
   }
 
-  async function advance(action: "en_route" | "pickup" | "await_dropoff") {
-    if (!active) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (action === "en_route") {
-        await setOrderStatus(active.hash, "DriverEnRouteToMerchant");
-      } else if (action === "pickup") {
-        const legRecord = await recordLeg({ order_ref: active.hash, sequence: 0, kind: "MerchantHandoff", to: active.order.merchant, geo_at_completion: location });
-        await initiateLegAttestation(actionHash(legRecord));
-        await setOrderStatus(active.hash, "PickedUp");
-      } else if (action === "await_dropoff") {
-        const legRecord = await recordLeg({ order_ref: active.hash, sequence: 1, kind: "CustomerHandoff", to: active.order.requester, geo_at_completion: location });
-        await initiateLegAttestation(actionHash(legRecord));
-      }
-      await refreshActive();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="px-4 pt-4 pb-8">
       <Card className="mb-5 flex items-center justify-between p-4">
@@ -169,52 +164,18 @@ export function DriverDashboard() {
         </button>
       </Card>
 
-      {active && (
-        <Card className="mb-5 border-2 border-relay-400 p-4">
-          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-relay-600">Active delivery</p>
-          <OrderStatusTimeline status={active.order.status} />
-          {active.order.special_instructions && (
-            <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-              {active.order.special_instructions}
-            </p>
-          )}
-          <div className="mt-4 flex flex-col gap-1 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-ink-400">Delivery fee</span>
-              <span className="text-ink-900 dark:text-ink-50">{formatCents(active.bid?.price_offer ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-ink-400">Tip</span>
-              <span className="text-ink-900 dark:text-ink-50">{formatCents(active.order.tip_cents)}</span>
-            </div>
-            <div className="flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-1 font-bold">
-              <span className="text-ink-400">Total payout</span>
-              <span className="text-ink-900 dark:text-ink-50">{formatCents((active.bid?.price_offer ?? 0) + active.order.tip_cents)}</span>
-            </div>
-          </div>
-          <div className="mt-4">
-            {active.order.status === "MerchantConfirmed" && (
-              <Button className="w-full" loading={busy} onClick={() => advance("en_route")}>
-                Head to merchant
-              </Button>
-            )}
-            {active.order.status === "DriverEnRouteToMerchant" && (
-              <Button className="w-full" loading={busy} onClick={() => advance("pickup")}>
-                Confirm pickup from merchant
-              </Button>
-            )}
-            {active.order.status === "PickedUp" && (
-              <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
-                Confirm handoff to customer
-              </Button>
-            )}
-            {active.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
-          </div>
-        </Card>
+      {activeOrders.length > 0 && (
+        <div className="mb-5 flex flex-col gap-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
+            Active {activeOrders.length === 1 ? "delivery" : `deliveries (${activeOrders.length})`}
+          </p>
+          {activeOrders.map((row) => (
+            <ActiveDeliveryCard key={bytesToHex(row.hash)} row={row} location={location} onAdvanced={refreshActiveOrders} />
+          ))}
+        </div>
       )}
 
-      {online && !active && (
+      {online && activeOrders.length < MAX_CONCURRENT_DELIVERIES && (
         <>
           <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink-400">
             <MapPin size={14} className="text-relay-500" />
@@ -234,8 +195,86 @@ export function DriverDashboard() {
         </>
       )}
 
+      {online && activeOrders.length >= MAX_CONCURRENT_DELIVERIES && (
+        <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
+          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit -- finish one to see new nearby orders again.
+        </p>
+      )}
+
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
     </div>
+  );
+}
+
+function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; location: { lat: number; lon: number }; onAdvanced: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function advance(action: "en_route" | "pickup" | "await_dropoff") {
+    setBusy(true);
+    setError(null);
+    try {
+      if (action === "en_route") {
+        await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
+      } else if (action === "pickup") {
+        const legRecord = await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
+        await initiateLegAttestation(actionHash(legRecord));
+        await setOrderStatus(row.hash, "PickedUp");
+      } else if (action === "await_dropoff") {
+        const legRecord = await recordLeg({ order_ref: row.hash, sequence: 1, kind: "CustomerHandoff", to: row.order.requester, geo_at_completion: location });
+        await initiateLegAttestation(actionHash(legRecord));
+      }
+      await onAdvanced();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="border-2 border-relay-400 p-4">
+      <OrderStatusTimeline status={row.order.status} />
+      {row.order.special_instructions && (
+        <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
+          <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
+          {row.order.special_instructions}
+        </p>
+      )}
+      <div className="mt-4 flex flex-col gap-1 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-ink-400">Delivery fee</span>
+          <span className="text-ink-900 dark:text-ink-50">{formatCents(row.bid?.price_offer ?? 0)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-ink-400">Tip</span>
+          <span className="text-ink-900 dark:text-ink-50">{formatCents(row.order.tip_cents)}</span>
+        </div>
+        <div className="flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-1 font-bold">
+          <span className="text-ink-400">Total payout</span>
+          <span className="text-ink-900 dark:text-ink-50">{formatCents((row.bid?.price_offer ?? 0) + row.order.tip_cents)}</span>
+        </div>
+      </div>
+      <div className="mt-4">
+        {row.order.status === "MerchantConfirmed" && (
+          <Button className="w-full" loading={busy} onClick={() => advance("en_route")}>
+            Head to merchant
+          </Button>
+        )}
+        {row.order.status === "DriverEnRouteToMerchant" && (
+          <Button className="w-full" loading={busy} onClick={() => advance("pickup")}>
+            Confirm pickup from merchant
+          </Button>
+        )}
+        {row.order.status === "PickedUp" && (
+          <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
+            Confirm handoff to customer
+          </Button>
+        )}
+        {row.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
+      </div>
+      {error && <p className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
+    </Card>
   );
 }
 
