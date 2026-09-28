@@ -499,6 +499,22 @@ fn validate_new_bid(bid: &Bid, author: &AgentPubKey) -> ExternResult<ValidateCal
     if order.status != DeliveryStatus::Open {
         return Ok(ValidateCallbackResult::Invalid("bids can only be placed on an Open order".into()));
     }
+    // Otherwise unenforced self-dealing: nothing else stops the requester or
+    // merchant from bidding on (and accepting) their own order -- the first
+    // symptom wouldn't be here, it'd be a much later, far more confusing
+    // `InvalidCommit` at pickup-confirmation time, when `record_leg` tries to
+    // create a Leg with identical `from`/`to` agents. Reject it here instead,
+    // at the earliest point it's actually knowable, with a clear reason.
+    if bid.bidder == order.requester {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a requester cannot bid to deliver their own order".into(),
+        ));
+    }
+    if bid.bidder == order.merchant {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a merchant cannot bid to deliver their own order".into(),
+        ));
+    }
     if let Some(max_fee) = order.max_delivery_fee {
         if bid.price_offer > max_fee {
             return Ok(ValidateCallbackResult::Invalid(
