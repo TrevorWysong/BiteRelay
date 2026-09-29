@@ -186,6 +186,61 @@ pub(crate) enum ReputationRoleWire {
 
 const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
 
+/// Cross-zome-fetches the order's merchant catalog for its currently-set
+/// `delivery_subsidy_cents` (architecture plan §12: a deliberate promotional
+/// lever, not an expected split -- defaults to 0, fully customer-paid) and
+/// splits `price_offer` between merchant and customer accordingly. The
+/// driver is always paid `price_offer` in full regardless of the split --
+/// this only changes *where* the money comes from, never the amount owed.
+/// Any tip is always the customer's alone, never subject to the subsidy.
+/// A failed/missing subsidy lookup degrades to "no subsidy" (the behavior
+/// before this feature existed) rather than blocking settlement over a
+/// bonus lookup -- but once a nonzero merchant share is actually owed, both
+/// settle calls must succeed, or the driver would be paid less than the
+/// `price_offer` they were promised.
+pub(crate) fn settle_delivery_fee(
+    order_ref: ActionHash,
+    catalog_ref: ActionHash,
+    customer: AgentPubKey,
+    merchant: AgentPubKey,
+    driver: AgentPubKey,
+    price_offer: u64,
+    tip_cents: u64,
+) -> ExternResult<()> {
+    let subsidy_response = call(CallTargetCell::Local, "catalog", "get_delivery_subsidy".into(), None, catalog_ref.clone());
+    let subsidy_cents: u64 = match subsidy_response {
+        Ok(ZomeCallResponse::Ok(extern_io)) => extern_io.decode().unwrap_or(0),
+        _ => 0,
+    };
+    let merchant_share = subsidy_cents.min(price_offer);
+    let customer_share = price_offer - merchant_share;
+
+    if merchant_share > 0 {
+        let response = call(
+            CallTargetCell::Local,
+            "ledger",
+            "release_on_completion".into(),
+            None,
+            SettleInputWire { order_ref: order_ref.clone(), from: merchant, to: driver.clone(), amount: merchant_share },
+        )?;
+        if !matches!(response, ZomeCallResponse::Ok(_)) {
+            return Err(wasm_error!(WasmErrorInner::Guest("merchant delivery-subsidy settlement failed".into())));
+        }
+    }
+
+    let response = call(
+        CallTargetCell::Local,
+        "ledger",
+        "release_on_completion".into(),
+        None,
+        SettleInputWire { order_ref, from: customer, to: driver, amount: customer_share + tip_cents },
+    )?;
+    if !matches!(response, ZomeCallResponse::Ok(_)) {
+        return Err(wasm_error!(WasmErrorInner::Guest("payment settlement failed".into())));
+    }
+    Ok(())
+}
+
 /// The gated path to marking a delivery Delivered. Unlike `set_order_status`,
 /// which trusts the integrity zome's state-machine table alone, this
 /// additionally cross-zome-fetches every attested receipt for this order's
@@ -251,29 +306,22 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     }
 
     let requester = order.requester.clone();
+    let merchant = order.merchant.clone();
+    let catalog_ref = order.catalog_ref.clone();
     let tip_cents = order.tip_cents;
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
 
-    // The tip goes to the driver alongside the delivery fee itself -- same
-    // recipient, same transaction, just a larger amount. Not modeled
-    // separately in the reputation/ledger event trail; it's just money.
-    let settle_response = call(
-        CallTargetCell::Local,
-        "ledger",
-        "release_on_completion".into(),
-        None,
-        SettleInputWire {
-            order_ref: input.order_original_action.clone(),
-            from: requester,
-            to: bid.bidder.clone(),
-            amount: bid.price_offer + tip_cents,
-        },
+    settle_delivery_fee(
+        input.order_original_action.clone(),
+        catalog_ref,
+        requester,
+        merchant,
+        bid.bidder.clone(),
+        bid.price_offer,
+        tip_cents,
     )?;
-    if !matches!(settle_response, ZomeCallResponse::Ok(_)) {
-        return Err(wasm_error!(WasmErrorInner::Guest("payment settlement failed".into())));
-    }
 
     // Best-effort: a reputation bump for the provider is valuable but
     // shouldn't block payment or delivery completion if it fails.

@@ -43,6 +43,17 @@ export async function setCatalogOpen(originalAction: ActionHash, isOpen: boolean
   return callZome("catalog", "set_catalog_open", { original_action: originalAction, is_open: isOpen });
 }
 
+/// A single catalog by reference -- Cart.tsx uses this to read the
+/// merchant's current `delivery_subsidy_cents` before checkout (architecture
+/// plan §12: a deliberate promotional lever, not an expected split).
+export async function getCatalog(catalogRef: ActionHash): Promise<HcRecord> {
+  return callZome("catalog", "get_catalog", catalogRef);
+}
+
+export async function setDeliverySubsidy(originalAction: ActionHash, deliverySubsidyCents: number): Promise<HcRecord> {
+  return callZome("catalog", "set_delivery_subsidy", { original_action: originalAction, delivery_subsidy_cents: deliverySubsidyCents });
+}
+
 const EMPTY_ITEM_DETAILS = { description: "", photo_data_uri: "", category: "", dietary_tags: [] as string[] };
 
 export async function addMenuItem(

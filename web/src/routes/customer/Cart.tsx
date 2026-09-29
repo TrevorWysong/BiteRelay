@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { Button } from "../../components/ui";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery } from "../../holochain/zomes/dispatch";
-import { actionHash, bytesToHex } from "../../holochain/decode";
+import { getCatalog } from "../../holochain/zomes/catalog";
+import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
+import type { MerchantCatalog } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 // A driver's bid can be anywhere up to this cap (validate_new_bid rejects
@@ -26,9 +28,22 @@ export function Cart() {
   const [customTip, setCustomTip] = useState("");
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
+  const [subsidyCents, setSubsidyCents] = useState(0);
+
+  useEffect(() => {
+    if (!cart.catalogRef) return;
+    getCatalog(cart.catalogRef)
+      .then((record) => setSubsidyCents(decodeEntry<MerchantCatalog>(record).delivery_subsidy_cents))
+      .catch(() => setSubsidyCents(0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
   const maxFeeCents = feePreset !== null ? feePreset : Math.round(Number(customFee || 0) * 100);
+  // Worst case (a winning bid right at the cap): the merchant's subsidy
+  // always applies first, up to its own limit -- matches the settlement
+  // formula in dispatch::settle_delivery_fee exactly (architecture plan §12).
+  const customerFeeShareCents = Math.max(0, maxFeeCents - subsidyCents);
 
   if (cart.lines.length === 0) {
     return (
@@ -176,8 +191,8 @@ export function Cart() {
           <span>{formatCents(cart.total())}</span>
         </div>
         <div className="flex justify-between text-ink-400">
-          <span>Delivery fee</span>
-          <span>up to {formatCents(maxFeeCents)}</span>
+          <span>Delivery fee{subsidyCents > 0 && <span className="text-presence-600"> (merchant covers up to {formatCents(subsidyCents)})</span>}</span>
+          <span>up to {formatCents(customerFeeShareCents)}</span>
         </div>
         <div className="flex justify-between text-ink-400">
           <span>Tip</span>
@@ -185,7 +200,7 @@ export function Cart() {
         </div>
         <div className="mt-1 flex justify-between border-t border-ink-100 dark:border-ink-800 pt-2 text-base font-bold text-ink-900 dark:text-ink-50">
           <span>Estimated total</span>
-          <span>up to {formatCents(cart.total() + tipCents + maxFeeCents)}</span>
+          <span>up to {formatCents(cart.total() + tipCents + customerFeeShareCents)}</span>
         </div>
       </div>
 
@@ -198,7 +213,7 @@ export function Cart() {
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
         <Button className="w-full" loading={placing} disabled={maxFeeCents <= 0} onClick={placeOrder}>
-          Place order · up to {formatCents(cart.total() + tipCents + maxFeeCents)}
+          Place order · up to {formatCents(cart.total() + tipCents + customerFeeShareCents)}
         </Button>
       </div>
     </div>

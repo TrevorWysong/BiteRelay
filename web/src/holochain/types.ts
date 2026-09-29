@@ -76,6 +76,11 @@ export interface MerchantCatalog {
   address_line: string;
   hours_open: string;
   hours_close: string;
+  /// A deliberate promotional lever, not an expected split (architecture
+  /// plan §12) -- cents of a winning bid's delivery fee this merchant
+  /// covers, applied automatically at settlement. 0 means fully
+  /// customer-paid, the default and old-school-delivery norm.
+  delivery_subsidy_cents: number;
 }
 
 export interface MenuItem {

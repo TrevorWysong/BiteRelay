@@ -41,6 +41,15 @@ pub struct MerchantCatalog {
     pub hours_open: String,
     #[serde(default)]
     pub hours_close: String,
+    /// A deliberate promotional lever, not an expected split (architecture
+    /// plan §12) -- how many cents of a winning bid's delivery fee this
+    /// merchant covers, capped at the bid amount itself, computed
+    /// deterministically at settlement (`dispatch::complete_delivery`).
+    /// Defaults to 0, matching old-school independent delivery's norm of
+    /// the fee being fully customer-paid unless a merchant opts to offer
+    /// "free/discounted delivery" as a promotion.
+    #[serde(default)]
+    pub delivery_subsidy_cents: u64,
 }
 
 #[hdk_entry_helper]

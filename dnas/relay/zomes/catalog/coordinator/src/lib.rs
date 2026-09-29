@@ -60,6 +60,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         address_line: input.address_line,
         hours_open: input.hours_open,
         hours_close: input.hours_close,
+        delivery_subsidy_cents: 0,
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -129,6 +130,58 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
     catalog.address_line = input.address_line;
     catalog.hours_open = input.hours_open;
     catalog.hours_close = input.hours_close;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+/// Cross-zome read for `dispatch::complete_delivery` (and the equivalent
+/// dispute-resolution settlement paths) to look up a merchant's current
+/// `delivery_subsidy_cents` at settlement time -- no client previously
+/// needed to fetch a single catalog by reference, only lists/pages.
+#[hdk_extern]
+pub fn get_catalog(catalog_ref: ActionHash) -> ExternResult<Record> {
+    resolve_latest(catalog_ref)
+}
+
+/// A narrow, purpose-built cross-zome read for `dispatch::complete_delivery`
+/// -- returns just the one field settlement needs, rather than having
+/// `dispatch_coordinator` partially-decode a `MerchantCatalog` entry it has
+/// no Cargo-level type for (coordinator zomes call each other over the
+/// zome-call boundary specifically to avoid that kind of coupling; see
+/// `dispatch_coordinator::matching::NearbyProviderView`'s doc comment for
+/// the same reasoning applied to `geo_presence`).
+#[hdk_extern]
+pub fn get_delivery_subsidy(catalog_ref: ActionHash) -> ExternResult<u64> {
+    let record = resolve_latest(catalog_ref)?;
+    let catalog: MerchantCatalog = record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    Ok(catalog.delivery_subsidy_cents)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetDeliverySubsidyInput {
+    pub original_action: ActionHash,
+    pub delivery_subsidy_cents: u64,
+}
+
+/// A deliberate promotional lever, not an expected split (architecture plan
+/// §12) -- a merchant opts into covering part of a winning bid's delivery
+/// fee, capped at the bid amount itself and applied automatically at
+/// settlement. Defaults to 0 (fully customer-paid) for every catalog that
+/// hasn't called this.
+#[hdk_extern]
+pub fn set_delivery_subsidy(input: SetDeliverySubsidyInput) -> ExternResult<Record> {
+    let record = resolve_latest(input.original_action)?;
+    let mut catalog: MerchantCatalog = record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    catalog.delivery_subsidy_cents = input.delivery_subsidy_cents;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))

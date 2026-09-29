@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Star, Store } from "lucide-react";
-import { publishCatalog, setCatalogOpen, updateCatalogDetails, addMenuItem, updateMenuItem, listMenuItems, getNearbyMerchants } from "../../holochain/zomes/catalog";
+import { publishCatalog, setCatalogOpen, updateCatalogDetails, setDeliverySubsidy, addMenuItem, updateMenuItem, listMenuItems, getNearbyMerchants } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
@@ -31,6 +31,9 @@ export function MerchantCatalog() {
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailsDraft, setDetailsDraft] = useState({ description: "", cuisine_type: "", banner_data_uri: "", phone: "", address_line: "", hours_open: "", hours_close: "" });
   const [savingDetails, setSavingDetails] = useState(false);
+  const [editingSubsidy, setEditingSubsidy] = useState(false);
+  const [subsidyDraft, setSubsidyDraft] = useState("0");
+  const [savingSubsidy, setSavingSubsidy] = useState(false);
   const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM);
   const [editingItemHash, setEditingItemHash] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
@@ -53,6 +56,7 @@ export function MerchantCatalog() {
         hours_open: decoded.hours_open,
         hours_close: decoded.hours_close,
       });
+      setSubsidyDraft((decoded.delivery_subsidy_cents / 100).toString());
       const itemsPage = await listMenuItems(actionHash(mine));
       setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
       getReviewsFor(decoded.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
@@ -91,6 +95,18 @@ export function MerchantCatalog() {
       setEditingDetails(false);
     } finally {
       setSavingDetails(false);
+    }
+  }
+
+  async function saveSubsidy() {
+    if (!catalogHash) return;
+    setSavingSubsidy(true);
+    try {
+      await setDeliverySubsidy(catalogHash, Math.max(0, Math.round(Number(subsidyDraft || 0) * 100)));
+      await load();
+      setEditingSubsidy(false);
+    } finally {
+      setSavingSubsidy(false);
     }
   }
 
@@ -274,6 +290,38 @@ export function MerchantCatalog() {
                 )}
               </div>
             </div>
+          )}
+        </Card>
+
+        <Card className="mb-4 p-4">
+          <div className="mb-1 flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Delivery subsidy</p>
+            <button onClick={() => setEditingSubsidy((v) => !v)} className="text-ink-400 hover:text-relay-600">
+              <Pencil size={14} />
+            </button>
+          </div>
+          <p className="mb-2 text-xs text-ink-400">
+            Optionally cover part of a driver's delivery fee as a promotion -- customers see "free/discounted delivery" up to this amount. Never required; 0 means fully customer-paid.
+          </p>
+          {editingSubsidy ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={subsidyDraft}
+                onChange={(e) => setSubsidyDraft(e.target.value)}
+                placeholder="0"
+                className="w-28 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
+              />
+              <Button loading={savingSubsidy} onClick={saveSubsidy} className="px-4 py-2 text-xs">
+                Save
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
+              {catalog.delivery_subsidy_cents > 0 ? `We cover ${formatCents(catalog.delivery_subsidy_cents)} of delivery` : "Not offering a delivery subsidy"}
+            </p>
           )}
         </Card>
 

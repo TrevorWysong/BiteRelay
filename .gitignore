@@ -4,3 +4,4 @@
 .hc
 .hc-live-*
 node_modules
+.claude/
