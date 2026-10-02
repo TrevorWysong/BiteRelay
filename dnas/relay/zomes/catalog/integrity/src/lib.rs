@@ -10,7 +10,7 @@ use hdi::prelude::*;
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{MenuItem, MerchantCatalog, PromoCode, PromoDiscount};
+pub use catalog_types::{MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching the presence-beacon precision in `geo_presence` so both
@@ -114,10 +114,68 @@ fn owner_of_catalog(catalog_ref: &ActionHash) -> ExternResult<AgentPubKey> {
     Ok(catalog.owner)
 }
 
-fn validate_discount(discount: &PromoDiscount) -> Option<&'static str> {
-    match discount {
-        PromoDiscount::PercentOff(p) if *p == 0 || *p > 100 => Some("PercentOff must be between 1 and 100"),
-        PromoDiscount::FlatCentsOff(c) if *c == 0 => Some("FlatCentsOff must be greater than zero"),
+fn validate_requirement(requirement: &PromoRequirement) -> Option<&'static str> {
+    match requirement {
+        PromoRequirement::None => None,
+        PromoRequirement::MinimumSpend(cents) if *cents == 0 => {
+            Some("MinimumSpend must be greater than zero")
+        }
+        PromoRequirement::MinimumSpend(_) => None,
+        PromoRequirement::MinimumItemQuantity { quantity, .. } if *quantity == 0 => {
+            Some("MinimumItemQuantity's quantity must be greater than zero")
+        }
+        PromoRequirement::MinimumItemQuantity { .. } => None,
+    }
+}
+
+fn validate_reward(reward: &PromoReward) -> Option<&'static str> {
+    match reward {
+        PromoReward::PercentOffSubtotal(p) if *p == 0 || *p > 100 => {
+            Some("PercentOffSubtotal must be between 1 and 100")
+        }
+        PromoReward::PercentOffSubtotal(_) => None,
+        PromoReward::FlatOffSubtotal(cents) if *cents == 0 => {
+            Some("FlatOffSubtotal must be greater than zero")
+        }
+        PromoReward::FlatOffSubtotal(_) => None,
+        PromoReward::FreeItem { quantity, .. } if *quantity == 0 => {
+            Some("FreeItem's quantity must be greater than zero")
+        }
+        PromoReward::FreeItem { .. } => None,
+        PromoReward::PercentOffItem { percent, quantity, .. } if *percent == 0 || *percent > 100 || *quantity == 0 => {
+            Some("PercentOffItem's percent must be between 1 and 100 and quantity must be greater than zero")
+        }
+        PromoReward::PercentOffItem { .. } => None,
+    }
+}
+
+/// `item_ref`s named in a requirement/reward (`MinimumItemQuantity`,
+/// `FreeItem`, `PercentOffItem`) must be real menu items belonging to
+/// *this same* catalog -- otherwise a promo could reference another
+/// merchant's item, or something that isn't a menu item at all.
+/// `MenuItem.catalog_ref` is set once at creation and never changes, so
+/// `must_get_valid_record`'s literalness is exactly right here, same
+/// reasoning as `validate_menu_item`'s own ownership check.
+fn item_belongs_to_catalog(item_ref: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<bool> {
+    let record = must_get_valid_record(item_ref.clone())?;
+    let item: MenuItem = match record.entry().to_app_option().map_err(|e| wasm_error!(e))? {
+        Some(item) => item,
+        None => return Ok(false),
+    };
+    Ok(&item.catalog_ref == catalog_ref)
+}
+
+fn requirement_item_ref(requirement: &PromoRequirement) -> Option<&ActionHash> {
+    match requirement {
+        PromoRequirement::MinimumItemQuantity { item_ref, .. } => Some(item_ref),
+        _ => None,
+    }
+}
+
+fn reward_item_ref(reward: &PromoReward) -> Option<&ActionHash> {
+    match reward {
+        PromoReward::FreeItem { item_ref, .. } => Some(item_ref),
+        PromoReward::PercentOffItem { item_ref, .. } => Some(item_ref),
         _ => None,
     }
 }
@@ -126,8 +184,18 @@ fn validate_new_promo_code(promo: &PromoCode, author: &AgentPubKey) -> ExternRes
     if promo.code.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("code must not be empty".into()));
     }
-    if let Some(reason) = validate_discount(&promo.discount) {
+    if let Some(reason) = validate_requirement(&promo.requirement) {
         return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    if let Some(reason) = validate_reward(&promo.reward) {
+        return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    for item_ref in requirement_item_ref(&promo.requirement).into_iter().chain(reward_item_ref(&promo.reward)) {
+        if !item_belongs_to_catalog(item_ref, &promo.catalog_ref)? {
+            return Ok(ValidateCallbackResult::Invalid(
+                "a promo code's item references must be real menu items belonging to the same catalog".into(),
+            ));
+        }
     }
     let owner = owner_of_catalog(&promo.catalog_ref)?;
     if &owner != author {
@@ -160,7 +228,8 @@ fn validate_promo_code_update(promo: &PromoCode, author: &AgentPubKey, original_
         )))?;
     let unchanged = prior.catalog_ref == promo.catalog_ref
         && prior.code == promo.code
-        && prior.discount == promo.discount
+        && prior.requirement == promo.requirement
+        && prior.reward == promo.reward
         && prior.expires_at == promo.expires_at
         && prior.created_at == promo.created_at;
     if !unchanged {

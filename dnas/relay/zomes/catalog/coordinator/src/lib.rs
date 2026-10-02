@@ -309,7 +309,8 @@ fn promo_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::p
 pub struct CreatePromoCodeInput {
     pub catalog_ref: ActionHash,
     pub code: String,
-    pub discount: PromoDiscount,
+    pub requirement: PromoRequirement,
+    pub reward: PromoReward,
     pub expires_at: Option<Timestamp>,
 }
 
@@ -330,7 +331,8 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
     let promo = PromoCode {
         catalog_ref: input.catalog_ref.clone(),
         code: input.code,
-        discount: input.discount,
+        requirement: input.requirement,
+        reward: input.reward,
         active: true,
         expires_at: input.expires_at,
         created_at: sys_time()?,

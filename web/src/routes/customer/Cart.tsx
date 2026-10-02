@@ -6,15 +6,11 @@ import { LocationInput } from "../../components/LocationInput";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery } from "../../holochain/zomes/dispatch";
-import { getCatalog, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
+import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
-import type { ActionHash, GeoPoint, MerchantCatalog, PromoCode } from "../../holochain/types";
-
-function discountAmountCents(discount: PromoCode["discount"], subtotalCents: number): number {
-  if ("PercentOff" in discount) return Math.floor((subtotalCents * discount.PercentOff) / 100);
-  return Math.min(discount.FlatCentsOff, subtotalCents);
-}
+import { describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
+import type { ActionHash, GeoPoint, MenuItem, MerchantCatalog, PromoCode } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 // A driver's bid can be anywhere up to this cap (validate_new_bid rejects
@@ -45,6 +41,7 @@ export function Cart() {
   const [customFee, setCustomFee] = useState("");
   const [subsidyPercent, setSubsidyPercent] = useState(0);
   const [promoCodes, setPromoCodes] = useState<{ hash: ActionHash; promo: PromoCode }[]>([]);
+  const [menuItems, setMenuItems] = useState<{ hash: ActionHash; item: MenuItem }[]>([]);
   const [promoInput, setPromoInput] = useState("");
   const [appliedPromo, setAppliedPromo] = useState<{ hash: ActionHash; promo: PromoCode } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
@@ -57,8 +54,17 @@ export function Cart() {
     listPromoCodesForCatalog(cart.catalogRef)
       .then((records) => setPromoCodes(records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) }))))
       .catch(() => setPromoCodes([]));
+    // Needed to describe/evaluate item-scoped requirements and rewards
+    // (BOGO, "spend $X get item Y free") even when the item they name isn't
+    // already sitting in the cart -- cart lines alone can't resolve a
+    // reward item's name if the customer hasn't added it yet.
+    listMenuItems({ catalog_ref: cart.catalogRef, after: null })
+      .then((page) => setMenuItems(page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }))))
+      .catch(() => setMenuItems([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const itemName = (hex: string) => menuItems.find((m) => bytesToHex(m.hash) === hex)?.item.name;
 
   function applyPromo() {
     setPromoError(null);
@@ -67,6 +73,10 @@ export function Cart() {
     const match = promoCodes.find((p) => p.promo.code.toUpperCase() === typed && p.promo.active && (p.promo.expires_at === null || p.promo.expires_at > now));
     if (!match) {
       setPromoError("That code isn't valid or has expired.");
+      return;
+    }
+    if (!isPromoEligible(match.promo.requirement, cart.lines, cart.total())) {
+      setPromoError(`Not eligible yet -- ${describeRequirement(match.promo.requirement, itemName).toLowerCase()} to use this code.`);
       return;
     }
     setAppliedPromo(match);
@@ -78,7 +88,16 @@ export function Cart() {
   // formula in dispatch::settle_delivery_fee exactly (architecture plan
   // §12) -- merchant_share floor-rounded, customer absorbs the remainder.
   const customerFeeShareCents = maxFeeCents - Math.floor((maxFeeCents * subsidyPercent) / 100);
-  const promoDiscountCents = appliedPromo ? discountAmountCents(appliedPromo.promo.discount, cart.total()) : 0;
+  // Re-evaluated against the *current* cart every render, not just at the
+  // moment the code was applied -- a requirement can stop being met (e.g.
+  // the qualifying item gets removed) or a reward can newly become
+  // redeemable (e.g. a "spend $X get item Y free" code applied before Y was
+  // added), and the summary should reflect that live, not the stale state
+  // from when "Apply" was clicked.
+  const promoEvaluation = appliedPromo ? evaluatePromo(appliedPromo.promo, cart.lines, cart.total()) : null;
+  const promoDiscountCents = promoEvaluation?.effect.subtotalDiscountCents ?? 0;
+  const promoRewardNeedsItem = appliedPromo ? "FreeItem" in appliedPromo.promo.reward || "PercentOffItem" in appliedPromo.promo.reward : false;
+  const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
 
   if (cart.lines.length === 0) {
@@ -280,17 +299,22 @@ export function Cart() {
       <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Promo code</p>
         {appliedPromo ? (
-          <div className="flex items-center justify-between rounded-lg bg-presence-500/10 px-3 py-2 text-sm text-presence-600 dark:text-presence-400">
-            <span className="font-mono font-semibold">{appliedPromo.promo.code}</span>
-            <button
-              onClick={() => {
-                setAppliedPromo(null);
-                setPromoInput("");
-              }}
-              className="text-xs underline"
-            >
-              Remove
-            </button>
+          <div className="rounded-lg bg-presence-500/10 px-3 py-2 text-sm text-presence-600 dark:text-presence-400">
+            <div className="flex items-center justify-between">
+              <span className="font-mono font-semibold">{appliedPromo.promo.code}</span>
+              <button
+                onClick={() => {
+                  setAppliedPromo(null);
+                  setPromoInput("");
+                }}
+                className="text-xs underline"
+              >
+                Remove
+              </button>
+            </div>
+            <p className="mt-0.5 text-xs opacity-80">{describeReward(appliedPromo.promo.reward, itemName)}</p>
+            {!promoEvaluation?.eligible && <p className="mt-1 text-xs text-red-600">No longer eligible -- {describeRequirement(appliedPromo.promo.requirement, itemName).toLowerCase()}.</p>}
+            {promoAwaitingRewardItem && <p className="mt-1 text-xs text-amber-600">Add the qualifying item to your cart to redeem this.</p>}
           </div>
         ) : (
           <div className="flex gap-2">

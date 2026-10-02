@@ -87,14 +87,27 @@ export interface MerchantCatalog {
   delivery_subsidy_percent: number;
 }
 
-// `PromoDiscount` is a Rust tuple-variant enum -- serializes as
-// `{ PercentOff: number }` or `{ FlatCentsOff: number }`.
-export type PromoDiscount = { PercentOff: number } | { FlatCentsOff: number };
+// `PromoRequirement`/`PromoReward` mirror `catalog_types`' Rust enums --
+// see that crate's doc comments for why requirement and reward are two
+// independent axes rather than one flat discount value (a plain code,
+// "spend $X get item Y free," and buy-X-get-Y-free/BOGO deals are all just
+// different (requirement, reward) pairs, not distinct hardcoded promo
+// types). `None` is a bare unit variant (`"None"`, a plain string, same
+// serde shape as `BidStatus`/`DeliveryStatus` below) -- the rest are tuple
+// or struct variants (`{ VariantName: value }`).
+export type PromoRequirement = "None" | { MinimumSpend: number } | { MinimumItemQuantity: { item_ref: ActionHash; quantity: number } };
+
+export type PromoReward =
+  | { PercentOffSubtotal: number }
+  | { FlatOffSubtotal: number }
+  | { FreeItem: { item_ref: ActionHash; quantity: number } }
+  | { PercentOffItem: { item_ref: ActionHash; percent: number; quantity: number } };
 
 export interface PromoCode {
   catalog_ref: ActionHash;
   code: string;
-  discount: PromoDiscount;
+  requirement: PromoRequirement;
+  reward: PromoReward;
   active: boolean;
   expires_at: Timestamp | null;
   created_at: Timestamp;

@@ -14,7 +14,7 @@ import {
   listPromoCodesForCatalog,
 } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
-import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
+import { decodeEntry, actionHash, bytesToHex, hexToBytes, bytesEqual } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
 import { useSession } from "../../store/session";
 import { encodeGeohash } from "../../lib/geohash";
@@ -22,7 +22,8 @@ import { Button, Card, Spinner } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { StarRating } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
-import type { MenuItem, MerchantCatalog, PromoCode, Review } from "../../holochain/types";
+import { describeRequirement, describeReward } from "../../lib/promotions";
+import type { MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review } from "../../holochain/types";
 
 interface ItemRow {
   hash: Uint8Array;
@@ -35,7 +36,59 @@ interface PromoRow {
 }
 
 const EMPTY_ITEM_FORM = { name: "", price: 10, description: "", photo_data_uri: "", category: "", dietary_tags: "" };
-const EMPTY_PROMO_FORM = { code: "", kind: "percent" as "percent" | "flat", amount: 10 };
+
+// Requirement/reward are chosen independently in the UI (two separate
+// dropdowns), matching how `PromoRequirement`/`PromoReward` are two
+// independent enums on the Rust side -- a plain code, "spend $X get item Y
+// free," and buy-X-get-Y-free/BOGO are all just one requirement kind paired
+// with one reward kind, never a hardcoded "promo type" branch anywhere in
+// this form.
+type RequirementKind = "none" | "minSpend" | "minItemQty";
+type RewardKind = "percentOffSubtotal" | "flatOffSubtotal" | "freeItem" | "percentOffItem";
+
+const EMPTY_PROMO_FORM = {
+  code: "",
+  requirementKind: "none" as RequirementKind,
+  requirementAmount: 20, // dollars (minSpend) or units (minItemQty)
+  requirementItemHex: "",
+  rewardKind: "percentOffSubtotal" as RewardKind,
+  rewardAmount: 10, // percent (percentOff*) or dollars (flatOffSubtotal)
+  rewardItemHex: "",
+  rewardQuantity: 1,
+};
+
+function buildRequirement(form: typeof EMPTY_PROMO_FORM): PromoRequirement | null {
+  switch (form.requirementKind) {
+    case "none":
+      return "None";
+    case "minSpend":
+      return { MinimumSpend: Math.max(1, Math.round(form.requirementAmount * 100)) };
+    case "minItemQty":
+      if (!form.requirementItemHex) return null;
+      return { MinimumItemQuantity: { item_ref: hexToBytes(form.requirementItemHex), quantity: Math.max(1, Math.round(form.requirementAmount)) } };
+  }
+}
+
+function buildReward(form: typeof EMPTY_PROMO_FORM): PromoReward | null {
+  switch (form.rewardKind) {
+    case "percentOffSubtotal":
+      return { PercentOffSubtotal: Math.min(100, Math.max(1, Math.round(form.rewardAmount))) };
+    case "flatOffSubtotal":
+      return { FlatOffSubtotal: Math.max(1, Math.round(form.rewardAmount * 100)) };
+    case "freeItem":
+      if (!form.rewardItemHex) return null;
+      return { FreeItem: { item_ref: hexToBytes(form.rewardItemHex), quantity: Math.max(1, Math.round(form.rewardQuantity)) } };
+    case "percentOffItem":
+      if (!form.rewardItemHex) return null;
+      return {
+        PercentOffItem: {
+          item_ref: hexToBytes(form.rewardItemHex),
+          percent: Math.min(100, Math.max(1, Math.round(form.rewardAmount))),
+          quantity: Math.max(1, Math.round(form.rewardQuantity)),
+        },
+      };
+  }
+}
 
 export function MerchantCatalog() {
   const location = useSession((s) => s.location);
@@ -137,12 +190,16 @@ export function MerchantCatalog() {
 
   async function savePromo() {
     if (!catalogHash || !promoForm.code.trim()) return;
+    const requirement = buildRequirement(promoForm);
+    const reward = buildReward(promoForm);
+    if (!requirement || !reward) return;
     setSavingPromo(true);
     try {
       await createPromoCode({
         catalog_ref: catalogHash,
         code: promoForm.code.trim().toUpperCase(),
-        discount: promoForm.kind === "percent" ? { PercentOff: Math.min(100, Math.max(1, Math.round(promoForm.amount))) } : { FlatCentsOff: Math.max(1, Math.round(promoForm.amount * 100)) },
+        requirement,
+        reward,
       });
       await load();
       setShowAddPromo(false);
@@ -257,6 +314,8 @@ export function MerchantCatalog() {
   }
 
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
+  const itemNameByHex = new Map((items ?? []).map((row) => [bytesToHex(row.hash), row.item.name]));
+  const itemName = (hex: string) => itemNameByHex.get(hex);
   const grouped = new Map<string, ItemRow[]>();
   for (const row of items ?? []) {
     const key = row.item.category || "Menu";
@@ -389,33 +448,123 @@ export function MerchantCatalog() {
             </Button>
           </div>
           {showAddPromo && (
-            <div className="mb-3 flex flex-col gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
+            <div className="mb-3 flex flex-col gap-3 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
               <input
                 value={promoForm.code}
                 onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))}
                 placeholder="CODE (e.g. WELCOME10)"
                 className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
               />
-              <div className="flex items-center gap-2">
-                <select
-                  value={promoForm.kind}
-                  onChange={(e) => setPromoForm((f) => ({ ...f, kind: e.target.value as "percent" | "flat" }))}
-                  className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
-                >
-                  <option value="percent">% off</option>
-                  <option value="flat">$ off</option>
-                </select>
-                <input
-                  type="number"
-                  min={promoForm.kind === "percent" ? 1 : 0.01}
-                  max={promoForm.kind === "percent" ? 100 : undefined}
-                  step={promoForm.kind === "percent" ? 1 : 0.5}
-                  value={promoForm.amount}
-                  onChange={(e) => setPromoForm((f) => ({ ...f, amount: Number(e.target.value) }))}
-                  className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
-                />
+
+              <div>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Requirement</p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={promoForm.requirementKind}
+                    onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}
+                    className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
+                  >
+                    <option value="none">None -- always eligible</option>
+                    <option value="minSpend">Minimum spend</option>
+                    <option value="minItemQty">Minimum quantity of an item</option>
+                  </select>
+                  {promoForm.requirementKind === "minSpend" && (
+                    <input
+                      type="number"
+                      min={0.01}
+                      step={0.5}
+                      value={promoForm.requirementAmount}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
+                      placeholder="$"
+                      className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                    />
+                  )}
+                </div>
+                {promoForm.requirementKind === "minItemQty" && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <select
+                      value={promoForm.requirementItemHex}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, requirementItemHex: e.target.value }))}
+                      className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
+                    >
+                      <option value="">Select an item...</option>
+                      {(items ?? []).map((row) => (
+                        <option key={bytesToHex(row.hash)} value={bytesToHex(row.hash)}>
+                          {row.item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={promoForm.requirementAmount}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
+                      placeholder="Qty"
+                      className="w-20 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
               </div>
-              <Button loading={savingPromo} onClick={savePromo} className="py-2 text-xs">
+
+              <div>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Reward</p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={promoForm.rewardKind}
+                    onChange={(e) => setPromoForm((f) => ({ ...f, rewardKind: e.target.value as RewardKind }))}
+                    className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
+                  >
+                    <option value="percentOffSubtotal">% off order</option>
+                    <option value="flatOffSubtotal">$ off order</option>
+                    <option value="freeItem">Free item (e.g. BOGO)</option>
+                    <option value="percentOffItem">% off an item</option>
+                  </select>
+                  {(promoForm.rewardKind === "percentOffSubtotal" || promoForm.rewardKind === "flatOffSubtotal" || promoForm.rewardKind === "percentOffItem") && (
+                    <input
+                      type="number"
+                      min={promoForm.rewardKind === "flatOffSubtotal" ? 0.01 : 1}
+                      max={promoForm.rewardKind === "flatOffSubtotal" ? undefined : 100}
+                      step={promoForm.rewardKind === "flatOffSubtotal" ? 0.5 : 1}
+                      value={promoForm.rewardAmount}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, rewardAmount: Number(e.target.value) }))}
+                      className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                    />
+                  )}
+                </div>
+                {(promoForm.rewardKind === "freeItem" || promoForm.rewardKind === "percentOffItem") && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <select
+                      value={promoForm.rewardItemHex}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, rewardItemHex: e.target.value }))}
+                      className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
+                    >
+                      <option value="">Select an item...</option>
+                      {(items ?? []).map((row) => (
+                        <option key={bytesToHex(row.hash)} value={bytesToHex(row.hash)}>
+                          {row.item.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={promoForm.rewardQuantity}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, rewardQuantity: Number(e.target.value) }))}
+                      placeholder="Qty"
+                      className="w-20 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <Button
+                loading={savingPromo}
+                disabled={!promoForm.code.trim() || !buildRequirement(promoForm) || !buildReward(promoForm)}
+                onClick={savePromo}
+                className="py-2 text-xs"
+              >
                 Create
               </Button>
             </div>
@@ -429,7 +578,7 @@ export function MerchantCatalog() {
                   <div>
                     <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">{row.promo.code}</p>
                     <p className="text-xs text-ink-400">
-                      {"PercentOff" in row.promo.discount ? `${row.promo.discount.PercentOff}% off` : `${formatCents(row.promo.discount.FlatCentsOff)} off`}
+                      {describeRequirement(row.promo.requirement, itemName)} -- {describeReward(row.promo.reward, itemName)}
                     </p>
                   </div>
                   <Button

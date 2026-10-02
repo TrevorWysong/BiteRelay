@@ -1,8 +1,12 @@
-// Proves merchant-scoped promo codes: a valid, active code is accepted on
-// an order; an inactive one, an expired one, and one belonging to a
-// different merchant are all rejected deterministically by
-// dispatch_integrity::validate_new_order -- not just trusted from the
-// client that claimed them.
+// Proves merchant-scoped promo codes, built on the generic
+// PromoRequirement/PromoReward split (architecture plan §13): a valid,
+// active plain-discount code is accepted on an order; an inactive one, an
+// expired one, and one belonging to a different merchant are all rejected
+// deterministically by dispatch_integrity::validate_new_order -- not just
+// trusted from the client that claimed them. Also proves the generic shape
+// actually covers BOGO and "spend $X get item Y free" deals (not just
+// flat percent/off-the-whole-order codes), and that an item-scoped
+// requirement/reward can't reference another merchant's menu item.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
@@ -30,9 +34,13 @@ await runScenario(async (scenario) => {
   const catalogRef = actionHash(catalogRecord);
   const menuItemRecord = await catalogOf(merchant)<HcRecord>("add_menu_item", { catalog_ref: catalogRef, name: "Empanada", price_cents: 1000, available: true });
   const menuItemRef = actionHash(menuItemRecord);
+  const drinkRecord = await catalogOf(merchant)<HcRecord>("add_menu_item", { catalog_ref: catalogRef, name: "Soda", price_cents: 250, available: true });
+  const drinkRef = actionHash(drinkRecord);
 
   const otherCatalogRecord = await catalogOf(otherMerchant)<HcRecord>("publish_catalog", { business_name: "Someone Else's", location: ST_PETE });
   const otherCatalogRef = actionHash(otherCatalogRecord);
+  const otherMenuItemRecord = await catalogOf(otherMerchant)<HcRecord>("add_menu_item", { catalog_ref: otherCatalogRef, name: "Taco", price_cents: 500, available: true });
+  const otherMenuItemRef = actionHash(otherMenuItemRecord);
 
   async function placeOrder(promoRef: Uint8Array | null, orderTotal = 1000) {
     return dispatchOf(customer)<HcRecord>("request_delivery", {
@@ -50,22 +58,24 @@ await runScenario(async (scenario) => {
   await placeOrder(null);
   console.log("[PASS] an order with no promo code still works");
 
-  // A valid, active code for the right merchant.
+  // A valid, active plain percent-off-the-order code (requirement: None).
   const activeCodeRecord = await catalogOf(merchant)<HcRecord>("create_promo_code", {
     catalog_ref: catalogRef,
     code: "WELCOME10",
-    discount: { PercentOff: 10 },
+    requirement: "None",
+    reward: { PercentOffSubtotal: 10 },
   });
   const activeCodeRef = actionHash(activeCodeRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await placeOrder(activeCodeRef, 900); // 10% off $10.00
-  console.log("[PASS] a valid, active promo code for the right merchant is accepted");
+  console.log("[PASS] a valid, active plain percent-off code is accepted");
 
   // An inactive code (created then deactivated).
   const inactiveCodeRecord = await catalogOf(merchant)<HcRecord>("create_promo_code", {
     catalog_ref: catalogRef,
     code: "GONE",
-    discount: { FlatCentsOff: 200 },
+    requirement: "None",
+    reward: { FlatOffSubtotal: 200 },
   });
   const inactiveCodeRef = actionHash(inactiveCodeRecord);
   await catalogOf(merchant)("set_promo_code_active", { original_action: inactiveCodeRef, active: false });
@@ -77,7 +87,8 @@ await runScenario(async (scenario) => {
   const expiredCodeRecord = await catalogOf(merchant)<HcRecord>("create_promo_code", {
     catalog_ref: catalogRef,
     code: "OLDDEAL",
-    discount: { PercentOff: 50 },
+    requirement: "None",
+    reward: { PercentOffSubtotal: 50 },
     expires_at: now - 1_000_000, // 1 second in the past
   });
   const expiredCodeRef = actionHash(expiredCodeRecord);
@@ -89,7 +100,8 @@ await runScenario(async (scenario) => {
   const wrongMerchantCodeRecord = await catalogOf(otherMerchant)<HcRecord>("create_promo_code", {
     catalog_ref: otherCatalogRef,
     code: "NOTYOURS",
-    discount: { PercentOff: 20 },
+    requirement: "None",
+    reward: { PercentOffSubtotal: 20 },
   });
   const wrongMerchantCodeRef = actionHash(wrongMerchantCodeRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -98,16 +110,85 @@ await runScenario(async (scenario) => {
 
   // Only the catalog's own owner may create or deactivate its promo codes.
   await assert.rejects(
-    catalogOf(customer)("create_promo_code", { catalog_ref: catalogRef, code: "HIJACK", discount: { PercentOff: 99 } }),
+    catalogOf(customer)("create_promo_code", { catalog_ref: catalogRef, code: "HIJACK", requirement: "None", reward: { PercentOffSubtotal: 99 } }),
     /a promo code can only be authored by its catalog's own owner/,
     "a non-owner must not be able to create a promo code for someone else's catalog",
   );
   console.log("[PASS] only the catalog's own owner can create promo codes for it");
 
+  // Buy-X-get-Y-free / BOGO: requirement and reward are two independent
+  // enums, not a hardcoded "BOGO" promo type -- this is MinimumItemQuantity
+  // paired with FreeItem, same machinery as the plain-discount codes above.
+  const bogoRecord = await catalogOf(merchant)<HcRecord>("create_promo_code", {
+    catalog_ref: catalogRef,
+    code: "BOGOEMPANADA",
+    requirement: { MinimumItemQuantity: { item_ref: menuItemRef, quantity: 2 } },
+    reward: { FreeItem: { item_ref: menuItemRef, quantity: 1 } },
+  });
+  const bogoRef = actionHash(bogoRecord);
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+  await placeOrder(bogoRef, 2000); // the arithmetic isn't re-derived server-side; this just proves the code itself is accepted end to end
+  console.log("[PASS] a buy-X-get-Y-free (BOGO) requirement+reward pair is created and accepted on an order");
+
+  // "Spend $X, get item Y free" -- MinimumSpend paired with FreeItem, where
+  // the reward item differs from whatever triggered the requirement.
+  const spendGetRecord = await catalogOf(merchant)<HcRecord>("create_promo_code", {
+    catalog_ref: catalogRef,
+    code: "FREESODA",
+    requirement: { MinimumSpend: 1500 },
+    reward: { FreeItem: { item_ref: drinkRef, quantity: 1 } },
+  });
+  const spendGetRef = actionHash(spendGetRecord);
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+  await placeOrder(spendGetRef, 1600);
+  console.log("[PASS] a spend-$X-get-item-Y-free requirement+reward pair is created and accepted on an order");
+
+  // An item-scoped requirement or reward can't reference another
+  // merchant's menu item -- `item_belongs_to_catalog` must catch this even
+  // though the item_ref itself resolves to a perfectly real MenuItem entry.
+  await assert.rejects(
+    catalogOf(merchant)("create_promo_code", {
+      catalog_ref: catalogRef,
+      code: "CROSSCATALOG",
+      requirement: { MinimumItemQuantity: { item_ref: otherMenuItemRef, quantity: 1 } },
+      reward: { PercentOffSubtotal: 10 },
+    }),
+    /a promo code's item references must be real menu items belonging to the same catalog/,
+    "a requirement referencing another merchant's menu item must be rejected",
+  );
+  await assert.rejects(
+    catalogOf(merchant)("create_promo_code", {
+      catalog_ref: catalogRef,
+      code: "CROSSCATALOG2",
+      requirement: "None",
+      reward: { FreeItem: { item_ref: otherMenuItemRef, quantity: 1 } },
+    }),
+    /a promo code's item references must be real menu items belonging to the same catalog/,
+    "a reward referencing another merchant's menu item must be rejected",
+  );
+  console.log("[PASS] item-scoped requirements/rewards can't reference a different merchant's menu item");
+
+  // Zero quantities/percentages are rejected for the new variants too, same
+  // bounds-checking discipline as the original PercentOff/FlatCentsOff pair.
+  await assert.rejects(
+    catalogOf(merchant)("create_promo_code", {
+      catalog_ref: catalogRef,
+      code: "ZEROQTY",
+      requirement: { MinimumItemQuantity: { item_ref: menuItemRef, quantity: 0 } },
+      reward: { PercentOffSubtotal: 10 },
+    }),
+    /MinimumItemQuantity's quantity must be greater than zero/,
+    "a zero-quantity MinimumItemQuantity requirement must be rejected",
+  );
+  console.log("[PASS] a zero-quantity item requirement is rejected");
+
   const codes = await catalogOf(merchant)<HcRecord[]>("list_promo_codes_for_catalog", catalogRef);
-  assert.equal(codes.length, 3, "the merchant should see all 3 codes they created, active or not");
-  const decoded = codes.map((r) => decodeEntry<{ code: string; active: boolean }>(r));
+  assert.equal(codes.length, 5, "the merchant should see all 5 codes they successfully created, active or not");
+  const decoded = codes.map((r) => decodeEntry<{ code: string; active: boolean; requirement: unknown; reward: unknown }>(r));
   assert.equal(decoded.find((d) => d.code === "WELCOME10")?.active, true, "WELCOME10 should still be active");
   assert.equal(decoded.find((d) => d.code === "GONE")?.active, false, "GONE should reflect its deactivation");
-  console.log("[PASS] list_promo_codes_for_catalog returns every code the merchant created, reflecting current active state");
+  const bogoDecoded = decoded.find((d) => d.code === "BOGOEMPANADA");
+  assert.deepEqual(bogoDecoded?.requirement, { MinimumItemQuantity: { item_ref: menuItemRef, quantity: 2 } }, "BOGOEMPANADA's requirement should round-trip exactly");
+  assert.deepEqual(bogoDecoded?.reward, { FreeItem: { item_ref: menuItemRef, quantity: 1 } }, "BOGOEMPANADA's reward should round-trip exactly");
+  console.log("[PASS] list_promo_codes_for_catalog returns every code the merchant created, with requirement/reward round-tripping exactly");
 });

@@ -62,26 +62,68 @@ pub struct MenuItem {
     pub dietary_tags: Vec<String>,
 }
 
+/// What a cart must satisfy for a `PromoCode` to apply -- the "purchase
+/// criteria" half of the same requirement/reward split DoorDash's own
+/// Promotion Management API uses (`purchase_criteria` + `discount_options`,
+/// two separate, paired objects rather than one flat discount value).
+/// Deliberately generic rather than one struct per promo flavor: a new
+/// condition (e.g. "customer's first order") is a new variant here, not a
+/// change to `PromoCode`, `PromoReward`, or any validation/evaluation code
+/// that doesn't specifically care about that condition.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum PromoDiscount {
-    /// 1-100 -- validated in `catalog_integrity::validate_promo_code`.
-    PercentOff(u8),
-    /// Cents, must be > 0.
-    FlatCentsOff(u64),
+pub enum PromoRequirement {
+    /// Always eligible once redeemed -- a plain code with no purchase
+    /// condition (what the old flat `PercentOff`/`FlatCentsOff`-only design
+    /// always meant, now one case among several instead of the only one).
+    None,
+    /// Cart subtotal (pre-discount, in cents) must be at least this much.
+    /// The "spend $X, get something free" shape.
+    MinimumSpend(u64),
+    /// Cart must contain at least `quantity` units of `item_ref` (a
+    /// `MenuItem` belonging to the same catalog -- checked in
+    /// `catalog_integrity::validate_new_promo_code`). The "buy X" half of
+    /// a buy-X-get-Y deal, including BOGO (`quantity: 1`).
+    MinimumItemQuantity { item_ref: ActionHash, quantity: u32 },
+}
+
+/// The benefit a `PromoCode` grants once its `PromoRequirement` is met --
+/// the "discount_options" half. Each variant is a distinct *shape* of
+/// benefit (whole-order vs. item-scoped, percent vs. flat/free), not a
+/// distinct promo "type" -- requirement and reward are chosen independently,
+/// so e.g. `MinimumSpend` + `FreeItem` and `MinimumItemQuantity` + `FreeItem`
+/// are both just "this requirement, that reward," not two hardcoded
+/// promo-type branches anywhere in validation or evaluation code.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum PromoReward {
+    /// 1-100, applied to the whole (pre-discount) cart subtotal.
+    PercentOffSubtotal(u8),
+    /// Cents, applied to the whole subtotal, clamped so it can't exceed it.
+    FlatOffSubtotal(u64),
+    /// Up to `quantity` units of `item_ref` (a `MenuItem` belonging to the
+    /// same catalog) become free. The generic shape behind both
+    /// "spend $X, get item Y free" and buy-X-get-Y-free/BOGO deals --
+    /// which one it is depends entirely on the paired `PromoRequirement`,
+    /// not on anything here.
+    FreeItem { item_ref: ActionHash, quantity: u32 },
+    /// Up to `quantity` units of `item_ref` get `percent` (1-100) off
+    /// instead of fully free -- e.g. "buy a burger, get a second burger
+    /// 50% off."
+    PercentOffItem { item_ref: ActionHash, percent: u8, quantity: u32 },
 }
 
 /// Merchant-scoped, not global -- one restaurant's "WELCOME10" is a
 /// completely independent code from another's, looked up by
 /// `(catalog_ref, code)` rather than a globally unique string. Immutable
 /// once created except `active` (see `catalog_coordinator::set_promo_code_active`)
-/// -- a code's actual discount never changes after the fact, only whether
-/// it can still be used.
+/// -- a code's actual requirement/reward never changes after the fact, only
+/// whether it can still be used.
 #[hdk_entry_helper]
 #[derive(Clone)]
 pub struct PromoCode {
     pub catalog_ref: ActionHash,
     pub code: String,
-    pub discount: PromoDiscount,
+    pub requirement: PromoRequirement,
+    pub reward: PromoReward,
     pub active: bool,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
