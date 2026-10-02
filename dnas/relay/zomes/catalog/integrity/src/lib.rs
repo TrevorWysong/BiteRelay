@@ -1,94 +1,28 @@
 //! Integrity zome for merchant catalogs: `MerchantCatalog` (owner, location,
-//! open/closed) and `MenuItem` (must reference a real catalog).
+//! open/closed), `MenuItem` (must reference a real catalog), and `PromoCode`
+//! (merchant-scoped discount codes).
 
 use hdi::prelude::*;
-use relay_types::GeoPoint;
+
+// MerchantCatalog/MenuItem/PromoCode now live in catalog_types so
+// dispatch_integrity can decode a PromoCode too, for its own promo-code
+// validation in validate_new_order -- see that crate's doc comment for why
+// a direct dependency on this crate wouldn't work. Re-exported here so
+// nothing else in this crate or the coordinator crate (which imports via
+// `catalog_integrity::*`) needs to change.
+pub use catalog_types::{MenuItem, MerchantCatalog, PromoCode, PromoDiscount};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching the presence-beacon precision in `geo_presence` so both
 /// discovery paths compose over the same geohash grid.
 pub const CATALOG_GEOHASH_PRECISION: usize = 6;
 
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct MerchantCatalog {
-    pub owner: AgentPubKey,
-    pub business_name: String,
-    pub location: GeoPoint,
-    pub geohash: String,
-    pub is_open: bool,
-    /// Storefront depth added for the DoorDash/UberEats-style browse and
-    /// detail views -- every field below defaults to empty on decode so
-    /// existing catalog entries (and any client that hasn't caught up)
-    /// still deserialize cleanly.
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub cuisine_type: String,
-    /// A data URI, same reasoning as `Profile.avatar_data_uri` -- there is
-    /// no image host in this system.
-    #[serde(default)]
-    pub banner_data_uri: String,
-    #[serde(default)]
-    pub phone: String,
-    #[serde(default)]
-    pub address_line: String,
-    /// Free-form "HH:MM" 24-hour strings, deliberately not a richer
-    /// per-weekday schedule -- that's a real gap for a production app, but
-    /// this is enough to show "open until 10pm" in the UI without a much
-    /// larger struct for a demo.
-    #[serde(default)]
-    pub hours_open: String,
-    #[serde(default)]
-    pub hours_close: String,
-    /// What share (0-100) of a winning bid's delivery fee this merchant
-    /// covers, computed deterministically at settlement
-    /// (`dispatch::complete_delivery`) as `price_offer * percent / 100`.
-    /// A percentage, not a flat amount, so the split stays proportional
-    /// regardless of what the winning bid turns out to be -- a flat dollar
-    /// subsidy means something different on a $3 bid than a $15 bid; a
-    /// percentage doesn't. Defaults to 50 (architecture plan §12,
-    /// 2026-10-01 revision): a deliberate departure from old-school
-    /// independent delivery's historical norm (customarily ~0%
-    /// merchant-paid) -- the reasoning is that both the merchant (reach,
-    /// repeat customers) and the customer (convenience) benefit from the
-    /// delivery happening at all, so neither should bear its full cost
-    /// alone, and driver pay shouldn't depend entirely on how generously a
-    /// given customer tips. Still merchant-adjustable, not a hard protocol
-    /// mandate -- a merchant with tighter margins can lower it.
-    #[serde(default = "default_delivery_subsidy_percent")]
-    pub delivery_subsidy_percent: u8,
-}
-
-fn default_delivery_subsidy_percent() -> u8 {
-    50
-}
-
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct MenuItem {
-    pub catalog_ref: ActionHash,
-    pub name: String,
-    pub price_cents: u64,
-    pub available: bool,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub photo_data_uri: String,
-    /// Free-form section label ("Appetizers", "Mains", ...) -- the menu UI
-    /// groups by whatever string is here, not a fixed enum, so a merchant
-    /// can name sections however they want.
-    #[serde(default)]
-    pub category: String,
-    #[serde(default)]
-    pub dietary_tags: Vec<String>,
-}
-
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
     MerchantCatalog(MerchantCatalog),
     MenuItem(MenuItem),
+    PromoCode(PromoCode),
 }
 
 #[hdk_link_types]
@@ -96,6 +30,7 @@ pub enum LinkTypes {
     OwnerToCatalog,
     CatalogToMenuItem,
     GeohashToCatalog,
+    CatalogToPromoCode,
 }
 
 #[hdk_extern]
@@ -104,10 +39,12 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
+            EntryTypes::PromoCode(promo) => validate_new_promo_code(&promo, action.author()),
         },
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
+            EntryTypes::PromoCode(promo) => validate_promo_code_update(&promo, action.author(), &action.original_action_address),
         },
         _ => Ok(ValidateCallbackResult::Valid),
     }
@@ -160,6 +97,75 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
     if &catalog.owner != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a menu item can only be authored by its catalog's own owner".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+fn owner_of_catalog(catalog_ref: &ActionHash) -> ExternResult<AgentPubKey> {
+    let record = must_get_valid_record(catalog_ref.clone())?;
+    let catalog: MerchantCatalog = record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest(
+            "catalog_ref does not point at a MerchantCatalog entry".into()
+        )))?;
+    Ok(catalog.owner)
+}
+
+fn validate_discount(discount: &PromoDiscount) -> Option<&'static str> {
+    match discount {
+        PromoDiscount::PercentOff(p) if *p == 0 || *p > 100 => Some("PercentOff must be between 1 and 100"),
+        PromoDiscount::FlatCentsOff(c) if *c == 0 => Some("FlatCentsOff must be greater than zero"),
+        _ => None,
+    }
+}
+
+fn validate_new_promo_code(promo: &PromoCode, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if promo.code.trim().is_empty() {
+        return Ok(ValidateCallbackResult::Invalid("code must not be empty".into()));
+    }
+    if let Some(reason) = validate_discount(&promo.discount) {
+        return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    let owner = owner_of_catalog(&promo.catalog_ref)?;
+    if &owner != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a promo code can only be authored by its catalog's own owner".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// Only `active` may ever change -- `code`/`discount`/`catalog_ref`/
+/// `expires_at`/`created_at` are fixed at creation, so a code's meaning
+/// can't be silently altered out from under an order that already
+/// referenced it (`dispatch_integrity::validate_new_order` resolves this
+/// entry by reference, not by re-checking the discount amount separately).
+fn validate_promo_code_update(promo: &PromoCode, author: &AgentPubKey, original_action_hash: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let owner = owner_of_catalog(&promo.catalog_ref)?;
+    if &owner != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a promo code can only be updated by its catalog's own owner".into(),
+        ));
+    }
+    let prior_record = must_get_valid_record(original_action_hash.clone())?;
+    let prior: PromoCode = prior_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest(
+            "original_action_hash does not point at a PromoCode entry".into()
+        )))?;
+    let unchanged = prior.catalog_ref == promo.catalog_ref
+        && prior.code == promo.code
+        && prior.discount == promo.discount
+        && prior.expires_at == promo.expires_at
+        && prior.created_at == promo.created_at;
+    if !unchanged {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a promo code update may only change active -- every other field must stay the same".into(),
         ));
     }
     Ok(ValidateCallbackResult::Valid)

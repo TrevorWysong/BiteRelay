@@ -29,6 +29,7 @@ pub enum LocalSignal {
     BidPlaced(ActionHash),
     BidAccepted(ActionHash),
     BidReleased(ActionHash),
+    ChatMessage { order_ref: ActionHash, from: AgentPubKey, text: String, sent_at: Timestamp },
 }
 
 /// Peer-to-peer signals -- Layer 2 of the matching mechanism. Every receiver
@@ -42,6 +43,10 @@ pub enum RemoteSignal {
     BidPlaced { order_hash: ActionHash, bid_hash: ActionHash },
     BidAccepted { bid_hash: ActionHash },
     BidReleased { bid_hash: ActionHash },
+    /// Sent only to the *other* party of an already-accepted order (see
+    /// `chat::send_chat_message`) -- never a broadcast, same
+    /// already-known-AgentPubKey requirement as every other signal here.
+    ChatMessage { order_hash: ActionHash, from: AgentPubKey, text: String, sent_at: Timestamp },
 }
 
 #[hdk_extern]
@@ -51,5 +56,8 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
         RemoteSignal::BidPlaced { bid_hash, .. } => emit_signal(LocalSignal::BidPlaced(bid_hash)),
         RemoteSignal::BidAccepted { bid_hash } => emit_signal(LocalSignal::BidAccepted(bid_hash)),
         RemoteSignal::BidReleased { bid_hash } => emit_signal(LocalSignal::BidReleased(bid_hash)),
+        RemoteSignal::ChatMessage { order_hash, from, text, sent_at } => {
+            emit_signal(LocalSignal::ChatMessage { order_ref: order_hash, from, text, sent_at })
+        }
     }
 }

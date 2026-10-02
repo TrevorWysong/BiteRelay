@@ -4,6 +4,7 @@
 //! concrete entry type rather than one generalized "Job".
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
+use catalog_types::PromoCode;
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 
@@ -34,12 +35,12 @@ pub enum LinkTypes {
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match op.flattened::<EntryTypes, LinkTypes>()? {
         FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
-            EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author()),
+            EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp()),
             EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author()),
         },
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::DeliveryOrder(order) => {
-                validate_order_transition(&order, action.author(), &action.original_action_address)
+                validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp())
             }
             EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author()),
         },
@@ -47,7 +48,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     }
 }
 
-fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timestamp: Timestamp) -> ExternResult<ValidateCallbackResult> {
     if &order.requester != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a delivery order can only be authored by its own requester".into(),
@@ -59,8 +60,14 @@ fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey) -> ExternResu
     if order.order_total == 0 {
         return Ok(ValidateCallbackResult::Invalid("order_total must be greater than zero".into()));
     }
-    if order.status != DeliveryStatus::Open {
-        return Ok(ValidateCallbackResult::Invalid("a new order must start in the Open status".into()));
+    match (&order.status, order.requested_delivery_time) {
+        (DeliveryStatus::Open, None) => {}
+        (DeliveryStatus::Scheduled, Some(_)) => {}
+        _ => {
+            return Ok(ValidateCallbackResult::Invalid(
+                "a new order must start Open with no requested_delivery_time, or Scheduled with one set".into(),
+            ))
+        }
     }
     if order.accepted_bid.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have an accepted bid".into()));
@@ -70,6 +77,45 @@ fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey) -> ExternResu
     }
     if order.dispute_ref.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have a dispute_ref".into()));
+    }
+    // Only checks facts that are genuinely *immutable* once a PromoCode is
+    // created (which merchant it belongs to, its fixed expiry) -- NOT
+    // `active`, even though that field exists on the same entry.
+    // `must_get_valid_record` is deterministic but literal: it always
+    // returns the entry *as created*, and `active` always starts `true`
+    // (see `create_promo_code`), so checking it here would silently never
+    // catch a later deactivation -- the exact same "get() never resolves to
+    // latest" trap this codebase has already hit for dispute timing and
+    // warrants. There is no deterministic way to ask "what is this *other*
+    // entry's current state" inside validate() -- forward-chain walking is
+    // exactly the non-deterministic query it can't depend on. "Is this code
+    // still active" is therefore a coordinator-level, best-effort check
+    // only (`dispatch::request_delivery`'s own pre-check, same trust tier
+    // as `check_warrants`), not enforced here. The discount's arithmetic
+    // effect on `order_total` is also not independently re-derived here --
+    // there's no deterministic way to recompute "what the undiscounted
+    // total should have been" without passing full cart contents into
+    // validate(), and `order_total` itself already has no such check today
+    // (a known, pre-existing, separate trust gap).
+    if let Some(promo_ref) = &order.promo_code_ref {
+        let promo_record = must_get_valid_record(promo_ref.clone())?;
+        let promo: PromoCode = promo_record
+            .entry()
+            .to_app_option()
+            .map_err(|e| wasm_error!(e))?
+            .ok_or(wasm_error!(WasmErrorInner::Guest(
+                "promo_code_ref does not point at a PromoCode entry".into()
+            )))?;
+        if promo.catalog_ref != order.catalog_ref {
+            return Ok(ValidateCallbackResult::Invalid(
+                "promo_code_ref does not belong to this order's merchant".into(),
+            ));
+        }
+        if let Some(expires) = promo.expires_at {
+            if action_timestamp >= expires {
+                return Ok(ValidateCallbackResult::Invalid("promo code has expired".into()));
+            }
+        }
     }
     Ok(ValidateCallbackResult::Valid)
 }
@@ -238,6 +284,7 @@ fn validate_order_transition(
     order: &DeliveryOrder,
     author: &AgentPubKey,
     original_action_hash: &ActionHash,
+    action_timestamp: Timestamp,
 ) -> ExternResult<ValidateCallbackResult> {
     let prior_record = must_get_valid_record(original_action_hash.clone())?;
     let prior: DeliveryOrder = prior_record
@@ -311,6 +358,20 @@ fn validate_order_transition(
         return Ok(ValidateCallbackResult::Invalid(
             "accepted_bid may only be set, once, during the Open -> BidAccepted transition".into(),
         ));
+    }
+    // A scheduled order can only actually open once its requested time has
+    // arrived. Deliberately checked against *this action's own recorded
+    // timestamp* (fixed, agreed-upon by every validator who looks at this
+    // same action), not a fresh `sys_time()` call inside validate() -- the
+    // latter would be non-deterministic, since different peers validating
+    // the same action at different real-world moments could disagree.
+    if prior.status == DeliveryStatus::Scheduled && order.status == DeliveryStatus::Open {
+        let due = prior.requested_delivery_time.unwrap_or(Timestamp(0));
+        if action_timestamp < due {
+            return Ok(ValidateCallbackResult::Invalid(
+                "a scheduled order cannot open for bidding before its requested_delivery_time".into(),
+            ));
+        }
     }
     // delivery_receipts may only be populated, once, during PickedUp ->
     // Delivered -- and when it is, it must actually check out: every
@@ -465,7 +526,9 @@ fn validate_order_transition(
         && prior.max_delivery_fee == order.max_delivery_fee
         && prior.requested_at == order.requested_at
         && prior.special_instructions == order.special_instructions
-        && prior.tip_cents == order.tip_cents;
+        && prior.tip_cents == order.tip_cents
+        && prior.requested_delivery_time == order.requested_delivery_time
+        && prior.promo_code_ref == order.promo_code_ref;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "an order update may only change status (and accepted_bid, on acceptance) -- every other field must stay the same".into(),

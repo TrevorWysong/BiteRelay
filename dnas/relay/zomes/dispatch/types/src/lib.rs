@@ -10,6 +10,12 @@ use relay_types::{GeoPoint, LedgerCommitmentRef};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryStatus {
+    /// A future-dated order that hasn't started matching yet -- see
+    /// `DeliveryOrder.requested_delivery_time`. Never reachable via
+    /// `set_order_status`'s generic path; only `request_delivery` (create)
+    /// and `open_scheduled_order` (the one narrow transition out of it)
+    /// touch this status.
+    Scheduled,
     Open,
     BidAccepted,
     MerchantConfirmed,
@@ -56,6 +62,13 @@ impl DeliveryStatus {
         use DeliveryStatus::*;
         use RequiredAuthor::*;
         match (self, next) {
+            // A scheduled order becoming live -- only via
+            // `dispatch::open_scheduled_order`, which additionally checks
+            // `sys_time() >= requested_delivery_time` (a time constraint,
+            // not an authorship one, so it lives in `validate_order_transition`
+            // alongside the other per-transition field checks, not here).
+            (Scheduled, Open) => Some(RequesterOrMerchant),
+            (Scheduled, Cancelled) => Some(RequesterOrMerchant),
             // accept_bid and cancellation before pickup: the customer/merchant side.
             (Open, BidAccepted) => Some(RequesterOrMerchant),
             (Open, Cancelled) => Some(RequesterOrMerchant),
@@ -152,6 +165,27 @@ pub struct DeliveryOrder {
     pub special_instructions: String,
     #[serde(default)]
     pub tip_cents: u64,
+    /// `None` means "order now," the original and still-default behavior.
+    /// `Some(t)` means this order was created in `Scheduled` status instead
+    /// of `Open` -- matching never begins until the requester's own client
+    /// calls `open_scheduled_order` at/after this time (see
+    /// `validate_order_transition`'s `(Scheduled, Open)` arm). There's no
+    /// p2p cron here, deliberately: this app already relies on clients
+    /// polling/acting on their own schedule everywhere else (presence
+    /// beacons, the matching backstop), so a scheduled order becoming live
+    /// via the same pattern is consistent, not a new kind of dependency.
+    #[serde(default)]
+    pub requested_delivery_time: Option<Timestamp>,
+    /// `None` means no promo code was applied. `Some` references a real
+    /// `PromoCode` entry (`catalog_types`) that `validate_new_order`
+    /// independently checks belongs to this same `catalog_ref`, is
+    /// `active`, and isn't expired -- see that function's own doc comment
+    /// for what this does and doesn't verify (the code's *validity* is
+    /// checked deterministically; the discount's arithmetic effect on
+    /// `order_total` is not independently re-derived, same trust tier
+    /// `order_total` itself already has).
+    #[serde(default)]
+    pub promo_code_ref: Option<ActionHash>,
 }
 
 #[hdk_entry_helper]

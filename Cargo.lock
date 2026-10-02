@@ -108,6 +108,17 @@ dependencies = [
 name = "catalog_integrity"
 version = "0.1.0"
 dependencies = [
+ "catalog_types",
+ "hdi",
+ "holochain_serialized_bytes",
+ "relay_types",
+ "serde",
+]
+
+[[package]]
+name = "catalog_types"
+version = "0.1.0"
+dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "relay_types",
@@ -263,6 +274,7 @@ dependencies = [
 name = "dispatch_coordinator"
 version = "0.1.0"
 dependencies = [
+ "catalog_types",
  "dispatch_integrity",
  "dispute_types",
  "hdi",
@@ -278,6 +290,7 @@ name = "dispatch_integrity"
 version = "0.1.0"
 dependencies = [
  "attestation_types",
+ "catalog_types",
  "dispatch_types",
  "dispute_types",
  "hdi",

@@ -6,6 +6,7 @@ members = [
     "dnas/relay/governance",
     "dnas/relay/zomes/profiles/integrity",
     "dnas/relay/zomes/profiles/coordinator",
+    "dnas/relay/zomes/catalog/types",
     "dnas/relay/zomes/catalog/integrity",
     "dnas/relay/zomes/catalog/coordinator",
     "dnas/relay/zomes/geo_presence/integrity",
@@ -45,6 +46,7 @@ attestation_types = { path = "dnas/relay/zomes/attestation/types" }
 relay_governance = { path = "dnas/relay/governance" }
 dispatch_types = { path = "dnas/relay/zomes/dispatch/types" }
 dispute_types = { path = "dnas/relay/zomes/dispute/types" }
+catalog_types = { path = "dnas/relay/zomes/catalog/types" }
 
 [profile.release]
 opt-level = "z"

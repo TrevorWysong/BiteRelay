@@ -22,6 +22,33 @@ pub struct RequestDeliveryInput {
     pub special_instructions: String,
     #[serde(default)]
     pub tip_cents: u64,
+    /// `None` (the default) places a normal, immediately-open order. `Some`
+    /// creates it in `Scheduled` status instead -- invisible to matching
+    /// until `open_scheduled_order` is called at/after this time.
+    #[serde(default)]
+    pub requested_delivery_time: Option<Timestamp>,
+    /// `None` means no promo code applied. Validated (real, belongs to
+    /// this merchant, active, not expired) deterministically by
+    /// `validate_new_order` -- see that function's own doc comment.
+    #[serde(default)]
+    pub promo_code_ref: Option<ActionHash>,
+}
+
+/// Publishes an already-Open order to the discovery anchor and fires the
+/// best-effort signal fan-out -- shared by `request_delivery` (immediate
+/// orders) and `open_scheduled_order` (a scheduled order finally becoming
+/// live), since a `Scheduled` order must not be discoverable or signaled
+/// until it's genuinely Open.
+fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
+    let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
+    let path = open_order_anchor_path(dropoff_geohash, bucket)?;
+    path.ensure()?;
+    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
+
+    // Best-effort fast path. A driver who missed this falls back to polling
+    // get_open_orders_near -- see plan §3's named "signals can silently drop" risk.
+    let _ = notify_nearby_providers(action_hash, dropoff_geohash);
+    Ok(())
 }
 
 #[hdk_extern]
@@ -30,6 +57,29 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let merchant = input.merchant.clone();
     let now = sys_time()?;
     let dropoff_geohash = relay_types::encode(input.dropoff, geo_presence_precision());
+    let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Open };
+    let is_open = status == DeliveryStatus::Open;
+
+    // Best-effort "is this code still active" pre-check -- see
+    // `dispatch_integrity::validate_new_order`'s own doc comment for why
+    // this genuinely can't be the deterministic source of truth (only
+    // `catalog_ref` match and `expires_at` are enforced there). A failed
+    // lookup here degrades to "let validate() decide on what it actually
+    // can check" rather than blocking the order over a convenience
+    // pre-check that couldn't resolve.
+    if let Some(promo_ref) = &input.promo_code_ref {
+        let response = call(CallTargetCell::Local, "catalog", "get_promo_code".into(), None, promo_ref.clone());
+        if let Ok(ZomeCallResponse::Ok(extern_io)) = response {
+            if let Ok(record) = extern_io.decode::<Record>() {
+                if let Ok(Some(promo)) = record.entry().to_app_option::<catalog_types::PromoCode>() {
+                    if !promo.active {
+                        return Err(wasm_error!(WasmErrorInner::Guest("promo code is not active".into())));
+                    }
+                }
+            }
+        }
+    }
+
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -39,13 +89,15 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         dropoff: input.dropoff,
         dropoff_geohash: dropoff_geohash.clone(),
         max_delivery_fee: input.max_delivery_fee,
-        status: DeliveryStatus::Open,
+        status,
         accepted_bid: None,
         delivery_receipts: Vec::new(),
         dispute_ref: None,
         requested_at: now,
         special_instructions: input.special_instructions,
         tip_cents: input.tip_cents,
+        requested_delivery_time: input.requested_delivery_time,
+        promo_code_ref: input.promo_code_ref,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;
@@ -55,17 +107,47 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // naming them at all, not even a delayed one. Mirrors RequesterToOrder.
     create_link(merchant, action_hash.clone(), LinkTypes::MerchantToOrder, ())?;
 
-    let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
-    let path = open_order_anchor_path(&dropoff_geohash, bucket)?;
-    path.ensure()?;
-    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
-
-    // Best-effort fast path. A driver who missed this falls back to polling
-    // get_open_orders_near -- see plan §3's named "signals can silently drop" risk.
-    let _ = notify_nearby_providers(&action_hash, &dropoff_geohash);
+    if is_open {
+        publish_to_open_anchor_and_notify(&action_hash, &dropoff_geohash, now)?;
+    }
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back delivery order".into())))
+}
+
+/// The one narrow transition out of `Scheduled` -- fails fast, as a
+/// convenience, if it's clearly too early; `validate_order_transition`'s own
+/// check (against this *update action's* own recorded timestamp, not a
+/// fresh `sys_time()` call) is the real, deterministic enforcement. There's
+/// no server-side scheduler here: the requester's own client is expected to
+/// call this once the time arrives, the same client-driven-polling pattern
+/// this app already relies on everywhere else (presence beacons, the
+/// matching backstop).
+#[hdk_extern]
+pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<Record> {
+    let record = resolve_latest(order_original_action)?;
+    let mut order: DeliveryOrder = record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    if order.status != DeliveryStatus::Scheduled {
+        return Err(wasm_error!(WasmErrorInner::Guest("order is not Scheduled".into())));
+    }
+    let now = sys_time()?;
+    if let Some(due) = order.requested_delivery_time {
+        if now < due {
+            return Err(wasm_error!(WasmErrorInner::Guest(
+                "requested_delivery_time has not arrived yet".into()
+            )));
+        }
+    }
+    order.status = DeliveryStatus::Open;
+    let dropoff_geohash = order.dropoff_geohash.clone();
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    publish_to_open_anchor_and_notify(&updated, &dropoff_geohash, now)?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
 }
 
 /// Reads a specific, already-known order's current state -- every other
@@ -200,6 +282,32 @@ const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
 /// settlement over a bonus lookup -- but once a nonzero merchant share is
 /// actually owed, both settle calls must succeed, or the driver would be
 /// paid less than the `price_offer` they were promised.
+/// Pays the merchant for the food itself -- a completely separate flow from
+/// `settle_delivery_fee` below, which only ever moves the delivery fee/tip
+/// to the driver. `amount` is the order's `order_total`, already net of
+/// any applied promo-code discount by the time this is called.
+pub(crate) fn settle_order_total(order_ref: ActionHash, customer: AgentPubKey, merchant: AgentPubKey, amount: u64) -> ExternResult<()> {
+    // A customer ordering from their own restaurant is legitimate (unlike a
+    // driver bidding on their own order, see validate_new_bid) -- but it's
+    // economically a no-op, and `ledger_integrity::validate_transaction`
+    // correctly rejects any from == to transaction as meaningless
+    // bookkeeping. Skip rather than attempt one.
+    if amount == 0 || customer == merchant {
+        return Ok(());
+    }
+    let response = call(
+        CallTargetCell::Local,
+        "ledger",
+        "release_on_completion".into(),
+        None,
+        SettleInputWire { order_ref, from: customer, to: merchant, amount },
+    )?;
+    if !matches!(response, ZomeCallResponse::Ok(_)) {
+        return Err(wasm_error!(WasmErrorInner::Guest("order-total settlement failed".into())));
+    }
+    Ok(())
+}
+
 pub(crate) fn settle_delivery_fee(
     order_ref: ActionHash,
     catalog_ref: ActionHash,
@@ -312,9 +420,16 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
     let tip_cents = order.tip_cents;
+    let order_total = order.order_total;
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+
+    // Food payment, entirely separate from the delivery-fee split above --
+    // customer pays the merchant for what was ordered, regardless of how
+    // the delivery fee itself gets split. Previously missing entirely: the
+    // merchant was never actually paid anything through the ledger.
+    settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
 
     settle_delivery_fee(
         input.order_original_action.clone(),

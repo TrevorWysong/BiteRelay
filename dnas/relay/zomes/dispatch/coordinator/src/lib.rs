@@ -11,14 +11,19 @@
 //!   gated completion path that settles payment and reputation.
 //! - `disputes` -- raising a dispute and applying an arbitrator's
 //!   resolution (plan §8).
+//! - `chat` -- direct, signal-only messaging between an order's two active
+//!   parties once a bid is accepted. Deliberately not persisted on the DHT
+//!   (see that module's own doc comment).
 
 mod bids;
+mod chat;
 mod disputes;
 mod matching;
 mod orders;
 mod signals;
 
 pub use bids::*;
+pub use chat::*;
 pub use disputes::*;
 pub use matching::get_open_orders_near;
 pub use orders::*;

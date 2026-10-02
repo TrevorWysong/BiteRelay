@@ -15,4 +15,5 @@ relay_types.workspace = true
 relay_coordinator_support.workspace = true
 dispatch_integrity = { path = "../integrity" }
 dispute_types.workspace = true
+catalog_types.workspace = true
 relay_governance.workspace = true

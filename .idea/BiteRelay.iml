@@ -10,6 +10,7 @@
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/attestation/types/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/catalog/coordinator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/catalog/integrity/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/catalog/types/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/dispatch/coordinator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/dispatch/integrity/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/dispatch/types/src" isTestSource="false" />

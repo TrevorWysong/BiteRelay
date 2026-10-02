@@ -297,3 +297,91 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
     }
     Ok(NearbyMerchantsPage { catalogs, next_after })
 }
+
+// --- promo codes (architecture plan: merchant-scoped discounts, built
+// 2026-10-02 alongside the delivery-fee-sharing work) ---
+
+fn promo_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
+    Path::from(format!("catalog_promo.{}", catalog_ref)).typed(LinkTypes::CatalogToPromoCode)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreatePromoCodeInput {
+    pub catalog_ref: ActionHash,
+    pub code: String,
+    pub discount: PromoDiscount,
+    pub expires_at: Option<Timestamp>,
+}
+
+/// Cross-zome read for `dispatch::request_delivery`'s best-effort "is this
+/// code still active" pre-check -- `resolve_latest` (unlike `hdi`'s
+/// `must_get_valid_record`, which the deterministic `validate()` side has
+/// to use and which is always literal) actually walks to the current
+/// state, so this is the one place that question can genuinely be
+/// answered. See `dispatch_integrity::validate_new_order`'s own doc
+/// comment for why `active` specifically can't be enforced there.
+#[hdk_extern]
+pub fn get_promo_code(promo_ref: ActionHash) -> ExternResult<Record> {
+    resolve_latest(promo_ref)
+}
+
+#[hdk_extern]
+pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
+    let promo = PromoCode {
+        catalog_ref: input.catalog_ref.clone(),
+        code: input.code,
+        discount: input.discount,
+        active: true,
+        expires_at: input.expires_at,
+        created_at: sys_time()?,
+    };
+    let action_hash = create_entry(&EntryTypes::PromoCode(promo))?;
+    let path = promo_anchor_path(&input.catalog_ref)?;
+    path.ensure()?;
+    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
+    get(action_hash, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back promo code".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetPromoCodeActiveInput {
+    pub original_action: ActionHash,
+    pub active: bool,
+}
+
+#[hdk_extern]
+pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Record> {
+    let record = resolve_latest(input.original_action)?;
+    let mut promo: PromoCode = record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a PromoCode".into())))?;
+    promo.active = input.active;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::PromoCode(promo))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated promo code".into())))
+}
+
+/// Small, bounded link set per merchant (a handful of codes at most), so no
+/// pagination -- reused for both the merchant's own management view and a
+/// customer's redemption lookup (match the typed code client-side against
+/// this list, same approach `list_menu_items` + client-side filtering
+/// already uses elsewhere rather than a dedicated per-code index).
+#[hdk_extern]
+pub fn list_promo_codes_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
+    let path = promo_anchor_path(&catalog_ref)?;
+    let path_hash = match path.path_entry_hash() {
+        Ok(hash) => hash,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let links = get_links(LinkQuery::try_new(path_hash, LinkTypes::CatalogToPromoCode)?, GetStrategy::default())?;
+    let mut promos = Vec::with_capacity(links.len());
+    for link in links {
+        let Some(action_hash) = link.target.into_action_hash() else { continue };
+        if let Ok(record) = resolve_latest(action_hash) {
+            promos.push(record);
+        }
+    }
+    Ok(promos)
+}

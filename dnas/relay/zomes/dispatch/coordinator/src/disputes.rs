@@ -11,7 +11,7 @@
 //! that were speculatively designed in the original architecture pass and
 //! never wired up until now).
 
-use crate::orders::{settle_delivery_fee, RecordEventInputWire, ReputationEventKindWire, SettleInputWire};
+use crate::orders::{settle_delivery_fee, settle_order_total, RecordEventInputWire, ReputationEventKindWire, SettleInputWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest;
@@ -204,6 +204,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     let requester = order.requester.clone();
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
+    let order_total = order.order_total;
     let target_status = match &outcome {
         DisputeOutcome::FavorProvider { .. } => DeliveryStatus::Delivered,
         DisputeOutcome::FavorRequester { .. } => DeliveryStatus::Cancelled,
@@ -221,6 +222,11 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {
+            // Arbitration confirms the delivery genuinely happened, so the
+            // merchant is owed for the food here too -- same settlement
+            // `complete_delivery` already does on the honest path.
+            settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
+
             // Preserves this path's existing amount semantics exactly (no
             // tip -- unlike `complete_delivery`'s normal path, this one
             // never has, and that's an existing, separate question from
