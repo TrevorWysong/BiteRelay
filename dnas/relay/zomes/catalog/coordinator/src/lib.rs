@@ -61,6 +61,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         hours_open: input.hours_open,
         hours_close: input.hours_close,
         delivery_subsidy_percent: 50,
+        dietary_tags: Vec::new(),
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -187,10 +188,52 @@ pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> Ex
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
 }
 
+/// Recomputes `MerchantCatalog.dietary_tags` as the sorted, deduplicated
+/// union of every one of this catalog's menu items' own `dietary_tags` --
+/// called after any menu-item create/update so the denormalized field
+/// never drifts from the real per-item data. Walks every page rather than
+/// just the first: a merchant's menu is realistically a few dozen items at
+/// most (this is a write-time-only cost, paid on menu edits, not on every
+/// browse read -- see `MerchantCatalog.dietary_tags`'s own doc comment for
+/// why that tradeoff is the right one here), but silently truncating at one
+/// page would mean an item on page 2 could never contribute its tags.
+fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<()> {
+    let mut tags: Vec<String> = Vec::new();
+    let mut after = None;
+    loop {
+        let page = list_menu_items(ListMenuItemsInput { catalog_ref: catalog_ref.clone(), after })?;
+        for record in &page.items {
+            if let Ok(Some(item)) = record.entry().to_app_option::<MenuItem>() {
+                tags.extend(item.dietary_tags);
+            }
+        }
+        after = page.next_after;
+        if after.is_none() {
+            break;
+        }
+    }
+    tags.sort();
+    tags.dedup();
+
+    let catalog_record = resolve_latest(catalog_ref.clone())?;
+    let mut catalog: MerchantCatalog = catalog_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref does not point at a MerchantCatalog".into())))?;
+    if catalog.dietary_tags != tags {
+        catalog.dietary_tags = tags;
+        update_entry(catalog_record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    }
+    Ok(())
+}
+
 #[hdk_extern]
 pub fn add_menu_item(item: MenuItem) -> ExternResult<Record> {
+    let catalog_ref = item.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::MenuItem(item.clone()))?;
-    create_link(item.catalog_ref, action_hash.clone(), LinkTypes::CatalogToMenuItem, ())?;
+    create_link(catalog_ref.clone(), action_hash.clone(), LinkTypes::CatalogToMenuItem, ())?;
+    recompute_dietary_tags(&catalog_ref)?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back menu item".into())))
 }
@@ -204,7 +247,9 @@ pub struct UpdateMenuItemInput {
 #[hdk_extern]
 pub fn update_menu_item(input: UpdateMenuItemInput) -> ExternResult<Record> {
     let record = resolve_latest(input.original_action)?;
+    let catalog_ref = input.item.catalog_ref.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MenuItem(input.item))?;
+    recompute_dietary_tags(&catalog_ref)?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated menu item".into())))
 }

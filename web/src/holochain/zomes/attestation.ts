@@ -7,8 +7,9 @@ export async function recordLeg(input: {
   kind: LegKind;
   to: AgentPubKey;
   geo_at_completion: GeoPoint;
+  photo_data_uri?: string;
 }): Promise<HcRecord> {
-  return callZome("attestation", "record_leg", input);
+  return callZome("attestation", "record_leg", { photo_data_uri: "", ...input });
 }
 
 /// Orchestrates the full countersigning round trip server-side (both

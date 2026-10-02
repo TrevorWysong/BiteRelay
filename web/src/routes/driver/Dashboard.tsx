@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bike, MapPin, Power } from "lucide-react";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
-import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
@@ -11,9 +11,49 @@ import { Button, Card, EmptyState, PresenceDot, Spinner } from "../../components
 import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
+import { PhotoInput } from "../../components/PhotoInput";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta } from "../../lib/format";
-import type { Bid, DeliveryOrder, Review } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, Review } from "../../holochain/types";
+
+const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
+  LeaveAtDoor: "Leave at door",
+  HandToMe: "Hand to me",
+  MeetOutside: "Meet outside",
+};
+
+// Live location is only meaningful once the driver has actually started
+// moving on this delivery -- not while still waiting on the merchant to
+// confirm prep. 8s matches the "a few seconds, not sub-second" cadence
+// named in tracking.rs's own doc comment -- fast enough to feel live,
+// far below anything that would stress signal delivery the way a tighter
+// interval could.
+const TRACKED_STATUSES: DeliveryStatus[] = ["MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
+const LOCATION_BROADCAST_MS = 8000;
+
+/// Browser geolocation, throttled client-side (there's no way to
+/// deterministically rate-limit a signal on the backend -- see
+/// tracking.rs) and silently inert if the API is unavailable or the user
+/// denies permission. Named, not hidden: a driver who never grants
+/// location access simply never appears on the customer's live map --
+/// everything else about the delivery still works.
+function useLocationBroadcast(orderRef: Uint8Array, active: boolean) {
+  const lastSentRef = useRef(0);
+  useEffect(() => {
+    if (!active || !("geolocation" in navigator)) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        if (now - lastSentRef.current < LOCATION_BROADCAST_MS) return;
+        lastSentRef.current = now;
+        sendLocationUpdate(orderRef, pos.coords.latitude, pos.coords.longitude).catch(() => {});
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [orderRef, active]);
+}
 
 interface OrderRow {
   hash: Uint8Array;
@@ -210,6 +250,9 @@ export function DriverDashboard() {
 function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; location: { lat: number; lon: number }; onAdvanced: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dropoffPhoto, setDropoffPhoto] = useState("");
+
+  useLocationBroadcast(row.hash, TRACKED_STATUSES.includes(row.order.status));
 
   async function advance(action: "en_route" | "pickup" | "await_dropoff") {
     setBusy(true);
@@ -222,7 +265,14 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         await initiateLegAttestation(actionHash(legRecord));
         await setOrderStatus(row.hash, "PickedUp");
       } else if (action === "await_dropoff") {
-        const legRecord = await recordLeg({ order_ref: row.hash, sequence: 1, kind: "CustomerHandoff", to: row.order.requester, geo_at_completion: location });
+        const legRecord = await recordLeg({
+          order_ref: row.hash,
+          sequence: 1,
+          kind: "CustomerHandoff",
+          to: row.order.requester,
+          geo_at_completion: location,
+          photo_data_uri: dropoffPhoto,
+        });
         await initiateLegAttestation(actionHash(legRecord));
       }
       await onAdvanced();
@@ -236,6 +286,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   return (
     <Card className="border-2 border-relay-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
+      <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
       {row.order.special_instructions && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
           <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
@@ -268,9 +319,13 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           </Button>
         )}
         {row.order.status === "PickedUp" && (
-          <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
-            Confirm handoff to customer
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            <p className="text-xs text-ink-400">Optional: photo at drop-off, for the customer's reassurance.</p>
+            <PhotoInput value={dropoffPhoto} onChange={setDropoffPhoto} shape="banner" className="w-full" />
+            <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
+              Confirm handoff to customer
+            </Button>
+          </div>
         )}
         {row.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
       </div>

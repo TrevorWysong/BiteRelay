@@ -10,9 +10,14 @@ import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holoc
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
 import { describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
-import type { ActionHash, GeoPoint, MenuItem, MerchantCatalog, PromoCode } from "../../holochain/types";
+import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
+const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] = [
+  { value: "LeaveAtDoor", label: "Leave at door" },
+  { value: "HandToMe", label: "Hand to me" },
+  { value: "MeetOutside", label: "Meet outside" },
+];
 // A driver's bid can be anywhere up to this cap (validate_new_bid rejects
 // anything higher) -- letting the customer set it, rather than hardcoding
 // `max_delivery_fee: null`, is what actually gives them cost certainty at
@@ -33,6 +38,7 @@ export function Cart() {
   // moving.
   const [dropoff, setDropoff] = useState<GeoPoint>(location);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
+  const [dropoffPreference, setDropoffPreference] = useState<DropoffPreference>("LeaveAtDoor");
   const [scheduled, setScheduled] = useState(false);
   const [scheduledFor, setScheduledFor] = useState("");
   const [tipPercent, setTipPercent] = useState<number | null>(15);
@@ -140,6 +146,7 @@ export function Cart() {
         tip_cents: tipCents,
         requested_delivery_time: requestedDeliveryTime,
         promo_code_ref: appliedPromo?.hash ?? null,
+        dropoff_preference: dropoffPreference,
       });
       const orderRef = actionHash(record);
       if (saveAsDefault) setSessionLocation(dropoff);
@@ -190,6 +197,18 @@ export function Cart() {
           <input type="checkbox" checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
           Save as my default location
         </label>
+        <p className="mb-2 mt-3 text-xs font-bold uppercase tracking-wide text-ink-400">Drop-off</p>
+        <div className="flex gap-2">
+          {DROPOFF_PREFERENCE_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setDropoffPreference(value)}
+              className={`flex-1 rounded-full px-2 py-1.5 text-xs font-semibold ${dropoffPreference === value ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">

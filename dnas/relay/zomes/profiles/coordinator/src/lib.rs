@@ -80,3 +80,43 @@ pub fn get_provider_credential_for_profile(profile_action: ActionHash) -> Extern
         .ok_or(wasm_error!(WasmErrorInner::Guest("malformed provider credential link target".into())))?;
     get(action_hash, GetOptions::default())
 }
+
+// --- favorite restaurants --- a customer's own saved-restaurant list.
+// Personal, zero-multi-party-trust data (nobody else ever needs to query
+// "who favorited this catalog") -- so unlike the discovery anchors
+// elsewhere in this app, there's no hot-shared-anchor concern here at all:
+// the link base is this one agent's own pubkey, and the set it bounds is
+// "how many restaurants this one person has favorited," not anything that
+// grows with total app usage. No entry type, no pagination -- a personal
+// list is realistically dozens of items at most, same bounded-list
+// reasoning already applied to a merchant's promo codes.
+
+#[hdk_extern]
+pub fn add_favorite(catalog_ref: ActionHash) -> ExternResult<()> {
+    let me = agent_info()?.agent_initial_pubkey;
+    create_link(me, catalog_ref, LinkTypes::AgentToFavorite, ())?;
+    Ok(())
+}
+
+/// Finds and deletes the specific link for this `catalog_ref` among the
+/// caller's own favorite links -- `delete_link` needs the *create* action's
+/// own hash, not the target, so this always does a lookup first rather than
+/// trusting a client-cached link hash that could be stale.
+#[hdk_extern]
+pub fn remove_favorite(catalog_ref: ActionHash) -> ExternResult<()> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let links = get_links(LinkQuery::try_new(me, LinkTypes::AgentToFavorite)?, GetStrategy::default())?;
+    for link in links {
+        if link.target.into_action_hash().as_ref() == Some(&catalog_ref) {
+            delete_link(link.create_link_hash, GetOptions::default())?;
+        }
+    }
+    Ok(())
+}
+
+#[hdk_extern]
+pub fn list_favorites(_: ()) -> ExternResult<Vec<ActionHash>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let links = get_links(LinkQuery::try_new(me, LinkTypes::AgentToFavorite)?, GetStrategy::default())?;
+    Ok(links.into_iter().filter_map(|l| l.target.into_action_hash()).collect())
+}

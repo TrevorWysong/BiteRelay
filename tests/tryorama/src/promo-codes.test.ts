@@ -168,6 +168,25 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] item-scoped requirements/rewards can't reference a different merchant's menu item");
 
+  // A real bug, caught by testing: the first version of
+  // item_belongs_to_catalog propagated to_app_option's decode *error*
+  // (not Ok(None)) when item_ref pointed at an entry that doesn't even
+  // deserialize as MenuItem -- surfacing as a generic "missing field"
+  // validation failure instead of this function's own clear message. A
+  // real PromoCode action hash (not a MenuItem) exercises exactly that
+  // decode-failure path, not just "wrong catalog."
+  await assert.rejects(
+    catalogOf(merchant)("create_promo_code", {
+      catalog_ref: catalogRef,
+      code: "WRONGTYPE",
+      requirement: { MinimumItemQuantity: { item_ref: activeCodeRef, quantity: 1 } },
+      reward: { PercentOffSubtotal: 10 },
+    }),
+    /a promo code's item references must be real menu items belonging to the same catalog/,
+    "an item_ref pointing at a real entry of the wrong type (not just the wrong catalog) must be rejected cleanly",
+  );
+  console.log("[PASS] an item_ref pointing at a non-MenuItem entry (wrong type, not just wrong catalog) is rejected cleanly");
+
   // Zero quantities/percentages are rejected for the new variants too, same
   // bounds-checking discipline as the original PercentOff/FlatCentsOff pair.
   await assert.rejects(

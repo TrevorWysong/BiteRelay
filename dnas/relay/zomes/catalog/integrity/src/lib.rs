@@ -158,11 +158,21 @@ fn validate_reward(reward: &PromoReward) -> Option<&'static str> {
 /// reasoning as `validate_menu_item`'s own ownership check.
 fn item_belongs_to_catalog(item_ref: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<bool> {
     let record = must_get_valid_record(item_ref.clone())?;
-    let item: MenuItem = match record.entry().to_app_option().map_err(|e| wasm_error!(e))? {
-        Some(item) => item,
-        None => return Ok(false),
+    // `to_app_option` *errors* (not `Ok(None)`) when the entry's own fields
+    // don't even deserialize as `MenuItem` -- e.g. a `PromoCode` entry has
+    // no `price_cents` field at all, so decoding it as `MenuItem` fails
+    // outright rather than cleanly reporting "wrong type." Both a decode
+    // error and a clean `Ok(None)` mean the same thing here ("not a
+    // MenuItem"), so both collapse to `false` via `matches!` rather than
+    // letting the decode error propagate as a generic, unfriendly
+    // validation failure -- the same real bug this fix caught in
+    // `profiles_integrity::validate_new_favorite`, caught first there by
+    // testing against a genuinely wrong-shaped entry.
+    let item: Option<MenuItem> = match record.entry().to_app_option() {
+        Ok(item) => item,
+        Err(_) => return Ok(false),
     };
-    Ok(&item.catalog_ref == catalog_ref)
+    Ok(item.is_some_and(|item| &item.catalog_ref == catalog_ref))
 }
 
 fn requirement_item_ref(requirement: &PromoRequirement) -> Option<&ActionHash> {

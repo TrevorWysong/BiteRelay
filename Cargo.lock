@@ -903,6 +903,7 @@ dependencies = [
 name = "profiles_integrity"
 version = "0.1.0"
 dependencies = [
+ "catalog_types",
  "hdi",
  "holochain_serialized_bytes",
  "relay_types",

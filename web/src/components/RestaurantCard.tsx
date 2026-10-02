@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Clock } from "lucide-react";
+import { Clock, Heart } from "lucide-react";
 import type { MerchantCatalog } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { Badge } from "./ui";
@@ -28,9 +28,14 @@ interface Props {
   catalog: MerchantCatalog;
   rating?: number;
   reviewCount?: number;
+  /// Both omitted means "no favorite affordance at all" -- `Browse` is the
+  /// only caller that currently passes these, since it's the only place
+  /// that already holds the full favorited-set fetched once up front.
+  favorited?: boolean;
+  onToggleFavorite?: () => void;
 }
 
-export function RestaurantCard({ catalogHash, catalog, rating, reviewCount }: Props) {
+export function RestaurantCard({ catalogHash, catalog, rating, reviewCount, favorited, onToggleFavorite }: Props) {
   const gradient = pick(GRADIENTS, catalogHash);
   const emoji = pick(EMOJI, catalogHash.slice().reverse());
   const hex = bytesToHex(catalogHash);
@@ -51,6 +56,18 @@ export function RestaurantCard({ catalogHash, catalog, rating, reviewCount }: Pr
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
             <Badge tone="neutral">Closed</Badge>
           </div>
+        )}
+        {onToggleFavorite && (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleFavorite();
+            }}
+            className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white transition hover:bg-black/60"
+          >
+            <Heart size={14} fill={favorited ? "currentColor" : "none"} />
+          </button>
         )}
       </div>
       <div className="rounded-b-2xl border border-t-0 border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-3">

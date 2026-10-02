@@ -35,6 +35,20 @@ pub struct Leg {
     pub to: AgentPubKey,
     pub geo_at_completion: GeoPoint,
     pub completed_at: Timestamp,
+    /// An optional data URI, captured by `from` at handoff time (typically
+    /// the driver, on `CustomerHandoff` -- "photo at the door," the
+    /// DoorDash-style delivery-confirmation convention). Empty string means
+    /// no photo. Deliberately informal evidence, *not* part of the
+    /// dual-signed `ReceiptAttestation` payload -- that payload is just
+    /// `{leg, attested_at}` and stays that way, so adding this field here
+    /// never touches the countersigning session's content or its own
+    /// documented fragility (see `ReceiptAttestation`'s doc comment on the
+    /// "isolated spike" this app's countersigning already needed). A
+    /// customer gets reassurance from a photo; the actual completion gate
+    /// (`dispatch_integrity`'s `delivery_receipts` check) still runs on the
+    /// real dual-signed receipt, same as before, regardless of this field.
+    #[serde(default)]
+    pub photo_data_uri: String,
 }
 
 /// The dual-signed proof that a `Leg` actually happened. Intended to be

@@ -39,6 +39,21 @@ pub struct MerchantCatalog {
     /// this defaults to 50, not 0.
     #[serde(default = "default_delivery_subsidy_percent")]
     pub delivery_subsidy_percent: u8,
+    /// A sorted, deduplicated union of every available menu item's
+    /// `dietary_tags`, maintained by `catalog_coordinator::add_menu_item`/
+    /// `update_menu_item` (never set directly by a client) -- denormalized
+    /// specifically so Browse can filter restaurants by dietary tag without
+    /// fetching every candidate's full menu on every browse load. This
+    /// moves the cost to the rare path (a merchant editing their menu)
+    /// away from the hot one (a customer browsing), the same tradeoff
+    /// `ledger`/`reputation`'s checkpoint mechanism makes for the opposite
+    /// reason (architecture plan §9.4). Not independently verified in
+    /// `validate()` -- recomputing "is this really the union of all this
+    /// catalog's menu items" deterministically would need a non-deterministic
+    /// `get_links` walk inside `validate()`, the same category of gap
+    /// `order_total` already has (never independently re-derived either).
+    #[serde(default)]
+    pub dietary_tags: Vec<String>,
 }
 
 pub fn default_delivery_subsidy_percent() -> u8 {

@@ -39,6 +39,21 @@ export async function getProviderCredentialForProfile(profileAction: ActionHash)
   return callZome("profiles", "get_provider_credential_for_profile", profileAction);
 }
 
+// --- favorite restaurants -- a customer's own saved-restaurant list, a
+// plain link (no entry type), see profiles' integrity crate for why ---
+
+export async function addFavorite(catalogRef: ActionHash): Promise<void> {
+  return callZome("profiles", "add_favorite", catalogRef);
+}
+
+export async function removeFavorite(catalogRef: ActionHash): Promise<void> {
+  return callZome("profiles", "remove_favorite", catalogRef);
+}
+
+export async function listFavorites(): Promise<ActionHash[]> {
+  return callZome("profiles", "list_favorites", null);
+}
+
 export async function fetchProviderCredential(profileAction: ActionHash): Promise<ProviderCredential | null> {
   const record = await getProviderCredentialForProfile(profileAction);
   return record ? decodeEntry<ProviderCredential>(record) : null;

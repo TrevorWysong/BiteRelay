@@ -32,6 +32,10 @@ pub struct RequestDeliveryInput {
     /// `validate_new_order` -- see that function's own doc comment.
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
+    /// Defaults to `LeaveAtDoor` -- see `DropoffPreference`'s own doc
+    /// comment.
+    #[serde(default)]
+    pub dropoff_preference: DropoffPreference,
 }
 
 /// Publishes an already-Open order to the discovery anchor and fires the
@@ -98,6 +102,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         tip_cents: input.tip_cents,
         requested_delivery_time: input.requested_delivery_time,
         promo_code_ref: input.promo_code_ref,
+        dropoff_preference: input.dropoff_preference,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;

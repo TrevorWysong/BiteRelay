@@ -119,6 +119,20 @@ pub enum BidStatus {
     Rejected,
 }
 
+/// How the customer wants the driver to handle the actual drop-off --
+/// closed enum (not a free-text field) so a driver's UI can show a fixed,
+/// unambiguous instruction rather than parsing arbitrary text. Separate
+/// from `special_instructions` (still free text, for anything else, e.g.
+/// a gate code) -- this field is specifically the one DoorDash-style
+/// choice drivers act on differently (knock-and-wait vs. leave-and-go).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DropoffPreference {
+    #[default]
+    LeaveAtDoor,
+    HandToMe,
+    MeetOutside,
+}
+
 /// One concrete entry type per vertical (this one, plus a future
 /// `RideRequest` if rides are ever added) rather than one generalized "Job"
 /// with a cargo-type enum: cramming both into one entry would force a
@@ -186,6 +200,11 @@ pub struct DeliveryOrder {
     /// `order_total` itself already has).
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
+    /// Set once at request_delivery time, immutable thereafter, same
+    /// treatment as the other per-order fields above. Defaults to
+    /// `LeaveAtDoor` on decode for orders written before this field existed.
+    #[serde(default)]
+    pub dropoff_preference: DropoffPreference,
 }
 
 #[hdk_entry_helper]

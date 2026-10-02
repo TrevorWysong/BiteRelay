@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, MapPin, Phone, Plus, ShoppingBag, Star } from "lucide-react";
+import { ArrowLeft, Clock, Heart, MapPin, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { getNearbyMerchants, listMenuItems } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
+import { addFavorite, removeFavorite, listFavorites } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
@@ -27,6 +28,7 @@ export function MerchantDetail() {
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(routerState?.catalogHash ?? null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [favorited, setFavorited] = useState(false);
 
   useEffect(() => {
     if (!hash) return;
@@ -54,6 +56,26 @@ export function MerchantDetail() {
     getReviewsFor(catalog.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
   }, [catalog]);
 
+  useEffect(() => {
+    if (!catalogHash) return;
+    const hex = bytesToHex(catalogHash);
+    listFavorites()
+      .then((hashes) => setFavorited(hashes.some((h) => bytesToHex(h) === hex)))
+      .catch(() => {});
+  }, [catalogHash]);
+
+  async function toggleFavorite() {
+    if (!catalogHash) return;
+    const next = !favorited;
+    setFavorited(next); // optimistic, same reasoning as Browse.tsx's toggle
+    try {
+      if (next) await addFavorite(catalogHash);
+      else await removeFavorite(catalogHash);
+    } catch {
+      setFavorited(!next);
+    }
+  }
+
   if (!catalog || !items || !catalogHash) {
     return (
       <div className="flex justify-center py-16 text-ink-300">
@@ -80,6 +102,9 @@ export function MerchantDetail() {
         )}
         <button onClick={() => navigate(-1)} className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow">
           <ArrowLeft size={18} className="text-ink-900" />
+        </button>
+        <button onClick={toggleFavorite} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow">
+          <Heart size={18} className="text-red-500" fill={favorited ? "currentColor" : "none"} />
         </button>
       </div>
 

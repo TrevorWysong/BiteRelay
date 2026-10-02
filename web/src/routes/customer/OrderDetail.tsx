@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
+import { getCatalog } from "../../holochain/zomes/catalog";
+import { getLegsForOrder } from "../../holochain/zomes/attestation";
 import { submitReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
@@ -9,12 +11,19 @@ import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Spinner } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
+import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
-import type { Bid, DeliveryOrder, DeliveryStatus, Review, WarrantSummary } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MerchantCatalog, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
 const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
+
+const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
+  LeaveAtDoor: "Leave at door",
+  HandToMe: "Hand to me",
+  MeetOutside: "Meet outside",
+};
 
 interface BidRow {
   hash: Uint8Array;
@@ -59,12 +68,28 @@ export function OrderDetail() {
   const [driverComment, setDriverComment] = useState("");
   const [reviewsSubmitted, setReviewsSubmitted] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [pickup, setPickup] = useState<GeoPoint | null>(null);
+  const [driverLocation, setDriverLocation] = useState<GeoPoint | null>(null);
+  const [dropoffPhoto, setDropoffPhoto] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
     const record = await getOrder(orderRef);
     const decoded = decodeEntry<DeliveryOrder>(record);
     setOrder(decoded);
+    if (!pickup) {
+      getCatalog(decoded.catalog_ref)
+        .then((r) => setPickup(decodeEntry<MerchantCatalog>(r).location))
+        .catch(() => {});
+    }
+    if (!dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
+      getLegsForOrder(orderRef)
+        .then((records) => {
+          const handoff = records.map((r) => decodeEntry<Leg>(r)).find((l) => l.kind === "CustomerHandoff");
+          if (handoff?.photo_data_uri) setDropoffPhoto(handoff.photo_data_uri);
+        })
+        .catch(() => {});
+    }
     if (decoded.status === "Open") {
       const page = await listBidsForOrder(orderRef);
       const rows = page.bids.map((r) => ({ hash: actionHash(r), bid: decodeEntry<Bid>(r) }));
@@ -117,6 +142,9 @@ export function OrderDetail() {
     const interval = setInterval(refresh, POLL_MS);
     const unsub = onLocalSignal((signal) => {
       if ("BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal) refresh();
+      if ("LocationUpdate" in signal && orderRef && bytesEqual(signal.LocationUpdate.order_ref, orderRef)) {
+        setDriverLocation({ lat: signal.LocationUpdate.lat, lon: signal.LocationUpdate.lon });
+      }
     });
     return () => {
       clearInterval(interval);
@@ -188,22 +216,24 @@ export function OrderDetail() {
         <OrderStatusTimeline status={order.status} />
       </Card>
 
-      {(order.special_instructions || order.tip_cents > 0) && (
-        <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
-          {order.special_instructions && (
-            <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-              {order.special_instructions}
-            </p>
-          )}
-          {order.tip_cents > 0 && (
-            <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Tip: </span>
-              {formatCents(order.tip_cents)}
-            </p>
-          )}
-        </Card>
-      )}
+      <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
+        <p className="text-ink-500">
+          <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off: </span>
+          {DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]}
+        </p>
+        {order.special_instructions && (
+          <p className="text-ink-500">
+            <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
+            {order.special_instructions}
+          </p>
+        )}
+        {order.tip_cents > 0 && (
+          <p className="text-ink-500">
+            <span className="font-semibold text-ink-900 dark:text-ink-50">Tip: </span>
+            {formatCents(order.tip_cents)}
+          </p>
+        )}
+      </Card>
 
       {order.status === "Open" && (
         <div className="mt-5">
@@ -271,10 +301,24 @@ export function OrderDetail() {
         </div>
       )}
 
+      {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && (
+        <div className="mt-4">
+          <LiveMap pickup={pickup} dropoff={order.dropoff} driver={driverLocation} />
+          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location -- not every device shares this.</p>}
+        </div>
+      )}
+
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && (
         <div className="mt-4">
           <ChatPanel orderRef={orderRef} title="Chat with your driver" />
         </div>
+      )}
+
+      {dropoffPhoto && (
+        <Card className="mt-4 p-4">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Photo at drop-off</p>
+          <img src={dropoffPhoto} alt="Delivery drop-off" className="w-full rounded-xl object-cover" />
+        </Card>
       )}
 
       {canDispute && (

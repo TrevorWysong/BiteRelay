@@ -14,7 +14,7 @@ use hdi::prelude::*;
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{Bid, BidStatus, DeliveryOrder, DeliveryStatus, RequiredAuthor};
+pub use dispatch_types::{Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -528,7 +528,8 @@ fn validate_order_transition(
         && prior.special_instructions == order.special_instructions
         && prior.tip_cents == order.tip_cents
         && prior.requested_delivery_time == order.requested_delivery_time
-        && prior.promo_code_ref == order.promo_code_ref;
+        && prior.promo_code_ref == order.promo_code_ref
+        && prior.dropoff_preference == order.dropoff_preference;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "an order update may only change status (and accepted_bid, on acceptance) -- every other field must stay the same".into(),

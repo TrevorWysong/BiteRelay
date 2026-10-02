@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeliveryStatus, GeoPoint, HcRecord, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -14,8 +14,16 @@ export async function requestDelivery(input: {
   tip_cents?: number;
   requested_delivery_time?: number | null;
   promo_code_ref?: ActionHash | null;
+  dropoff_preference?: DropoffPreference;
 }): Promise<HcRecord> {
-  return callZome("dispatch", "request_delivery", { special_instructions: "", tip_cents: 0, requested_delivery_time: null, promo_code_ref: null, ...input });
+  return callZome("dispatch", "request_delivery", {
+    special_instructions: "",
+    tip_cents: 0,
+    requested_delivery_time: null,
+    promo_code_ref: null,
+    dropoff_preference: "LeaveAtDoor",
+    ...input,
+  });
 }
 
 /// The one narrow transition out of `Scheduled` -- see orders.rs's own doc
@@ -141,4 +149,11 @@ export async function applyCancellationDisputeResolution(orderOriginalAction: Ac
 
 export async function sendChatMessage(orderRef: ActionHash, text: string): Promise<void> {
   return callZome("dispatch", "send_chat_message", { order_ref: orderRef, text });
+}
+
+// --- live location (signal-only, driver -> requester, never persisted --
+// see tracking.rs's own doc comment) ---
+
+export async function sendLocationUpdate(orderRef: ActionHash, lat: number, lon: number): Promise<void> {
+  return callZome("dispatch", "send_location_update", { order_ref: orderRef, lat, lon });
 }

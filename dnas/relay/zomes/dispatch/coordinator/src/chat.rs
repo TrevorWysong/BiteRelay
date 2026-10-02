@@ -10,10 +10,9 @@
 //! history survives a page reload, which is an honest, named limitation,
 //! not an oversight.
 
+use crate::parties::resolve_order_and_bid;
 use crate::signals::RemoteSignal;
-use dispatch_integrity::{Bid, DeliveryOrder};
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendChatMessageInput {
@@ -33,21 +32,7 @@ pub fn send_chat_message(input: SendChatMessageInput) -> ExternResult<()> {
         return Err(wasm_error!(WasmErrorInner::Guest("chat message must not be empty".into())));
     }
     let me = agent_info()?.agent_initial_pubkey;
-    let order_record = resolve_latest(input.order_ref.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
-    let accepted_bid_ref = order.accepted_bid.ok_or(wasm_error!(WasmErrorInner::Guest(
-        "chat is only available once a driver has been assigned".into()
-    )))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (order, bid) = resolve_order_and_bid(input.order_ref.clone(), "chat is only available once a driver has been assigned")?;
 
     let other = if me == order.requester {
         bid.bidder

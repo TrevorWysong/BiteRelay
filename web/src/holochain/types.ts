@@ -23,7 +23,8 @@ export type LocalSignal =
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }
   | { BidReleased: ActionHash }
-  | { ChatMessage: { order_ref: ActionHash; from: AgentPubKey; text: string; sent_at: Timestamp } };
+  | { ChatMessage: { order_ref: ActionHash; from: AgentPubKey; text: string; sent_at: Timestamp } }
+  | { LocationUpdate: { order_ref: ActionHash; lat: number; lon: number; sent_at: Timestamp } };
 
 export interface GeoPoint {
   lat: number;
@@ -85,6 +86,11 @@ export interface MerchantCatalog {
   /// this merchant covers, applied proportionally at settlement. Defaults
   /// to 50 (an even split with the customer) at catalog creation.
   delivery_subsidy_percent: number;
+  /// Sorted, deduplicated union of every available menu item's own
+  /// `dietary_tags`, maintained server-side by `add_menu_item`/
+  /// `update_menu_item` -- never set directly. Lets Browse filter by
+  /// dietary tag without fetching every candidate's full menu.
+  dietary_tags: string[];
 }
 
 // `PromoRequirement`/`PromoReward` mirror `catalog_types`' Rust enums --
@@ -157,7 +163,10 @@ export interface DeliveryOrder {
   requested_delivery_time: Timestamp | null;
   /// `null` means no promo code applied.
   promo_code_ref: ActionHash | null;
+  dropoff_preference: DropoffPreference;
 }
+
+export type DropoffPreference = "LeaveAtDoor" | "HandToMe" | "MeetOutside";
 
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";
 
@@ -245,6 +254,10 @@ export interface Leg {
   to: AgentPubKey;
   geo_at_completion: GeoPoint;
   completed_at: Timestamp;
+  /// A data URI, or "" for no photo -- see the Rust `Leg.photo_data_uri`
+  /// doc comment for why this is deliberately outside the countersigned
+  /// `ReceiptAttestation` payload.
+  photo_data_uri: string;
 }
 
 export interface ReceiptAttestation {

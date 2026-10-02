@@ -15,6 +15,10 @@ pub struct RecordLegInput {
     pub kind: LegKind,
     pub to: AgentPubKey,
     pub geo_at_completion: GeoPoint,
+    /// See `Leg.photo_data_uri`'s own doc comment -- optional, empty string
+    /// means no photo.
+    #[serde(default)]
+    pub photo_data_uri: String,
 }
 
 /// Either party on a leg (the one initiating a handoff) records the raw
@@ -33,6 +37,7 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
         to: input.to,
         geo_at_completion: input.geo_at_completion,
         completed_at: sys_time()?,
+        photo_data_uri: input.photo_data_uri,
     };
     let action_hash = create_entry(&EntryTypes::Leg(leg))?;
     create_link(input.order_ref, action_hash.clone(), LinkTypes::OrderToLeg, ())?;

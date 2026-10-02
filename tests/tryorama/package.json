@@ -23,7 +23,12 @@
     "test:chat": "tsx src/chat.test.ts",
     "test:scheduled-orders": "tsx src/scheduled-orders.test.ts",
     "test:promo-codes": "tsx src/promo-codes.test.ts",
-    "test": "npm run test:matching && npm run test:attestation && npm run test:lifecycle && npm run test:authorization && npm run test:completion-gate && npm run test:dispute && npm run test:dispute-bypass && npm run test:scale-anchors && npm run test:checkpoint && npm run test:cancellation-dispute && npm run test:warrants && npm run test:reviews && npm run test:storefront-details && npm run test:self-dealing-bid && npm run test:concurrent-deliveries && npm run test:delivery-subsidy && npm run test:order-total-settlement && npm run test:chat && npm run test:scheduled-orders && npm run test:promo-codes",
+    "test:dropoff-preference": "tsx src/dropoff-preference.test.ts",
+    "test:favorites": "tsx src/favorites.test.ts",
+    "test:delivery-proof-photo": "tsx src/delivery-proof-photo.test.ts",
+    "test:live-location-signal": "tsx src/live-location-signal.test.ts",
+    "test:dietary-tags": "tsx src/dietary-tags.test.ts",
+    "test": "npm run test:matching && npm run test:attestation && npm run test:lifecycle && npm run test:authorization && npm run test:completion-gate && npm run test:dispute && npm run test:dispute-bypass && npm run test:scale-anchors && npm run test:checkpoint && npm run test:cancellation-dispute && npm run test:warrants && npm run test:reviews && npm run test:storefront-details && npm run test:self-dealing-bid && npm run test:concurrent-deliveries && npm run test:delivery-subsidy && npm run test:order-total-settlement && npm run test:chat && npm run test:scheduled-orders && npm run test:promo-codes && npm run test:dropoff-preference && npm run test:favorites && npm run test:delivery-proof-photo && npm run test:live-location-signal && npm run test:dietary-tags",
     "load-test": "tsx src/load-test.ts"
   },
   "devDependencies": {
