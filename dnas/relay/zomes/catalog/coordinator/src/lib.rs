@@ -60,7 +60,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         address_line: input.address_line,
         hours_open: input.hours_open,
         hours_close: input.hours_close,
-        delivery_subsidy_cents: 0,
+        delivery_subsidy_percent: 50,
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -137,7 +137,7 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
 
 /// Cross-zome read for `dispatch::complete_delivery` (and the equivalent
 /// dispute-resolution settlement paths) to look up a merchant's current
-/// `delivery_subsidy_cents` at settlement time -- no client previously
+/// `delivery_subsidy_percent` at settlement time -- no client previously
 /// needed to fetch a single catalog by reference, only lists/pages.
 #[hdk_extern]
 pub fn get_catalog(catalog_ref: ActionHash) -> ExternResult<Record> {
@@ -152,36 +152,36 @@ pub fn get_catalog(catalog_ref: ActionHash) -> ExternResult<Record> {
 /// `dispatch_coordinator::matching::NearbyProviderView`'s doc comment for
 /// the same reasoning applied to `geo_presence`).
 #[hdk_extern]
-pub fn get_delivery_subsidy(catalog_ref: ActionHash) -> ExternResult<u64> {
+pub fn get_delivery_subsidy(catalog_ref: ActionHash) -> ExternResult<u8> {
     let record = resolve_latest(catalog_ref)?;
     let catalog: MerchantCatalog = record
         .entry()
         .to_app_option()
         .map_err(|e| wasm_error!(e))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
-    Ok(catalog.delivery_subsidy_cents)
+    Ok(catalog.delivery_subsidy_percent)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SetDeliverySubsidyInput {
+pub struct SetDeliverySubsidyPercentInput {
     pub original_action: ActionHash,
-    pub delivery_subsidy_cents: u64,
+    pub delivery_subsidy_percent: u8,
 }
 
-/// A deliberate promotional lever, not an expected split (architecture plan
-/// §12) -- a merchant opts into covering part of a winning bid's delivery
-/// fee, capped at the bid amount itself and applied automatically at
-/// settlement. Defaults to 0 (fully customer-paid) for every catalog that
-/// hasn't called this.
+/// The standard delivery-cost-sharing model (architecture plan §12,
+/// 2026-10-01 revision), not a rare promotion -- defaults to 50 (an even
+/// split with the customer) at `publish_catalog` time, adjustable here if a
+/// merchant needs a different split. A percentage, not a flat amount, so
+/// it stays proportional to whatever the winning bid turns out to be.
 #[hdk_extern]
-pub fn set_delivery_subsidy(input: SetDeliverySubsidyInput) -> ExternResult<Record> {
+pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> ExternResult<Record> {
     let record = resolve_latest(input.original_action)?;
     let mut catalog: MerchantCatalog = record
         .entry()
         .to_app_option()
         .map_err(|e| wasm_error!(e))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
-    catalog.delivery_subsidy_cents = input.delivery_subsidy_cents;
+    catalog.delivery_subsidy_percent = input.delivery_subsidy_percent;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))

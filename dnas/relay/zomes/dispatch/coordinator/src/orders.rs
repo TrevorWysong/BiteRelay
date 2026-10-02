@@ -187,17 +187,19 @@ pub(crate) enum ReputationRoleWire {
 const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
 
 /// Cross-zome-fetches the order's merchant catalog for its currently-set
-/// `delivery_subsidy_cents` (architecture plan §12: a deliberate promotional
-/// lever, not an expected split -- defaults to 0, fully customer-paid) and
-/// splits `price_offer` between merchant and customer accordingly. The
-/// driver is always paid `price_offer` in full regardless of the split --
-/// this only changes *where* the money comes from, never the amount owed.
-/// Any tip is always the customer's alone, never subject to the subsidy.
-/// A failed/missing subsidy lookup degrades to "no subsidy" (the behavior
-/// before this feature existed) rather than blocking settlement over a
-/// bonus lookup -- but once a nonzero merchant share is actually owed, both
-/// settle calls must succeed, or the driver would be paid less than the
-/// `price_offer` they were promised.
+/// `delivery_subsidy_percent` (architecture plan §12, 2026-10-01 revision:
+/// the standard delivery-cost-sharing model, defaulting to an even 50/50
+/// split with the customer -- not a rare promotion) and splits
+/// `price_offer` between merchant and customer proportionally:
+/// `merchant_share = price_offer * percent / 100`, floor-rounded, with any
+/// rounding remainder landing on the customer's side. The driver is always
+/// paid `price_offer` in full regardless of the split -- this only changes
+/// *where* the money comes from, never the amount owed. Any tip is always
+/// the customer's alone, never subject to the split. A failed/missing
+/// subsidy lookup degrades to 0% (fully customer-paid) rather than blocking
+/// settlement over a bonus lookup -- but once a nonzero merchant share is
+/// actually owed, both settle calls must succeed, or the driver would be
+/// paid less than the `price_offer` they were promised.
 pub(crate) fn settle_delivery_fee(
     order_ref: ActionHash,
     catalog_ref: ActionHash,
@@ -208,11 +210,12 @@ pub(crate) fn settle_delivery_fee(
     tip_cents: u64,
 ) -> ExternResult<()> {
     let subsidy_response = call(CallTargetCell::Local, "catalog", "get_delivery_subsidy".into(), None, catalog_ref.clone());
-    let subsidy_cents: u64 = match subsidy_response {
+    let subsidy_percent: u8 = match subsidy_response {
         Ok(ZomeCallResponse::Ok(extern_io)) => extern_io.decode().unwrap_or(0),
         _ => 0,
-    };
-    let merchant_share = subsidy_cents.min(price_offer);
+    }
+    .min(100);
+    let merchant_share = price_offer * subsidy_percent as u64 / 100;
     let customer_share = price_offer - merchant_share;
 
     if merchant_share > 0 {

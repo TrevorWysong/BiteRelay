@@ -41,15 +41,27 @@ pub struct MerchantCatalog {
     pub hours_open: String,
     #[serde(default)]
     pub hours_close: String,
-    /// A deliberate promotional lever, not an expected split (architecture
-    /// plan §12) -- how many cents of a winning bid's delivery fee this
-    /// merchant covers, capped at the bid amount itself, computed
-    /// deterministically at settlement (`dispatch::complete_delivery`).
-    /// Defaults to 0, matching old-school independent delivery's norm of
-    /// the fee being fully customer-paid unless a merchant opts to offer
-    /// "free/discounted delivery" as a promotion.
-    #[serde(default)]
-    pub delivery_subsidy_cents: u64,
+    /// What share (0-100) of a winning bid's delivery fee this merchant
+    /// covers, computed deterministically at settlement
+    /// (`dispatch::complete_delivery`) as `price_offer * percent / 100`.
+    /// A percentage, not a flat amount, so the split stays proportional
+    /// regardless of what the winning bid turns out to be -- a flat dollar
+    /// subsidy means something different on a $3 bid than a $15 bid; a
+    /// percentage doesn't. Defaults to 50 (architecture plan §12,
+    /// 2026-10-01 revision): a deliberate departure from old-school
+    /// independent delivery's historical norm (customarily ~0%
+    /// merchant-paid) -- the reasoning is that both the merchant (reach,
+    /// repeat customers) and the customer (convenience) benefit from the
+    /// delivery happening at all, so neither should bear its full cost
+    /// alone, and driver pay shouldn't depend entirely on how generously a
+    /// given customer tips. Still merchant-adjustable, not a hard protocol
+    /// mandate -- a merchant with tighter margins can lower it.
+    #[serde(default = "default_delivery_subsidy_percent")]
+    pub delivery_subsidy_percent: u8,
+}
+
+fn default_delivery_subsidy_percent() -> u8 {
+    50
 }
 
 #[hdk_entry_helper]
@@ -114,6 +126,11 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
     if catalog.geohash != expected {
         return Ok(ValidateCallbackResult::Invalid(
             "geohash does not match the encoded location".into(),
+        ));
+    }
+    if catalog.delivery_subsidy_percent > 100 {
+        return Ok(ValidateCallbackResult::Invalid(
+            "delivery_subsidy_percent must be between 0 and 100".into(),
         ));
     }
     Ok(ValidateCallbackResult::Valid)

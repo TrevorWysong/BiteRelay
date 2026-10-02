@@ -76,11 +76,11 @@ export interface MerchantCatalog {
   address_line: string;
   hours_open: string;
   hours_close: string;
-  /// A deliberate promotional lever, not an expected split (architecture
-  /// plan §12) -- cents of a winning bid's delivery fee this merchant
-  /// covers, applied automatically at settlement. 0 means fully
-  /// customer-paid, the default and old-school-delivery norm.
-  delivery_subsidy_cents: number;
+  /// The standard delivery-cost-sharing model (architecture plan §12,
+  /// 2026-10-01 revision), 0-100 -- share of a winning bid's delivery fee
+  /// this merchant covers, applied proportionally at settlement. Defaults
+  /// to 50 (an even split with the customer) at catalog creation.
+  delivery_subsidy_percent: number;
 }
 
 export interface MenuItem {

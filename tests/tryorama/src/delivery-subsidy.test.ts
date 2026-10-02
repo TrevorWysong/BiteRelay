@@ -1,9 +1,9 @@
-// Proves the merchant delivery-fee subsidy (architecture plan §12): a
-// deliberate promotional lever, not an expected split. Default (no subsidy
-// set) stays fully customer-paid, matching existing behavior exactly; an
-// active subsidy is applied deterministically at settlement, capped at the
-// bid amount, and the driver is always paid the full bid regardless of
-// which side(s) it came from.
+// Proves the merchant delivery-cost-sharing model (architecture plan §12,
+// 2026-10-01 revision): a 50/50 percentage split with the customer is the
+// real default (set at publish_catalog time, not a rare opt-in), the split
+// stays proportional to whatever the winning bid turns out to be, and the
+// driver is always paid the full bid regardless of which side(s) it came
+// from.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
@@ -32,9 +32,11 @@ await runScenario(async (scenario) => {
   const menuItemRecord = await catalogOf(customer)<HcRecord>("add_menu_item", { catalog_ref: catalogRef, name: "Empanada", price_cents: 600, available: true });
   const menuItemRef = actionHash(menuItemRecord);
 
-  // Merchant opts into covering $3.00 of delivery.
-  await catalogOf(customer)("set_delivery_subsidy", { original_action: catalogRef, delivery_subsidy_cents: 300 });
-  await dhtSync(both, customer.cells[0].cell_id[0]);
+  // Never explicitly set -- publish_catalog's own default should already
+  // be 50, not 0.
+  const decodedCatalog = decodeEntry<{ delivery_subsidy_percent: number }>(catalogRecord);
+  assert.equal(decodedCatalog.delivery_subsidy_percent, 50, "publish_catalog should default delivery_subsidy_percent to 50, not 0");
+  console.log("[PASS] publish_catalog defaults delivery_subsidy_percent to an even 50/50 split");
 
   async function driveToDelivered(priceOfferCents: number) {
     const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
@@ -82,23 +84,25 @@ await runScenario(async (scenario) => {
     await dhtSync(both, customer.cells[0].cell_id[0]);
   }
 
-  // Subsidy ($3.00) is smaller than the bid ($5.00) -- merchant covers
-  // exactly their subsidy, customer covers the remainder + tip.
+  // Default 50/50 split on a $5.00 bid + $1.00 tip: merchant covers $2.50,
+  // customer covers $2.50 + $1.00 tip = $3.50. Driver gets the full $6.00.
   await driveToDelivered(500);
   const driverBalance1 = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
   assert.equal(driverBalance1, 600, "driver should be paid the full $5.00 bid + $1.00 tip regardless of the split");
   const customerBalance1 = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
   // Customer is both requester and merchant here, so both settlement legs
-  // (merchant_share out, customer_share+tip out) hit the same balance:
-  // -300 (merchant's covered share) + -(500-300+100) (customer's own share+tip) = -600.
+  // hit the same balance: -250 (merchant's half) + -(250+100) (customer's
+  // half + tip) = -600.
   assert.equal(customerBalance1, -600, "combined requester+merchant balance should reflect both settlement legs, net -$6.00");
-  console.log("[PASS] subsidy smaller than the bid: merchant covers exactly its subsidy, customer covers the rest + tip, driver paid in full");
+  console.log("[PASS] default 50/50 split applies automatically on a bid, without the merchant ever calling set_delivery_subsidy_percent");
 
-  // Subsidy ($3.00) is larger than a smaller bid ($2.00) -- merchant covers
-  // the whole delivery fee (capped at the bid itself), customer pays only
-  // the tip.
+  // Merchant raises their share to 100% -- covers the whole delivery fee,
+  // customer pays only the tip. Proves the split scales with whatever the
+  // bid turns out to be, not a flat capped dollar amount.
+  await catalogOf(customer)("set_delivery_subsidy_percent", { original_action: catalogRef, delivery_subsidy_percent: 100 });
+  await dhtSync(both, customer.cells[0].cell_id[0]);
   await driveToDelivered(200);
   const driverBalance2 = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
   assert.equal(driverBalance2, 600 + 300, "driver's second delivery should add exactly $2.00 fee + $1.00 tip = $3.00 to their running balance");
-  console.log("[PASS] subsidy larger than the bid: capped at the bid amount, never overpays the driver or undercounts the merchant's share");
+  console.log("[PASS] a merchant raising their share to 100% covers the entire delivery fee, customer pays only the tip");
 });

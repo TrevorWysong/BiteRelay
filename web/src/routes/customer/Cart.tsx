@@ -28,22 +28,22 @@ export function Cart() {
   const [customTip, setCustomTip] = useState("");
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
-  const [subsidyCents, setSubsidyCents] = useState(0);
+  const [subsidyPercent, setSubsidyPercent] = useState(0);
 
   useEffect(() => {
     if (!cart.catalogRef) return;
     getCatalog(cart.catalogRef)
-      .then((record) => setSubsidyCents(decodeEntry<MerchantCatalog>(record).delivery_subsidy_cents))
-      .catch(() => setSubsidyCents(0));
+      .then((record) => setSubsidyPercent(decodeEntry<MerchantCatalog>(record).delivery_subsidy_percent))
+      .catch(() => setSubsidyPercent(0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
   const maxFeeCents = feePreset !== null ? feePreset : Math.round(Number(customFee || 0) * 100);
-  // Worst case (a winning bid right at the cap): the merchant's subsidy
-  // always applies first, up to its own limit -- matches the settlement
-  // formula in dispatch::settle_delivery_fee exactly (architecture plan §12).
-  const customerFeeShareCents = Math.max(0, maxFeeCents - subsidyCents);
+  // Worst case (a winning bid right at the cap): mirrors the settlement
+  // formula in dispatch::settle_delivery_fee exactly (architecture plan
+  // §12) -- merchant_share floor-rounded, customer absorbs the remainder.
+  const customerFeeShareCents = maxFeeCents - Math.floor((maxFeeCents * subsidyPercent) / 100);
 
   if (cart.lines.length === 0) {
     return (
@@ -191,7 +191,7 @@ export function Cart() {
           <span>{formatCents(cart.total())}</span>
         </div>
         <div className="flex justify-between text-ink-400">
-          <span>Delivery fee{subsidyCents > 0 && <span className="text-presence-600"> (merchant covers up to {formatCents(subsidyCents)})</span>}</span>
+          <span>Delivery fee{subsidyPercent > 0 && <span className="text-presence-600"> (merchant covers {subsidyPercent}%)</span>}</span>
           <span>up to {formatCents(customerFeeShareCents)}</span>
         </div>
         <div className="flex justify-between text-ink-400">
