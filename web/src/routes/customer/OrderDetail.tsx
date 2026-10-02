@@ -2,21 +2,44 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
-import { submitReview } from "../../holochain/zomes/reputation";
+import { submitReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Spinner } from "../../components/ui";
-import { StarRatingInput } from "../../components/StarRating";
+import { StarRating, StarRatingInput } from "../../components/StarRating";
+import { ChatPanel } from "../../components/ChatPanel";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
-import type { Bid, DeliveryOrder, WarrantSummary } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, Review, WarrantSummary } from "../../holochain/types";
+
+// Chat is only valid once a driver is assigned (send_chat_message requires
+// order.accepted_bid to exist) and before the delivery's own terminal state.
+const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 
 interface BidRow {
   hash: Uint8Array;
   bid: Bid;
 }
 
+interface DriverStats {
+  completedCount: number;
+  avgRating: number;
+  reviewCount: number;
+}
+
 const POLL_MS = 6000;
+
+/// The customer is the one who accepts a bid, so this is the one place
+/// that choice should actually be informed by the bidder's track record,
+/// not just price/ETA/warrants -- see the architecture plan's discussion
+/// of why the restaurant doesn't get a separate veto: shared visibility
+/// into the same trust signal covers that interest too.
+async function fetchDriverStats(agent: Uint8Array): Promise<DriverStats> {
+  const [summary, reviews] = await Promise.all([getReputationSummary(agent), getReviewsFor(agent)]);
+  const decoded = reviews.map((r) => decodeEntry<Review>(r));
+  const avgRating = decoded.length ? decoded.reduce((s, r) => s + r.rating, 0) / decoded.length : 0;
+  return { completedCount: summary.completed_count, avgRating, reviewCount: decoded.length };
+}
 
 export function OrderDetail() {
   const { hash } = useParams<{ hash: string }>();
@@ -25,6 +48,7 @@ export function OrderDetail() {
   const [bids, setBids] = useState<BidRow[] | null>(null);
   const [driver, setDriver] = useState<Uint8Array | null>(null);
   const [warrants, setWarrants] = useState<Record<string, WarrantSummary>>({});
+  const [driverStats, setDriverStats] = useState<Record<string, DriverStats>>({});
   const [accepting, setAccepting] = useState<string | null>(null);
   const [disputing, setDisputing] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -50,6 +74,11 @@ export function OrderDetail() {
         if (!(key in warrants)) {
           checkWarrants(row.bid.bidder)
             .then((w) => setWarrants((prev) => ({ ...prev, [key]: w })))
+            .catch(() => {});
+        }
+        if (!(key in driverStats)) {
+          fetchDriverStats(row.bid.bidder)
+            .then((stats) => setDriverStats((prev) => ({ ...prev, [key]: stats })))
             .catch(() => {});
         }
       }
@@ -184,6 +213,7 @@ export function OrderDetail() {
           <div className="flex flex-col gap-2">
             {bids?.map(({ hash: bidHash, bid }) => {
               const w = warrants[bytesToHex(bid.bidder)];
+              const stats = driverStats[bytesToHex(bid.bidder)];
               return (
                 <Card key={bytesToHex(bidHash)} className="flex items-center justify-between p-3.5">
                   <div>
@@ -191,6 +221,16 @@ export function OrderDetail() {
                       Driver {shortAgentId(bid.bidder)} · {formatEta(bid.eta_seconds)}
                     </p>
                     <p className="text-xs text-ink-400">Delivery fee {formatCents(bid.price_offer)}</p>
+                    {stats && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        {stats.reviewCount > 0 ? (
+                          <StarRating value={stats.avgRating} count={stats.reviewCount} size={11} />
+                        ) : (
+                          <span className="text-xs text-ink-400">No reviews yet</span>
+                        )}
+                        <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
+                      </div>
+                    )}
                     {w && w.count > 0 && (
                       <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
                         <AlertTriangle size={12} /> {w.count} outstanding warrant{w.count === 1 ? "" : "s"}
@@ -228,6 +268,12 @@ export function OrderDetail() {
           <Button loading={completing} onClick={confirmReceipt}>
             Confirm receipt
           </Button>
+        </div>
+      )}
+
+      {ACTIVE_DELIVERY_STATUSES.includes(order.status) && (
+        <div className="mt-4">
+          <ChatPanel orderRef={orderRef} title="Chat with your driver" />
         </div>
       )}
 

@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Star, Store } from "lucide-react";
-import { publishCatalog, setCatalogOpen, updateCatalogDetails, setDeliverySubsidyPercent, addMenuItem, updateMenuItem, listMenuItems, getNearbyMerchants } from "../../holochain/zomes/catalog";
+import { Pencil, Plus, Star, Store, Tag } from "lucide-react";
+import {
+  publishCatalog,
+  setCatalogOpen,
+  updateCatalogDetails,
+  setDeliverySubsidyPercent,
+  addMenuItem,
+  updateMenuItem,
+  listMenuItems,
+  getNearbyMerchants,
+  createPromoCode,
+  setPromoCodeActive,
+  listPromoCodesForCatalog,
+} from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
@@ -10,14 +22,20 @@ import { Button, Card, Spinner } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { StarRating } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
-import type { MenuItem, MerchantCatalog, Review } from "../../holochain/types";
+import type { MenuItem, MerchantCatalog, PromoCode, Review } from "../../holochain/types";
 
 interface ItemRow {
   hash: Uint8Array;
   item: MenuItem;
 }
 
+interface PromoRow {
+  hash: Uint8Array;
+  promo: PromoCode;
+}
+
 const EMPTY_ITEM_FORM = { name: "", price: 10, description: "", photo_data_uri: "", category: "", dietary_tags: "" };
+const EMPTY_PROMO_FORM = { code: "", kind: "percent" as "percent" | "flat", amount: 10 };
 
 export function MerchantCatalog() {
   const location = useSession((s) => s.location);
@@ -38,6 +56,11 @@ export function MerchantCatalog() {
   const [editingItemHash, setEditingItemHash] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
   const [savingItem, setSavingItem] = useState(false);
+  const [promos, setPromos] = useState<PromoRow[]>([]);
+  const [showAddPromo, setShowAddPromo] = useState(false);
+  const [promoForm, setPromoForm] = useState(EMPTY_PROMO_FORM);
+  const [savingPromo, setSavingPromo] = useState(false);
+  const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
 
   async function load() {
     const me = myAgentPubKey();
@@ -60,6 +83,8 @@ export function MerchantCatalog() {
       const itemsPage = await listMenuItems(actionHash(mine));
       setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
       getReviewsFor(decoded.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
+      const promoRecords = await listPromoCodesForCatalog(actionHash(mine));
+      setPromos(promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })));
     }
     setLoading(false);
   }
@@ -107,6 +132,33 @@ export function MerchantCatalog() {
       setEditingSubsidy(false);
     } finally {
       setSavingSubsidy(false);
+    }
+  }
+
+  async function savePromo() {
+    if (!catalogHash || !promoForm.code.trim()) return;
+    setSavingPromo(true);
+    try {
+      await createPromoCode({
+        catalog_ref: catalogHash,
+        code: promoForm.code.trim().toUpperCase(),
+        discount: promoForm.kind === "percent" ? { PercentOff: Math.min(100, Math.max(1, Math.round(promoForm.amount))) } : { FlatCentsOff: Math.max(1, Math.round(promoForm.amount * 100)) },
+      });
+      await load();
+      setShowAddPromo(false);
+      setPromoForm(EMPTY_PROMO_FORM);
+    } finally {
+      setSavingPromo(false);
+    }
+  }
+
+  async function togglePromo(row: PromoRow) {
+    setTogglingPromo(bytesToHex(row.hash));
+    try {
+      await setPromoCodeActive(row.hash, !row.promo.active);
+      await load();
+    } finally {
+      setTogglingPromo(null);
     }
   }
 
@@ -324,6 +376,73 @@ export function MerchantCatalog() {
             <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
               {catalog.delivery_subsidy_percent > 0 ? `You cover ${catalog.delivery_subsidy_percent}% of delivery` : "You cover 0% -- fully customer-paid"}
             </p>
+          )}
+        </Card>
+
+        <Card className="mb-4 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+              <Tag size={13} /> Promo codes
+            </p>
+            <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setShowAddPromo((v) => !v)}>
+              <Plus size={14} /> {showAddPromo ? "Cancel" : "New code"}
+            </Button>
+          </div>
+          {showAddPromo && (
+            <div className="mb-3 flex flex-col gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
+              <input
+                value={promoForm.code}
+                onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))}
+                placeholder="CODE (e.g. WELCOME10)"
+                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
+              />
+              <div className="flex items-center gap-2">
+                <select
+                  value={promoForm.kind}
+                  onChange={(e) => setPromoForm((f) => ({ ...f, kind: e.target.value as "percent" | "flat" }))}
+                  className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
+                >
+                  <option value="percent">% off</option>
+                  <option value="flat">$ off</option>
+                </select>
+                <input
+                  type="number"
+                  min={promoForm.kind === "percent" ? 1 : 0.01}
+                  max={promoForm.kind === "percent" ? 100 : undefined}
+                  step={promoForm.kind === "percent" ? 1 : 0.5}
+                  value={promoForm.amount}
+                  onChange={(e) => setPromoForm((f) => ({ ...f, amount: Number(e.target.value) }))}
+                  className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                />
+              </div>
+              <Button loading={savingPromo} onClick={savePromo} className="py-2 text-xs">
+                Create
+              </Button>
+            </div>
+          )}
+          {promos.length === 0 && !showAddPromo ? (
+            <p className="text-sm text-ink-400">No promo codes yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {promos.map((row) => (
+                <div key={bytesToHex(row.hash)} className="flex items-center justify-between rounded-lg bg-ink-50 dark:bg-ink-800/60 px-3 py-2">
+                  <div>
+                    <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">{row.promo.code}</p>
+                    <p className="text-xs text-ink-400">
+                      {"PercentOff" in row.promo.discount ? `${row.promo.discount.PercentOff}% off` : `${formatCents(row.promo.discount.FlatCentsOff)} off`}
+                    </p>
+                  </div>
+                  <Button
+                    variant={row.promo.active ? "secondary" : "ghost"}
+                    className="px-3 py-1.5 text-xs"
+                    loading={togglingPromo === bytesToHex(row.hash)}
+                    onClick={() => togglePromo(row)}
+                  >
+                    {row.promo.active ? "Active" : "Inactive"}
+                  </Button>
+                </div>
+              ))}
+            </div>
           )}
         </Card>
 

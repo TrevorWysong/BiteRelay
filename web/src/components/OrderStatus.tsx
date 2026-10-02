@@ -1,4 +1,4 @@
-import { Check, ChefHat, CircleDot, PackageCheck, Bike, XCircle, AlertTriangle } from "lucide-react";
+import { Check, ChefHat, CircleDot, PackageCheck, Bike, XCircle, AlertTriangle, Clock } from "lucide-react";
 import type { DeliveryStatus } from "../holochain/types";
 import { Badge } from "./ui";
 
@@ -21,6 +21,8 @@ export function statusTone(status: DeliveryStatus): "neutral" | "brand" | "succe
       return "danger";
     case "Open":
       return "brand";
+    case "Scheduled":
+      return "neutral";
     default:
       return "warn";
   }
@@ -34,6 +36,14 @@ export function StatusBadge({ status }: { status: DeliveryStatus }) {
 /// render as a terminal banner instead of a step position, since they don't
 /// sit on the linear happy-path sequence.
 export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
+  if (status === "Scheduled") {
+    return (
+      <div className="flex items-center gap-3 rounded-xl bg-ink-100 dark:bg-ink-800 px-4 py-3 text-ink-500 dark:text-ink-300">
+        <Clock size={20} />
+        <span className="font-medium">Scheduled for later -- not yet open for driver bids.</span>
+      </div>
+    );
+  }
   if (status === "Cancelled") {
     return (
       <div className="flex items-center gap-3 rounded-xl bg-ink-100 dark:bg-ink-800 px-4 py-3 text-ink-500 dark:text-ink-300">

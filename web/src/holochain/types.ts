@@ -15,11 +15,15 @@ export type Timestamp = number; // microseconds since epoch, matching HDK's Time
 // variants (`NewOrderNearby(ActionHash)`), which serde serializes as
 // `{ "VariantName": <value> }` -- the payload is the bare ActionHash, not a
 // nested `{order_hash: ...}` object.
+// `ChatMessage` is a Rust *struct* variant (named fields), unlike the tuple
+// variants above, so it serializes as a nested object rather than a bare
+// value -- `{ ChatMessage: { order_ref, from, text, sent_at } }`.
 export type LocalSignal =
   | { NewOrderNearby: ActionHash }
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }
-  | { BidReleased: ActionHash };
+  | { BidReleased: ActionHash }
+  | { ChatMessage: { order_ref: ActionHash; from: AgentPubKey; text: string; sent_at: Timestamp } };
 
 export interface GeoPoint {
   lat: number;
@@ -83,6 +87,19 @@ export interface MerchantCatalog {
   delivery_subsidy_percent: number;
 }
 
+// `PromoDiscount` is a Rust tuple-variant enum -- serializes as
+// `{ PercentOff: number }` or `{ FlatCentsOff: number }`.
+export type PromoDiscount = { PercentOff: number } | { FlatCentsOff: number };
+
+export interface PromoCode {
+  catalog_ref: ActionHash;
+  code: string;
+  discount: PromoDiscount;
+  active: boolean;
+  expires_at: Timestamp | null;
+  created_at: Timestamp;
+}
+
 export interface MenuItem {
   catalog_ref: ActionHash;
   name: string;
@@ -95,6 +112,7 @@ export interface MenuItem {
 }
 
 export type DeliveryStatus =
+  | "Scheduled"
   | "Open"
   | "BidAccepted"
   | "MerchantConfirmed"
@@ -120,6 +138,12 @@ export interface DeliveryOrder {
   requested_at: Timestamp;
   special_instructions: string;
   tip_cents: number;
+  /// `null` means "order now." Set means this order starts in `Scheduled`
+  /// status, invisible to matching until `open_scheduled_order` is called
+  /// at/after this time.
+  requested_delivery_time: Timestamp | null;
+  /// `null` means no promo code applied.
+  promo_code_ref: ActionHash | null;
 }
 
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";

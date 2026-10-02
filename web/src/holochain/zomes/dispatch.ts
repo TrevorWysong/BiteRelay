@@ -12,8 +12,17 @@ export async function requestDelivery(input: {
   max_delivery_fee: number | null;
   special_instructions?: string;
   tip_cents?: number;
+  requested_delivery_time?: number | null;
+  promo_code_ref?: ActionHash | null;
 }): Promise<HcRecord> {
-  return callZome("dispatch", "request_delivery", { special_instructions: "", tip_cents: 0, ...input });
+  return callZome("dispatch", "request_delivery", { special_instructions: "", tip_cents: 0, requested_delivery_time: null, promo_code_ref: null, ...input });
+}
+
+/// The one narrow transition out of `Scheduled` -- see orders.rs's own doc
+/// comment: no server-side scheduler exists, the requester's own client is
+/// expected to call this once the requested time arrives.
+export async function openScheduledOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "open_scheduled_order", orderOriginalAction);
 }
 
 /// Every forward transition *except* Delivered (that one's gated -- see
@@ -126,4 +135,10 @@ export async function raiseCancellationDispute(input: {
 
 export async function applyCancellationDisputeResolution(orderOriginalAction: ActionHash): Promise<void> {
   return callZome("dispatch", "apply_cancellation_dispute_resolution", { order_original_action: orderOriginalAction });
+}
+
+// --- chat (signal-only, never persisted -- see chat.rs's own doc comment) ---
+
+export async function sendChatMessage(orderRef: ActionHash, text: string): Promise<void> {
+  return callZome("dispatch", "send_chat_message", { order_ref: orderRef, text });
 }

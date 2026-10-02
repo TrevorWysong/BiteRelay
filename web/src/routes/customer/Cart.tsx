@@ -2,13 +2,19 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { Button } from "../../components/ui";
+import { LocationInput } from "../../components/LocationInput";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery } from "../../holochain/zomes/dispatch";
-import { getCatalog } from "../../holochain/zomes/catalog";
+import { getCatalog, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
-import type { MerchantCatalog } from "../../holochain/types";
+import type { ActionHash, GeoPoint, MerchantCatalog, PromoCode } from "../../holochain/types";
+
+function discountAmountCents(discount: PromoCode["discount"], subtotalCents: number): number {
+  if ("PercentOff" in discount) return Math.floor((subtotalCents * discount.PercentOff) / 100);
+  return Math.min(discount.FlatCentsOff, subtotalCents);
+}
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 // A driver's bid can be anywhere up to this cap (validate_new_bid rejects
@@ -20,23 +26,51 @@ const DELIVERY_FEE_PRESETS_CENTS = [400, 600, 900, 1200];
 export function Cart() {
   const cart = useCart();
   const location = useSession((s) => s.location);
+  const setSessionLocation = useSession((s) => s.setLocation);
   const navigate = useNavigate();
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
+  // Defaults to the session's saved location, but editable per order --
+  // previously frozen at whatever was set once during onboarding, with no
+  // way to deliver anywhere else (e.g. a friend's place) or update it after
+  // moving.
+  const [dropoff, setDropoff] = useState<GeoPoint>(location);
+  const [saveAsDefault, setSaveAsDefault] = useState(false);
+  const [scheduled, setScheduled] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState("");
   const [tipPercent, setTipPercent] = useState<number | null>(15);
   const [customTip, setCustomTip] = useState("");
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
   const [subsidyPercent, setSubsidyPercent] = useState(0);
+  const [promoCodes, setPromoCodes] = useState<{ hash: ActionHash; promo: PromoCode }[]>([]);
+  const [promoInput, setPromoInput] = useState("");
+  const [appliedPromo, setAppliedPromo] = useState<{ hash: ActionHash; promo: PromoCode } | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!cart.catalogRef) return;
     getCatalog(cart.catalogRef)
       .then((record) => setSubsidyPercent(decodeEntry<MerchantCatalog>(record).delivery_subsidy_percent))
       .catch(() => setSubsidyPercent(0));
+    listPromoCodesForCatalog(cart.catalogRef)
+      .then((records) => setPromoCodes(records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) }))))
+      .catch(() => setPromoCodes([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function applyPromo() {
+    setPromoError(null);
+    const typed = promoInput.trim().toUpperCase();
+    const now = Date.now() * 1000;
+    const match = promoCodes.find((p) => p.promo.code.toUpperCase() === typed && p.promo.active && (p.promo.expires_at === null || p.promo.expires_at > now));
+    if (!match) {
+      setPromoError("That code isn't valid or has expired.");
+      return;
+    }
+    setAppliedPromo(match);
+  }
 
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
   const maxFeeCents = feePreset !== null ? feePreset : Math.round(Number(customFee || 0) * 100);
@@ -44,6 +78,8 @@ export function Cart() {
   // formula in dispatch::settle_delivery_fee exactly (architecture plan
   // §12) -- merchant_share floor-rounded, customer absorbs the remainder.
   const customerFeeShareCents = maxFeeCents - Math.floor((maxFeeCents * subsidyPercent) / 100);
+  const promoDiscountCents = appliedPromo ? discountAmountCents(appliedPromo.promo.discount, cart.total()) : 0;
+  const discountedSubtotalCents = cart.total() - promoDiscountCents;
 
   if (cart.lines.length === 0) {
     return (
@@ -56,6 +92,13 @@ export function Cart() {
     );
   }
 
+  // Holochain Timestamps are microseconds since epoch; <input type=
+  // "datetime-local"> gives a local-time string with no timezone info --
+  // Date.parse treats it as local time already, matching what the customer
+  // actually picked, so no further conversion is needed beyond ms -> µs.
+  const requestedDeliveryTime = scheduled && scheduledFor ? Date.parse(scheduledFor) * 1000 : null;
+  const scheduleInvalid = scheduled && (!scheduledFor || (requestedDeliveryTime !== null && requestedDeliveryTime <= Date.now() * 1000));
+
   async function placeOrder() {
     if (!cart.catalogRef || !cart.merchant) return;
     setPlacing(true);
@@ -64,14 +107,23 @@ export function Cart() {
       const record = await requestDelivery({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
-        item_refs: cart.lines.map((l) => l.itemRef),
-        order_total: cart.total(),
-        dropoff: { lat: location.lat, lon: location.lon },
+        // Repeated per quantity, not deduplicated -- item_refs is a plain
+        // Vec<ActionHash> with no parallel quantity field, so "2x Burger"
+        // is represented as the same ref appearing twice. Nothing reads
+        // item_refs as a set (dispatch_integrity only checks non-emptiness
+        // and byte-identical-on-update), so this is a safe, no-backend-
+        // change way to stop silently dropping quantity at checkout.
+        item_refs: cart.lines.flatMap((l) => Array(l.quantity).fill(l.itemRef)),
+        order_total: discountedSubtotalCents,
+        dropoff,
         max_delivery_fee: maxFeeCents,
         special_instructions: instructions.trim(),
         tip_cents: tipCents,
+        requested_delivery_time: requestedDeliveryTime,
+        promo_code_ref: appliedPromo?.hash ?? null,
       });
       const orderRef = actionHash(record);
+      if (saveAsDefault) setSessionLocation(dropoff);
       cart.clear();
       navigate(`/customer/orders/${bytesToHex(orderRef)}`);
     } catch (err) {
@@ -111,6 +163,46 @@ export function Cart() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <LocationInput value={dropoff} onChange={setDropoff} />
+        <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
+          <input type="checkbox" checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
+          Save as my default location
+        </label>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">When</p>
+        <div className="mb-2 flex gap-2">
+          <button
+            onClick={() => setScheduled(false)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${!scheduled ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+          >
+            Now
+          </button>
+          <button
+            onClick={() => setScheduled(true)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${scheduled ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+          >
+            Schedule for later
+          </button>
+        </div>
+        {scheduled && (
+          <>
+            <input
+              type="datetime-local"
+              value={scheduledFor}
+              onChange={(e) => setScheduledFor(e.target.value)}
+              className="w-full rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
+            />
+            <p className="mt-1 text-xs text-ink-400">
+              No driver matching starts until this time -- your Orders screen will show a button to open it for bids once it arrives (there's no
+              server-side scheduler here, it runs from your own client).
+            </p>
+          </>
+        )}
       </div>
 
       <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
@@ -185,11 +277,48 @@ export function Cart() {
         </div>
       </div>
 
+      <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Promo code</p>
+        {appliedPromo ? (
+          <div className="flex items-center justify-between rounded-lg bg-presence-500/10 px-3 py-2 text-sm text-presence-600 dark:text-presence-400">
+            <span className="font-mono font-semibold">{appliedPromo.promo.code}</span>
+            <button
+              onClick={() => {
+                setAppliedPromo(null);
+                setPromoInput("");
+              }}
+              className="text-xs underline"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              value={promoInput}
+              onChange={(e) => setPromoInput(e.target.value)}
+              placeholder="Enter code"
+              className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
+            />
+            <Button variant="ghost" className="px-4 py-2 text-xs" onClick={applyPromo}>
+              Apply
+            </Button>
+          </div>
+        )}
+        {promoError && <p className="mt-1 text-xs text-red-600">{promoError}</p>}
+      </div>
+
       <div className="mt-4 flex flex-col gap-1.5 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4 text-sm">
         <div className="flex justify-between text-ink-400">
           <span>Subtotal</span>
           <span>{formatCents(cart.total())}</span>
         </div>
+        {appliedPromo && (
+          <div className="flex justify-between text-presence-600 dark:text-presence-400">
+            <span>Promo ({appliedPromo.promo.code})</span>
+            <span>-{formatCents(promoDiscountCents)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-ink-400">
           <span>Delivery fee{subsidyPercent > 0 && <span className="text-presence-600"> (merchant covers {subsidyPercent}%)</span>}</span>
           <span>up to {formatCents(customerFeeShareCents)}</span>
@@ -200,7 +329,7 @@ export function Cart() {
         </div>
         <div className="mt-1 flex justify-between border-t border-ink-100 dark:border-ink-800 pt-2 text-base font-bold text-ink-900 dark:text-ink-50">
           <span>Estimated total</span>
-          <span>up to {formatCents(cart.total() + tipCents + customerFeeShareCents)}</span>
+          <span>up to {formatCents(discountedSubtotalCents + tipCents + customerFeeShareCents)}</span>
         </div>
       </div>
 
@@ -212,8 +341,8 @@ export function Cart() {
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
-        <Button className="w-full" loading={placing} disabled={maxFeeCents <= 0} onClick={placeOrder}>
-          Place order · up to {formatCents(cart.total() + tipCents + customerFeeShareCents)}
+        <Button className="w-full" loading={placing} disabled={maxFeeCents <= 0 || scheduleInvalid} onClick={placeOrder}>
+          {scheduled ? "Schedule order" : "Place order"} · up to {formatCents(discountedSubtotalCents + tipCents + customerFeeShareCents)}
         </Button>
       </div>
     </div>

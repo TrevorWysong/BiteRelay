@@ -18,6 +18,9 @@ interface CartState {
   addItem: (catalogRef: ActionHash, merchant: Uint8Array, merchantName: string, itemRef: ActionHash, name: string, priceCents: number) => void;
   removeLine: (itemRefHex: string) => void;
   setQuantity: (itemRefHex: string, quantity: number) => void;
+  /// Replaces the cart wholesale -- used by "reorder" to repopulate from a
+  /// past order in one shot, rather than replaying `addItem` once per unit.
+  setCart: (catalogRef: ActionHash, merchant: Uint8Array, merchantName: string, lines: CartLine[]) => void;
   clear: () => void;
   total: () => number;
 }
@@ -54,6 +57,8 @@ export const useCart = create<CartState>((set, get) => ({
     }
     set({ lines: get().lines.map((l) => (bytesToHex(l.itemRef) === itemRefHex ? { ...l, quantity } : l)) });
   },
+
+  setCart: (catalogRef, merchant, merchantName, lines) => set({ catalogRef, merchant, merchantName, lines }),
 
   clear: () => set({ catalogRef: null, merchant: null, merchantName: null, lines: [] }),
 

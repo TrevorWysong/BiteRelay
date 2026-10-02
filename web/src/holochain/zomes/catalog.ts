@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, PromoDiscount } from "../types";
 
 export interface NearbyMerchantsPage {
   catalogs: HcRecord[];
@@ -72,4 +72,18 @@ export async function listMenuItems(catalogRef: ActionHash, after: number | null
 
 export async function getNearbyMerchants(geohash: string, after: number | null = null): Promise<NearbyMerchantsPage> {
   return callZome("catalog", "get_nearby_merchants", { geohash, after });
+}
+
+// --- promo codes ---
+
+export async function createPromoCode(input: { catalog_ref: ActionHash; code: string; discount: PromoDiscount; expires_at?: number | null }): Promise<HcRecord> {
+  return callZome("catalog", "create_promo_code", { expires_at: null, ...input });
+}
+
+export async function setPromoCodeActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {
+  return callZome("catalog", "set_promo_code_active", { original_action: originalAction, active });
+}
+
+export async function listPromoCodesForCatalog(catalogRef: ActionHash): Promise<HcRecord[]> {
+  return callZome("catalog", "list_promo_codes_for_catalog", catalogRef);
 }
