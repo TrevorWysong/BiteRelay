@@ -6,8 +6,9 @@ import clsx from "clsx";
 import { primaryModeForRoles, useSession } from "../store/session";
 import { Button, Card, Input, Spinner, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
+import { AddressSearch } from "../components/AddressSearch";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
-import type { RoleTag } from "../holochain/types";
+import type { GeoPoint, RoleTag } from "../holochain/types";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
 
@@ -19,17 +20,23 @@ const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bi
 
 const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
 
+// Last-resort fallback only -- shown and overridable via the address
+// search below, never silently relied on. Previously this was the only
+// location every identity ever got, with no UI at all.
+const FALLBACK_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
+
 type Step = "roles" | "details" | "vehicle";
 const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 
 export function Onboarding() {
   const navigate = useNavigate();
-  const { createIdentity, reconnect, hasStoredIdentity, status, error } = useSession();
+  const { createIdentity, reconnect, hasStoredIdentity, status, error, signOut } = useSession();
   const [adminUrl, setAdminUrl] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [phone, setPhone] = useState("");
   const [avatarDataUri, setAvatarDataUri] = useState("");
+  const [location, setLocation] = useState<GeoPoint>(FALLBACK_LOCATION);
   const [roles, setRoles] = useState<RoleTag[]>(["Requester"]);
   const [step, setStep] = useState<Step>("roles");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -44,8 +51,19 @@ export function Onboarding() {
   }
 
   async function handleReconnect() {
-    await reconnect();
-    navigate("/");
+    setLocalError(null);
+    try {
+      await reconnect();
+      navigate("/");
+    } catch (err) {
+      // Most likely cause in this dev setup: the local conductor was
+      // restarted (every restart is a brand new, empty sandbox -- see
+      // scripts/run-conductor.mjs's own doc comment) since this identity
+      // was created, so the admin URL it remembers no longer points at
+      // anything real. There's no way to recover that specific identity;
+      // the only way forward is to forget it and sign up fresh.
+      setLocalError(describeError(err));
+    }
   }
 
   function goToDetailsNext() {
@@ -60,7 +78,7 @@ export function Onboarding() {
   async function finish() {
     setLocalError(null);
     try {
-      await createIdentity(adminUrl, displayName.trim(), roles, { lat: 27.7676, lon: -82.6403 }, { bio, avatarDataUri, phone });
+      await createIdentity(adminUrl, displayName.trim(), roles, location, { bio, avatarDataUri, phone });
       if (roles.includes("Provider")) {
         await registerProviderCredential({
           profile_action: useSession.getState().profileActionHash!,
@@ -179,6 +197,9 @@ export function Onboarding() {
                   <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
                   <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
                 </div>
+                <div className="mb-4">
+                  <AddressSearch value={location} onChange={setLocation} label="Your location" />
+                </div>
                 <div className="mb-1">
                   <label className="block text-xs font-semibold text-ink-500 mb-1">Local node address</label>
                   <Input value={adminUrl} onChange={(e) => setAdminUrl(e.target.value)} placeholder="ws://localhost:XXXXX/" className="font-mono" />
@@ -210,7 +231,7 @@ export function Onboarding() {
                 <h2 className="text-lg font-bold mb-1">Your vehicle</h2>
                 <p className="text-sm text-ink-500 mb-4">Shown to customers once you're assigned their delivery.</p>
 
-                <div className="mb-4 flex justify-center">
+                <div className="mb-4">
                   <PhotoInput value={vehiclePhoto} onChange={setVehiclePhoto} shape="banner" />
                 </div>
 
@@ -257,9 +278,22 @@ export function Onboarding() {
           </AnimatePresence>
 
           {hasStoredIdentity() && step === "roles" && (
-            <button onClick={handleReconnect} disabled={connecting} className="mt-4 w-full text-center text-xs font-semibold text-relay-600 hover:underline">
-              {connecting ? "Reconnecting..." : "Continue as your existing identity"}
-            </button>
+            <div className="mt-4">
+              <button onClick={handleReconnect} disabled={connecting} className="w-full text-center text-xs font-semibold text-relay-600 hover:underline">
+                {connecting ? "Reconnecting..." : "Continue as your existing identity"}
+              </button>
+              {showError && (
+                <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <p>{showError}</p>
+                  <p className="mt-1.5 text-[11px] text-red-600">
+                    This usually means your local node was restarted, which wipes every identity on it -- there's no way to recover this one.{" "}
+                    <button onClick={signOut} className="font-semibold underline">
+                      Forget it and start over
+                    </button>
+                  </p>
+                </motion.div>
+              )}
+            </div>
           )}
         </Card>
       </motion.div>

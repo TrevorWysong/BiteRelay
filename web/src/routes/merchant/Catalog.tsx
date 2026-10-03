@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Star, Store, Tag } from "lucide-react";
+import { Gift, ListChecks, Pencil, Plus, Sparkles, Star, Store, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   publishCatalog,
@@ -21,9 +21,11 @@ import { useSession } from "../../store/session";
 import { encodeGeohash } from "../../lib/geohash";
 import { Button, Card, Checkbox, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
+import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
 import { describeRequirement, describeReward } from "../../lib/promotions";
+import { describeError } from "../../lib/errors";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review } from "../../holochain/types";
 
@@ -97,6 +99,7 @@ function buildReward(form: typeof EMPTY_PROMO_FORM): PromoReward | null {
 
 export function MerchantCatalog() {
   const location = useSession((s) => s.location);
+  const [pickupLocation, setPickupLocation] = useState(location);
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
@@ -104,6 +107,7 @@ export function MerchantCatalog() {
   const [loading, setLoading] = useState(true);
   const [businessName, setBusinessName] = useState("");
   const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailsDraft, setDetailsDraft] = useState({ description: "", cuisine_type: "", banner_data_uri: "", phone: "", address_line: "", hours_open: "", hours_close: "" });
   const [savingDetails, setSavingDetails] = useState(false);
@@ -155,9 +159,12 @@ export function MerchantCatalog() {
   async function publish() {
     if (!businessName.trim()) return;
     setPublishing(true);
+    setPublishError(null);
     try {
-      await publishCatalog({ business_name: businessName.trim(), location });
+      await publishCatalog({ business_name: businessName.trim(), location: pickupLocation });
       await load();
+    } catch (err) {
+      setPublishError(describeError(err));
     } finally {
       setPublishing(false);
     }
@@ -309,6 +316,8 @@ export function MerchantCatalog() {
         </div>
         <Card className="flex flex-col gap-3 p-5">
           <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Cara's Kitchen" />
+          <AddressSearch value={pickupLocation} onChange={setPickupLocation} label="Pickup location" />
+          {publishError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{publishError}</p>}
           <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
             Publish catalog
           </Button>
@@ -446,13 +455,29 @@ export function MerchantCatalog() {
           </div>
           <AnimatePresence initial={false}>
           {showAddPromo && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="mb-3 flex flex-col gap-3 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
-              <Input value={promoForm.code} onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))} placeholder="CODE (e.g. WELCOME10)" className="font-mono" />
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-3 flex flex-col gap-3 rounded-2xl border border-ink-200/70 dark:border-ink-700/70 bg-white dark:bg-ink-900/40 p-4 shadow-sm"
+            >
+              <Input
+                value={promoForm.code}
+                onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))}
+                placeholder="CODE (e.g. WELCOME10)"
+                className="font-mono uppercase tracking-wide"
+              />
 
-              <div>
-                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Requirement</p>
-                <div className="flex items-center gap-2">
-                  <Select value={promoForm.requirementKind} onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}>
+              <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
+                  <ListChecks size={13} className="text-relay-500" /> Requirement
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select
+                    value={promoForm.requirementKind}
+                    onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}
+                    className="flex-1 min-w-[11rem]"
+                  >
                     <option value="none">No requirement (always eligible)</option>
                     <option value="minSpend">Minimum spend</option>
                     <option value="minItemQty">Minimum quantity of an item</option>
@@ -482,13 +507,13 @@ export function MerchantCatalog() {
                   )}
                 </div>
                 {promoForm.requirementKind === "loyalty" && (
-                  <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
+                  <label className="mt-2.5 flex items-center gap-2 text-xs text-ink-400">
                     <Checkbox checked={promoForm.autoApply} onChange={(e) => setPromoForm((f) => ({ ...f, autoApply: e.target.checked }))} />
                     Apply automatically, no code needed. Eligible customers get it without typing anything
                   </label>
                 )}
                 {promoForm.requirementKind === "minItemQty" && (
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2.5 flex items-center gap-2">
                     <Select value={promoForm.requirementItemHex} onChange={(e) => setPromoForm((f) => ({ ...f, requirementItemHex: e.target.value }))} className="flex-1">
                       <option value="">Select an item…</option>
                       {(items ?? []).map((row) => (
@@ -510,10 +535,16 @@ export function MerchantCatalog() {
                 )}
               </div>
 
-              <div>
-                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Reward</p>
-                <div className="flex items-center gap-2">
-                  <Select value={promoForm.rewardKind} onChange={(e) => setPromoForm((f) => ({ ...f, rewardKind: e.target.value as RewardKind }))}>
+              <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
+                  <Gift size={13} className="text-relay-500" /> Reward
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select
+                    value={promoForm.rewardKind}
+                    onChange={(e) => setPromoForm((f) => ({ ...f, rewardKind: e.target.value as RewardKind }))}
+                    className="flex-1 min-w-[11rem]"
+                  >
                     <option value="percentOffSubtotal">% off order</option>
                     <option value="flatOffSubtotal">$ off order</option>
                     <option value="freeItem">Free item (e.g. BOGO)</option>
@@ -534,7 +565,7 @@ export function MerchantCatalog() {
                   )}
                 </div>
                 {(promoForm.rewardKind === "freeItem" || promoForm.rewardKind === "percentOffItem") && (
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2.5 flex items-center gap-2">
                     <Select value={promoForm.rewardItemHex} onChange={(e) => setPromoForm((f) => ({ ...f, rewardItemHex: e.target.value }))} className="flex-1">
                       <option value="">Select an item…</option>
                       {(items ?? []).map((row) => (
@@ -556,13 +587,27 @@ export function MerchantCatalog() {
                 )}
               </div>
 
+              {(() => {
+                const liveRequirement = buildRequirement(promoForm);
+                const liveReward = buildReward(promoForm);
+                if (!liveRequirement || !liveReward) return null;
+                return (
+                  <div className="flex items-start gap-2 rounded-xl bg-relay-50 dark:bg-relay-900/20 px-3 py-2.5 text-xs text-relay-700 dark:text-relay-300">
+                    <Sparkles size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      {describeRequirement(liveRequirement, itemName)} · {describeReward(liveReward, itemName)}
+                    </span>
+                  </div>
+                );
+              })()}
+
               <Button
                 loading={savingPromo}
                 disabled={!promoForm.code.trim() || !buildRequirement(promoForm) || !buildReward(promoForm)}
                 onClick={savePromo}
-                className="py-2 text-xs"
+                className="py-2.5 text-xs"
               >
-                Create
+                Create promo code
               </Button>
             </motion.div>
           )}

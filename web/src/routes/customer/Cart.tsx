@@ -4,7 +4,7 @@ import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
-import { LocationInput } from "../../components/LocationInput";
+import { AddressSearch } from "../../components/AddressSearch";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
@@ -311,7 +311,7 @@ export function Cart() {
       </motion.div>
 
       <Section title="Deliver to">
-        <LocationInput value={dropoff} onChange={setDropoff} />
+        <AddressSearch value={dropoff} onChange={setDropoff} label="Delivery location" />
         <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
           <Checkbox checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
           Save as my default location
