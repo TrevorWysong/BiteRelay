@@ -3,7 +3,7 @@ import { Bike, Link2, MapPin, Power } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
 import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids, sendLocationUpdate } from "../../holochain/zomes/dispatch";
-import { recordLeg, initiateLegAttestation } from "../../holochain/zomes/attestation";
+import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
@@ -312,7 +312,13 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
       } else if (action === "pickup") {
         const legRecord = await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
-        await initiateLegAttestation(actionHash(legRecord));
+        const legHash = actionHash(legRecord);
+        const receiptRecord = await initiateLegAttestation(legHash);
+        // Required second step -- see initiateLegAttestation's own doc
+        // comment. Without this, the receipt commits fine but stays
+        // permanently undiscoverable, and completeDelivery later fails
+        // with "0 of N required leg attestations found".
+        await linkLegToReceipt(legHash, actionHash(receiptRecord));
         await setOrderStatus(row.hash, "PickedUp");
       } else if (action === "await_dropoff") {
         const legRecord = await recordLeg({
@@ -323,7 +329,9 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           geo_at_completion: location,
           photo_data_uri: dropoffPhoto,
         });
-        await initiateLegAttestation(actionHash(legRecord));
+        const legHash = actionHash(legRecord);
+        const receiptRecord = await initiateLegAttestation(legHash);
+        await linkLegToReceipt(legHash, actionHash(receiptRecord));
       }
       await onAdvanced();
     } catch (err) {
