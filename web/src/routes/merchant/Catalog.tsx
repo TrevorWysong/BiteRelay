@@ -9,16 +9,14 @@ import {
   addMenuItem,
   updateMenuItem,
   listMenuItems,
-  getNearbyMerchants,
+  getMyCatalog,
   createPromoCode,
   setPromoCodeActive,
   listPromoCodesForCatalog,
 } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
-import { decodeEntry, actionHash, bytesToHex, hexToBytes, bytesEqual } from "../../holochain/decode";
-import { myAgentPubKey } from "../../holochain/client";
+import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { useSession } from "../../store/session";
-import { encodeGeohash } from "../../lib/geohash";
 import { Button, Card, Checkbox, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { AddressSearch } from "../../components/AddressSearch";
@@ -125,10 +123,8 @@ export function MerchantCatalog() {
   const [savingPromo, setSavingPromo] = useState(false);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
 
-  async function load(searchLocation = location) {
-    const me = myAgentPubKey();
-    const page = await getNearbyMerchants(encodeGeohash(searchLocation.lat, searchLocation.lon));
-    const mine = page.catalogs.find((r) => bytesEqual(decodeEntry<MerchantCatalog>(r).owner, me));
+  async function load() {
+    const mine = await getMyCatalog();
     if (mine) {
       const decoded = decodeEntry<MerchantCatalog>(mine);
       setCatalog(decoded);
@@ -163,16 +159,13 @@ export function MerchantCatalog() {
     setPublishError(null);
     try {
       await publishCatalog({ business_name: businessName.trim(), location: pickupLocation });
-      // The merchant's real location may differ from whatever `location`
-      // was before they searched for an address here -- load() searches
-      // for "my own catalog" by geohash, so without this it would search
-      // the *old* cell, never find the catalog it just created, and the
-      // UI would silently sit on the publish card forever with no error
-      // (nothing actually failed -- the catalog exists, just undiscoverable
-      // from the stale search point). Sync the session location too, since
-      // every other geohash-based read in the app uses it.
+      // load() finds "my own catalog" via the OwnerToCatalog link now, not
+      // by geohash, so it isn't location-dependent -- but every *other*
+      // geohash-based read in the app (customer browse, etc.) still uses
+      // the session location, so still sync it to where the merchant just
+      // said their real pickup point is.
       setLocation(pickupLocation);
-      await load(pickupLocation);
+      await load();
     } catch (err) {
       setPublishError(describeError(err));
     } finally {

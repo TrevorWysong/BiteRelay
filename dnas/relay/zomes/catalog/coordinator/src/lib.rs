@@ -43,9 +43,35 @@ pub struct PublishCatalogInput {
     pub hours_close: String,
 }
 
+/// Resolves "does this agent already have a catalog" via the `OwnerToCatalog`
+/// link created at publish time -- deterministic and independent of geohash
+/// matching, unlike discovering it through `get_nearby_merchants` (which
+/// only works if the caller's current `location` happens to hash to the
+/// same cell the catalog itself did, and which has no stable tiebreak if
+/// more than one link exists for the same owner). `publish_catalog` below
+/// guards against ever creating more than one, but this picks the
+/// newest-by-link-timestamp regardless, so a client that somehow already
+/// has duplicates (e.g. from before that guard existed) still gets a
+/// stable, repeatable answer instead of an arbitrary one each call.
+#[hdk_extern]
+pub fn get_my_catalog(_: ()) -> ExternResult<Option<Record>> {
+    let owner = agent_info()?.agent_initial_pubkey;
+    let mut links = get_links(LinkQuery::try_new(owner, LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
+    links.sort_by_key(|l| l.timestamp);
+    let Some(link) = links.pop() else { return Ok(None) };
+    let Some(action_hash) = link.target.into_action_hash() else { return Ok(None) };
+    Ok(Some(resolve_latest(action_hash)?))
+}
+
 #[hdk_extern]
 pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
     let owner = agent_info()?.agent_initial_pubkey;
+    let existing = get_links(LinkQuery::try_new(owner.clone(), LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
+    if !existing.is_empty() {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "You already have a published storefront -- there's no second one to create.".into()
+        )));
+    }
     let geohash = relay_types::encode(input.location, CATALOG_GEOHASH_PRECISION);
     let catalog = MerchantCatalog {
         owner: owner.clone(),

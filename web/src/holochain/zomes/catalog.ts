@@ -35,6 +35,14 @@ export async function publishCatalog(input: { business_name: string; location: G
   return callZome("catalog", "publish_catalog", { ...EMPTY_DETAILS, ...input });
 }
 
+// Resolves the caller's own catalog directly via the OwnerToCatalog link,
+// not by geohash discovery -- independent of whatever `location` happens
+// to be set to right now, and stable even if a stale conductor build once
+// let a duplicate get created (see the Rust extern's own doc comment).
+export async function getMyCatalog(): Promise<HcRecord | null> {
+  return callZome("catalog", "get_my_catalog", null);
+}
+
 export async function updateCatalogDetails(originalAction: ActionHash, details: CatalogDetails): Promise<HcRecord> {
   return callZome("catalog", "update_catalog_details", { original_action: originalAction, ...EMPTY_DETAILS, ...details });
 }
