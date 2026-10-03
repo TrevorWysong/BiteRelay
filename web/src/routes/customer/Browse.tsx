@@ -162,7 +162,7 @@ export function Browse() {
 
       <h1 className="mb-1 text-xl font-black tracking-tight">Restaurants near you</h1>
       <p className="mb-4 text-xs text-ink-400">
-        Discovered live from the DHT -- {rows?.length ?? "..."} merchant{rows?.length === 1 ? "" : "s"} in this area right now.
+        {rows?.length ?? "…"} restaurant{rows?.length === 1 ? "" : "s"} open near you right now.
       </p>
 
       {cuisines.length > 0 && (
@@ -222,7 +222,7 @@ export function Browse() {
       )}
 
       {rows !== null && filtered?.length === 0 && (
-        <EmptyState title="No restaurants nearby yet" subtitle="Merchants publish a catalog for their own location -- try switching to Sell mode to publish one for this demo." />
+        <EmptyState title="No restaurants nearby yet" subtitle="Switch to Sell mode to add one and see how it looks here." />
       )}
 
       {filtered && filtered.length > 0 && (

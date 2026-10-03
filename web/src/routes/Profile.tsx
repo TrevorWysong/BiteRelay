@@ -9,7 +9,7 @@ import { getReputationSummary } from "../holochain/zomes/reputation";
 import { getReviewsFor } from "../holochain/zomes/reputation";
 import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { decodeEntry } from "../holochain/decode";
-import { Button, Card, Skeleton, StatNumber } from "../components/ui";
+import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { StarRating } from "../components/StarRating";
 import { formatCents } from "../lib/format";
@@ -119,19 +119,8 @@ export function ProfilePage() {
         <AnimatePresence mode="wait" initial={false}>
         {editing ? (
           <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
-            <textarea
-              value={draft.bio}
-              onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))}
-              rows={2}
-              placeholder="Bio"
-              className="resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-            />
-            <input
-              value={draft.phone}
-              onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
-              placeholder="Phone"
-              className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-            />
+            <Textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
+            <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
             <Button loading={saving} onClick={saveProfile} className="py-2 text-xs">
               Save
             </Button>
@@ -161,17 +150,16 @@ export function ProfilePage() {
           {editingVehicle ? (
             <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={vehicleDraft.photo_data_uri} onChange={(v) => setVehicleDraft((d) => ({ ...d, photo_data_uri: v }))} shape="banner" />
-              <input
+              <Input
                 value={vehicleDraft.vehicle_description}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, vehicle_description: e.target.value }))}
                 placeholder="e.g. Blue Honda Civic"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
               />
-              <input
+              <Input
                 value={vehicleDraft.license_plate}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, license_plate: e.target.value }))}
                 placeholder="License plate"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
+                className="font-mono"
               />
               <Button loading={saving} onClick={saveVehicle} className="py-2 text-xs">
                 Save
@@ -186,7 +174,7 @@ export function ProfilePage() {
               </div>
             </motion.div>
           ) : (
-            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet -- tap the pencil to add it.</motion.p>
+            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet — tap the pencil to add it.</motion.p>
           )}
           </AnimatePresence>
         </Card>
@@ -195,10 +183,10 @@ export function ProfilePage() {
 
       <motion.div variants={fadeSlideUp}>
       <Card className="mb-4 p-4">
-        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Agent identity</p>
+        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Your identity</p>
         <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "—"}</p>
         <p className="mt-2 text-xs text-ink-400">
-          This is your actual cryptographic identity on the DHT — there's no separate account behind it, and nobody but you holds the private key.
+          This is your real cryptographic identity — there's no account behind it on any server, and nobody but you holds the private key.
         </p>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
           <Fingerprint size={13} className={hasDeviceLock ? "text-presence-600" : "text-ink-300"} />
@@ -227,7 +215,7 @@ export function ProfilePage() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-ink-900 dark:text-ink-50">No-skim transparency</p>
-          <p className="text-xs text-ink-400">See every cent, verified from your own ledger -- $0 platform fee, always.</p>
+          <p className="text-xs text-ink-400">See every cent, verified from your own ledger — $0 platform fee, always.</p>
         </div>
         <ChevronRight size={18} className="shrink-0 text-ink-300" />
       </Link>

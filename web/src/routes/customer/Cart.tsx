@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { Button, Card, StatNumber } from "../../components/ui";
+import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { LocationInput } from "../../components/LocationInput";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
@@ -162,7 +162,7 @@ export function Cart() {
       return;
     }
     if (!isPromoEligible(match.promo.requirement, cart.lines, cart.total(), completedOrderCount)) {
-      setPromoError(`Not eligible yet -- ${describeRequirement(match.promo.requirement, itemName).toLowerCase()} to use this code.`);
+      setPromoError(`Not eligible yet — ${describeRequirement(match.promo.requirement, itemName).toLowerCase()} to use this code.`);
       return;
     }
     setAppliedPromo(match);
@@ -312,7 +312,7 @@ export function Cart() {
       <Section title="Deliver to">
         <LocationInput value={dropoff} onChange={setDropoff} />
         <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
-          <input type="checkbox" checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
+          <Checkbox checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
           Save as my default location
         </label>
         <p className="mb-2 mt-3 text-xs font-bold uppercase tracking-wide text-ink-400">Drop-off</p>
@@ -337,15 +337,9 @@ export function Cart() {
         <AnimatePresence initial={false}>
           {scheduled && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
-              <input
-                type="datetime-local"
-                value={scheduledFor}
-                onChange={(e) => setScheduledFor(e.target.value)}
-                className="w-full rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-              />
+              <Input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} />
               <p className="mt-1 text-xs text-ink-400">
-                No driver matching starts until this time -- your Orders screen will show a button to open it for bids once it arrives (there's no
-                server-side scheduler here, it runs from your own client).
+                We won't look for a driver until this time. You can open it up early anytime from your Orders screen.
               </p>
             </motion.div>
           )}
@@ -360,7 +354,7 @@ export function Cart() {
           </button>
         }
       >
-        {recurringSaved && !showRecurring && <p className="text-xs text-presence-600">Saved -- manage it from your Orders screen.</p>}
+        {recurringSaved && !showRecurring && <p className="text-xs text-presence-600">Saved! Manage it from your Orders screen.</p>}
         <AnimatePresence initial={false}>
           {showRecurring && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
@@ -373,27 +367,18 @@ export function Cart() {
                 </ToggleChip>
               </div>
               {recurrenceKind === "Weekly" && (
-                <select
-                  value={recurrenceWeekday}
-                  onChange={(e) => setRecurrenceWeekday(Number(e.target.value))}
-                  className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
-                >
+                <Select value={recurrenceWeekday} onChange={(e) => setRecurrenceWeekday(Number(e.target.value))}>
                   {WEEKDAYS.map((day, i) => (
                     <option key={day} value={i}>
                       {day}
                     </option>
                   ))}
-                </select>
+                </Select>
               )}
-              <input
-                type="time"
-                value={recurrenceTime}
-                onChange={(e) => setRecurrenceTime(e.target.value)}
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
-              />
+              <Input type="time" value={recurrenceTime} onChange={(e) => setRecurrenceTime(e.target.value)} />
               <p className="text-xs text-ink-400">
-                Fires from your own device while the app is open -- there's no server-side scheduler. Items are re-matched
-                against the merchant's current menu each time, best-effort, same as reordering.
+                This order will place itself automatically on that schedule while the app is open on your device. We'll match
+                the items against the current menu each time, so prices or availability may change slightly.
               </p>
               <Button loading={savingRecurring} onClick={saveRecurring} className="py-2 text-xs">
                 Save recurring order
@@ -404,13 +389,7 @@ export function Cart() {
       </Section>
 
       <Section title="Delivery notes">
-        <textarea
-          value={instructions}
-          onChange={(e) => setInstructions(e.target.value)}
-          rows={2}
-          placeholder="Leave at the door, gate code, etc."
-          className="w-full resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-        />
+        <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
       </Section>
 
       <Section title="Delivery fee cap">
@@ -428,7 +407,7 @@ export function Cart() {
               {formatCents(cents)}
             </ToggleChip>
           ))}
-          <input
+          <Input
             type="number"
             min={0}
             step={0.5}
@@ -437,8 +416,9 @@ export function Cart() {
               setCustomFee(e.target.value);
               setFeePreset(null);
             }}
-            placeholder="Custom $"
-            className="w-24 rounded-full border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-1.5 text-xs outline-none focus:border-relay-400"
+            placeholder="Custom"
+            prefix="$"
+            className="w-24 rounded-full py-1.5 text-xs"
           />
         </div>
       </Section>
@@ -457,7 +437,7 @@ export function Cart() {
               {p === 0 ? "No tip" : `${p}%`}
             </ToggleChip>
           ))}
-          <input
+          <Input
             type="number"
             min={0}
             step={0.5}
@@ -466,8 +446,9 @@ export function Cart() {
               setCustomTip(e.target.value);
               setTipPercent(null);
             }}
-            placeholder="Custom $"
-            className="w-24 rounded-full border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-1.5 text-xs outline-none focus:border-relay-400"
+            placeholder="Custom"
+            prefix="$"
+            className="w-24 rounded-full py-1.5 text-xs"
           />
         </div>
       </Section>
@@ -498,17 +479,12 @@ export function Cart() {
                 </button>
               </div>
               <p className="mt-0.5 text-xs opacity-80">{describeReward(appliedPromo.promo.reward, itemName)}</p>
-              {!promoEvaluation?.eligible && <p className="mt-1 text-xs text-red-600">No longer eligible -- {describeRequirement(appliedPromo.promo.requirement, itemName).toLowerCase()}.</p>}
+              {!promoEvaluation?.eligible && <p className="mt-1 text-xs text-red-600">No longer eligible — {describeRequirement(appliedPromo.promo.requirement, itemName).toLowerCase()}.</p>}
               {promoAwaitingRewardItem && <p className="mt-1 text-xs text-amber-600">Add the qualifying item to your cart to redeem this.</p>}
             </motion.div>
           ) : (
             <motion.div key="unapplied" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex gap-2">
-              <input
-                value={promoInput}
-                onChange={(e) => setPromoInput(e.target.value)}
-                placeholder="Enter code"
-                className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
-              />
+              <Input value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Enter code" className="flex-1 font-mono" />
               <Button variant="ghost" className="px-4 py-2 text-xs" onClick={applyPromo}>
                 Apply
               </Button>
@@ -547,8 +523,7 @@ export function Cart() {
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mt-4 rounded-2xl bg-ink-100/60 dark:bg-ink-800/60 p-4 text-xs text-ink-500 dark:text-ink-400">
-        Placing this order publishes it to your local geohash cell — nearby drivers are notified directly, with a background poll
-        as a backstop in case the direct notification doesn't land (it's fire-and-forget by design; see HOLOCHAIN_ISSUES.md #1).
+        Placing this order notifies nearby drivers directly — if nobody picks it up right away, it stays visible until one does.
       </motion.div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}

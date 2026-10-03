@@ -57,7 +57,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
   if (status === "Scheduled") {
     return (
       <TerminalBanner icon={<Clock size={20} />} tone="neutral">
-        Scheduled for later -- not yet open for driver bids.
+        Scheduled for later — we'll start looking for a driver closer to the time.
       </TerminalBanner>
     );
   }

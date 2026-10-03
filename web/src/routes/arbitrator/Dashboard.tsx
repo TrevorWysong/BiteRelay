@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { listOpenDisputes, submitResolution } from "../../holochain/zomes/dispute";
 import { getOrder, applyDisputeResolution, applyCancellationDisputeResolution } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
-import { Button, Card, Skeleton, EmptyState, Badge, StatNumber } from "../../components/ui";
+import { Button, Card, Skeleton, EmptyState, Badge, Input, StatNumber, Textarea } from "../../components/ui";
 import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Dispute, DeliveryOrder } from "../../holochain/types";
@@ -142,31 +142,26 @@ function CaseCard({
       <p className="text-sm text-ink-600 dark:text-ink-300">{dispute.description}</p>
       <p className="text-xs text-ink-400">
         Raised by {shortAgentId(dispute.raised_by)} against {shortAgentId(dispute.respondent)}
-        {dispute.evidence_refs.length > 0 && ` · ${dispute.evidence_refs.length} evidence ref${dispute.evidence_refs.length === 1 ? "" : "s"}`}
+        {dispute.evidence_refs.length > 0 && ` · ${dispute.evidence_refs.length} evidence item${dispute.evidence_refs.length === 1 ? "" : "s"}`}
       </p>
 
       {!order ? (
         <p className="rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Could not load the underlying order -- this refreshes automatically, try again shortly.
+          Couldn't load this order yet — this refreshes automatically, try again shortly.
         </p>
       ) : (
         <div className="mt-1 flex flex-col gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
-          <label className="text-xs font-semibold text-ink-500">Forfeit amount (cents, charged to the losing party)</label>
-          <input
+          <label className="text-xs font-semibold text-ink-500">Forfeit amount — charged to the losing party</label>
+          <Input
             type="number"
             min={0}
-            value={forfeitAmount}
-            onChange={(e) => setForfeitAmount(Math.max(0, Number(e.target.value) || 0))}
-            className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
+            step={0.5}
+            value={forfeitAmount / 100}
+            onChange={(e) => setForfeitAmount(Math.max(0, Math.round(Number(e.target.value) * 100) || 0))}
+            prefix="$"
           />
           <label className="text-xs font-semibold text-ink-500">Reasoning</label>
-          <textarea
-            value={reasoning}
-            onChange={(e) => setReasoning(e.target.value)}
-            rows={2}
-            placeholder="Why you're ruling this way -- recorded on-chain."
-            className="resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-          />
+          <Textarea value={reasoning} onChange={(e) => setReasoning(e.target.value)} rows={2} placeholder="Why you're ruling this way — recorded permanently." />
           <div className="mt-1 flex gap-2">
             <Button variant="secondary" className="flex-1 px-3 py-2 text-xs" loading={resolving} disabled={!reasoning.trim()} onClick={() => handle("provider")}>
               {isCancellation ? "Compensate provider" : "Favor provider"}

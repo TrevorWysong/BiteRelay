@@ -1,5 +1,6 @@
-import type { HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { motion, type HTMLMotionProps } from "framer-motion";
+import { ChevronDown } from "lucide-react";
 import clsx from "clsx";
 
 export function Card({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
@@ -107,4 +108,62 @@ export function StatNumber({ children, className, tone = "default" }: { children
     danger: "text-red-600 dark:text-red-400",
   };
   return <span className={clsx("font-black tracking-tight tabular-nums", tones[tone], className)}>{children}</span>;
+}
+
+/// Shared "filled field" look for every text input, textarea, and select
+/// in the app -- a soft tinted background that lifts to a crisper
+/// white/dark surface plus a brand-colored ring on focus, instead of a
+/// bare bordered box that just changes border color. One place to tune so
+/// every form field in the app reads as the same, deliberately designed
+/// control rather than each screen's raw browser default.
+const fieldBase =
+  "w-full rounded-xl border border-ink-200/70 dark:border-ink-700/70 bg-ink-50/80 dark:bg-ink-800/50 px-3.5 py-2.5 text-sm text-ink-900 dark:text-ink-50 placeholder:text-ink-400 dark:placeholder:text-ink-500 outline-none transition focus:border-relay-400 focus:bg-white dark:focus:bg-ink-900 focus:ring-2 focus:ring-relay-100 dark:focus:ring-relay-900/40";
+
+type Adornment = { prefix?: ReactNode; suffix?: ReactNode };
+
+/// `prefix`/`suffix` render as fixed, non-editable glyphs inside the field
+/// (e.g. `prefix="$"` for a dollar amount, `suffix="%"` for a percentage)
+/// -- unlike placeholder text, these never disappear once the customer
+/// starts typing, so the unit stays legible the whole time.
+export function Input({ className, prefix, suffix, ...rest }: InputHTMLAttributes<HTMLInputElement> & Adornment) {
+  if (!prefix && !suffix) return <input className={clsx(fieldBase, className)} {...rest} />;
+  return (
+    <div className="relative flex items-center">
+      {prefix && <span className="pointer-events-none absolute left-3.5 text-sm font-medium text-ink-400">{prefix}</span>}
+      <input className={clsx(fieldBase, prefix && "pl-7", suffix && "pr-8", className)} {...rest} />
+      {suffix && <span className="pointer-events-none absolute right-3.5 text-sm font-medium text-ink-400">{suffix}</span>}
+    </div>
+  );
+}
+
+export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={clsx(fieldBase, "resize-none", className)} {...rest} />;
+}
+
+/// Native `<select>`s render their own platform-default arrow and chrome
+/// that doesn't match anything else in this app -- `appearance-none` turns
+/// that off, and a `ChevronDown` icon stands in for it, styled the same as
+/// every other field.
+export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div className="relative">
+      <select className={clsx(fieldBase, "appearance-none pr-9", className)} {...rest}>
+        {children}
+      </select>
+      <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-400" />
+    </div>
+  );
+}
+
+export function Checkbox({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      type="checkbox"
+      className={clsx(
+        "h-4 w-4 shrink-0 rounded-md border-ink-300 dark:border-ink-600 text-relay-500 accent-relay-500 focus:ring-2 focus:ring-relay-100 dark:focus:ring-relay-900/40",
+        className
+      )}
+      {...rest}
+    />
+  );
 }

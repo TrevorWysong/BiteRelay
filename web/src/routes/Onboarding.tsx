@@ -4,7 +4,7 @@ import { Bike, ChefHat, ShoppingBag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { useSession } from "../store/session";
-import { Button, Card, Spinner } from "../components/ui";
+import { Button, Card, Input, Spinner, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
 import type { RoleTag } from "../holochain/types";
@@ -17,9 +17,6 @@ const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bi
 ];
 
 const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
-
-const inputClass =
-  "mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm transition focus:border-relay-500 focus:outline-none focus:ring-2 focus:ring-relay-100";
 
 type Step = "roles" | "details" | "vehicle";
 const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
@@ -66,7 +63,7 @@ export function Onboarding() {
       if (roles.includes("Provider")) {
         await registerProviderCredential({
           profile_action: useSession.getState().profileActionHash!,
-          vehicle_description: `${vehicleType}${vehicleDetail ? " -- " + vehicleDetail : ""}`,
+          vehicle_description: `${vehicleType}${vehicleDetail ? " · " + vehicleDetail : ""}`,
           capabilities: ["Food"],
           verified: false,
           license_plate: licensePlate,
@@ -96,7 +93,7 @@ export function Onboarding() {
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
         <h1 className="text-3xl font-black tracking-tight">Relay</h1>
         <p className="text-white/80 text-sm text-center max-w-xs">
-          A peer-to-peer delivery marketplace on Holochain -- no central server, every order runs directly between real agents.
+          A peer-to-peer delivery marketplace — no corporate middleman, no central server. Orders run directly between you and the people fulfilling them.
         </p>
       </motion.div>
 
@@ -122,7 +119,7 @@ export function Onboarding() {
             {step === "roles" && (
               <motion.div key="roles" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
                 <h2 className="text-lg font-bold mb-1">What do you want to do?</h2>
-                <p className="text-sm text-ink-500 mb-4">Pick one or more -- you can switch anytime.</p>
+                <p className="text-sm text-ink-500 mb-4">Pick one or more. You can switch anytime.</p>
                 <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2 mb-5">
                   {ROLE_CARDS.map(({ role, label, blurb, icon: Icon }) => {
                     const active = roles.includes(role);
@@ -162,29 +159,32 @@ export function Onboarding() {
               <motion.div key="details" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
                 <h2 className="text-lg font-bold mb-1">Create your identity</h2>
                 <p className="text-sm text-ink-500 mb-4">
-                  This provisions a real, independent agent on the conductor -- your own keypair and DHT cell, not an account on a shared server.
+                  This creates your own private identity, secured by a cryptographic key that only you hold — not an account on a shared server.
                 </p>
 
                 <div className="mb-4 flex justify-center">
                   <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
                 </div>
 
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Display name</label>
-                <input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" className={inputClass} />
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Bio (optional)</label>
-                <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" className={clsx(inputClass, "resize-none")} />
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" className={inputClass} />
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Conductor admin URL</label>
-                <input
-                  value={adminUrl}
-                  onChange={(e) => setAdminUrl(e.target.value)}
-                  placeholder="ws://localhost:XXXXX/"
-                  className={clsx(inputClass, "mb-1 font-mono")}
-                />
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">Display name</label>
+                  <Input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">Bio (optional)</label>
+                  <Textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
+                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
+                </div>
+                <div className="mb-1">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">Local node address</label>
+                  <Input value={adminUrl} onChange={(e) => setAdminUrl(e.target.value)} placeholder="ws://localhost:XXXXX/" className="font-mono" />
+                </div>
                 <p className="text-[11px] text-ink-400 mb-4">
                   Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
-                  <code className="bg-ink-100 rounded px-1">web/</code>) -- it starts a real conductor and prints this URL for you.
+                  <code className="bg-ink-100 rounded px-1">web/</code>) — it starts a local test node and gives you this address.
                 </p>
 
                 {showError && (
@@ -228,15 +228,14 @@ export function Onboarding() {
                     </button>
                   ))}
                 </div>
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
-                <input value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" className={inputClass} />
-                <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
-                <input
-                  value={licensePlate}
-                  onChange={(e) => setLicensePlate(e.target.value)}
-                  placeholder="ABC-1234"
-                  className={clsx(inputClass, "font-mono")}
-                />
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
+                  <Input value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
+                  <Input value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} placeholder="ABC-1234" className="font-mono" />
+                </div>
 
                 {showError && (
                   <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">

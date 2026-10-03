@@ -6,16 +6,17 @@ import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationD
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
 import { submitReview, submitItemReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
+import { getProfileForAgent } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
-import { Button, Card, Skeleton, StatNumber } from "../../components/ui";
+import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Review, WarrantSummary } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -36,6 +37,7 @@ interface DriverStats {
   completedCount: number;
   avgRating: number;
   reviewCount: number;
+  displayName: string | null;
 }
 
 const POLL_MS = 6000;
@@ -44,12 +46,15 @@ const POLL_MS = 6000;
 /// that choice should actually be informed by the bidder's track record,
 /// not just price/ETA/warrants -- see the architecture plan's discussion
 /// of why the restaurant doesn't get a separate veto: shared visibility
-/// into the same trust signal covers that interest too.
+/// into the same trust signal covers that interest too. Also resolves a
+/// real display name instead of showing the bidder's raw identity hash --
+/// `null` (falling back to `shortAgentId`) just means they haven't set one.
 async function fetchDriverStats(agent: Uint8Array): Promise<DriverStats> {
-  const [summary, reviews] = await Promise.all([getReputationSummary(agent), getReviewsFor(agent)]);
+  const [summary, reviews, profileRecord] = await Promise.all([getReputationSummary(agent), getReviewsFor(agent), getProfileForAgent(agent)]);
   const decoded = reviews.map((r) => decodeEntry<Review>(r));
   const avgRating = decoded.length ? decoded.reduce((s, r) => s + r.rating, 0) / decoded.length : 0;
-  return { completedCount: summary.completed_count, avgRating, reviewCount: decoded.length };
+  const displayName = profileRecord ? decodeEntry<Profile>(profileRecord).display_name : null;
+  return { completedCount: summary.completed_count, avgRating, reviewCount: decoded.length, displayName: displayName || null };
 }
 
 export function OrderDetail() {
@@ -291,7 +296,7 @@ export function OrderDetail() {
                     <Card className="flex items-center justify-between p-3.5">
                       <div>
                         <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
-                          Driver {shortAgentId(bid.bidder)} · {formatEta(bid.eta_seconds)}
+                          {stats?.displayName || `Driver ${shortAgentId(bid.bidder)}`} · {formatEta(bid.eta_seconds)}
                         </p>
                         <p className="text-xs text-ink-400">Delivery fee {formatCents(bid.price_offer)}</p>
                         {stats && (
@@ -306,7 +311,7 @@ export function OrderDetail() {
                         )}
                         {w && w.count > 0 && (
                           <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-                            <AlertTriangle size={12} /> {w.count} outstanding warrant{w.count === 1 ? "" : "s"}
+                            <AlertTriangle size={12} /> {w.count} verified complaint{w.count === 1 ? "" : "s"} on record
                           </p>
                         )}
                       </div>
@@ -349,7 +354,7 @@ export function OrderDetail() {
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && (
         <motion.div variants={fadeSlideUp} className="mt-4">
           <LiveMap pickup={pickup} dropoff={order.dropoff} driver={driverLocation} />
-          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location -- not every device shares this.</p>}
+          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location — not every device shares this.</p>}
         </motion.div>
       )}
 
@@ -390,29 +395,13 @@ export function OrderDetail() {
           <div>
             <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
             <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-            {merchantRating > 0 && (
-              <textarea
-                value={merchantComment}
-                onChange={(e) => setMerchantComment(e.target.value)}
-                rows={2}
-                placeholder="How was the food?"
-                className="mt-2 w-full resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-              />
-            )}
+            {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
           </div>
           {driver && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Your driver</p>
               <StarRatingInput value={driverRating} onChange={setDriverRating} />
-              {driverRating > 0 && (
-                <textarea
-                  value={driverComment}
-                  onChange={(e) => setDriverComment(e.target.value)}
-                  rows={2}
-                  placeholder="How was the delivery?"
-                  className="mt-2 w-full resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-                />
-              )}
+              {driverRating > 0 && <Textarea value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
             </div>
           )}
           {[...new Set(order.item_refs.map(bytesToHex))].length > 0 && (

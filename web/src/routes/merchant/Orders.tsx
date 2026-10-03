@@ -59,7 +59,7 @@ export function MerchantOrders() {
   }
 
   if (rows.length === 0) {
-    return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Orders naming your catalog show up here automatically -- this reads your own MerchantToOrder links." />;
+    return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="New orders for your restaurant show up here automatically." />;
   }
 
   return (

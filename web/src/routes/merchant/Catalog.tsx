@@ -19,7 +19,7 @@ import { decodeEntry, actionHash, bytesToHex, hexToBytes, bytesEqual } from "../
 import { myAgentPubKey } from "../../holochain/client";
 import { useSession } from "../../store/session";
 import { encodeGeohash } from "../../lib/geohash";
-import { Button, Card, Skeleton, StatNumber } from "../../components/ui";
+import { Button, Card, Checkbox, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { StarRating } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
@@ -305,15 +305,10 @@ export function MerchantCatalog() {
             <Store size={22} />
           </div>
           <h1 className="text-lg font-black text-ink-900 dark:text-ink-50">Publish your storefront</h1>
-          <p className="text-xs text-ink-400">This creates a real, discoverable catalog entry for your current location.</p>
+          <p className="text-xs text-ink-400">This creates your restaurant's storefront, visible to customers near your current location right away.</p>
         </div>
         <Card className="flex flex-col gap-3 p-5">
-          <input
-            value={businessName}
-            onChange={(e) => setBusinessName(e.target.value)}
-            placeholder="Cara's Kitchen"
-            className="rounded-xl border border-ink-200 dark:border-ink-700 bg-transparent px-3.5 py-2.5 text-sm outline-none focus:border-relay-400"
-          />
+          <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Cara's Kitchen" />
           <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
             Publish catalog
           </Button>
@@ -361,44 +356,22 @@ export function MerchantCatalog() {
           {editingDetails ? (
             <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={detailsDraft.banner_data_uri} onChange={(v) => setDetailsDraft((d) => ({ ...d, banner_data_uri: v }))} shape="banner" />
-              <textarea
+              <Textarea
                 value={detailsDraft.description}
                 onChange={(e) => setDetailsDraft((d) => ({ ...d, description: e.target.value }))}
                 rows={2}
                 placeholder="Describe your restaurant"
-                className="resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
               />
-              <input
+              <Input
                 value={detailsDraft.cuisine_type}
                 onChange={(e) => setDetailsDraft((d) => ({ ...d, cuisine_type: e.target.value }))}
                 placeholder="Cuisine (e.g. Cuban, Italian)"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
               />
-              <input
-                value={detailsDraft.address_line}
-                onChange={(e) => setDetailsDraft((d) => ({ ...d, address_line: e.target.value }))}
-                placeholder="Address"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-              />
-              <input
-                value={detailsDraft.phone}
-                onChange={(e) => setDetailsDraft((d) => ({ ...d, phone: e.target.value }))}
-                placeholder="Phone"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-              />
+              <Input value={detailsDraft.address_line} onChange={(e) => setDetailsDraft((d) => ({ ...d, address_line: e.target.value }))} placeholder="Address" />
+              <Input value={detailsDraft.phone} onChange={(e) => setDetailsDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
               <div className="flex gap-2">
-                <input
-                  value={detailsDraft.hours_open}
-                  onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_open: e.target.value }))}
-                  placeholder="Opens (09:00)"
-                  className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-                />
-                <input
-                  value={detailsDraft.hours_close}
-                  onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_close: e.target.value }))}
-                  placeholder="Closes (22:00)"
-                  className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-                />
+                <Input value={detailsDraft.hours_open} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_open: e.target.value }))} placeholder="Opens (09:00)" className="flex-1" />
+                <Input value={detailsDraft.hours_close} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_close: e.target.value }))} placeholder="Closes (22:00)" className="flex-1" />
               </div>
               <Button loading={savingDetails} onClick={saveDetails} className="py-2 text-xs">
                 Save
@@ -432,28 +405,18 @@ export function MerchantCatalog() {
             </button>
           </div>
           <p className="mb-2 text-xs text-ink-400">
-            Your share of each delivery's fee, split proportionally with the customer at settlement -- defaults to an even 50/50, since you're not paying a platform commission here. Adjust if your margins need a different split.
+            Your share of each delivery fee, split with the customer automatically. Defaults to an even 50/50, since there's no platform cut here to offset — adjust it if your margins call for a different split.
           </p>
           {editingSubsidy ? (
             <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={5}
-                value={subsidyDraft}
-                onChange={(e) => setSubsidyDraft(e.target.value)}
-                placeholder="50"
-                className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-              />
-              <span className="text-sm text-ink-400">%</span>
+              <Input type="number" min={0} max={100} step={5} value={subsidyDraft} onChange={(e) => setSubsidyDraft(e.target.value)} placeholder="50" suffix="%" className="w-24" />
               <Button loading={savingSubsidy} onClick={saveSubsidy} className="px-4 py-2 text-xs">
                 Save
               </Button>
             </div>
           ) : (
             <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
-              {catalog.delivery_subsidy_percent > 0 ? `You cover ${catalog.delivery_subsidy_percent}% of delivery` : "You cover 0% -- fully customer-paid"}
+              {catalog.delivery_subsidy_percent > 0 ? `You cover ${catalog.delivery_subsidy_percent}% of delivery` : "Customer covers the full delivery fee"}
             </p>
           )}
         </Card>
@@ -472,77 +435,64 @@ export function MerchantCatalog() {
           <AnimatePresence initial={false}>
           {showAddPromo && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="mb-3 flex flex-col gap-3 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
-              <input
-                value={promoForm.code}
-                onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))}
-                placeholder="CODE (e.g. WELCOME10)"
-                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm font-mono outline-none focus:border-relay-400"
-              />
+              <Input value={promoForm.code} onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))} placeholder="CODE (e.g. WELCOME10)" className="font-mono" />
 
               <div>
                 <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Requirement</p>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={promoForm.requirementKind}
-                    onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}
-                    className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
-                  >
-                    <option value="none">None -- always eligible</option>
+                  <Select value={promoForm.requirementKind} onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}>
+                    <option value="none">No requirement — always eligible</option>
                     <option value="minSpend">Minimum spend</option>
                     <option value="minItemQty">Minimum quantity of an item</option>
                     <option value="loyalty">Order count at this restaurant</option>
-                  </select>
+                  </Select>
                   {promoForm.requirementKind === "minSpend" && (
-                    <input
+                    <Input
                       type="number"
                       min={0.01}
                       step={0.5}
                       value={promoForm.requirementAmount}
                       onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
-                      placeholder="$"
-                      className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                      prefix="$"
+                      className="w-24"
                     />
                   )}
                   {promoForm.requirementKind === "loyalty" && (
-                    <input
+                    <Input
                       type="number"
                       min={1}
                       step={1}
                       value={promoForm.requirementAmount}
                       onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
                       placeholder="Prior orders"
-                      className="w-28 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                      className="w-28"
                     />
                   )}
                 </div>
                 {promoForm.requirementKind === "loyalty" && (
                   <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
-                    <input type="checkbox" checked={promoForm.autoApply} onChange={(e) => setPromoForm((f) => ({ ...f, autoApply: e.target.checked }))} />
-                    Auto-apply -- no code needed, eligible customers get it automatically
+                    <Checkbox checked={promoForm.autoApply} onChange={(e) => setPromoForm((f) => ({ ...f, autoApply: e.target.checked }))} />
+                    Apply automatically — no code needed, eligible customers get it without typing anything
                   </label>
                 )}
                 {promoForm.requirementKind === "minItemQty" && (
                   <div className="mt-2 flex items-center gap-2">
-                    <select
-                      value={promoForm.requirementItemHex}
-                      onChange={(e) => setPromoForm((f) => ({ ...f, requirementItemHex: e.target.value }))}
-                      className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
-                    >
-                      <option value="">Select an item...</option>
+                    <Select value={promoForm.requirementItemHex} onChange={(e) => setPromoForm((f) => ({ ...f, requirementItemHex: e.target.value }))} className="flex-1">
+                      <option value="">Select an item…</option>
                       {(items ?? []).map((row) => (
                         <option key={bytesToHex(row.hash)} value={bytesToHex(row.hash)}>
                           {row.item.name}
                         </option>
                       ))}
-                    </select>
-                    <input
+                    </Select>
+                    <Input
                       type="number"
                       min={1}
                       step={1}
                       value={promoForm.requirementAmount}
                       onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
                       placeholder="Qty"
-                      className="w-20 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                      className="w-20"
                     />
                   </div>
                 )}
@@ -551,50 +501,44 @@ export function MerchantCatalog() {
               <div>
                 <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Reward</p>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={promoForm.rewardKind}
-                    onChange={(e) => setPromoForm((f) => ({ ...f, rewardKind: e.target.value as RewardKind }))}
-                    className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
-                  >
+                  <Select value={promoForm.rewardKind} onChange={(e) => setPromoForm((f) => ({ ...f, rewardKind: e.target.value as RewardKind }))}>
                     <option value="percentOffSubtotal">% off order</option>
                     <option value="flatOffSubtotal">$ off order</option>
                     <option value="freeItem">Free item (e.g. BOGO)</option>
                     <option value="percentOffItem">% off an item</option>
-                  </select>
+                  </Select>
                   {(promoForm.rewardKind === "percentOffSubtotal" || promoForm.rewardKind === "flatOffSubtotal" || promoForm.rewardKind === "percentOffItem") && (
-                    <input
+                    <Input
                       type="number"
                       min={promoForm.rewardKind === "flatOffSubtotal" ? 0.01 : 1}
                       max={promoForm.rewardKind === "flatOffSubtotal" ? undefined : 100}
                       step={promoForm.rewardKind === "flatOffSubtotal" ? 0.5 : 1}
                       value={promoForm.rewardAmount}
                       onChange={(e) => setPromoForm((f) => ({ ...f, rewardAmount: Number(e.target.value) }))}
-                      className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                      prefix={promoForm.rewardKind === "flatOffSubtotal" ? "$" : undefined}
+                      suffix={promoForm.rewardKind !== "flatOffSubtotal" ? "%" : undefined}
+                      className="w-24"
                     />
                   )}
                 </div>
                 {(promoForm.rewardKind === "freeItem" || promoForm.rewardKind === "percentOffItem") && (
                   <div className="mt-2 flex items-center gap-2">
-                    <select
-                      value={promoForm.rewardItemHex}
-                      onChange={(e) => setPromoForm((f) => ({ ...f, rewardItemHex: e.target.value }))}
-                      className="flex-1 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-2 text-sm"
-                    >
-                      <option value="">Select an item...</option>
+                    <Select value={promoForm.rewardItemHex} onChange={(e) => setPromoForm((f) => ({ ...f, rewardItemHex: e.target.value }))} className="flex-1">
+                      <option value="">Select an item…</option>
                       {(items ?? []).map((row) => (
                         <option key={bytesToHex(row.hash)} value={bytesToHex(row.hash)}>
                           {row.item.name}
                         </option>
                       ))}
-                    </select>
-                    <input
+                    </Select>
+                    <Input
                       type="number"
                       min={1}
                       step={1}
                       value={promoForm.rewardQuantity}
                       onChange={(e) => setPromoForm((f) => ({ ...f, rewardQuantity: Number(e.target.value) }))}
                       placeholder="Qty"
-                      className="w-20 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                      className="w-20"
                     />
                   </div>
                 )}
@@ -624,7 +568,7 @@ export function MerchantCatalog() {
                       {row.promo.auto_apply && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-presence-600">auto</span>}
                     </p>
                     <p className="text-xs text-ink-400">
-                      {describeRequirement(row.promo.requirement, itemName)} -- {describeReward(row.promo.reward, itemName)}
+                      {describeRequirement(row.promo.requirement, itemName)} · {describeReward(row.promo.reward, itemName)}
                     </p>
                   </div>
                   <Button
@@ -657,41 +601,24 @@ export function MerchantCatalog() {
             <div className="flex gap-3">
               <PhotoInput value={itemForm.photo_data_uri} onChange={(v) => setItemForm((f) => ({ ...f, photo_data_uri: v }))} shape="circle" className="shrink-0" />
               <div className="flex flex-1 flex-col gap-2">
-                <input
-                  value={itemForm.name}
-                  onChange={(e) => setItemForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="Item name"
-                  className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-                />
-                <input
+                <Input value={itemForm.name} onChange={(e) => setItemForm((f) => ({ ...f, name: e.target.value }))} placeholder="Item name" />
+                <Input
                   type="number"
                   min={0}
                   step={0.5}
                   value={itemForm.price}
                   onChange={(e) => setItemForm((f) => ({ ...f, price: Number(e.target.value) }))}
-                  placeholder="Price ($)"
-                  className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
+                  placeholder="0.00"
+                  prefix="$"
                 />
               </div>
             </div>
-            <textarea
-              value={itemForm.description}
-              onChange={(e) => setItemForm((f) => ({ ...f, description: e.target.value }))}
-              rows={2}
-              placeholder="Description"
-              className="resize-none rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-            />
-            <input
-              value={itemForm.category}
-              onChange={(e) => setItemForm((f) => ({ ...f, category: e.target.value }))}
-              placeholder="Category (e.g. Appetizers)"
-              className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
-            />
-            <input
+            <Textarea value={itemForm.description} onChange={(e) => setItemForm((f) => ({ ...f, description: e.target.value }))} rows={2} placeholder="Description" />
+            <Input value={itemForm.category} onChange={(e) => setItemForm((f) => ({ ...f, category: e.target.value }))} placeholder="Category (e.g. Appetizers)" />
+            <Input
               value={itemForm.dietary_tags}
               onChange={(e) => setItemForm((f) => ({ ...f, dietary_tags: e.target.value }))}
               placeholder="Dietary tags, comma separated (Vegetarian, Spicy)"
-              className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-relay-400"
             />
             <Button loading={savingItem} disabled={!itemForm.name.trim()} onClick={saveItem} className="py-2 text-xs">
               {editingItemHash ? "Save changes" : "Add to menu"}

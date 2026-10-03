@@ -8,7 +8,7 @@ import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
-import { Button, Card, EmptyState, PresenceDot, Skeleton, StatNumber } from "../../components/ui";
+import { Button, Card, EmptyState, Input, PresenceDot, Skeleton, StatNumber } from "../../components/ui";
 import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
@@ -288,7 +288,7 @@ export function DriverDashboard() {
 
       {online && activeOrders.length >= MAX_CONCURRENT_DELIVERIES && (
         <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
-          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit -- finish one to see new nearby orders again.
+          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit — finish one to see new nearby orders again.
         </p>
       )}
 
@@ -424,24 +424,25 @@ function BidCard({
         )
       )}
       <p className="mt-1 text-xs text-ink-400">
-        {order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"} · dropoff {order.dropoff_geohash}
+        {order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
       {order.special_instructions && <p className="mt-1 truncate text-xs text-ink-400">"{order.special_instructions}"</p>}
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">
           ETA (min)
-          <input type="number" min={1} value={eta} onChange={(e) => setEta(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-1.5 text-sm" />
+          <Input type="number" min={1} value={eta} onChange={(e) => setEta(Number(e.target.value))} className="mt-1 py-1.5 text-sm" />
         </label>
         <label className="flex-1 text-xs text-ink-400">
-          Fee ($)
-          <input
+          Your fee
+          <Input
             type="number"
             min={0}
             step={0.5}
             value={fee / 100}
             onChange={(e) => setFee(Math.round(Number(e.target.value) * 100))}
-            className="mt-1 w-full rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-2 py-1.5 text-sm"
+            prefix="$"
+            className="mt-1 py-1.5 text-sm"
           />
         </label>
         <Button className="mt-4 px-4 py-2 text-xs" loading={loading} onClick={() => onBid(eta, fee)}>

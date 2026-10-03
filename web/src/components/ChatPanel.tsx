@@ -10,7 +10,7 @@ import { onLocalSignal, myAgentPubKey } from "../holochain/client";
 import { bytesEqual, bytesToHex } from "../holochain/decode";
 import { shortAgentId } from "../lib/format";
 import type { ActionHash } from "../holochain/types";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
 
 interface ChatLine {
   from: Uint8Array;
@@ -78,12 +78,12 @@ export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; 
         <div ref={bottomRef} />
       </div>
       <div className="flex gap-2">
-        <input
+        <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder="Message..."
-          className="flex-1 rounded-full border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-1.5 text-xs outline-none focus:border-relay-400"
+          className="flex-1 rounded-full py-1.5 text-xs"
         />
         <Button className="px-3 py-1.5" loading={sending} onClick={send}>
           <Send size={13} />
