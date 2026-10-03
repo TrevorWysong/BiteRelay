@@ -19,6 +19,8 @@
 //!   requester only).
 //! - `parties` -- the "resolve this order's accepted bid" lookup shared by
 //!   `chat` and `tracking`, not itself a zome-call surface.
+//! - `recurring` -- "same order every Monday" templates, client-fired
+//!   (no p2p cron), link-free (local chain query only).
 
 mod bids;
 mod chat;
@@ -26,6 +28,7 @@ mod disputes;
 mod matching;
 mod orders;
 mod parties;
+mod recurring;
 mod signals;
 mod tracking;
 
@@ -34,5 +37,6 @@ pub use chat::*;
 pub use disputes::*;
 pub use matching::get_open_orders_near;
 pub use orders::*;
+pub use recurring::*;
 pub use signals::*;
 pub use tracking::*;

@@ -2,6 +2,7 @@
 //! `LedgerTransaction`'s doc comment for the mutual-credit design and its
 //! deliberate simplifications.
 
+use dispatch_types::DeliveryOrder;
 use hdi::prelude::*;
 
 /// A stub mutual-credit ledger, internal to `relay`, standing in for
@@ -75,6 +76,30 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     }
 }
 
+/// Shared authorization check for both `LedgerTransaction` and
+/// `BalanceCheckpoint`: trusted if the author is one of the two named
+/// parties, a listed arbitrator, or -- the real gap `validate_transaction`'s
+/// own doc comment documents in full -- the related order's own requester
+/// or merchant (needed because `complete_delivery` settles payment from a
+/// single calling conductor, but `settle_delivery_fee` can author a
+/// transaction between two *other* parties when customer/merchant/driver
+/// are genuinely distinct agents).
+fn is_authorized_party_or_order_principal(
+    author: &AgentPubKey,
+    party_a: &AgentPubKey,
+    party_b: &AgentPubKey,
+    related_order: &ActionHash,
+) -> ExternResult<bool> {
+    if author == party_a || author == party_b || relay_governance::is_arbitrator(author)? {
+        return Ok(true);
+    }
+    let order_record = must_get_valid_record(related_order.clone())?;
+    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+        return Ok(false);
+    };
+    Ok(author == &order.requester || author == &order.merchant)
+}
+
 /// A checkpoint can't be fabricated independent of a real, already-validated
 /// transaction: it must reference one via `related_txn`, name one of that
 /// transaction's own two parties as the agent it's a balance for, and be
@@ -90,10 +115,9 @@ fn validate_checkpoint(checkpoint: &BalanceCheckpoint, author: &AgentPubKey) -> 
             "checkpoint agent must be one of related_txn's two parties".into(),
         ));
     }
-    let author_is_party = author == &txn.from || author == &txn.to;
-    if !author_is_party && !relay_governance::is_arbitrator(author)? {
+    if !is_authorized_party_or_order_principal(author, &txn.from, &txn.to, &txn.related_order)? {
         return Ok(ValidateCallbackResult::Invalid(
-            "a checkpoint can only be authored by one of its related transaction's two parties, or a listed arbitrator".into(),
+            "a checkpoint can only be authored by one of its related transaction's two parties, a listed arbitrator, or the related order's own requester/merchant".into(),
         ));
     }
     Ok(ValidateCallbackResult::Valid)
@@ -112,15 +136,24 @@ fn validate_transaction(txn: &LedgerTransaction, author: &AgentPubKey) -> Extern
     // against the referenced order actually existing -- a known, named gap,
     // not a hardened settlement path.
     //
-    // The one other party allowed to author a transaction between two other
-    // agents: a listed arbitrator, applying a dispute ruling
-    // (`dispatch::apply_dispute_resolution`, architecture plan §8) -- that's
-    // a third-party-triggered payment/forfeiture by design, not a bypass of
-    // the two-party rule above.
-    let author_is_party = author == &txn.from || author == &txn.to;
-    if !author_is_party && !relay_governance::is_arbitrator(author)? {
+    // Beyond the transaction's own two sides and a listed arbitrator (a
+    // dispute ruling, architecture plan §8), the related order's own
+    // requester or merchant are also trusted authors -- see
+    // `is_authorized_party_or_order_principal`'s own doc comment for why:
+    // a real bug, found only by testing with three *genuinely distinct*
+    // customer/merchant/driver agents rather than the "customer doubles as
+    // merchant" convention most of this codebase's other tests happened to
+    // use. `dispatch::settle_delivery_fee` splits the delivery fee into up
+    // to two transactions (merchant -> driver for the subsidy share,
+    // customer -> driver for the rest + tip), but `complete_delivery` is
+    // called from exactly *one* conductor -- that caller can never be the
+    // `from` party on *both* transactions when all three are distinct
+    // agents and the subsidy is nonzero (the *default*, not a rare case).
+    // Exactly one of the two transactions would always fail this check
+    // before this exception existed.
+    if !is_authorized_party_or_order_principal(author, &txn.from, &txn.to, &txn.related_order)? {
         return Ok(ValidateCallbackResult::Invalid(
-            "a transaction can only be authored by one of its two parties, or a listed arbitrator".into(),
+            "a transaction can only be authored by one of its two parties, a listed arbitrator, or the related order's own requester/merchant".into(),
         ));
     }
     must_get_valid_record(txn.related_order.clone())?;

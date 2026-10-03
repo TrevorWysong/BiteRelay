@@ -14,12 +14,12 @@ export function StarRating({ value, count, size = 14 }: { value: number; count?:
   );
 }
 
-export function StarRatingInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+export function StarRatingInput({ value, onChange, size = 28 }: { value: number; onChange: (v: number) => void; size?: number }) {
   return (
     <span className="inline-flex gap-1">
       {[1, 2, 3, 4, 5].map((i) => (
         <button key={i} type="button" onClick={() => onChange(i)} className="p-0.5">
-          <Star size={28} className={clsx("transition-colors", i <= value ? "fill-amber-400 text-amber-400" : "text-ink-200 dark:text-ink-700")} />
+          <Star size={size} className={clsx("transition-colors", i <= value ? "fill-amber-400 text-amber-400" : "text-ink-200 dark:text-ink-700")} />
         </button>
       ))}
     </span>

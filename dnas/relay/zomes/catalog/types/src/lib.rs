@@ -99,6 +99,15 @@ pub enum PromoRequirement {
     /// `catalog_integrity::validate_new_promo_code`). The "buy X" half of
     /// a buy-X-get-Y deal, including BOGO (`quantity: 1`).
     MinimumItemQuantity { item_ref: ActionHash, quantity: u32 },
+    /// The customer must have at least `count` of their own prior
+    /// `Delivered` orders at *this* catalog -- the loyalty-reward shape
+    /// ("order 5 times, your 6th is discounted"). Deliberately **not**
+    /// independently checkable inside `validate()`: counting an agent's
+    /// own order history is exactly the non-deterministic forward-reference
+    /// query this codebase has hit repeatedly (see `order_total`'s own
+    /// trust-tier note) -- evaluated client-side/best-effort only, same
+    /// tier as the arithmetic on every other requirement/reward here.
+    LoyaltyOrderCount(u32),
 }
 
 /// The benefit a `PromoCode` grants once its `PromoRequirement` is met --
@@ -142,4 +151,13 @@ pub struct PromoCode {
     pub active: bool,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
+    /// When `true`, an eligible customer gets this reward applied without
+    /// ever typing a code -- the mechanism loyalty rewards need (nobody
+    /// "types in" having ordered 5 times), but deliberately orthogonal to
+    /// any specific requirement/reward combo: a merchant could just as
+    /// well make a "spend $50, free dessert" deal auto-apply too. Defaults
+    /// `false` so every existing promo's "customer must type the code"
+    /// behavior is unchanged.
+    #[serde(default)]
+    pub auto_apply: bool,
 }

@@ -296,6 +296,7 @@ dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "relay_governance",
+ "relay_types",
  "serde",
 ]
 
@@ -780,6 +781,7 @@ version = "0.1.0"
 dependencies = [
  "hdk",
  "ledger_integrity",
+ "relay_coordinator_support",
  "relay_types",
  "serde",
 ]
@@ -788,6 +790,7 @@ dependencies = [
 name = "ledger_integrity"
 version = "0.1.0"
 dependencies = [
+ "dispatch_types",
  "hdi",
  "holochain_serialized_bytes",
  "relay_governance",

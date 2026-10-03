@@ -11,4 +11,5 @@ name = "ledger"
 hdk.workspace = true
 serde.workspace = true
 relay_types.workspace = true
+relay_coordinator_support.workspace = true
 ledger_integrity = { path = "../integrity" }

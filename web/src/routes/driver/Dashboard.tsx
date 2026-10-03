@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bike, MapPin, Power } from "lucide-react";
+import { Bike, Link2, MapPin, Power } from "lucide-react";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
 import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
-import { encodeGeohash } from "../../lib/geohash";
+import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { Button, Card, EmptyState, PresenceDot, Spinner } from "../../components/ui";
 import { OrderStatusTimeline } from "../../components/OrderStatus";
@@ -186,6 +186,32 @@ export function DriverDashboard() {
     }
   }
 
+  // Order batching (architecture plan §7's named v2 gap) -- a client-side
+  // convenience sort, not real route optimization: there's no way to
+  // deterministically validate "is this a good route" inside a zome, and
+  // that remains a deliberately open gap. Two zero-fetch signals, both
+  // already present on every DeliveryOrder: an exact catalog_ref match
+  // (literally the same pickup stop) and drop-off proximity to an order
+  // already accepted (clustered drop-offs -- e.g. the same apartment
+  // complex), so a driver already committed to one or two deliveries sees
+  // the genuinely convenient next pickup first, without this app ever
+  // claiming to have computed an optimal route.
+  const sameMerchantHexes = new Set(activeOrders.map((r) => bytesToHex(r.order.catalog_ref)));
+  function nearestActiveDropoffKm(order: DeliveryOrder): number | null {
+    if (activeOrders.length === 0) return null;
+    return Math.min(...activeOrders.map((a) => distanceKm(order.dropoff, a.order.dropoff)));
+  }
+  const sortedNearby = nearby
+    ? [...nearby].sort((a, b) => {
+        const aSame = sameMerchantHexes.has(bytesToHex(a.order.catalog_ref));
+        const bSame = sameMerchantHexes.has(bytesToHex(b.order.catalog_ref));
+        if (aSame !== bSame) return aSame ? -1 : 1;
+        const aDist = nearestActiveDropoffKm(a.order) ?? Infinity;
+        const bDist = nearestActiveDropoffKm(b.order) ?? Infinity;
+        return aDist - bDist;
+      })
+    : null;
+
   return (
     <div className="px-4 pt-4 pb-8">
       <Card className="mb-5 flex items-center justify-between p-4">
@@ -222,15 +248,22 @@ export function DriverDashboard() {
             <MapPin size={14} className="text-relay-500" />
             Nearby open orders
           </div>
-          {nearby === null && (
+          {sortedNearby === null && (
             <div className="flex justify-center py-10 text-ink-300">
               <Spinner />
             </div>
           )}
-          {nearby?.length === 0 && <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />}
+          {sortedNearby?.length === 0 && <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />}
           <div className="flex flex-col gap-3">
-            {nearby?.map(({ hash, order }) => (
-              <BidCard key={bytesToHex(hash)} order={order} loading={bidding === bytesToHex(hash)} onBid={(eta, fee) => placeBid(hash, eta, fee)} />
+            {sortedNearby?.map(({ hash, order }) => (
+              <BidCard
+                key={bytesToHex(hash)}
+                order={order}
+                loading={bidding === bytesToHex(hash)}
+                onBid={(eta, fee) => placeBid(hash, eta, fee)}
+                sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
+                nearbyDropoffKm={nearestActiveDropoffKm(order)}
+              />
             ))}
           </div>
         </>
@@ -337,7 +370,19 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   );
 }
 
-function BidCard({ order, loading, onBid }: { order: DeliveryOrder; loading: boolean; onBid: (etaMinutes: number, feeCents: number) => void }) {
+function BidCard({
+  order,
+  loading,
+  onBid,
+  sameMerchant,
+  nearbyDropoffKm,
+}: {
+  order: DeliveryOrder;
+  loading: boolean;
+  onBid: (etaMinutes: number, feeCents: number) => void;
+  sameMerchant?: boolean;
+  nearbyDropoffKm?: number | null;
+}) {
   const [eta, setEta] = useState(15);
   const [fee, setFee] = useState(500);
   return (
@@ -346,6 +391,19 @@ function BidCard({ order, loading, onBid }: { order: DeliveryOrder; loading: boo
         <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{formatCents(order.order_total)} order</p>
         <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>
       </div>
+      {sameMerchant ? (
+        <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-relay-600">
+          <Link2 size={12} /> Same restaurant as your current pickup
+        </p>
+      ) : (
+        nearbyDropoffKm !== null &&
+        nearbyDropoffKm !== undefined &&
+        nearbyDropoffKm < 2 && (
+          <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-presence-600">
+            <Link2 size={12} /> {nearbyDropoffKm < 0.1 ? "Same drop-off area" : `${nearbyDropoffKm.toFixed(1)}km from your other drop-off`}
+          </p>
+        )
+      )}
       <p className="mt-1 text-xs text-ink-400">
         {order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"} · dropoff {order.dropoff_geohash}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}

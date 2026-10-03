@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
-import { getCatalog } from "../../holochain/zomes/catalog";
+import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
-import { submitReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
+import { submitReview, submitItemReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
@@ -13,7 +13,7 @@ import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
-import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MerchantCatalog, Review, WarrantSummary } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -71,6 +71,8 @@ export function OrderDetail() {
   const [pickup, setPickup] = useState<GeoPoint | null>(null);
   const [driverLocation, setDriverLocation] = useState<GeoPoint | null>(null);
   const [dropoffPhoto, setDropoffPhoto] = useState<string | null>(null);
+  const [itemNames, setItemNames] = useState<Record<string, string>>({});
+  const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
@@ -80,6 +82,15 @@ export function OrderDetail() {
     if (!pickup) {
       getCatalog(decoded.catalog_ref)
         .then((r) => setPickup(decodeEntry<MerchantCatalog>(r).location))
+        .catch(() => {});
+    }
+    if (Object.keys(itemNames).length === 0) {
+      listMenuItems(decoded.catalog_ref)
+        .then((page) => {
+          const names: Record<string, string> = {};
+          for (const r of page.items) names[bytesToHex(actionHash(r))] = decodeEntry<MenuItem>(r).name;
+          setItemNames(names);
+        })
         .catch(() => {});
     }
     if (!dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
@@ -128,6 +139,11 @@ export function OrderDetail() {
       }
       if (driverRating > 0 && driver) {
         await submitReview({ subject: driver, order_original_action: orderRef, rating: driverRating, comment: driverComment });
+      }
+      for (const [itemHex, rating] of Object.entries(itemRatings)) {
+        if (rating > 0) {
+          await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
+        }
       }
       setReviewsSubmitted(true);
     } catch (err) {
@@ -367,7 +383,28 @@ export function OrderDetail() {
               )}
             </div>
           )}
-          <Button loading={submittingReview} disabled={merchantRating === 0 && driverRating === 0} onClick={submitReviews}>
+          {[...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
+              <div className="flex flex-col gap-2">
+                {[...new Set(order.item_refs.map(bytesToHex))].map((hex) => (
+                  <div key={hex} className="flex items-center justify-between">
+                    <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
+                    <StarRatingInput
+                      value={itemRatings[hex] ?? 0}
+                      onChange={(v) => setItemRatings((prev) => ({ ...prev, [hex]: v }))}
+                      size={16}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <Button
+            loading={submittingReview}
+            disabled={merchantRating === 0 && driverRating === 0 && Object.values(itemRatings).every((r) => r === 0)}
+            onClick={submitReviews}
+          >
             Submit review
           </Button>
         </Card>

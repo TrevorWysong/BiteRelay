@@ -5,6 +5,25 @@
 // is no server to reconcile a client-side encoding mismatch against.
 const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
 
+const EARTH_RADIUS_KM = 6371;
+
+/// Great-circle distance in kilometers -- used client-side only (order
+/// batching's route-aware sort in the driver dashboard), never sent to or
+/// compared against anything the backend validates. Deliberately kept out
+/// of any zome: there's no way to deterministically recompute "is this a
+/// good route" inside `validate()`, and real route optimization is a named,
+/// accepted v2 gap (architecture plan §7) -- this is just a client-side
+/// convenience sort, not a server-enforced guarantee.
+export function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinLon * sinLon;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 export function encodeGeohash(lat: number, lon: number, precision = 6): string {
   let latRange = [-90, 90];
   let lonRange = [-180, 180];

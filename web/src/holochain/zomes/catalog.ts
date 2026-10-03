@@ -82,8 +82,9 @@ export async function createPromoCode(input: {
   requirement: PromoRequirement;
   reward: PromoReward;
   expires_at?: number | null;
+  auto_apply?: boolean;
 }): Promise<HcRecord> {
-  return callZome("catalog", "create_promo_code", { expires_at: null, ...input });
+  return callZome("catalog", "create_promo_code", { expires_at: null, auto_apply: false, ...input });
 }
 
 export async function setPromoCodeActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {

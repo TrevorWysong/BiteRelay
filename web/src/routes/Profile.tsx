@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Fingerprint, LogOut, Pencil, Radio, Truck } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Truck } from "lucide-react";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
 import { getBalance } from "../holochain/zomes/ledger";
@@ -204,6 +205,17 @@ export function ProfilePage() {
           <p className="text-lg font-black text-ink-900 dark:text-ink-50">{rep === null ? "…" : rep.completed_count}</p>
         </Card>
       </div>
+
+      <Link to="/transparency" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-relay-500 to-presence-500 text-white">
+          <ShieldCheck size={18} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-ink-900 dark:text-ink-50">No-skim transparency</p>
+          <p className="text-xs text-ink-400">See every cent, verified from your own ledger -- $0 platform fee, always.</p>
+        </div>
+        <ChevronRight size={18} className="shrink-0 text-ink-300" />
+      </Link>
 
       {reviews.length > 0 && (
         <Card className="mb-4 p-4">

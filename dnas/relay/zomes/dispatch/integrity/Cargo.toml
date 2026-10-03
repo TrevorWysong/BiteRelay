@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 hdi.workspace = true
 serde.workspace = true
 holochain_serialized_bytes.workspace = true
+relay_types.workspace = true
 dispatch_types.workspace = true
 attestation_types.workspace = true
 dispute_types.workspace = true

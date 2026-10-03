@@ -43,18 +43,19 @@ const EMPTY_ITEM_FORM = { name: "", price: 10, description: "", photo_data_uri: 
 // free," and buy-X-get-Y-free/BOGO are all just one requirement kind paired
 // with one reward kind, never a hardcoded "promo type" branch anywhere in
 // this form.
-type RequirementKind = "none" | "minSpend" | "minItemQty";
+type RequirementKind = "none" | "minSpend" | "minItemQty" | "loyalty";
 type RewardKind = "percentOffSubtotal" | "flatOffSubtotal" | "freeItem" | "percentOffItem";
 
 const EMPTY_PROMO_FORM = {
   code: "",
   requirementKind: "none" as RequirementKind,
-  requirementAmount: 20, // dollars (minSpend) or units (minItemQty)
+  requirementAmount: 20, // dollars (minSpend), units (minItemQty), or prior-order count (loyalty)
   requirementItemHex: "",
   rewardKind: "percentOffSubtotal" as RewardKind,
   rewardAmount: 10, // percent (percentOff*) or dollars (flatOffSubtotal)
   rewardItemHex: "",
   rewardQuantity: 1,
+  autoApply: false,
 };
 
 function buildRequirement(form: typeof EMPTY_PROMO_FORM): PromoRequirement | null {
@@ -66,6 +67,8 @@ function buildRequirement(form: typeof EMPTY_PROMO_FORM): PromoRequirement | nul
     case "minItemQty":
       if (!form.requirementItemHex) return null;
       return { MinimumItemQuantity: { item_ref: hexToBytes(form.requirementItemHex), quantity: Math.max(1, Math.round(form.requirementAmount)) } };
+    case "loyalty":
+      return { LoyaltyOrderCount: Math.max(1, Math.round(form.requirementAmount)) };
   }
 }
 
@@ -200,6 +203,7 @@ export function MerchantCatalog() {
         code: promoForm.code.trim().toUpperCase(),
         requirement,
         reward,
+        auto_apply: promoForm.autoApply,
       });
       await load();
       setShowAddPromo(false);
@@ -467,6 +471,7 @@ export function MerchantCatalog() {
                     <option value="none">None -- always eligible</option>
                     <option value="minSpend">Minimum spend</option>
                     <option value="minItemQty">Minimum quantity of an item</option>
+                    <option value="loyalty">Order count at this restaurant</option>
                   </select>
                   {promoForm.requirementKind === "minSpend" && (
                     <input
@@ -479,7 +484,24 @@ export function MerchantCatalog() {
                       className="w-24 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
                     />
                   )}
+                  {promoForm.requirementKind === "loyalty" && (
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={promoForm.requirementAmount}
+                      onChange={(e) => setPromoForm((f) => ({ ...f, requirementAmount: Number(e.target.value) }))}
+                      placeholder="Prior orders"
+                      className="w-28 rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+                    />
+                  )}
                 </div>
+                {promoForm.requirementKind === "loyalty" && (
+                  <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
+                    <input type="checkbox" checked={promoForm.autoApply} onChange={(e) => setPromoForm((f) => ({ ...f, autoApply: e.target.checked }))} />
+                    Auto-apply -- no code needed, eligible customers get it automatically
+                  </label>
+                )}
                 {promoForm.requirementKind === "minItemQty" && (
                   <div className="mt-2 flex items-center gap-2">
                     <select
@@ -576,7 +598,10 @@ export function MerchantCatalog() {
               {promos.map((row) => (
                 <div key={bytesToHex(row.hash)} className="flex items-center justify-between rounded-lg bg-ink-50 dark:bg-ink-800/60 px-3 py-2">
                   <div>
-                    <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">{row.promo.code}</p>
+                    <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">
+                      {row.promo.code}
+                      {row.promo.auto_apply && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-presence-600">auto</span>}
+                    </p>
                     <p className="text-xs text-ink-400">
                       {describeRequirement(row.promo.requirement, itemName)} -- {describeReward(row.promo.reward, itemName)}
                     </p>

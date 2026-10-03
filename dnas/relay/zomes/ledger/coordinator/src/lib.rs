@@ -6,6 +6,7 @@
 
 use hdk::prelude::*;
 use ledger_integrity::*;
+use relay_coordinator_support::next_page_cursor;
 use relay_types::LedgerCommitmentRef;
 
 /// No entry is created here -- there is nothing to "lock" in a mutual-credit
@@ -178,4 +179,55 @@ pub fn count_balance_checkpoints(agent: AgentPubKey) -> ExternResult<u32> {
         GetStrategy::Local,
     )?;
     Ok(links.len() as u32)
+}
+
+const TRANSACTION_PAGE_SIZE: usize = 50;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ListMyTransactionsInput {
+    /// Page cursor -- pass back the previous call's `next_after` to continue.
+    /// `None` starts from the beginning (oldest first), same convention as
+    /// `catalog::list_menu_items`.
+    pub after: Option<Timestamp>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TransactionsPage {
+    pub transactions: Vec<Record>,
+    pub next_after: Option<Timestamp>,
+}
+
+/// The "no-skim" transparency dashboard's one real data source: every
+/// `LedgerTransaction` this agent is a party to (as either `from` or
+/// `to`), full records rather than `get_balance`'s folded sum -- the
+/// dashboard shows *where* each cent went, not just the net total.
+/// Deliberately **not** checkpoint-accelerated like `get_balance`: a
+/// checkpoint only carries a running *sum* forward, which is exactly the
+/// information this read throws away on purpose (it wants the individual
+/// transactions, not a number). Paginated instead, same tool catalog
+/// discovery already uses for its own unbounded-but-real-signal lists
+/// (architecture plan §9.3) -- a transaction history is signal, not
+/// noise, so bucketing would be the wrong tool; bounding page size is the
+/// right one. `GetStrategy::Local`, same reasoning as `get_balance`.
+#[hdk_extern]
+pub fn list_my_transactions(input: ListMyTransactionsInput) -> ExternResult<TransactionsPage> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let mut query = LinkQuery::try_new(me, LinkTypes::AgentToTransaction)?;
+    query.after = input.after;
+    let mut links = get_links(query, GetStrategy::Local)?;
+    links.sort_by_key(|l| l.timestamp);
+    let next_after = if links.len() > TRANSACTION_PAGE_SIZE {
+        Some(next_page_cursor(links[TRANSACTION_PAGE_SIZE - 1].timestamp))
+    } else {
+        None
+    };
+    links.truncate(TRANSACTION_PAGE_SIZE);
+    let mut transactions = Vec::with_capacity(links.len());
+    for link in links {
+        let Some(action_hash) = link.target.into_action_hash() else { continue };
+        if let Some(record) = get(action_hash, GetOptions::local())? {
+            transactions.push(record);
+        }
+    }
+    Ok(TransactionsPage { transactions, next_after })
 }

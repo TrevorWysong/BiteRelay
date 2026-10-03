@@ -125,6 +125,10 @@ fn validate_requirement(requirement: &PromoRequirement) -> Option<&'static str> 
             Some("MinimumItemQuantity's quantity must be greater than zero")
         }
         PromoRequirement::MinimumItemQuantity { .. } => None,
+        PromoRequirement::LoyaltyOrderCount(count) if *count == 0 => {
+            Some("LoyaltyOrderCount must be greater than zero")
+        }
+        PromoRequirement::LoyaltyOrderCount(_) => None,
     }
 }
 
@@ -241,7 +245,8 @@ fn validate_promo_code_update(promo: &PromoCode, author: &AgentPubKey, original_
         && prior.requirement == promo.requirement
         && prior.reward == promo.reward
         && prior.expires_at == promo.expires_at
-        && prior.created_at == promo.created_at;
+        && prior.created_at == promo.created_at
+        && prior.auto_apply == promo.auto_apply;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "a promo code update may only change active -- every other field must stay the same".into(),

@@ -5,12 +5,14 @@ import { Button } from "../../components/ui";
 import { LocationInput } from "../../components/LocationInput";
 import { useCart } from "../../store/cart";
 import { useSession } from "../../store/session";
-import { requestDelivery } from "../../holochain/zomes/dispatch";
+import { requestDelivery, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
-import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
+import { actionHash, bytesEqual, bytesToHex, decodeEntry } from "../../holochain/decode";
+import { myAgentPubKey } from "../../holochain/client";
 import { formatCents } from "../../lib/format";
-import { describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
-import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode } from "../../holochain/types";
+import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
+import { nextOccurrence, toMicros, WEEKDAYS } from "../../lib/recurrence";
+import type { ActionHash, DeliveryOrder, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] = [
@@ -39,6 +41,12 @@ export function Cart() {
   const [dropoff, setDropoff] = useState<GeoPoint>(location);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
   const [dropoffPreference, setDropoffPreference] = useState<DropoffPreference>("LeaveAtDoor");
+  const [showRecurring, setShowRecurring] = useState(false);
+  const [recurrenceKind, setRecurrenceKind] = useState<"Daily" | "Weekly">("Weekly");
+  const [recurrenceWeekday, setRecurrenceWeekday] = useState(1); // Monday
+  const [recurrenceTime, setRecurrenceTime] = useState("09:00");
+  const [savingRecurring, setSavingRecurring] = useState(false);
+  const [recurringSaved, setRecurringSaved] = useState(false);
   const [scheduled, setScheduled] = useState(false);
   const [scheduledFor, setScheduledFor] = useState("");
   const [tipPercent, setTipPercent] = useState<number | null>(15);
@@ -51,6 +59,7 @@ export function Cart() {
   const [promoInput, setPromoInput] = useState("");
   const [appliedPromo, setAppliedPromo] = useState<{ hash: ActionHash; promo: PromoCode } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
+  const [completedOrderCount, setCompletedOrderCount] = useState(0);
 
   useEffect(() => {
     if (!cart.catalogRef) return;
@@ -67,8 +76,46 @@ export function Cart() {
     listMenuItems({ catalog_ref: cart.catalogRef, after: null })
       .then((page) => setMenuItems(page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }))))
       .catch(() => setMenuItems([]));
+    // Loyalty rewards ("order 5 times, your 6th is discounted") need this
+    // customer's own completed-order count at *this* merchant -- their own
+    // RequesterToOrder links, a purely local, agent-centric read, same
+    // category as the no-skim dashboard's own personal ledger.
+    getOrdersForRequester(myAgentPubKey())
+      .then((records) => {
+        const count = records.filter((r) => {
+          const o = decodeEntry<DeliveryOrder>(r);
+          return o.status === "Delivered" && bytesEqual(o.catalog_ref, cart.catalogRef!);
+        }).length;
+        setCompletedOrderCount(count);
+      })
+      .catch(() => setCompletedOrderCount(0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-apply: once promo codes and the loyalty count are both known, the
+  // best *eligible, auto_apply* code gets applied without the customer
+  // typing anything -- but only if they haven't already applied a
+  // (manually typed) code of their own, which always wins.
+  useEffect(() => {
+    if (appliedPromo || promoCodes.length === 0) return;
+    const now = Date.now() * 1000;
+    const eligibleAutoApply = promoCodes.filter(
+      (p) =>
+        p.promo.auto_apply &&
+        p.promo.active &&
+        (p.promo.expires_at === null || p.promo.expires_at > now) &&
+        isPromoEligible(p.promo.requirement, cart.lines, cart.total(), completedOrderCount),
+    );
+    if (eligibleAutoApply.length === 0) return;
+    const best = eligibleAutoApply.reduce((a, b) =>
+      computePromoEffect(b.promo.reward, cart.lines, cart.total()).subtotalDiscountCents >
+      computePromoEffect(a.promo.reward, cart.lines, cart.total()).subtotalDiscountCents
+        ? b
+        : a,
+    );
+    setAppliedPromo(best);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promoCodes, completedOrderCount]);
 
   const itemName = (hex: string) => menuItems.find((m) => bytesToHex(m.hash) === hex)?.item.name;
 
@@ -81,7 +128,7 @@ export function Cart() {
       setPromoError("That code isn't valid or has expired.");
       return;
     }
-    if (!isPromoEligible(match.promo.requirement, cart.lines, cart.total())) {
+    if (!isPromoEligible(match.promo.requirement, cart.lines, cart.total(), completedOrderCount)) {
       setPromoError(`Not eligible yet -- ${describeRequirement(match.promo.requirement, itemName).toLowerCase()} to use this code.`);
       return;
     }
@@ -100,7 +147,7 @@ export function Cart() {
   // redeemable (e.g. a "spend $X get item Y free" code applied before Y was
   // added), and the summary should reflect that live, not the stale state
   // from when "Apply" was clicked.
-  const promoEvaluation = appliedPromo ? evaluatePromo(appliedPromo.promo, cart.lines, cart.total()) : null;
+  const promoEvaluation = appliedPromo ? evaluatePromo(appliedPromo.promo, cart.lines, cart.total(), completedOrderCount) : null;
   const promoDiscountCents = promoEvaluation?.effect.subtotalDiscountCents ?? 0;
   const promoRewardNeedsItem = appliedPromo ? "FreeItem" in appliedPromo.promo.reward || "PercentOffItem" in appliedPromo.promo.reward : false;
   const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
@@ -156,6 +203,37 @@ export function Cart() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPlacing(false);
+    }
+  }
+
+  async function saveRecurring() {
+    if (!cart.catalogRef || !cart.merchant) return;
+    setSavingRecurring(true);
+    setError(null);
+    try {
+      const recurrence: RecurrenceRule =
+        recurrenceKind === "Daily"
+          ? { Daily: { hour: Number(recurrenceTime.split(":")[0]), minute: Number(recurrenceTime.split(":")[1]) } }
+          : { Weekly: { weekday: recurrenceWeekday, hour: Number(recurrenceTime.split(":")[0]), minute: Number(recurrenceTime.split(":")[1]) } };
+      await createRecurringTemplate({
+        merchant: cart.merchant,
+        catalog_ref: cart.catalogRef,
+        item_refs: cart.lines.flatMap((l) => Array(l.quantity).fill(l.itemRef)),
+        dropoff,
+        max_delivery_fee: maxFeeCents,
+        special_instructions: instructions.trim(),
+        tip_cents: tipCents,
+        dropoff_preference: dropoffPreference,
+        promo_code_ref: appliedPromo?.hash ?? null,
+        recurrence,
+        next_run_at: toMicros(nextOccurrence(recurrence)),
+      });
+      setRecurringSaved(true);
+      setShowRecurring(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingRecurring(false);
     }
   }
 
@@ -244,6 +322,62 @@ export function Cart() {
       </div>
 
       <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Repeat this order</p>
+          <button onClick={() => setShowRecurring((v) => !v)} className="text-xs font-semibold text-relay-600">
+            {showRecurring ? "Cancel" : recurringSaved ? "Edit" : "Set up"}
+          </button>
+        </div>
+        {recurringSaved && !showRecurring && (
+          <p className="mt-1 text-xs text-presence-600">Saved -- manage it from your Orders screen.</p>
+        )}
+        {showRecurring && (
+          <div className="mt-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRecurrenceKind("Weekly")}
+                className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold ${recurrenceKind === "Weekly" ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+              >
+                Weekly
+              </button>
+              <button
+                onClick={() => setRecurrenceKind("Daily")}
+                className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold ${recurrenceKind === "Daily" ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}
+              >
+                Daily
+              </button>
+            </div>
+            {recurrenceKind === "Weekly" && (
+              <select
+                value={recurrenceWeekday}
+                onChange={(e) => setRecurrenceWeekday(Number(e.target.value))}
+                className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+              >
+                {WEEKDAYS.map((day, i) => (
+                  <option key={day} value={i}>
+                    {day}
+                  </option>
+                ))}
+              </select>
+            )}
+            <input
+              type="time"
+              value={recurrenceTime}
+              onChange={(e) => setRecurrenceTime(e.target.value)}
+              className="rounded-lg border border-ink-200 dark:border-ink-700 bg-transparent px-3 py-2 text-sm"
+            />
+            <p className="text-xs text-ink-400">
+              Fires from your own device while the app is open -- there's no server-side scheduler. Items are re-matched
+              against the merchant's current menu each time, best-effort, same as reordering.
+            </p>
+            <Button loading={savingRecurring} onClick={saveRecurring} className="py-2 text-xs">
+              Save recurring order
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Delivery notes</p>
         <textarea
           value={instructions}
@@ -320,7 +454,10 @@ export function Cart() {
         {appliedPromo ? (
           <div className="rounded-lg bg-presence-500/10 px-3 py-2 text-sm text-presence-600 dark:text-presence-400">
             <div className="flex items-center justify-between">
-              <span className="font-mono font-semibold">{appliedPromo.promo.code}</span>
+              <span className="font-mono font-semibold">
+                {appliedPromo.promo.auto_apply && <span className="mr-1.5 rounded-full bg-presence-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">🎁 Loyalty</span>}
+                {appliedPromo.promo.code}
+              </span>
               <button
                 onClick={() => {
                   setAppliedPromo(null);

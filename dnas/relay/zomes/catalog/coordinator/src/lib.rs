@@ -357,6 +357,8 @@ pub struct CreatePromoCodeInput {
     pub requirement: PromoRequirement,
     pub reward: PromoReward,
     pub expires_at: Option<Timestamp>,
+    #[serde(default)]
+    pub auto_apply: bool,
 }
 
 /// Cross-zome read for `dispatch::request_delivery`'s best-effort "is this
@@ -381,6 +383,7 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
         active: true,
         expires_at: input.expires_at,
         created_at: sys_time()?,
+        auto_apply: input.auto_apply,
     };
     let action_hash = create_entry(&EntryTypes::PromoCode(promo))?;
     let path = promo_anchor_path(&input.catalog_ref)?;

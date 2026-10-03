@@ -18,7 +18,14 @@ function findLine(lines: CartLine[], itemRef: ActionHash): CartLine | undefined 
   return lines.find((l) => bytesToHex(l.itemRef) === key);
 }
 
-export function isPromoEligible(requirement: PromoRequirement, lines: CartLine[], subtotalCents: number): boolean {
+/// `completedOrderCount` is only meaningful for `LoyaltyOrderCount` --
+/// optional and defaulted to 0 so every other requirement variant's
+/// existing callers (which have no reason to know this) don't need to
+/// change. Counting "how many times has this customer ordered here" is
+/// the same client-side/best-effort trust tier as every other promo's
+/// arithmetic -- see `PromoRequirement::LoyaltyOrderCount`'s own Rust doc
+/// comment.
+export function isPromoEligible(requirement: PromoRequirement, lines: CartLine[], subtotalCents: number, completedOrderCount = 0): boolean {
   if (requirement === "None") return true;
   if ("MinimumSpend" in requirement) return subtotalCents >= requirement.MinimumSpend;
   if ("MinimumItemQuantity" in requirement) {
@@ -26,6 +33,7 @@ export function isPromoEligible(requirement: PromoRequirement, lines: CartLine[]
     const line = findLine(lines, item_ref);
     return !!line && line.quantity >= quantity;
   }
+  if ("LoyaltyOrderCount" in requirement) return completedOrderCount >= requirement.LoyaltyOrderCount;
   return false;
 }
 
@@ -82,8 +90,8 @@ export interface PromoEvaluation {
 /// so, what does it save. Ineligible carts get a zeroed effect rather than
 /// whatever `computePromoEffect` would compute against a cart that hasn't
 /// actually earned the reward.
-export function evaluatePromo(promo: PromoCode, lines: CartLine[], subtotalCents: number): PromoEvaluation {
-  const eligible = isPromoEligible(promo.requirement, lines, subtotalCents);
+export function evaluatePromo(promo: PromoCode, lines: CartLine[], subtotalCents: number, completedOrderCount = 0): PromoEvaluation {
+  const eligible = isPromoEligible(promo.requirement, lines, subtotalCents, completedOrderCount);
   return { eligible, effect: eligible ? computePromoEffect(promo.reward, lines, subtotalCents) : NO_EFFECT };
 }
 
@@ -99,6 +107,10 @@ export function describeRequirement(requirement: PromoRequirement, itemName: (he
     const { item_ref, quantity } = requirement.MinimumItemQuantity;
     const name = itemName(bytesToHex(item_ref)) ?? "a qualifying item";
     return `Buy ${quantity}+ ${name}`;
+  }
+  if ("LoyaltyOrderCount" in requirement) {
+    const n = requirement.LoyaltyOrderCount;
+    return `Order here ${n}+ time${n === 1 ? "" : "s"}`;
   }
   return "Unknown requirement";
 }

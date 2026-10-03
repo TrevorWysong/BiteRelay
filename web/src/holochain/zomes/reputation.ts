@@ -15,3 +15,23 @@ export async function submitReview(input: { subject: AgentPubKey; order_original
 export async function getReviewsFor(subject: AgentPubKey): Promise<HcRecord[]> {
   return callZome("reputation", "get_reviews_for", subject);
 }
+
+// --- per-item ratings -- same shape as Review above, keyed by a MenuItem's
+// action hash instead of an agent pubkey ---
+
+export async function submitItemReview(input: { item_ref: ActionHash; order_original_action: ActionHash; rating: number; comment: string }): Promise<HcRecord> {
+  return callZome("reputation", "submit_item_review", input);
+}
+
+export interface ItemRatingSummary {
+  count: number;
+  rating_sum: number;
+}
+
+export async function getItemRatingSummary(itemRef: ActionHash): Promise<ItemRatingSummary> {
+  return callZome("reputation", "get_item_rating_summary", itemRef);
+}
+
+export async function getItemReviews(itemRef: ActionHash): Promise<HcRecord[]> {
+  return callZome("reputation", "get_item_reviews", itemRef);
+}

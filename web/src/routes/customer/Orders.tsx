@@ -1,27 +1,64 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ClipboardList, RotateCcw, PlayCircle } from "lucide-react";
-import { getOrdersForRequester, openScheduledOrder } from "../../holochain/zomes/dispatch";
+import { ClipboardList, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
+import { getOrdersForRequester, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
-import { Button, EmptyState, Spinner } from "../../components/ui";
+import { Button, Card, EmptyState, Spinner } from "../../components/ui";
 import { StatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
-import type { DeliveryOrder, MenuItem, MerchantCatalog } from "../../holochain/types";
+import { describeRecurrence } from "../../lib/recurrence";
+import type { DeliveryOrder, MenuItem, MerchantCatalog, RecurringOrderTemplate } from "../../holochain/types";
 
 interface Row {
   hash: Uint8Array;
   order: DeliveryOrder;
 }
 
+interface RecurringRow {
+  hash: Uint8Array;
+  template: RecurringOrderTemplate;
+  merchantName: string;
+}
+
 export function Orders() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [reordering, setReordering] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [recurring, setRecurring] = useState<RecurringRow[]>([]);
+  const [togglingRecurring, setTogglingRecurring] = useState<string | null>(null);
   const cart = useCart();
   const navigate = useNavigate();
+
+  const refreshRecurring = useCallback(async () => {
+    try {
+      const records = await listMyRecurringTemplates();
+      const decoded = await Promise.all(
+        records.map(async (r) => {
+          const template = decodeEntry<RecurringOrderTemplate>(r);
+          const merchantName = await getCatalog(template.catalog_ref)
+            .then((cr) => decodeEntry<MerchantCatalog>(cr).business_name)
+            .catch(() => "Restaurant");
+          return { hash: actionHash(r), template, merchantName };
+        }),
+      );
+      setRecurring(decoded);
+    } catch {
+      setRecurring([]);
+    }
+  }, []);
+
+  async function toggleRecurring(row: RecurringRow) {
+    setTogglingRecurring(bytesToHex(row.hash));
+    try {
+      await setRecurringTemplateActive(row.hash, !row.template.active);
+      await refreshRecurring();
+    } finally {
+      setTogglingRecurring(null);
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -85,7 +122,8 @@ export function Orders() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    refreshRecurring();
+  }, [refresh, refreshRecurring]);
 
   if (rows === null) {
     return (
@@ -95,13 +133,40 @@ export function Orders() {
     );
   }
 
-  if (rows.length === 0) {
-    return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here — this reads your own RequesterToOrder links directly off the DHT." />;
-  }
-
   return (
     <div className="px-4 pt-4">
       <h1 className="mb-4 text-xl font-black text-ink-900 dark:text-ink-50">Your orders</h1>
+
+      {recurring.length > 0 && (
+        <div className="mb-5">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+            <Repeat size={13} /> Recurring orders
+          </p>
+          <div className="flex flex-col gap-2">
+            {recurring.map((row) => (
+              <Card key={bytesToHex(row.hash)} className="flex items-center justify-between p-3.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.merchantName}</p>
+                  <p className="text-xs text-ink-400">{describeRecurrence(row.template.recurrence)}</p>
+                </div>
+                <Button
+                  variant={row.template.active ? "secondary" : "ghost"}
+                  className="px-3 py-1.5 text-xs"
+                  loading={togglingRecurring === bytesToHex(row.hash)}
+                  onClick={() => toggleRecurring(row)}
+                >
+                  {row.template.active ? <Pause size={13} /> : <Play size={13} />} {row.template.active ? "Active" : "Paused"}
+                </Button>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 && (
+        <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here — this reads your own RequesterToOrder links directly off the DHT." />
+      )}
+
       <div className="flex flex-col gap-3 pb-6">
         {rows.map(({ hash, order }) => (
           <div key={bytesToHex(hash)} className="flex items-center gap-2 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">

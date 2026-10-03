@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -156,4 +156,41 @@ export async function sendChatMessage(orderRef: ActionHash, text: string): Promi
 
 export async function sendLocationUpdate(orderRef: ActionHash, lat: number, lon: number): Promise<void> {
   return callZome("dispatch", "send_location_update", { order_ref: orderRef, lat, lon });
+}
+
+// --- recurring order templates ("same order every Monday") -- client-
+// fired, no p2p cron, see recurring.rs's own doc comment ---
+
+export async function createRecurringTemplate(input: {
+  merchant: AgentPubKey;
+  catalog_ref: ActionHash;
+  item_refs: ActionHash[];
+  dropoff: GeoPoint;
+  max_delivery_fee: number | null;
+  special_instructions?: string;
+  tip_cents?: number;
+  dropoff_preference?: DropoffPreference;
+  promo_code_ref?: ActionHash | null;
+  recurrence: RecurrenceRule;
+  next_run_at: number;
+}): Promise<HcRecord> {
+  return callZome("dispatch", "create_recurring_template", {
+    special_instructions: "",
+    tip_cents: 0,
+    dropoff_preference: "LeaveAtDoor",
+    promo_code_ref: null,
+    ...input,
+  });
+}
+
+export async function setRecurringTemplateActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {
+  return callZome("dispatch", "set_recurring_template_active", { original_action: originalAction, active });
+}
+
+export async function advanceRecurringTemplate(originalAction: ActionHash, nextRunAt: number): Promise<HcRecord> {
+  return callZome("dispatch", "advance_recurring_template", { original_action: originalAction, next_run_at: nextRunAt });
+}
+
+export async function listMyRecurringTemplates(): Promise<HcRecord[]> {
+  return callZome("dispatch", "list_my_recurring_templates", null);
 }

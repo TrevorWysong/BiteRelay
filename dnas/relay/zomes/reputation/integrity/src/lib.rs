@@ -86,12 +86,48 @@ pub struct Review {
     pub created_at: Timestamp,
 }
 
+/// A star rating + comment against a specific *menu item* (not an agent) --
+/// same posture as `Review`: self-authored by the customer, a UI-display
+/// feature rather than a cryptographically-enforced fact, except there's no
+/// "subject" agent to worry about self-flattery from at all (you're rating
+/// a product, not yourself). The one real check that makes this different
+/// from just reusing `Review` with an `ActionHash` subject: `item_ref` must
+/// actually have been part of the reviewed order (see `validate_item_review`)
+/// -- otherwise a customer could rate an item they never ordered.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct ItemReview {
+    pub item_ref: ActionHash,
+    pub author: AgentPubKey,
+    pub order_ref: ActionHash,
+    pub rating: u8,
+    pub comment: String,
+    pub created_at: Timestamp,
+}
+
+/// Same O(n/K) checkpoint pattern as `ReputationCheckpoint`/`BalanceCheckpoint`
+/// (architecture plan §9.4), carrying forward a running `(count, rating_sum)`
+/// pair instead of a single number -- an average can't be folded
+/// incrementally from just the prior average, it needs both the count and
+/// the sum to stay exact.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct ItemRatingCheckpoint {
+    pub item_ref: ActionHash,
+    pub count: u32,
+    pub rating_sum: u32,
+    pub related_review: ActionHash,
+    pub recorded_at: Timestamp,
+}
+
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
     ReputationEvent(ReputationEvent),
     ReputationCheckpoint(ReputationCheckpoint),
     Review(Review),
+    ItemReview(ItemReview),
+    ItemRatingCheckpoint(ItemRatingCheckpoint),
 }
 
 #[hdk_link_types]
@@ -99,6 +135,8 @@ pub enum LinkTypes {
     SubjectToEvent,
     SubjectToReputationCheckpoint,
     SubjectToReview,
+    ItemToReview,
+    ItemToRatingCheckpoint,
 }
 
 #[hdk_extern]
@@ -108,9 +146,67 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::ReputationEvent(event) => validate_event(&event, action.author()),
             EntryTypes::ReputationCheckpoint(checkpoint) => validate_checkpoint(&checkpoint, action.author()),
             EntryTypes::Review(review) => validate_review(&review, action.author()),
+            EntryTypes::ItemReview(review) => validate_item_review(&review, action.author()),
+            EntryTypes::ItemRatingCheckpoint(checkpoint) => validate_item_rating_checkpoint(&checkpoint, action.author()),
         },
         _ => Ok(ValidateCallbackResult::Valid),
     }
+}
+
+/// Same shape as `validate_review`, plus the one extra check that
+/// distinguishes an item rating from a plain agent review: `item_ref` must
+/// actually be one of the order's own `item_refs`, checked deterministically
+/// since `order_ref` is already resolved (by the coordinator) to the
+/// order's real, immutable-at-this-point item list.
+fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if review.rating < 1 || review.rating > 5 {
+        return Ok(ValidateCallbackResult::Invalid("rating must be between 1 and 5".into()));
+    }
+    if &review.author != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "an item review's author field must match the actual action author".into(),
+        ));
+    }
+    let order_record = must_get_valid_record(review.order_ref.clone())?;
+    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+        return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
+    };
+    if order.status != DeliveryStatus::Delivered {
+        return Ok(ValidateCallbackResult::Invalid(
+            "an item can only be reviewed against a Delivered order".into(),
+        ));
+    }
+    if &order.requester != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "only the order's requester may review an item from it".into(),
+        ));
+    }
+    if !order.item_refs.contains(&review.item_ref) {
+        return Ok(ValidateCallbackResult::Invalid(
+            "item_ref must have actually been part of the reviewed order".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// Same discipline as `validate_checkpoint`: can't be fabricated
+/// independent of a real, already-validated `ItemReview`.
+fn validate_item_rating_checkpoint(checkpoint: &ItemRatingCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    let review_record = must_get_valid_record(checkpoint.related_review.clone())?;
+    let Some(review): Option<ItemReview> = review_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+        return Ok(ValidateCallbackResult::Invalid("related_review does not point at an ItemReview entry".into()));
+    };
+    if checkpoint.item_ref != review.item_ref {
+        return Ok(ValidateCallbackResult::Invalid(
+            "checkpoint item_ref must match related_review's own item_ref".into(),
+        ));
+    }
+    if author != &review.author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a checkpoint can only be authored by related_review's own author".into(),
+        ));
+    }
+    Ok(ValidateCallbackResult::Valid)
 }
 
 /// Only the order's requester may review, only about the order's actual

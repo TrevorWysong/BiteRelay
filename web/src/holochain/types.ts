@@ -101,7 +101,11 @@ export interface MerchantCatalog {
 // types). `None` is a bare unit variant (`"None"`, a plain string, same
 // serde shape as `BidStatus`/`DeliveryStatus` below) -- the rest are tuple
 // or struct variants (`{ VariantName: value }`).
-export type PromoRequirement = "None" | { MinimumSpend: number } | { MinimumItemQuantity: { item_ref: ActionHash; quantity: number } };
+export type PromoRequirement =
+  | "None"
+  | { MinimumSpend: number }
+  | { MinimumItemQuantity: { item_ref: ActionHash; quantity: number } }
+  | { LoyaltyOrderCount: number };
 
 export type PromoReward =
   | { PercentOffSubtotal: number }
@@ -117,6 +121,10 @@ export interface PromoCode {
   active: boolean;
   expires_at: Timestamp | null;
   created_at: Timestamp;
+  /// When true, an eligible customer gets this applied without typing a
+  /// code -- the mechanism loyalty rewards need. Orthogonal to any
+  /// specific requirement/reward combo.
+  auto_apply: boolean;
 }
 
 export interface MenuItem {
@@ -237,6 +245,15 @@ export interface Review {
   created_at: Timestamp;
 }
 
+export interface ItemReview {
+  item_ref: ActionHash;
+  author: AgentPubKey;
+  order_ref: ActionHash;
+  rating: number;
+  comment: string;
+  created_at: Timestamp;
+}
+
 export type ReputationEventKind =
   | { OrderCompleted: { subject_role: "Requester" | "Provider" | "Merchant" } }
   | "OrderCancelledByThem"
@@ -265,11 +282,44 @@ export interface ReceiptAttestation {
   attested_at: Timestamp;
 }
 
+// `RecurrenceRule` mirrors dispatch_integrity's Rust enum -- struct
+// variants, so `{ Daily: { hour, minute } }` / `{ Weekly: { weekday, hour,
+// minute } }`.
+export type RecurrenceRule = { Daily: { hour: number; minute: number } } | { Weekly: { weekday: number; hour: number; minute: number } };
+
+export interface RecurringOrderTemplate {
+  requester: AgentPubKey;
+  merchant: AgentPubKey;
+  catalog_ref: ActionHash;
+  item_refs: ActionHash[];
+  dropoff: GeoPoint;
+  max_delivery_fee: number | null;
+  special_instructions: string;
+  tip_cents: number;
+  dropoff_preference: DropoffPreference;
+  promo_code_ref: ActionHash | null;
+  recurrence: RecurrenceRule;
+  next_run_at: Timestamp;
+  active: boolean;
+  created_at: Timestamp;
+}
+
 export interface PresenceBeacon {
   provider: AgentPubKey;
   geohash: string;
   capabilities: DeliveryCapability[];
   expires_at: Timestamp;
+}
+
+export type TxnReason = "Payment" | "CollateralForfeit";
+
+export interface LedgerTransaction {
+  from: AgentPubKey;
+  to: AgentPubKey;
+  amount: number;
+  reason: TxnReason;
+  related_order: ActionHash;
+  created_at: Timestamp;
 }
 
 export interface NearbyProvider {

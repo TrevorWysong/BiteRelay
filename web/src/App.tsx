@@ -12,6 +12,7 @@ import { Earnings } from "./routes/driver/Earnings";
 import { MerchantOrders } from "./routes/merchant/Orders";
 import { MerchantCatalog } from "./routes/merchant/Catalog";
 import { ProfilePage } from "./routes/Profile";
+import { Transparency } from "./routes/Transparency";
 import { ArbitratorDashboard } from "./routes/arbitrator/Dashboard";
 
 function RequireSession({ children }: { children: React.ReactNode }) {
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/merchant/catalog" element={<MerchantCatalog />} />
         <Route path="/arbitrator" element={<ArbitratorDashboard />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/transparency" element={<Transparency />} />
         <Route path="*" element={<HomeForMode />} />
       </Route>
     </Routes>

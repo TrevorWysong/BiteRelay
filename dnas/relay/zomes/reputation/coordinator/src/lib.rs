@@ -215,3 +215,135 @@ pub fn count_reputation_checkpoints(subject: AgentPubKey) -> ExternResult<u32> {
     )?;
     Ok(links.len() as u32)
 }
+
+// --- per-item ratings -- same shape as Review/get_reputation_summary
+// above, keyed by a MenuItem's action hash instead of an agent pubkey ---
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SubmitItemReviewInput {
+    pub item_ref: ActionHash,
+    pub order_original_action: ActionHash,
+    pub rating: u8,
+    pub comment: String,
+}
+
+const ITEM_RATING_CHECKPOINT_INTERVAL: u64 = 20;
+
+fn should_checkpoint_item_rating(review_hash: &ActionHash) -> bool {
+    review_hash.get_raw_36()[0] as u64 % ITEM_RATING_CHECKPOINT_INTERVAL == 0
+}
+
+/// Best-effort, same posture as every other checkpoint writer in this
+/// codebase: a pure read-side optimization, never required, so a failure
+/// here must never fail the review submission it's piggybacking on.
+fn maybe_write_item_rating_checkpoint(item_ref: ActionHash, review_hash: ActionHash, review_created_at: Timestamp) {
+    if !should_checkpoint_item_rating(&review_hash) {
+        return;
+    }
+    let Ok(summary) = get_item_rating_summary(item_ref.clone()) else { return };
+    let checkpoint = ItemRatingCheckpoint {
+        item_ref: item_ref.clone(),
+        count: summary.count,
+        rating_sum: summary.rating_sum,
+        related_review: review_hash,
+        recorded_at: review_created_at,
+    };
+    if let Ok(action_hash) = create_entry(&EntryTypes::ItemRatingCheckpoint(checkpoint)) {
+        let _ = create_link(item_ref, action_hash, LinkTypes::ItemToRatingCheckpoint, ());
+    }
+}
+
+/// Same `resolve_latest`-before-writing treatment as `submit_review`'s own
+/// doc comment explains -- `validate_item_review` needs to deterministically
+/// see the order's real `Delivered` status and final `item_refs`.
+#[hdk_extern]
+pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> {
+    if input.rating < 1 || input.rating > 5 {
+        return Err(wasm_error!(WasmErrorInner::Guest("rating must be between 1 and 5".into())));
+    }
+    let order_record = resolve_latest(input.order_original_action)?;
+    let author = agent_info()?.agent_initial_pubkey;
+    let created_at = sys_time()?;
+    let review = ItemReview {
+        item_ref: input.item_ref.clone(),
+        author,
+        order_ref: order_record.action_address().clone(),
+        rating: input.rating,
+        comment: input.comment,
+        created_at,
+    };
+    let action_hash = create_entry(&EntryTypes::ItemReview(review))?;
+    create_link(input.item_ref.clone(), action_hash.clone(), LinkTypes::ItemToReview, ())?;
+    maybe_write_item_rating_checkpoint(input.item_ref, action_hash.clone(), created_at);
+    get(action_hash, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back item review".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ItemRatingSummary {
+    pub count: u32,
+    pub rating_sum: u32,
+}
+
+/// Checkpoint-accelerated, same O(n/K) pattern and same `after`-is->=-not->
+/// double-count guard as `get_reputation_summary` -- see that function's
+/// doc comment for the full reasoning. `average` is computed by the caller
+/// (`rating_sum as f64 / count as f64`, with `count == 0` meaning "no
+/// reviews yet") rather than stored, since storing a pre-divided float in
+/// an append-only checkpoint would re-introduce float-precision drift
+/// across many checkpoints for no benefit over dividing the two integers
+/// fresh every read.
+#[hdk_extern]
+pub fn get_item_rating_summary(item_ref: ActionHash) -> ExternResult<ItemRatingSummary> {
+    let checkpoint_links = get_links(
+        LinkQuery::try_new(item_ref.clone(), LinkTypes::ItemToRatingCheckpoint)?,
+        GetStrategy::Local,
+    )?;
+    let mut latest_checkpoint: Option<ItemRatingCheckpoint> = None;
+    for link in checkpoint_links {
+        let Some(action_hash) = link.target.into_action_hash() else { continue };
+        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
+        let Ok(Some(checkpoint)) = record.entry().to_app_option::<ItemRatingCheckpoint>() else { continue };
+        let is_newer = latest_checkpoint.as_ref().map(|l| checkpoint.recorded_at > l.recorded_at).unwrap_or(true);
+        if is_newer {
+            latest_checkpoint = Some(checkpoint);
+        }
+    }
+
+    let (mut summary, since, already_counted) = match &latest_checkpoint {
+        Some(checkpoint) => (
+            ItemRatingSummary { count: checkpoint.count, rating_sum: checkpoint.rating_sum },
+            Some(checkpoint.recorded_at),
+            Some(checkpoint.related_review.clone()),
+        ),
+        None => (ItemRatingSummary::default(), None, None),
+    };
+
+    let mut review_query = LinkQuery::try_new(item_ref, LinkTypes::ItemToReview)?;
+    review_query.after = since;
+    let links = get_links(review_query, GetStrategy::Local)?;
+    for link in links {
+        let Some(action_hash) = link.target.into_action_hash() else { continue };
+        if already_counted.as_ref() == Some(&action_hash) {
+            continue;
+        }
+        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
+        let Ok(Some(review)) = record.entry().to_app_option::<ItemReview>() else { continue };
+        summary.count += 1;
+        summary.rating_sum += review.rating as u32;
+    }
+    Ok(summary)
+}
+
+#[hdk_extern]
+pub fn get_item_reviews(item_ref: ActionHash) -> ExternResult<Vec<Record>> {
+    let links = get_links(LinkQuery::try_new(item_ref, LinkTypes::ItemToReview)?, GetStrategy::default())?;
+    let mut reviews = Vec::with_capacity(links.len());
+    for link in links {
+        let Some(action_hash) = link.target.into_action_hash() else { continue };
+        if let Some(record) = get(action_hash, GetOptions::default())? {
+            reviews.push(record);
+        }
+    }
+    Ok(reviews)
+}

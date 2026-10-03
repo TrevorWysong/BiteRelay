@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { getNearbyMerchants, listMenuItems } from "../../holochain/zomes/catalog";
-import { getReviewsFor } from "../../holochain/zomes/reputation";
+import { getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { addFavorite, removeFavorite, listFavorites } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
@@ -29,6 +29,7 @@ export function MerchantDetail() {
   const [items, setItems] = useState<ItemRow[] | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [favorited, setFavorited] = useState(false);
+  const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({});
 
   useEffect(() => {
     if (!hash) return;
@@ -46,7 +47,17 @@ export function MerchantDetail() {
       });
     }
     listMenuItems(wanted).then((page) => {
-      setItems(page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
+      const rows = page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }));
+      setItems(rows);
+      // Bounded by the page itself (a merchant's own menu, already capped --
+      // see list_menu_items' own pagination), same cost category as the
+      // per-restaurant review fetch Browse.tsx already does.
+      rows.forEach((row) => {
+        const hex = bytesToHex(row.hash);
+        getItemRatingSummary(row.hash)
+          .then((summary) => setItemRatings((prev) => ({ ...prev, [hex]: summary })))
+          .catch(() => {});
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash, location]);
@@ -144,7 +155,18 @@ export function MerchantDetail() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{item.name}</p>
                     {item.description && <p className="truncate text-xs text-ink-400">{item.description}</p>}
-                    <p className="text-sm text-ink-500">{formatCents(item.price_cents)}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm text-ink-500">{formatCents(item.price_cents)}</p>
+                      {(() => {
+                        const r = itemRatings[bytesToHex(itemHash)];
+                        if (!r || r.count === 0) return null;
+                        return (
+                          <span className="flex items-center gap-0.5 text-xs text-ink-400">
+                            <Star size={11} className="fill-amber-400 text-amber-400" /> {(r.rating_sum / r.count).toFixed(1)} ({r.count})
+                          </span>
+                        );
+                      })()}
+                    </div>
                     {item.dietary_tags.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {item.dietary_tags.map((tag) => (

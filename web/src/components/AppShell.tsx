@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { Home, ClipboardList, ShoppingCart, User, Car, Store, DollarSign, Gavel } from "lucide-react";
 import { useSession } from "../store/session";
 import { useCart } from "../store/cart";
+import { useRecurringOrderFiring } from "../hooks/useRecurringOrderFiring";
 import { PresenceDot } from "./ui";
 
 function BottomNavLink({ to, icon: Icon, label, badge }: { to: string; icon: typeof Home; label: string; badge?: number }) {
@@ -34,6 +35,7 @@ export function AppShell() {
   const { mode, setMode, profile, agentPubKey, isArbitrator } = useSession();
   const cartCount = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const navigate = useNavigate();
+  useRecurringOrderFiring();
 
   const roles = profile?.roles ?? [];
   const availableModes = [
