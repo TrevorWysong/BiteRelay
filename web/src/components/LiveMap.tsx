@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { PresenceDot } from "./ui";
 import type { GeoPoint } from "../holochain/types";
 
 // Vanilla Leaflet, not react-leaflet -- this app already writes small,
@@ -49,6 +50,16 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
     L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
     L.marker([pickup.lat, pickup.lon], { icon: PICKUP_ICON }).addTo(map).bindPopup("Pickup");
     L.marker([dropoff.lat, dropoff.lon], { icon: DROPOFF_ICON }).addTo(map).bindPopup("Dropoff");
+    // A themed, dashed connector rather than a bare pair of pins -- gives
+    // the route a visual through-line in the brand color without claiming
+    // to be a real routed path (it's a straight line, not turn-by-turn).
+    L.polyline(
+      [
+        [pickup.lat, pickup.lon],
+        [dropoff.lat, dropoff.lon],
+      ],
+      { color: "#ff5a2b", weight: 3, opacity: 0.55, dashArray: "6 8" },
+    ).addTo(map);
     const bounds = L.latLngBounds([
       [pickup.lat, pickup.lon],
       [dropoff.lat, dropoff.lon],
@@ -75,5 +86,15 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
     }
   }, [driver]);
 
-  return <div ref={containerRef} className={className ?? "h-56 w-full rounded-2xl"} />;
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-ink-100 dark:border-ink-800 shadow-[var(--shadow-card)]">
+      <div ref={containerRef} className={className ?? "h-56 w-full"} />
+      {driver && (
+        <div className="pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-white/90 dark:bg-ink-900/90 px-2.5 py-1 text-[10px] font-bold text-ink-700 dark:text-ink-200 shadow backdrop-blur-sm">
+          <PresenceDot />
+          Live
+        </div>
+      )}
+    </div>
+  );
 }

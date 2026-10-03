@@ -8,7 +8,7 @@
 import { useEffect } from "react";
 import { listMyRecurringTemplates, advanceRecurringTemplate, requestDelivery } from "../holochain/zomes/dispatch";
 import { listMenuItems } from "../holochain/zomes/catalog";
-import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../holochain/decode";
+import { decodeEntry, actionHash, bytesEqual } from "../holochain/decode";
 import { nextOccurrence, toMicros } from "../lib/recurrence";
 import type { MenuItem, RecurringOrderTemplate } from "../holochain/types";
 

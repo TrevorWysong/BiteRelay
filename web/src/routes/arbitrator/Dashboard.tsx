@@ -5,11 +5,13 @@
 // somewhere to review and rule on the cases the network sees.
 import { useCallback, useEffect, useState } from "react";
 import { Gavel } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { listOpenDisputes, submitResolution } from "../../holochain/zomes/dispute";
 import { getOrder, applyDisputeResolution, applyCancellationDisputeResolution } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
-import { Button, Card, Spinner, EmptyState, Badge } from "../../components/ui";
+import { Button, Card, Skeleton, EmptyState, Badge, StatNumber } from "../../components/ui";
 import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Dispute, DeliveryOrder } from "../../holochain/types";
 
 interface CaseRow {
@@ -70,25 +72,35 @@ export function ArbitratorDashboard() {
 
   if (cases === null) {
     return (
-      <div className="flex justify-center py-16 text-ink-300">
-        <Spinner />
+      <div className="px-4 pb-10 pt-4">
+        <Skeleton className="h-7 w-1/3 mb-4" />
+        <Skeleton className="h-40 w-full mb-3" />
+        <Skeleton className="h-40 w-full" />
       </div>
     );
   }
 
   return (
-    <div className="px-4 pb-10 pt-4">
-      <h1 className="mb-4 text-xl font-black text-ink-900 dark:text-ink-50">Open cases</h1>
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
+      <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
+        Open cases
+      </motion.h1>
       {cases.length === 0 && (
-        <EmptyState icon={<Gavel size={32} />} title="No open disputes" subtitle="Cases raised by either party will show up here for you to review." />
+        <motion.div variants={fadeSlideUp}>
+          <EmptyState icon={<Gavel size={32} />} title="No open disputes" subtitle="Cases raised by either party will show up here for you to review." />
+        </motion.div>
       )}
       <div className="flex flex-col gap-3">
-        {cases.map((row) => (
-          <CaseCard key={bytesToHex(row.hash)} row={row} onResolve={(favor, amount, reasoning) => resolve(row, favor, amount, reasoning)} />
-        ))}
+        <AnimatePresence initial={false}>
+          {cases.map((row) => (
+            <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+              <CaseCard row={row} onResolve={(favor, amount, reasoning) => resolve(row, favor, amount, reasoning)} />
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
-    </div>
+    </motion.div>
   );
 }
 
@@ -123,8 +135,8 @@ function CaseCard({
         <span className="text-xs text-ink-400">{timeAgo(dispute.raised_at)}</span>
       </div>
       {order && (
-        <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
-          {formatCents(order.order_total)} order &middot; currently {order.status}
+        <p className="flex items-baseline gap-1 text-sm font-semibold text-ink-900 dark:text-ink-50">
+          <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber> order &middot; currently {order.status}
         </p>
       )}
       <p className="text-sm text-ink-600 dark:text-ink-300">{dispute.description}</p>

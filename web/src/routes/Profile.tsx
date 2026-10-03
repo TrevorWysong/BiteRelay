@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Truck } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
 import { getBalance } from "../holochain/zomes/ledger";
@@ -8,10 +9,11 @@ import { getReputationSummary } from "../holochain/zomes/reputation";
 import { getReviewsFor } from "../holochain/zomes/reputation";
 import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { decodeEntry } from "../holochain/decode";
-import { Button, Card } from "../components/ui";
+import { Button, Card, Skeleton, StatNumber } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { StarRating } from "../components/StarRating";
 import { formatCents } from "../lib/format";
+import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import type { ProviderCredential, ReputationSummary, Review } from "../holochain/types";
 
 export function ProfilePage() {
@@ -82,18 +84,20 @@ export function ProfilePage() {
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
 
   return (
-    <div className="px-4 pt-6 pb-8">
-      <div className="mb-6 flex flex-col items-center gap-3">
-        {editing ? (
-          <PhotoInput value={draft.avatar_data_uri} onChange={(v) => setDraft((d) => ({ ...d, avatar_data_uri: v }))} shape="circle" />
-        ) : profile?.avatar_data_uri ? (
-          <img src={profile.avatar_data_uri} alt="" className="h-20 w-20 rounded-3xl object-cover shadow-xl" />
-        ) : (
-          <div className="grid h-20 w-20 place-items-center rounded-3xl bg-ink-900 dark:bg-white text-relay-400 dark:text-relay-600 shadow-xl">
-            <Radio size={28} />
-          </div>
-        )}
-        <h1 className="text-xl font-black text-ink-900 dark:text-ink-50">{profile?.display_name}</h1>
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-6 pb-8">
+      <motion.div variants={fadeSlideUp} className="mb-6 flex flex-col items-center gap-3">
+        <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+          {editing ? (
+            <PhotoInput value={draft.avatar_data_uri} onChange={(v) => setDraft((d) => ({ ...d, avatar_data_uri: v }))} shape="circle" />
+          ) : profile?.avatar_data_uri ? (
+            <img src={profile.avatar_data_uri} alt="" className="h-20 w-20 rounded-3xl object-cover shadow-xl" />
+          ) : (
+            <div className="grid h-20 w-20 place-items-center rounded-3xl bg-ink-900 dark:bg-white text-relay-400 dark:text-relay-600 shadow-xl">
+              <Radio size={28} />
+            </div>
+          )}
+        </motion.div>
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{profile?.display_name}</h1>
         {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} />}
         <div className="flex gap-1.5">
           {profile?.roles.map((r) => (
@@ -102,8 +106,9 @@ export function ProfilePage() {
             </span>
           ))}
         </div>
-      </div>
+      </motion.div>
 
+      <motion.div variants={fadeSlideUp}>
       <Card className="mb-4 p-4">
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-wide text-ink-400">About</p>
@@ -111,8 +116,9 @@ export function ProfilePage() {
             <Pencil size={14} />
           </button>
         </div>
+        <AnimatePresence mode="wait" initial={false}>
         {editing ? (
-          <div className="flex flex-col gap-2">
+          <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
             <textarea
               value={draft.bio}
               onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))}
@@ -129,16 +135,19 @@ export function ProfilePage() {
             <Button loading={saving} onClick={saveProfile} className="py-2 text-xs">
               Save
             </Button>
-          </div>
+          </motion.div>
         ) : (
-          <>
+          <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <p className="text-sm text-ink-600 dark:text-ink-300">{profile?.bio || "No bio yet."}</p>
             {profile?.phone && <p className="mt-1 text-xs text-ink-400">{profile.phone}</p>}
-          </>
+          </motion.div>
         )}
+        </AnimatePresence>
       </Card>
+      </motion.div>
 
       {profile?.roles.includes("Provider") && (
+        <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
@@ -148,8 +157,9 @@ export function ProfilePage() {
               <Pencil size={14} />
             </button>
           </div>
+          <AnimatePresence mode="wait" initial={false}>
           {editingVehicle ? (
-            <div className="flex flex-col gap-2">
+            <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={vehicleDraft.photo_data_uri} onChange={(v) => setVehicleDraft((d) => ({ ...d, photo_data_uri: v }))} shape="banner" />
               <input
                 value={vehicleDraft.vehicle_description}
@@ -166,21 +176,24 @@ export function ProfilePage() {
               <Button loading={saving} onClick={saveVehicle} className="py-2 text-xs">
                 Save
               </Button>
-            </div>
+            </motion.div>
           ) : credential ? (
-            <div className="flex items-center gap-3">
+            <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-3">
               {credential.photo_data_uri && <img src={credential.photo_data_uri} alt="" className="h-12 w-16 rounded-lg object-cover" />}
               <div>
                 <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{credential.vehicle_description}</p>
                 {credential.license_plate && <p className="font-mono text-xs text-ink-400">{credential.license_plate}</p>}
               </div>
-            </div>
+            </motion.div>
           ) : (
-            <p className="text-sm text-ink-400">No vehicle info yet -- tap the pencil to add it.</p>
+            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet -- tap the pencil to add it.</motion.p>
           )}
+          </AnimatePresence>
         </Card>
+        </motion.div>
       )}
 
+      <motion.div variants={fadeSlideUp}>
       <Card className="mb-4 p-4">
         <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Agent identity</p>
         <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "—"}</p>
@@ -194,19 +207,21 @@ export function ProfilePage() {
             : "Device lock not set up — this device has no passkey gate, so reconnecting here doesn't ask for one."}
         </p>
       </Card>
+      </motion.div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3">
+      <motion.div variants={fadeSlideUp} className="mb-4 grid grid-cols-2 gap-3">
         <Card className="p-4">
           <p className="text-xs text-ink-400">Balance</p>
-          <p className="text-lg font-black text-ink-900 dark:text-ink-50">{balance === null ? "…" : formatCents(balance)}</p>
+          {balance === null ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
         </Card>
         <Card className="p-4">
           <p className="text-xs text-ink-400">Completed</p>
-          <p className="text-lg font-black text-ink-900 dark:text-ink-50">{rep === null ? "…" : rep.completed_count}</p>
+          {rep === null ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
         </Card>
-      </div>
+      </motion.div>
 
-      <Link to="/transparency" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+      <motion.div variants={fadeSlideUp} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
+      <Link to="/transparency" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4 shadow-[var(--shadow-card)]">
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-relay-500 to-presence-500 text-white">
           <ShieldCheck size={18} />
         </div>
@@ -216,8 +231,10 @@ export function ProfilePage() {
         </div>
         <ChevronRight size={18} className="shrink-0 text-ink-300" />
       </Link>
+      </motion.div>
 
       {reviews.length > 0 && (
+        <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
           <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Reviews</p>
           <div className="flex flex-col gap-3">
@@ -229,11 +246,14 @@ export function ProfilePage() {
             ))}
           </div>
         </Card>
+        </motion.div>
       )}
 
-      <Button variant="ghost" className="w-full" onClick={signOut}>
-        <LogOut size={16} /> Disconnect this identity
-      </Button>
-    </div>
+      <motion.div variants={fadeSlideUp}>
+        <Button variant="ghost" className="w-full" onClick={signOut}>
+          <LogOut size={16} /> Disconnect this identity
+        </Button>
+      </motion.div>
+    </motion.div>
   );
 }

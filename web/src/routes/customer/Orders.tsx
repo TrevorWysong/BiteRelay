@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ClipboardList, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { getOrdersForRequester, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
-import { Button, Card, EmptyState, Spinner } from "../../components/ui";
+import { Button, Card, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
 import { describeRecurrence } from "../../lib/recurrence";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { DeliveryOrder, MenuItem, MerchantCatalog, RecurringOrderTemplate } from "../../holochain/types";
 
 interface Row {
@@ -127,18 +129,23 @@ export function Orders() {
 
   if (rows === null) {
     return (
-      <div className="flex justify-center py-16 text-ink-300">
-        <Spinner />
+      <div className="px-4 pt-4">
+        <Skeleton className="h-7 w-1/3 mb-4" />
+        <Skeleton className="h-16 w-full mb-3" />
+        <Skeleton className="h-16 w-full mb-3" />
+        <Skeleton className="h-16 w-full" />
       </div>
     );
   }
 
   return (
-    <div className="px-4 pt-4">
-      <h1 className="mb-4 text-xl font-black text-ink-900 dark:text-ink-50">Your orders</h1>
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4">
+      <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
+        Your orders
+      </motion.h1>
 
       {recurring.length > 0 && (
-        <div className="mb-5">
+        <motion.div variants={fadeSlideUp} className="mb-5">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
             <Repeat size={13} /> Recurring orders
           </p>
@@ -160,37 +167,43 @@ export function Orders() {
               </Card>
             ))}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {rows.length === 0 && (
-        <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here — this reads your own RequesterToOrder links directly off the DHT." />
+        <motion.div variants={fadeSlideUp}>
+          <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here — this reads your own RequesterToOrder links directly off the DHT." />
+        </motion.div>
       )}
 
-      <div className="flex flex-col gap-3 pb-6">
-        {rows.map(({ hash, order }) => (
-          <div key={bytesToHex(hash)} className="flex items-center gap-2 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
-            <Link to={`/customer/orders/${bytesToHex(hash)}`} className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{formatCents(order.order_total)}</p>
-              <p className="text-xs text-ink-400">{order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}</p>
-            </Link>
-            <StatusBadge status={order.status} />
-            {order.status === "Scheduled" && order.requested_delivery_time !== null && order.requested_delivery_time <= Date.now() * 1000 && (
-              <Button variant="primary" className="px-2.5 py-1.5 text-xs" loading={opening === bytesToHex(hash)} onClick={() => openNow(hash)}>
-                <PlayCircle size={13} />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1.5 text-xs"
-              loading={reordering === bytesToHex(order.catalog_ref)}
-              onClick={() => reorder(order)}
-            >
-              <RotateCcw size={13} />
-            </Button>
-          </div>
-        ))}
-      </div>
-    </div>
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3 pb-6">
+        <AnimatePresence initial={false}>
+          {rows.map(({ hash, order }) => (
+            <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+              <Card className="flex items-center gap-2 p-4">
+                <Link to={`/customer/orders/${bytesToHex(hash)}`} className="min-w-0 flex-1">
+                  <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
+                  <p className="text-xs text-ink-400">{order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}</p>
+                </Link>
+                <StatusBadge status={order.status} />
+                {order.status === "Scheduled" && order.requested_delivery_time !== null && order.requested_delivery_time <= Date.now() * 1000 && (
+                  <Button variant="primary" className="px-2.5 py-1.5 text-xs" loading={opening === bytesToHex(hash)} onClick={() => openNow(hash)}>
+                    <PlayCircle size={13} />
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  className="px-2.5 py-1.5 text-xs"
+                  loading={reordering === bytesToHex(order.catalog_ref)}
+                  onClick={() => reorder(order)}
+                >
+                  <RotateCcw size={13} />
+                </Button>
+              </Card>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </motion.div>
+    </motion.div>
   );
 }

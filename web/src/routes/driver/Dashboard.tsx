@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
 import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation } from "../../holochain/zomes/attestation";
@@ -7,13 +8,14 @@ import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
-import { Button, Card, EmptyState, PresenceDot, Spinner } from "../../components/ui";
+import { Button, Card, EmptyState, PresenceDot, Skeleton, StatNumber } from "../../components/ui";
 import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { PhotoInput } from "../../components/PhotoInput";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta } from "../../lib/format";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Bid, DeliveryOrder, DeliveryStatus, Review } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
@@ -223,24 +225,32 @@ export function DriverDashboard() {
           <p className="text-xs text-ink-400">{online ? "Nearby customers can see and signal you directly" : "Go online to start receiving orders"}</p>
           {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} size={11} />}
         </div>
-        <button
+        <motion.button
           onClick={toggleOnline}
-          className={`grid h-11 w-11 place-items-center rounded-full transition ${online ? "bg-presence-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-400"}`}
+          whileTap={{ scale: 0.92 }}
+          animate={{ backgroundColor: online ? "#22c55e" : "#ece9e6" }}
+          transition={{ duration: 0.25 }}
+          className={`grid h-11 w-11 place-items-center rounded-full ${online ? "text-white shadow-[var(--shadow-glow)]" : "text-ink-400"}`}
+          style={online ? { boxShadow: "0 6px 20px -4px rgba(34, 197, 94, 0.5)" } : undefined}
         >
           <Power size={20} />
-        </button>
+        </motion.button>
       </Card>
 
-      {activeOrders.length > 0 && (
-        <div className="mb-5 flex flex-col gap-4">
-          <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
-            Active {activeOrders.length === 1 ? "delivery" : `deliveries (${activeOrders.length})`}
-          </p>
-          {activeOrders.map((row) => (
-            <ActiveDeliveryCard key={bytesToHex(row.hash)} row={row} location={location} onAdvanced={refreshActiveOrders} />
-          ))}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {activeOrders.length > 0 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mb-5 flex flex-col gap-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
+              Active {activeOrders.length === 1 ? "delivery" : `deliveries (${activeOrders.length})`}
+            </p>
+            {activeOrders.map((row) => (
+              <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
+                <ActiveDeliveryCard row={row} location={location} onAdvanced={refreshActiveOrders} />
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {online && activeOrders.length < MAX_CONCURRENT_DELIVERIES && (
         <>
@@ -249,23 +259,30 @@ export function DriverDashboard() {
             Nearby open orders
           </div>
           {sortedNearby === null && (
-            <div className="flex justify-center py-10 text-ink-300">
-              <Spinner />
+            <div className="flex flex-col gap-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i} className="p-4">
+                  <Skeleton className="h-4 w-1/3 mb-2" />
+                  <Skeleton className="h-3 w-2/3 mb-3" />
+                  <Skeleton className="h-8 w-full" />
+                </Card>
+              ))}
             </div>
           )}
           {sortedNearby?.length === 0 && <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />}
-          <div className="flex flex-col gap-3">
+          <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3">
             {sortedNearby?.map(({ hash, order }) => (
-              <BidCard
-                key={bytesToHex(hash)}
-                order={order}
-                loading={bidding === bytesToHex(hash)}
-                onBid={(eta, fee) => placeBid(hash, eta, fee)}
-                sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
-                nearbyDropoffKm={nearestActiveDropoffKm(order)}
-              />
+              <motion.div key={bytesToHex(hash)} variants={fadeSlideUp} layout>
+                <BidCard
+                  order={order}
+                  loading={bidding === bytesToHex(hash)}
+                  onBid={(eta, fee) => placeBid(hash, eta, fee)}
+                  sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
+                  nearbyDropoffKm={nearestActiveDropoffKm(order)}
+                />
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         </>
       )}
 
@@ -335,9 +352,9 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           <span className="text-ink-400">Tip</span>
           <span className="text-ink-900 dark:text-ink-50">{formatCents(row.order.tip_cents)}</span>
         </div>
-        <div className="flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-1 font-bold">
+        <div className="flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-2 mt-1">
           <span className="text-ink-400">Total payout</span>
-          <span className="text-ink-900 dark:text-ink-50">{formatCents((row.bid?.price_offer ?? 0) + row.order.tip_cents)}</span>
+          <StatNumber tone="success" className="text-lg">{formatCents((row.bid?.price_offer ?? 0) + row.order.tip_cents)}</StatNumber>
         </div>
       </div>
       <div className="mt-4">
@@ -388,7 +405,9 @@ function BidCard({
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{formatCents(order.order_total)} order</p>
+        <p className="flex items-baseline gap-1 text-sm font-bold text-ink-900 dark:text-ink-50">
+          <StatNumber className="text-base">{formatCents(order.order_total)}</StatNumber> order
+        </p>
         <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>
       </div>
       {sameMerchant ? (

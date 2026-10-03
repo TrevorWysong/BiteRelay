@@ -18,8 +18,14 @@
   --color-ink-800: #2b2721;
   --color-ink-900: #1c1916;
   --color-ink-950: #111010;
-  --color-ink: #14161a;
-  --color-ink-soft: #3a3d44;
+  /* `ink`/`ink-soft` are semantic aliases for "default text" / "default
+     muted text" -- deliberately kept equal to ink-900/ink-700 (not a
+     separate cool-toned pair, which they used to be) so Button's
+     `secondary` variant and index.css's own body color always match the
+     rest of the warm neutral scale instead of reading as a slightly
+     different, colder black. */
+  --color-ink: #1c1916;
+  --color-ink-soft: #3f3931;
   --color-cream: #fbf8f4;
   --color-cream-deep: #f2ecE3;
 
@@ -43,6 +49,11 @@
 
   --shadow-card: 0 1px 2px rgba(20, 22, 26, 0.04), 0 8px 24px -8px rgba(20, 22, 26, 0.12);
   --shadow-float: 0 12px 32px -8px rgba(20, 22, 26, 0.28);
+  /* The brand button's own glow, promoted from an inline arbitrary value
+     (it was previously hand-typed in ui.tsx's Button component) to a
+     reusable token, now also used by other "primary call to action"
+     surfaces (the hero stat ring, floating action buttons). */
+  --shadow-glow: 0 6px 20px -4px rgba(255, 90, 43, 0.5);
 }
 
 @layer base {
@@ -73,5 +84,99 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Skeleton loading placeholders -- a moving highlight band over a flat
+     base, used by components/ui.tsx's `Skeleton` instead of every screen
+     showing a bare centered spinner while its first real content loads. */
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-ink-100);
+  }
+  @media (prefers-color-scheme: dark) {
+    .skeleton {
+      background-color: var(--color-ink-800);
+    }
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+  @media (prefers-color-scheme: dark) {
+    .skeleton::after {
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+    }
+  }
+
+  /* Leaflet theming (components/LiveMap.tsx) -- the library ships its own
+     gray chrome and a white popup by default, which clashes with this
+     app's warm palette and breaks outright in dark mode. A CSS filter on
+     the tile layer (rather than a second, paid dark-tile provider) is the
+     standard trick for giving free OSM raster tiles a branded, desaturated
+     look and a usable dark variant -- consistent with LiveMap's own "no
+     paid service" design constraint (architecture plan §12, LocationInput's
+     equivalent tradeoff). */
+  .leaflet-tile-pane {
+    filter: grayscale(0.25) saturate(0.85) brightness(1.03);
+  }
+  @media (prefers-color-scheme: dark) {
+    .leaflet-tile-pane {
+      filter: grayscale(0.4) invert(0.92) hue-rotate(180deg) brightness(0.95) contrast(0.92);
+    }
+  }
+  .leaflet-popup-content-wrapper {
+    border-radius: 0.75rem;
+    background: var(--color-cream);
+    color: var(--color-ink);
+    box-shadow: var(--shadow-float);
+  }
+  .leaflet-popup-content {
+    margin: 0.5rem 0.75rem;
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .leaflet-popup-tip {
+    background: var(--color-cream);
+  }
+  .leaflet-container a.leaflet-popup-close-button {
+    color: var(--color-ink-400);
+  }
+  @media (prefers-color-scheme: dark) {
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+      background: var(--color-ink-900);
+      color: var(--color-ink-50);
+    }
+  }
+  .leaflet-control-attribution {
+    background: color-mix(in srgb, var(--color-cream) 85%, transparent) !important;
+    color: var(--color-ink-400) !important;
+    font-size: 9px !important;
+  }
+  @media (prefers-color-scheme: dark) {
+    .leaflet-control-attribution {
+      background: color-mix(in srgb, var(--color-ink-900) 85%, transparent) !important;
+      color: var(--color-ink-500) !important;
+    }
+  }
+
+  /* A soft, brand-tinted radial mesh for hero sections (Onboarding,
+     Transparency) -- an alternative to a flat color fill that still reads
+     as calm/premium rather than "loud gradient." */
+  .mesh-hero {
+    background-image: radial-gradient(circle at 15% 20%, color-mix(in srgb, var(--color-relay-400) 55%, transparent) 0%, transparent 45%),
+      radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--color-presence-400) 35%, transparent) 0%, transparent 40%),
+      linear-gradient(180deg, var(--color-relay-500), var(--color-relay-700));
   }
 }

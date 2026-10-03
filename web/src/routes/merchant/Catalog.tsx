@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Star, Store, Tag } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   publishCatalog,
   setCatalogOpen,
@@ -18,11 +19,12 @@ import { decodeEntry, actionHash, bytesToHex, hexToBytes, bytesEqual } from "../
 import { myAgentPubKey } from "../../holochain/client";
 import { useSession } from "../../store/session";
 import { encodeGeohash } from "../../lib/geohash";
-import { Button, Card, Spinner } from "../../components/ui";
+import { Button, Card, Skeleton, StatNumber } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { StarRating } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
 import { describeRequirement, describeReward } from "../../lib/promotions";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review } from "../../holochain/types";
 
 interface ItemRow {
@@ -286,15 +288,18 @@ export function MerchantCatalog() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-16 text-ink-300">
-        <Spinner />
+      <div className="px-4 pt-4">
+        <Skeleton className="h-32 w-full mb-4" />
+        <Skeleton className="h-6 w-1/2 mb-3" />
+        <Skeleton className="h-24 w-full mb-3" />
+        <Skeleton className="h-24 w-full" />
       </div>
     );
   }
 
   if (!catalog || !catalogHash) {
     return (
-      <div className="px-4 pt-8">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-4 pt-8">
         <div className="mb-5 flex flex-col items-center gap-2 text-center">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-relay-100 dark:bg-relay-900/30 text-relay-600">
             <Store size={22} />
@@ -313,7 +318,7 @@ export function MerchantCatalog() {
             Publish catalog
           </Button>
         </Card>
-      </div>
+      </motion.div>
     );
   }
 
@@ -327,17 +332,24 @@ export function MerchantCatalog() {
   }
 
   return (
-    <div className="pb-8">
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-8">
       {catalog.banner_data_uri && <img src={catalog.banner_data_uri} alt="" className="h-32 w-full object-cover" />}
       <div className="px-4 pt-4">
-        <div className="mb-1 flex items-center justify-between">
-          <h1 className="text-xl font-black text-ink-900 dark:text-ink-50">{catalog.business_name}</h1>
-          <Button variant={catalog.is_open ? "secondary" : "primary"} className="px-3 py-1.5 text-xs" onClick={toggleOpen}>
+        <motion.div variants={fadeSlideUp} className="mb-1 flex items-center justify-between">
+          <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{catalog.business_name}</h1>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            animate={{ backgroundColor: catalog.is_open ? "#1c1916" : "#ff5a2b" }}
+            transition={{ duration: 0.2 }}
+            onClick={toggleOpen}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold text-white"
+          >
             {catalog.is_open ? "Open" : "Closed"} · toggle
-          </Button>
-        </div>
+          </motion.button>
+        </motion.div>
         {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} />}
 
+        <motion.div variants={fadeSlideUp}>
         <Card className="my-4 p-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Storefront details</p>
@@ -345,8 +357,9 @@ export function MerchantCatalog() {
               <Pencil size={14} />
             </button>
           </div>
+          <AnimatePresence mode="wait" initial={false}>
           {editingDetails ? (
-            <div className="flex flex-col gap-2">
+            <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={detailsDraft.banner_data_uri} onChange={(v) => setDetailsDraft((d) => ({ ...d, banner_data_uri: v }))} shape="banner" />
               <textarea
                 value={detailsDraft.description}
@@ -390,9 +403,9 @@ export function MerchantCatalog() {
               <Button loading={savingDetails} onClick={saveDetails} className="py-2 text-xs">
                 Save
               </Button>
-            </div>
+            </motion.div>
           ) : (
-            <div className="text-sm text-ink-600 dark:text-ink-300">
+            <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-600 dark:text-ink-300">
               <p>{catalog.description || "No description yet."}</p>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-400">
                 {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
@@ -404,10 +417,13 @@ export function MerchantCatalog() {
                   </span>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </Card>
+        </motion.div>
 
+        <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Delivery cost sharing</p>
@@ -441,7 +457,9 @@ export function MerchantCatalog() {
             </p>
           )}
         </Card>
+        </motion.div>
 
+        <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
@@ -451,8 +469,9 @@ export function MerchantCatalog() {
               <Plus size={14} /> {showAddPromo ? "Cancel" : "New code"}
             </Button>
           </div>
+          <AnimatePresence initial={false}>
           {showAddPromo && (
-            <div className="mb-3 flex flex-col gap-3 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="mb-3 flex flex-col gap-3 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
               <input
                 value={promoForm.code}
                 onChange={(e) => setPromoForm((f) => ({ ...f, code: e.target.value }))}
@@ -589,14 +608,16 @@ export function MerchantCatalog() {
               >
                 Create
               </Button>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
           {promos.length === 0 && !showAddPromo ? (
             <p className="text-sm text-ink-400">No promo codes yet.</p>
           ) : (
-            <div className="flex flex-col gap-2">
+            <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
+              <AnimatePresence initial={false}>
               {promos.map((row) => (
-                <div key={bytesToHex(row.hash)} className="flex items-center justify-between rounded-lg bg-ink-50 dark:bg-ink-800/60 px-3 py-2">
+                <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }} className="flex items-center justify-between rounded-lg bg-ink-50 dark:bg-ink-800/60 px-3 py-2">
                   <div>
                     <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">
                       {row.promo.code}
@@ -614,20 +635,24 @@ export function MerchantCatalog() {
                   >
                     {row.promo.active ? "Active" : "Inactive"}
                   </Button>
-                </div>
+                </motion.div>
               ))}
-            </div>
+              </AnimatePresence>
+            </motion.div>
           )}
         </Card>
+        </motion.div>
 
-        <div className="mb-3 flex items-center justify-between">
+        <motion.div variants={fadeSlideUp} className="mb-3 flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Menu</p>
           <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => (showAddItem ? resetItemForm() : setShowAddItem(true))}>
             <Plus size={14} /> {showAddItem ? "Cancel" : "Add item"}
           </Button>
-        </div>
+        </motion.div>
 
+        <AnimatePresence initial={false}>
         {showAddItem && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
           <Card className="mb-4 flex flex-col gap-2 p-4">
             <div className="flex gap-3">
               <PhotoInput value={itemForm.photo_data_uri} onChange={(v) => setItemForm((f) => ({ ...f, photo_data_uri: v }))} shape="circle" className="shrink-0" />
@@ -672,12 +697,15 @@ export function MerchantCatalog() {
               {editingItemHash ? "Save changes" : "Add to menu"}
             </Button>
           </Card>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {items?.length === 0 && !showAddItem && <p className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">No menu items yet.</p>}
 
+        <motion.div variants={staggerContainer} initial="hidden" animate="visible">
         {[...grouped.entries()].map(([category, rows]) => (
-          <div key={category} className="mb-4">
+          <motion.div variants={fadeSlideUp} key={category} className="mb-4">
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{category}</p>
             <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
               {rows.map((row) => (
@@ -686,21 +714,23 @@ export function MerchantCatalog() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.item.name}</p>
                     {row.item.description && <p className="truncate text-xs text-ink-400">{row.item.description}</p>}
-                    <p className="text-sm text-ink-500">{formatCents(row.item.price_cents)}</p>
+                    <StatNumber className="text-sm">{formatCents(row.item.price_cents)}</StatNumber>
                   </div>
-                  <button onClick={() => toggleAvailable(row)} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${row.item.available ? "bg-presence-500/15 text-presence-600" : "bg-ink-100 text-ink-400"}`}>
+                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => toggleAvailable(row)} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${row.item.available ? "bg-presence-500/15 text-presence-600" : "bg-ink-100 text-ink-400"}`}>
                     {row.item.available ? "Available" : "Sold out"}
-                  </button>
+                  </motion.button>
                   <button onClick={() => startEditItem(row)} className="text-ink-400 hover:text-relay-600">
                     <Pencil size={14} />
                   </button>
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         ))}
+        </motion.div>
 
         {reviews.length > 0 && (
+          <motion.div variants={fadeSlideUp}>
           <Card className="p-4">
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
               <Star size={13} /> Reviews
@@ -714,8 +744,9 @@ export function MerchantCatalog() {
               ))}
             </div>
           </Card>
+          </motion.div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

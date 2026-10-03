@@ -1,10 +1,29 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import { Home, ClipboardList, ShoppingCart, User, Car, Store, DollarSign, Gavel } from "lucide-react";
 import { useSession } from "../store/session";
 import { useCart } from "../store/cart";
 import { useRecurringOrderFiring } from "../hooks/useRecurringOrderFiring";
+import { pageVariants } from "../lib/motion";
 import { PresenceDot } from "./ui";
+
+/// Wraps whichever route is active in a short fade+rise so navigating
+/// between screens (Browse -> cart, an order's detail page, switching
+/// modes) feels like one continuous app rather than a hard page swap --
+/// `mode="wait"` so the outgoing screen finishes leaving before the next
+/// one enters, `initial={false}` so the very first screen on load doesn't
+/// also play the enter animation (it's already there).
+function AnimatedOutlet() {
+  const location = useLocation();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div key={location.pathname} variants={pageVariants} initial="initial" animate="animate" exit="exit">
+        <Outlet />
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 function BottomNavLink({ to, icon: Icon, label, badge }: { to: string; icon: typeof Home; label: string; badge?: number }) {
   return (
@@ -81,7 +100,7 @@ export function AppShell() {
       </header>
 
       <main className="flex-1 overflow-y-auto pb-20">
-        <Outlet />
+        <AnimatedOutlet />
       </main>
 
       <nav className="fixed bottom-0 left-1/2 z-20 flex w-full max-w-md -translate-x-1/2 border-t border-ink-100 dark:border-ink-800 bg-white/95 dark:bg-ink-900/95 backdrop-blur px-2 pb-[env(safe-area-inset-bottom)]">

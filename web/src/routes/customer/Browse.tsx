@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Heart, Search } from "lucide-react";
+import { motion } from "framer-motion";
 import clsx from "clsx";
 import { getNearbyMerchants } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
@@ -9,7 +10,8 @@ import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import type { MerchantCatalog, Review } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
-import { EmptyState, Spinner } from "../../components/ui";
+import { EmptyState, Skeleton } from "../../components/ui";
+import { staggerContainer } from "../../lib/motion";
 
 interface Row {
   hash: Uint8Array;
@@ -19,6 +21,37 @@ interface Row {
 }
 
 type Sort = "relevance" | "rating" | "name";
+
+function ChipRow({ children }: { children: React.ReactNode }) {
+  return <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto pb-0.5">{children}</div>;
+}
+
+function Chip({ active, onClick, children, tone = "default" }: { active: boolean; onClick: () => void; children: React.ReactNode; tone?: "default" | "danger" | "brand" }) {
+  const activeClasses = tone === "danger" ? "bg-red-500 text-white" : tone === "brand" ? "bg-presence-500 text-white" : "bg-ink-900 text-white dark:bg-white dark:text-ink-900";
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition",
+        active ? activeClasses : "bg-ink-100 dark:bg-ink-800 text-ink-500 hover:bg-ink-200 dark:hover:bg-ink-700"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CardSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-ink-100/60 dark:border-ink-800">
+      <Skeleton className="h-32 w-full rounded-none" />
+      <div className="space-y-2 bg-white p-3 dark:bg-ink-900">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+    </div>
+  );
+}
 
 export function Browse() {
   const location = useSession((s) => s.location);
@@ -117,7 +150,7 @@ export function Browse() {
 
   return (
     <div className="px-4 pt-4">
-      <div className="mb-4 flex items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5">
+      <div className="mb-4 flex items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 transition focus-within:border-relay-400 focus-within:ring-2 focus-within:ring-relay-100">
         <Search size={16} className="text-ink-400" />
         <input
           value={query}
@@ -127,71 +160,64 @@ export function Browse() {
         />
       </div>
 
-      <h1 className="mb-1 text-xl font-black">Restaurants near you</h1>
+      <h1 className="mb-1 text-xl font-black tracking-tight">Restaurants near you</h1>
       <p className="mb-4 text-xs text-ink-400">
         Discovered live from the DHT -- {rows?.length ?? "..."} merchant{rows?.length === 1 ? "" : "s"} in this area right now.
       </p>
 
       {cuisines.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-2">
-          <button
-            onClick={() => setCuisine(null)}
-            className={clsx("rounded-full px-3 py-1.5 text-xs font-semibold", cuisine === null ? "bg-ink-900 text-white dark:bg-white dark:text-ink-900" : "bg-ink-100 dark:bg-ink-800 text-ink-500")}
-          >
+        <ChipRow>
+          <Chip active={cuisine === null} onClick={() => setCuisine(null)}>
             All
-          </button>
+          </Chip>
           {cuisines.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCuisine(c)}
-              className={clsx("rounded-full px-3 py-1.5 text-xs font-semibold", cuisine === c ? "bg-ink-900 text-white dark:bg-white dark:text-ink-900" : "bg-ink-100 dark:bg-ink-800 text-ink-500")}
-            >
+            <Chip key={c} active={cuisine === c} onClick={() => setCuisine(c)}>
               {c}
-            </button>
+            </Chip>
           ))}
-          <button
-            onClick={() => setFavoritesOnly((v) => !v)}
-            className={clsx(
-              "flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold",
-              favoritesOnly ? "bg-red-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500",
-            )}
-          >
-            <Heart size={12} fill={favoritesOnly ? "currentColor" : "none"} /> Favorites
-          </button>
-          <div className="ml-auto flex items-center gap-1 rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
-            {(["relevance", "rating", "name"] as Sort[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setSort(s)}
-                className={clsx("rounded-full px-2.5 py-1 capitalize", sort === s ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400")}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
+        </ChipRow>
       )}
 
+      <div className="mb-3 flex items-center gap-2">
+        <Chip active={favoritesOnly} onClick={() => setFavoritesOnly((v) => !v)} tone="danger">
+          <span className="flex items-center gap-1">
+            <Heart size={12} fill={favoritesOnly ? "currentColor" : "none"} /> Favorites
+          </span>
+        </Chip>
+        <div className="ml-auto flex items-center gap-1 rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
+          {(["relevance", "rating", "name"] as Sort[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSort(s)}
+              className={clsx(
+                "rounded-full px-2.5 py-1 capitalize transition",
+                sort === s ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400"
+              )}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {dietaryTags.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-2">
-          {dietaryTags.map((tag) => {
-            const active = dietaryFilter.includes(tag);
-            return (
-              <button
-                key={tag}
-                onClick={() => setDietaryFilter((prev) => (active ? prev.filter((t) => t !== tag) : [...prev, tag]))}
-                className={clsx("rounded-full px-3 py-1.5 text-xs font-semibold", active ? "bg-presence-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500")}
-              >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-ink-300 dark:text-ink-600">Diet</span>
+          <ChipRow>
+            {dietaryTags.map((tag) => (
+              <Chip key={tag} active={dietaryFilter.includes(tag)} onClick={() => setDietaryFilter((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))} tone="brand">
                 {tag}
-              </button>
-            );
-          })}
+              </Chip>
+            ))}
+          </ChipRow>
         </div>
       )}
 
       {rows === null && (
-        <div className="flex justify-center py-16 text-ink-300">
-          <Spinner />
+        <div className="grid grid-cols-2 gap-3 pb-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <CardSkeleton key={i} />
+          ))}
         </div>
       )}
 
@@ -199,19 +225,21 @@ export function Browse() {
         <EmptyState title="No restaurants nearby yet" subtitle="Merchants publish a catalog for their own location -- try switching to Sell mode to publish one for this demo." />
       )}
 
-      <div className="grid grid-cols-2 gap-3 pb-6">
-        {filtered?.map((r) => (
-          <RestaurantCard
-            key={bytesToHex(r.hash)}
-            catalogHash={r.hash}
-            catalog={r.catalog}
-            rating={r.rating}
-            reviewCount={r.reviewCount}
-            favorited={favoritesHex.has(bytesToHex(r.hash))}
-            onToggleFavorite={() => toggleFavorite(r.hash)}
-          />
-        ))}
-      </div>
+      {filtered && filtered.length > 0 && (
+        <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="grid grid-cols-2 gap-3 pb-6">
+          {filtered.map((r) => (
+            <RestaurantCard
+              key={bytesToHex(r.hash)}
+              catalogHash={r.hash}
+              catalog={r.catalog}
+              rating={r.rating}
+              reviewCount={r.reviewCount}
+              favorited={favoritesHex.has(bytesToHex(r.hash))}
+              onToggleFavorite={() => toggleFavorite(r.hash)}
+            />
+          ))}
+        </motion.div>
+      )}
     </div>
   );
 }

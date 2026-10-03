@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { Clock, Heart } from "lucide-react";
+import { motion } from "framer-motion";
 import type { MerchantCatalog } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { Badge } from "./ui";
 import { StarRating } from "./StarRating";
+import { fadeSlideUp } from "../lib/motion";
 
 // Purely-cosmetic fallback for a merchant with no banner photo set yet --
 // deterministic per catalog action hash so the same restaurant always
@@ -45,47 +47,56 @@ export function RestaurantCard({ catalogHash, catalog, rating, reviewCount, favo
     // nearby-list one) -- passed via router state so the detail screen
     // doesn't need a redundant round trip for data it already has, with a
     // list re-fetch as its own fallback for a direct URL/refresh.
-    <Link to={`/customer/merchant/${hex}`} state={{ catalog, catalogHash }} className="block">
-      <div className="relative h-32 overflow-hidden rounded-t-2xl">
-        {catalog.banner_data_uri ? (
-          <img src={catalog.banner_data_uri} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <div className={`flex h-full items-center justify-center bg-gradient-to-br ${gradient} text-5xl`}>{emoji}</div>
-        )}
-        {!catalog.is_open && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-            <Badge tone="neutral">Closed</Badge>
-          </div>
-        )}
-        {onToggleFavorite && (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onToggleFavorite();
-            }}
-            className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white transition hover:bg-black/60"
-          >
-            <Heart size={14} fill={favorited ? "currentColor" : "none"} />
-          </button>
-        )}
-      </div>
-      <div className="rounded-b-2xl border border-t-0 border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-3">
-        <p className="truncate font-bold text-sm">{catalog.business_name}</p>
-        <div className="mt-1 flex items-center gap-3 text-xs text-ink-400">
-          {rating !== undefined && reviewCount ? (
-            <StarRating value={rating} count={reviewCount} size={11} />
+    <motion.div variants={fadeSlideUp} whileHover={{ y: -3 }} transition={{ duration: 0.18 }} className="group">
+      <Link to={`/customer/merchant/${hex}`} state={{ catalog, catalogHash }} className="block overflow-hidden rounded-2xl shadow-[var(--shadow-card)]">
+        <div className="relative h-32 overflow-hidden rounded-t-2xl">
+          {catalog.banner_data_uri ? (
+            <img
+              src={catalog.banner_data_uri}
+              alt=""
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+            />
           ) : (
-            <span>{catalog.cuisine_type || "New"}</span>
+            <div className={`flex h-full items-center justify-center bg-gradient-to-br ${gradient} text-5xl transition duration-300 group-hover:scale-105`}>
+              {emoji}
+            </div>
           )}
-          {(catalog.hours_open || catalog.hours_close) && (
-            <span className="flex items-center gap-1">
-              <Clock size={11} />
-              {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
-            </span>
+          {!catalog.is_open && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+              <Badge tone="neutral">Closed</Badge>
+            </div>
+          )}
+          {onToggleFavorite && (
+            <motion.button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onToggleFavorite();
+              }}
+              whileTap={{ scale: 0.85 }}
+              className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
+            >
+              <Heart size={14} fill={favorited ? "currentColor" : "none"} className={favorited ? "text-red-400" : undefined} />
+            </motion.button>
           )}
         </div>
-      </div>
-    </Link>
+        <div className="rounded-b-2xl border border-t-0 border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-3">
+          <p className="truncate font-bold text-sm">{catalog.business_name}</p>
+          <div className="mt-1 flex items-center gap-3 text-xs text-ink-400">
+            {rating !== undefined && reviewCount ? (
+              <StarRating value={rating} count={reviewCount} size={11} />
+            ) : (
+              <span>{catalog.cuisine_type || "New"}</span>
+            )}
+            {(catalog.hours_open || catalog.hours_close) && (
+              <span className="flex items-center gap-1">
+                <Clock size={11} />
+                {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
+              </span>
+            )}
+          </div>
+        </div>
+      </Link>
+    </motion.div>
   );
 }

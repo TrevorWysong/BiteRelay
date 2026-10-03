@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bike, ChefHat, ShoppingBag } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { useSession } from "../store/session";
 import { Button, Card, Spinner } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
 import type { RoleTag } from "../holochain/types";
+import { fadeSlideUp, staggerContainer } from "../lib/motion";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
   { role: "Requester", label: "Order food", icon: ShoppingBag, blurb: "Browse nearby restaurants and get food delivered." },
@@ -16,7 +18,11 @@ const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bi
 
 const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
 
+const inputClass =
+  "mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm transition focus:border-relay-500 focus:outline-none focus:ring-2 focus:ring-relay-100";
+
 type Step = "roles" | "details" | "vehicle";
+const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 
 export function Onboarding() {
   const navigate = useNavigate();
@@ -76,165 +82,187 @@ export function Onboarding() {
 
   const connecting = status === "connecting";
   const showError = error || localError;
+  const stepIndex = STEP_ORDER.indexOf(step);
+  const totalSteps = roles.includes("Provider") ? 3 : 2;
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center bg-gradient-to-b from-relay-500 to-relay-700 px-6 py-10 text-white">
-      <div className="mb-8 flex flex-col items-center gap-3">
+    <div className="mesh-hero flex min-h-svh flex-col items-center justify-center px-6 py-10 text-white">
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="mb-8 flex flex-col items-center gap-3"
+      >
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
         <h1 className="text-3xl font-black tracking-tight">Relay</h1>
         <p className="text-white/80 text-sm text-center max-w-xs">
           A peer-to-peer delivery marketplace on Holochain -- no central server, every order runs directly between real agents.
         </p>
-      </div>
+      </motion.div>
 
-      <Card className="w-full max-w-sm bg-white text-ink-900 p-6">
-        {step === "roles" && (
-          <>
-            <h2 className="text-lg font-bold mb-1">What do you want to do?</h2>
-            <p className="text-sm text-ink-500 mb-4">Pick one or more -- you can switch anytime.</p>
-            <div className="flex flex-col gap-2 mb-5">
-              {ROLE_CARDS.map(({ role, label, blurb, icon: Icon }) => {
-                const active = roles.includes(role);
-                return (
-                  <button
-                    key={role}
-                    onClick={() => toggleRole(role)}
-                    className={clsx(
-                      "flex items-center gap-3 rounded-xl border-2 p-3 text-left transition",
-                      active ? "border-relay-500 bg-relay-50" : "border-ink-100 hover:border-ink-200"
-                    )}
-                  >
-                    <div className={clsx("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", active ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-400")}>
-                      <Icon size={18} />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm">{label}</p>
-                      <p className="text-xs text-ink-500">{blurb}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <Button className="w-full" disabled={roles.length === 0} onClick={() => setStep("details")}>
-              Continue
-            </Button>
-          </>
-        )}
+      <motion.div
+        initial={{ opacity: 0, y: 14, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.4, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full max-w-sm"
+      >
+        <Card className="bg-white text-ink-900 p-6 overflow-hidden">
+          <div className="mb-5 flex items-center gap-1.5">
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <motion.div
+                key={i}
+                className="h-1.5 flex-1 rounded-full bg-ink-100"
+                animate={{ backgroundColor: i <= stepIndex ? "#ff5a2b" : "#ece9e6" }}
+                transition={{ duration: 0.25 }}
+              />
+            ))}
+          </div>
 
-        {step === "details" && (
-          <>
-            <h2 className="text-lg font-bold mb-1">Create your identity</h2>
-            <p className="text-sm text-ink-500 mb-4">
-              This provisions a real, independent agent on the conductor -- your own keypair and DHT cell, not an account on a shared server.
-            </p>
+          <AnimatePresence mode="wait" initial={false}>
+            {step === "roles" && (
+              <motion.div key="roles" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+                <h2 className="text-lg font-bold mb-1">What do you want to do?</h2>
+                <p className="text-sm text-ink-500 mb-4">Pick one or more -- you can switch anytime.</p>
+                <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2 mb-5">
+                  {ROLE_CARDS.map(({ role, label, blurb, icon: Icon }) => {
+                    const active = roles.includes(role);
+                    return (
+                      <motion.button
+                        key={role}
+                        variants={fadeSlideUp}
+                        onClick={() => toggleRole(role)}
+                        whileTap={{ scale: 0.98 }}
+                        className={clsx(
+                          "flex items-center gap-3 rounded-xl border-2 p-3 text-left transition",
+                          active ? "border-relay-500 bg-relay-50" : "border-ink-100 hover:border-ink-200"
+                        )}
+                      >
+                        <motion.div
+                          animate={{ scale: active ? 1.06 : 1 }}
+                          transition={{ duration: 0.2 }}
+                          className={clsx("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", active ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-400")}
+                        >
+                          <Icon size={18} />
+                        </motion.div>
+                        <div>
+                          <p className="font-semibold text-sm">{label}</p>
+                          <p className="text-xs text-ink-500">{blurb}</p>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </motion.div>
+                <Button className="w-full" disabled={roles.length === 0} onClick={() => setStep("details")}>
+                  Continue
+                </Button>
+              </motion.div>
+            )}
 
-            <div className="mb-4 flex justify-center">
-              <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
-            </div>
+            {step === "details" && (
+              <motion.div key="details" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+                <h2 className="text-lg font-bold mb-1">Create your identity</h2>
+                <p className="text-sm text-ink-500 mb-4">
+                  This provisions a real, independent agent on the conductor -- your own keypair and DHT cell, not an account on a shared server.
+                </p>
 
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Display name</label>
-            <input
-              autoFocus
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Alex Rivera"
-              className="mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm focus:border-relay-500 focus:outline-none"
-            />
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Bio (optional)</label>
-            <textarea
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              rows={2}
-              placeholder="A little about you"
-              className="mb-4 w-full resize-none rounded-lg border border-ink-200 px-3 py-2.5 text-sm focus:border-relay-500 focus:outline-none"
-            />
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="(555) 555-0100"
-              className="mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm focus:border-relay-500 focus:outline-none"
-            />
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Conductor admin URL</label>
-            <input
-              value={adminUrl}
-              onChange={(e) => setAdminUrl(e.target.value)}
-              placeholder="ws://localhost:XXXXX/"
-              className="mb-1 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm font-mono focus:border-relay-500 focus:outline-none"
-            />
-            <p className="text-[11px] text-ink-400 mb-4">
-              Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
-              <code className="bg-ink-100 rounded px-1">web/</code>) -- it starts a real conductor and prints this URL for you.
-            </p>
+                <div className="mb-4 flex justify-center">
+                  <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
+                </div>
 
-            {showError && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{showError}</p>}
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Display name</label>
+                <input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" className={inputClass} />
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Bio (optional)</label>
+                <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" className={clsx(inputClass, "resize-none")} />
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" className={inputClass} />
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Conductor admin URL</label>
+                <input
+                  value={adminUrl}
+                  onChange={(e) => setAdminUrl(e.target.value)}
+                  placeholder="ws://localhost:XXXXX/"
+                  className={clsx(inputClass, "mb-1 font-mono")}
+                />
+                <p className="text-[11px] text-ink-400 mb-4">
+                  Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
+                  <code className="bg-ink-100 rounded px-1">web/</code>) -- it starts a real conductor and prints this URL for you.
+                </p>
 
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setStep("roles")} disabled={connecting}>
-                Back
-              </Button>
-              <Button className="flex-1" onClick={goToDetailsNext} disabled={connecting || !displayName.trim() || !adminUrl.trim()}>
-                {connecting ? <Spinner className="h-4 w-4" /> : roles.includes("Provider") ? "Next: vehicle info" : "Enter Relay"}
-              </Button>
-            </div>
-          </>
-        )}
+                {showError && (
+                  <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {showError}
+                  </motion.p>
+                )}
 
-        {step === "vehicle" && (
-          <>
-            <h2 className="text-lg font-bold mb-1">Your vehicle</h2>
-            <p className="text-sm text-ink-500 mb-4">Shown to customers once you're assigned their delivery.</p>
+                <div className="flex gap-2">
+                  <Button variant="ghost" onClick={() => setStep("roles")} disabled={connecting}>
+                    Back
+                  </Button>
+                  <Button className="flex-1" onClick={goToDetailsNext} disabled={connecting || !displayName.trim() || !adminUrl.trim()}>
+                    {connecting ? <Spinner className="h-4 w-4" /> : roles.includes("Provider") ? "Next: vehicle info" : "Enter Relay"}
+                  </Button>
+                </div>
+              </motion.div>
+            )}
 
-            <div className="mb-4 flex justify-center">
-              <PhotoInput value={vehiclePhoto} onChange={setVehiclePhoto} shape="banner" />
-            </div>
+            {step === "vehicle" && (
+              <motion.div key="vehicle" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+                <h2 className="text-lg font-bold mb-1">Your vehicle</h2>
+                <p className="text-sm text-ink-500 mb-4">Shown to customers once you're assigned their delivery.</p>
 
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Vehicle type</label>
-            <div className="mb-4 flex flex-wrap gap-2">
-              {VEHICLE_TYPES.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setVehicleType(t)}
-                  className={clsx("rounded-full px-3 py-1.5 text-xs font-semibold", vehicleType === t ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-500")}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-            <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
-            <input
-              value={vehicleDetail}
-              onChange={(e) => setVehicleDetail(e.target.value)}
-              placeholder="Blue Honda Civic"
-              className="mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm focus:border-relay-500 focus:outline-none"
-            />
-            <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
-            <input
-              value={licensePlate}
-              onChange={(e) => setLicensePlate(e.target.value)}
-              placeholder="ABC-1234"
-              className="mb-4 w-full rounded-lg border border-ink-200 px-3 py-2.5 text-sm font-mono focus:border-relay-500 focus:outline-none"
-            />
+                <div className="mb-4 flex justify-center">
+                  <PhotoInput value={vehiclePhoto} onChange={setVehiclePhoto} shape="banner" />
+                </div>
 
-            {showError && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{showError}</p>}
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Vehicle type</label>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {VEHICLE_TYPES.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setVehicleType(t)}
+                      className={clsx(
+                        "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                        vehicleType === t ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-500 hover:bg-ink-200"
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
+                <input value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" className={inputClass} />
+                <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
+                <input
+                  value={licensePlate}
+                  onChange={(e) => setLicensePlate(e.target.value)}
+                  placeholder="ABC-1234"
+                  className={clsx(inputClass, "font-mono")}
+                />
 
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setStep("details")} disabled={connecting}>
-                Back
-              </Button>
-              <Button className="flex-1" onClick={finish} disabled={connecting}>
-                {connecting ? <Spinner className="h-4 w-4" /> : "Enter Relay"}
-              </Button>
-            </div>
-          </>
-        )}
+                {showError && (
+                  <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {showError}
+                  </motion.p>
+                )}
 
-        {hasStoredIdentity() && step === "roles" && (
-          <button onClick={handleReconnect} disabled={connecting} className="mt-4 w-full text-center text-xs font-semibold text-relay-600 hover:underline">
-            {connecting ? "Reconnecting..." : "Continue as your existing identity"}
-          </button>
-        )}
-      </Card>
+                <div className="flex gap-2">
+                  <Button variant="ghost" onClick={() => setStep("details")} disabled={connecting}>
+                    Back
+                  </Button>
+                  <Button className="flex-1" onClick={finish} disabled={connecting}>
+                    {connecting ? <Spinner className="h-4 w-4" /> : "Enter Relay"}
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {hasStoredIdentity() && step === "roles" && (
+            <button onClick={handleReconnect} disabled={connecting} className="mt-4 w-full text-center text-xs font-semibold text-relay-600 hover:underline">
+              {connecting ? "Reconnecting..." : "Continue as your existing identity"}
+            </button>
+          )}
+        </Card>
+      </motion.div>
     </div>
   );
 }

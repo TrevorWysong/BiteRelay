@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, Phone, Plus, ShoppingBag, Star } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { getNearbyMerchants, listMenuItems } from "../../holochain/zomes/catalog";
 import { getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { addFavorite, removeFavorite, listFavorites } from "../../holochain/zomes/profiles";
@@ -9,8 +10,9 @@ import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
 import { formatCents } from "../../lib/format";
-import { Spinner } from "../../components/ui";
+import { Skeleton, StatNumber } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { MenuItem, MerchantCatalog, Review } from "../../holochain/types";
 
 interface ItemRow {
@@ -89,8 +91,14 @@ export function MerchantDetail() {
 
   if (!catalog || !items || !catalogHash) {
     return (
-      <div className="flex justify-center py-16 text-ink-300">
-        <Spinner />
+      <div className="pb-24">
+        <Skeleton className="h-40 w-full rounded-none" />
+        <div className="px-4 pt-4">
+          <Skeleton className="h-6 w-2/3 mb-2" />
+          <Skeleton className="h-4 w-1/3 mb-6" />
+          <Skeleton className="h-24 w-full mb-3" />
+          <Skeleton className="h-24 w-full" />
+        </div>
       </div>
     );
   }
@@ -104,23 +112,23 @@ export function MerchantDetail() {
   }
 
   return (
-    <div className="pb-24">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pb-24">
       <div className="relative h-40">
         {catalog.banner_data_uri ? (
           <img src={catalog.banner_data_uri} alt="" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full items-center justify-center bg-gradient-to-br from-relay-400 to-relay-600 text-5xl">🍽️</div>
         )}
-        <button onClick={() => navigate(-1)} className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow">
+        <motion.button whileTap={{ scale: 0.9 }} onClick={() => navigate(-1)} className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm">
           <ArrowLeft size={18} className="text-ink-900" />
-        </button>
-        <button onClick={toggleFavorite} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow">
+        </motion.button>
+        <motion.button whileTap={{ scale: 0.85 }} onClick={toggleFavorite} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm">
           <Heart size={18} className="text-red-500" fill={favorited ? "currentColor" : "none"} />
-        </button>
+        </motion.button>
       </div>
 
-      <div className="px-4 pt-4">
-        <h1 className="text-xl font-black text-ink-900 dark:text-ink-50">{catalog.business_name}</h1>
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4">
+        <motion.h1 variants={fadeSlideUp} className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{catalog.business_name}</motion.h1>
         {catalog.description && <p className="mt-1 text-sm text-ink-500">{catalog.description}</p>}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-400">
@@ -146,7 +154,7 @@ export function MerchantDetail() {
         </div>
 
         {[...grouped.entries()].map(([category, rows]) => (
-          <div key={category} className="mt-6">
+          <motion.div variants={fadeSlideUp} key={category} className="mt-6">
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{category}</p>
             <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
               {rows.map(({ hash: itemHash, item }) => (
@@ -156,7 +164,7 @@ export function MerchantDetail() {
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{item.name}</p>
                     {item.description && <p className="truncate text-xs text-ink-400">{item.description}</p>}
                     <div className="flex items-center gap-2">
-                      <p className="text-sm text-ink-500">{formatCents(item.price_cents)}</p>
+                      <StatNumber className="text-sm">{formatCents(item.price_cents)}</StatNumber>
                       {(() => {
                         const r = itemRatings[bytesToHex(itemHash)];
                         if (!r || r.count === 0) return null;
@@ -178,23 +186,24 @@ export function MerchantDetail() {
                     )}
                     {!item.available && <span className="text-xs font-medium text-red-600">Currently unavailable</span>}
                   </div>
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.85 }}
                     disabled={!item.available || !catalog.is_open}
                     onClick={() => cart.addItem(catalogHash, catalog.owner, catalog.business_name, itemHash, item.name, item.price_cents)}
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition-transform hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"
                   >
                     <Plus size={18} />
-                  </button>
+                  </motion.button>
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         ))}
 
         {items.length === 0 && <p className="mt-6 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">This merchant hasn't published any menu items yet.</p>}
 
         {reviews.length > 0 && (
-          <div className="mt-6">
+          <motion.div variants={fadeSlideUp} className="mt-6">
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
               <Star size={13} /> Reviews
             </p>
@@ -206,24 +215,32 @@ export function MerchantDetail() {
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         )}
-      </div>
+      </motion.div>
 
-      {cartCount > 0 && (
-        <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
-          <button
-            onClick={() => navigate("/customer/cart")}
-            className="flex w-full items-center justify-between rounded-full bg-relay-500 px-5 py-3.5 font-semibold text-white shadow-[0_12px_32px_-8px_rgba(255,90,43,0.5)]"
+      <AnimatePresence>
+        {cartCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 30 }}
+            className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4"
           >
-            <span className="flex items-center gap-2">
-              <ShoppingBag size={18} />
-              View cart · {cartCount} item{cartCount === 1 ? "" : "s"}
-            </span>
-            <span>{formatCents(cart.total())}</span>
-          </button>
-        </div>
-      )}
-    </div>
+            <motion.button
+              whileTap={{ scale: 0.97 }}
+              onClick={() => navigate("/customer/cart")}
+              className="flex w-full items-center justify-between rounded-full bg-relay-500 px-5 py-3.5 font-semibold text-white shadow-[var(--shadow-glow)]"
+            >
+              <span className="flex items-center gap-2">
+                <ShoppingBag size={18} />
+                View cart · {cartCount} item{cartCount === 1 ? "" : "s"}
+              </span>
+              <span>{formatCents(cart.total())}</span>
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

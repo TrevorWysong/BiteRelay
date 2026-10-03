@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
@@ -8,11 +9,12 @@ import { submitReview, submitItemReview, getReputationSummary, getReviewsFor } f
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
-import { Button, Card, Spinner } from "../../components/ui";
+import { Button, Card, Skeleton, StatNumber } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
+import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
@@ -170,8 +172,16 @@ export function OrderDetail() {
 
   if (!order || !orderRef) {
     return (
-      <div className="flex justify-center py-16 text-ink-300">
-        <Spinner />
+      <div className="flex flex-col gap-3 px-4 pt-4">
+        <Skeleton className="h-7 w-2/5" />
+        <Card className="p-4">
+          <Skeleton className="h-4 w-full mb-3" />
+          <Skeleton className="h-4 w-3/4 mb-3" />
+          <Skeleton className="h-4 w-1/2" />
+        </Card>
+        <Card className="p-4">
+          <Skeleton className="h-16 w-full" />
+        </Card>
       </div>
     );
   }
@@ -222,91 +232,110 @@ export function OrderDetail() {
   const canDispute = order.status === "Delivered" || order.status === "Cancelled";
 
   return (
-    <div className="px-4 pb-10 pt-4">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-black text-ink-900 dark:text-ink-50">{formatCents(order.order_total)} order</h1>
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
+      <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
+        <h1 className="flex items-baseline gap-1.5 text-xl font-black text-ink-900 dark:text-ink-50">
+          <StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber> order
+        </h1>
         <StatusBadge status={order.status} />
-      </div>
+      </motion.div>
 
-      <Card className="p-4">
-        <OrderStatusTimeline status={order.status} />
-      </Card>
+      <motion.div variants={fadeSlideUp}>
+        <Card className="p-4">
+          <OrderStatusTimeline status={order.status} />
+        </Card>
+      </motion.div>
 
-      <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
-        <p className="text-ink-500">
-          <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off: </span>
-          {DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]}
-        </p>
-        {order.special_instructions && (
+      <motion.div variants={fadeSlideUp}>
+        <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
           <p className="text-ink-500">
-            <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-            {order.special_instructions}
+            <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off: </span>
+            {DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]}
           </p>
-        )}
-        {order.tip_cents > 0 && (
-          <p className="text-ink-500">
-            <span className="font-semibold text-ink-900 dark:text-ink-50">Tip: </span>
-            {formatCents(order.tip_cents)}
-          </p>
-        )}
-      </Card>
+          {order.special_instructions && (
+            <p className="text-ink-500">
+              <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
+              {order.special_instructions}
+            </p>
+          )}
+          {order.tip_cents > 0 && (
+            <p className="text-ink-500">
+              <span className="font-semibold text-ink-900 dark:text-ink-50">Tip: </span>
+              {formatCents(order.tip_cents)}
+            </p>
+          )}
+        </Card>
+      </motion.div>
 
       {order.status === "Open" && (
-        <div className="mt-5">
+        <motion.div variants={fadeSlideUp} className="mt-5">
           <h2 className="mb-2 text-sm font-bold text-ink-900 dark:text-ink-50">Driver bids</h2>
-          {bids === null && <Spinner className="mx-auto my-4 h-5 w-5 text-ink-300" />}
-          {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid — this updates live.</p>}
-          <div className="flex flex-col gap-2">
-            {bids?.map(({ hash: bidHash, bid }) => {
-              const w = warrants[bytesToHex(bid.bidder)];
-              const stats = driverStats[bytesToHex(bid.bidder)];
-              return (
-                <Card key={bytesToHex(bidHash)} className="flex items-center justify-between p-3.5">
-                  <div>
-                    <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
-                      Driver {shortAgentId(bid.bidder)} · {formatEta(bid.eta_seconds)}
-                    </p>
-                    <p className="text-xs text-ink-400">Delivery fee {formatCents(bid.price_offer)}</p>
-                    {stats && (
-                      <div className="mt-1 flex items-center gap-1.5">
-                        {stats.reviewCount > 0 ? (
-                          <StarRating value={stats.avgRating} count={stats.reviewCount} size={11} />
-                        ) : (
-                          <span className="text-xs text-ink-400">No reviews yet</span>
-                        )}
-                        <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
-                      </div>
-                    )}
-                    {w && w.count > 0 && (
-                      <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-                        <AlertTriangle size={12} /> {w.count} outstanding warrant{w.count === 1 ? "" : "s"}
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    variant={w && w.count > 0 ? "danger" : "primary"}
-                    className="px-4 py-2 text-xs"
-                    loading={accepting === bytesToHex(bidHash)}
-                    onClick={() => pickBid(bidHash)}
-                  >
-                    {w && w.count > 0 ? "Accept anyway" : "Accept"}
-                  </Button>
+          {bids === null && (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <Card key={i} className="p-3.5">
+                  <Skeleton className="h-4 w-1/2 mb-2" />
+                  <Skeleton className="h-3 w-1/3" />
                 </Card>
-              );
-            })}
-          </div>
-        </div>
+              ))}
+            </div>
+          )}
+          {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid — this updates live.</p>}
+          <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>
+              {bids?.map(({ hash: bidHash, bid }) => {
+                const w = warrants[bytesToHex(bid.bidder)];
+                const stats = driverStats[bytesToHex(bid.bidder)];
+                return (
+                  <motion.div key={bytesToHex(bidHash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
+                    <Card className="flex items-center justify-between p-3.5">
+                      <div>
+                        <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
+                          Driver {shortAgentId(bid.bidder)} · {formatEta(bid.eta_seconds)}
+                        </p>
+                        <p className="text-xs text-ink-400">Delivery fee {formatCents(bid.price_offer)}</p>
+                        {stats && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            {stats.reviewCount > 0 ? (
+                              <StarRating value={stats.avgRating} count={stats.reviewCount} size={11} />
+                            ) : (
+                              <span className="text-xs text-ink-400">No reviews yet</span>
+                            )}
+                            <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
+                          </div>
+                        )}
+                        {w && w.count > 0 && (
+                          <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
+                            <AlertTriangle size={12} /> {w.count} outstanding warrant{w.count === 1 ? "" : "s"}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        variant={w && w.count > 0 ? "danger" : "primary"}
+                        className="px-4 py-2 text-xs"
+                        loading={accepting === bytesToHex(bidHash)}
+                        onClick={() => pickBid(bidHash)}
+                      >
+                        {w && w.count > 0 ? "Accept anyway" : "Accept"}
+                      </Button>
+                    </Card>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </motion.div>
+        </motion.div>
       )}
 
       {(order.status === "BidAccepted" || order.status === "MerchantConfirmed" || order.status === "DriverEnRouteToMerchant") && (
-        <div className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <Bike size={20} className="text-relay-600" />
           <p className="text-sm text-relay-700 dark:text-relay-300">Your driver is on it — this screen updates automatically as they progress.</p>
-        </div>
+        </motion.div>
       )}
 
       {order.status === "PickedUp" && (
-        <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <div className="flex items-center gap-3">
             <Bike size={20} className="text-relay-600" />
             <p className="text-sm text-relay-700 dark:text-relay-300">Your driver has picked up your order.</p>
@@ -314,45 +343,48 @@ export function OrderDetail() {
           <Button loading={completing} onClick={confirmReceipt}>
             Confirm receipt
           </Button>
-        </div>
+        </motion.div>
       )}
 
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && (
-        <div className="mt-4">
+        <motion.div variants={fadeSlideUp} className="mt-4">
           <LiveMap pickup={pickup} dropoff={order.dropoff} driver={driverLocation} />
           {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location -- not every device shares this.</p>}
-        </div>
+        </motion.div>
       )}
 
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && (
-        <div className="mt-4">
+        <motion.div variants={fadeSlideUp} className="mt-4">
           <ChatPanel orderRef={orderRef} title="Chat with your driver" />
-        </div>
+        </motion.div>
       )}
 
       {dropoffPhoto && (
-        <Card className="mt-4 p-4">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Photo at drop-off</p>
-          <img src={dropoffPhoto} alt="Delivery drop-off" className="w-full rounded-xl object-cover" />
-        </Card>
+        <motion.div variants={fadeSlideUp}>
+          <Card className="mt-4 p-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Photo at drop-off</p>
+            <img src={dropoffPhoto} alt="Delivery drop-off" className="w-full rounded-xl object-cover" />
+          </Card>
+        </motion.div>
       )}
 
       {canDispute && (
-        <div className="mt-6">
+        <motion.div variants={fadeSlideUp} className="mt-6">
           <Button variant="ghost" loading={disputing} onClick={fileDispute} className="w-full">
             {order.status === "Cancelled" ? "This cancellation seems unfair" : "Something went wrong with this order"}
           </Button>
-        </div>
+        </motion.div>
       )}
 
       {order.status === "Disputed" && (
-        <div className="mt-5 flex items-center gap-3 rounded-2xl bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-300">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-300">
           <AlertTriangle size={20} />
           <p className="text-sm">An arbitrator is reviewing this case. You'll see the outcome here once resolved.</p>
-        </div>
+        </motion.div>
       )}
 
       {order.status === "Delivered" && !reviewsSubmitted && (
+        <motion.div variants={fadeSlideUp}>
         <Card className="mt-5 flex flex-col gap-4 p-4">
           <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Rate your order</p>
           <div>
@@ -408,16 +440,17 @@ export function OrderDetail() {
             Submit review
           </Button>
         </Card>
+        </motion.div>
       )}
 
       {reviewsSubmitted && (
-        <div className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
           <CheckCircle2 size={20} />
           <p className="text-sm">Thanks for your feedback!</p>
-        </div>
+        </motion.div>
       )}
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
-    </div>
+    </motion.div>
   );
 }

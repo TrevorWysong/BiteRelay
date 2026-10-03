@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
+import { motion, type HTMLMotionProps } from "framer-motion";
 import clsx from "clsx";
 
 export function Card({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
@@ -21,19 +22,25 @@ export function Button({
   loading,
   disabled,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
-  const base = "inline-flex items-center justify-center gap-2 rounded-full font-semibold text-sm px-5 py-3 transition active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none";
+}: Omit<HTMLMotionProps<"button">, "children"> & { children?: ReactNode; variant?: ButtonVariant; loading?: boolean }) {
+  const base = "inline-flex items-center justify-center gap-2 rounded-full font-semibold text-sm px-5 py-3 transition disabled:opacity-40 disabled:pointer-events-none";
   const variants: Record<ButtonVariant, string> = {
-    primary: "bg-relay-500 text-white hover:bg-relay-600 shadow-[0_6px_16px_-4px_rgba(255,90,43,0.55)]",
+    primary: "bg-relay-500 text-white hover:bg-relay-600 shadow-[var(--shadow-glow)]",
     secondary: "bg-ink dark:bg-ink-100 text-white dark:text-ink-900 hover:opacity-90",
     ghost: "bg-transparent text-ink dark:text-ink-100 hover:bg-ink-100 dark:hover:bg-ink-800 border border-ink-200 dark:border-ink-700",
     danger: "bg-red-600 text-white hover:bg-red-700",
   };
   return (
-    <button className={clsx(base, variants[variant], className)} disabled={disabled || loading} {...rest}>
+    <motion.button
+      className={clsx(base, variants[variant], className)}
+      disabled={disabled || loading}
+      whileTap={disabled || loading ? undefined : { scale: 0.96 }}
+      transition={{ duration: 0.12 }}
+      {...rest}
+    >
       {loading && <Spinner className="h-4 w-4" />}
       {children}
-    </button>
+    </motion.button>
   );
 }
 
@@ -77,4 +84,27 @@ export function EmptyState({ icon, title, subtitle }: { icon?: ReactNode; title:
       {subtitle && <p className="text-sm mt-1 max-w-xs">{subtitle}</p>}
     </div>
   );
+}
+
+/// A shimmering placeholder block matching the shape of the content that
+/// will replace it (a row, a card, a line of text) -- used instead of a
+/// bare centered `Spinner` for list-shaped loading states, so the layout
+/// a screen is about to show is legible before any data arrives.
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={clsx("skeleton rounded-xl", className)} aria-hidden />;
+}
+
+/// Consistent "this number matters" treatment -- order totals, balances,
+/// earnings, the transparency dashboard's stats. Tabular figures so
+/// digits don't jitter the layout as they change, tight tracking for a
+/// confident, editorial feel, one shared place to tune rather than each
+/// screen hand-rolling its own `font-black` + color combination.
+export function StatNumber({ children, className, tone = "default" }: { children: ReactNode; className?: string; tone?: "default" | "brand" | "success" | "danger" }) {
+  const tones: Record<string, string> = {
+    default: "text-ink-900 dark:text-ink-50",
+    brand: "text-relay-600 dark:text-relay-400",
+    success: "text-presence-600 dark:text-presence-400",
+    danger: "text-red-600 dark:text-red-400",
+  };
+  return <span className={clsx("font-black tracking-tight tabular-nums", tones[tone], className)}>{children}</span>;
 }
