@@ -49,7 +49,14 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
         try {
           await reconnect();
           return;
-        } catch {
+        } catch (err) {
+          // A passkey ceremony is user-interactive and can itself take up
+          // to a minute (session.ts's reconnect() tags this distinctly) --
+          // retrying it automatically just re-triggers Touch ID/Windows
+          // Hello 2-3 more times back to back, which is what was reading
+          // as the page freezing/crashing on refresh, not a helpful retry.
+          // Only the *other* (transient-infra) failures get retried.
+          if (err instanceof Error && err.name === "PasskeyError") return;
           if (i < RECONNECT_RETRIES - 1) await new Promise((r) => setTimeout(r, RECONNECT_RETRY_DELAY_MS));
         }
       }
@@ -67,6 +74,11 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
       <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-3 text-white">
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
         <Spinner className="h-6 w-6" />
+        {/* A device-locked identity's reconnect can legitimately sit here
+            up to a minute waiting on a Touch ID/Windows Hello prompt (an
+            OS-level UI this page can't show anything about directly) --
+            an unlabeled spinner for that long reads as a frozen page. */}
+        <p className="text-xs text-white/70">Reconnecting -- check for a sign-in prompt if this takes a moment</p>
       </div>
     );
   }

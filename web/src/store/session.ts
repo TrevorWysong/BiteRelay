@@ -114,8 +114,21 @@ export const useSession = create<SessionState>((set) => ({
     try {
       // Gate *before* touching the admin API at all -- a cancelled/failed
       // passkey check should never even attempt to reconnect the identity.
+      // Tagged distinctly so callers that auto-retry (App.tsx's bootstrap)
+      // can tell this apart from a transient infra failure -- a Touch
+      // ID/Windows Hello prompt is user-interactive and can itself take up
+      // to a minute (see webauthn.ts's own ceremony timeout), so blindly
+      // retrying it 2-3 more times on failure means up to several more
+      // minutes of prompts stacking up, which reads as the page freezing,
+      // not as a helpful retry.
       if (stored.credentialId) {
-        await verifyPasskey(stored.credentialId);
+        try {
+          await verifyPasskey(stored.credentialId);
+        } catch (err) {
+          const tagged = new Error(describeError(err));
+          tagged.name = "PasskeyError";
+          throw tagged;
+        }
       }
       const agentPubKey = base64ToBytes(stored.agentPubKeyB64);
       const identity = await reconnectIdentity(stored.adminUrl, stored.installedAppId, agentPubKey);
