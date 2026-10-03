@@ -233,7 +233,7 @@ export function MerchantCatalog() {
       description: row.item.description,
       photo_data_uri: row.item.photo_data_uri,
       category: row.item.category,
-      dietary_tags: row.item.dietary_tags.join(", "),
+      dietary_tags: (row.item.dietary_tags ?? []).join(", "),
     });
     setShowAddItem(true);
   }

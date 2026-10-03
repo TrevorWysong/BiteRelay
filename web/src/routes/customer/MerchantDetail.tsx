@@ -175,9 +175,9 @@ export function MerchantDetail() {
                         );
                       })()}
                     </div>
-                    {item.dietary_tags.length > 0 && (
+                    {(item.dietary_tags ?? []).length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {item.dietary_tags.map((tag) => (
+                        {(item.dietary_tags ?? []).map((tag) => (
                           <span key={tag} className="rounded-full bg-ink-100 dark:bg-ink-800 px-2 py-0.5 text-[10px] font-medium text-ink-500">
                             {tag}
                           </span>

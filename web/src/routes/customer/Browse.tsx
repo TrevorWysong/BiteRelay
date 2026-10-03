@@ -125,7 +125,7 @@ export function Browse() {
 
   const dietaryTags = useMemo(() => {
     const set = new Set<string>();
-    rows?.forEach((r) => r.catalog.dietary_tags.forEach((t) => set.add(t)));
+    rows?.forEach((r) => (r.catalog.dietary_tags ?? []).forEach((t) => set.add(t)));
     return [...set].sort();
   }, [rows]);
 
@@ -137,7 +137,7 @@ export function Browse() {
     // forgiving reading for a browse filter (a restaurant with *some*
     // vegetarian options is still worth showing to a vegetarian customer,
     // even if its whole menu isn't vegetarian).
-    if (list && dietaryFilter.length > 0) list = list.filter((r) => dietaryFilter.some((tag) => r.catalog.dietary_tags.includes(tag)));
+    if (list && dietaryFilter.length > 0) list = list.filter((r) => dietaryFilter.some((tag) => (r.catalog.dietary_tags ?? []).includes(tag)));
     if (list) {
       list = [...list].sort((a, b) => {
         if (sort === "rating") return b.rating - a.rating;
