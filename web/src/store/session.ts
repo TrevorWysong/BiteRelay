@@ -5,12 +5,13 @@
 import { create } from "zustand";
 import { connect, isConnected, myAgentPubKey } from "../holochain/client";
 import { provisionNewIdentity, reconnectIdentity } from "../holochain/admin";
-import { createProfile, fetchProfile, getProfileForAgent } from "../holochain/zomes/profiles";
-import { actionHash } from "../holochain/decode";
+import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
+import { actionHash, decodeEntry } from "../holochain/decode";
 import { bytesToBase64, base64ToBytes } from "../holochain/client";
 import { isArbitrator as checkIsArbitrator } from "../holochain/governance";
 import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
 import { describeError } from "../lib/errors";
+import { withTimeout } from "../lib/timeout";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
 
 const STORAGE_KEY = "relay.identity.v1";
@@ -123,18 +124,31 @@ export const useSession = create<SessionState>((set) => ({
       // not as a helpful retry.
       if (stored.credentialId) {
         try {
-          await verifyPasskey(stored.credentialId);
+          // Independent of webauthn.ts's own AbortSignal.timeout() --
+          // confirmed directly that Safari can leave a
+          // navigator.credentials.get() ceremony hanging well past that
+          // signal's deadline with no rejection ever arriving, which is
+          // what "the page is frozen, I had to force-quit the browser" was.
+          // This backstop doesn't depend on Safari cooperating at all.
+          await withTimeout(verifyPasskey(stored.credentialId), 30000, "Sign-in prompt timed out");
         } catch (err) {
           const tagged = new Error(describeError(err));
           tagged.name = "PasskeyError";
           throw tagged;
         }
       }
+      // Same backstop for the rest of the sequence -- none of these admin
+      // API/zome calls have their own timeout at all, so a conductor that
+      // genuinely stops responding (vs. just being slow) would otherwise
+      // hang this forever too, with no way back to the error UI.
       const agentPubKey = base64ToBytes(stored.agentPubKeyB64);
-      const identity = await reconnectIdentity(stored.adminUrl, stored.installedAppId, agentPubKey);
+      const identity = await withTimeout(reconnectIdentity(stored.adminUrl, stored.installedAppId, agentPubKey), 30000, "Reconnecting to your local node timed out");
       await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
+      // One call, not getProfileForAgent *then* fetchProfile (which just
+      // calls getProfileForAgent again internally) -- decode locally
+      // instead of paying for the same zome call twice every reconnect.
       const profileRecord = await getProfileForAgent(myAgentPubKey());
-      const profile = profileRecord ? await fetchProfile(myAgentPubKey()) : null;
+      const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
       const arbitrator = await checkIsArbitrator(myAgentPubKey());
       set({
         status: "connected",
@@ -174,16 +188,21 @@ export const useSession = create<SessionState>((set) => ({
         avatar_data_uri: extras?.avatarDataUri,
         phone: extras?.phone,
       });
-      const profile = await fetchProfile(myAgentPubKey());
+      // createProfile already returned the record -- no need for a second
+      // get_profile_for_agent zome call just to read back what was sent.
+      const profile = decodeEntry<Profile>(profileRecord);
       const arbitrator = await checkIsArbitrator(myAgentPubKey());
 
       // Best-effort: a device without a platform authenticator (or a user
       // who cancels) still gets a fully working identity, just without the
-      // reconnect gate -- this must never block onboarding itself.
+      // reconnect gate -- this must never block onboarding itself. The
+      // explicit timeout matters here as much as in reconnect() -- without
+      // it, the same Safari AbortSignal unreliability would hang onboarding
+      // itself, not just a later reconnect.
       let credentialId: string | undefined;
       if (isWebAuthnAvailable()) {
         try {
-          credentialId = await registerPasskey(displayName, identity.agentPubKey);
+          credentialId = await withTimeout(registerPasskey(displayName, identity.agentPubKey), 20000, "Passkey setup timed out");
         } catch {
           credentialId = undefined;
         }
@@ -212,7 +231,7 @@ export const useSession = create<SessionState>((set) => ({
   refreshProfile: async () => {
     if (!isConnected()) return;
     const profileRecord = await getProfileForAgent(myAgentPubKey());
-    const profile = profileRecord ? await fetchProfile(myAgentPubKey()) : null;
+    const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
     set({ profile, profileActionHash: profileRecord ? actionHash(profileRecord) : null });
   },
 
