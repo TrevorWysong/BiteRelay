@@ -155,7 +155,7 @@ export function OrderDetail() {
       }
       setReviewsSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setSubmittingReview(false);
     }
@@ -199,7 +199,7 @@ export function OrderDetail() {
       await acceptBid(orderRef!, bidHash);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setAccepting(null);
     }
@@ -216,7 +216,7 @@ export function OrderDetail() {
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setDisputing(false);
     }

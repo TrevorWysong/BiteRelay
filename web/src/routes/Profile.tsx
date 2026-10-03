@@ -5,8 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
 import { getBalance } from "../holochain/zomes/ledger";
-import { getReputationSummary } from "../holochain/zomes/reputation";
-import { getReviewsFor } from "../holochain/zomes/reputation";
+import { getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
 import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { decodeEntry } from "../holochain/decode";
 import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
@@ -14,6 +13,7 @@ import { PhotoInput } from "../components/PhotoInput";
 import { StarRating } from "../components/StarRating";
 import { formatCents } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
+import { describeError } from "../lib/errors";
 import type { ProviderCredential, ReputationSummary, Review } from "../holochain/types";
 
 export function ProfilePage() {
@@ -27,6 +27,7 @@ export function ProfilePage() {
   const [draft, setDraft] = useState({ bio: "", phone: "", avatar_data_uri: "" });
   const [vehicleDraft, setVehicleDraft] = useState({ vehicle_description: "", license_plate: "", photo_data_uri: "" });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!agentPubKey) return;
@@ -53,10 +54,13 @@ export function ProfilePage() {
   async function saveProfile() {
     if (!profile || !profileActionHash) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await updateProfile(profileActionHash, { ...profile, ...draft });
       await refreshProfile();
       setEditing(false);
+    } catch (err) {
+      setSaveError(describeError(err));
     } finally {
       setSaving(false);
     }
@@ -65,6 +69,7 @@ export function ProfilePage() {
   async function saveVehicle() {
     if (!profileActionHash) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await registerProviderCredential({
         profile_action: profileActionHash,
@@ -76,6 +81,8 @@ export function ProfilePage() {
       });
       setCredential({ ...vehicleDraft, profile_action: profileActionHash, capabilities: ["Food"], verified: false });
       setEditingVehicle(false);
+    } catch (err) {
+      setSaveError(describeError(err));
     } finally {
       setSaving(false);
     }
@@ -121,6 +128,7 @@ export function ProfilePage() {
           <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
             <Textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
             <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
+            {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}
             <Button loading={saving} onClick={saveProfile} className="py-2 text-xs">
               Save
             </Button>
@@ -161,6 +169,7 @@ export function ProfilePage() {
                 placeholder="License plate"
                 className="font-mono"
               />
+              {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}
               <Button loading={saving} onClick={saveVehicle} className="py-2 text-xs">
                 Save
               </Button>
