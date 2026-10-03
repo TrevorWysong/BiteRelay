@@ -63,6 +63,17 @@ export function Browse() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
 
+  // A restaurant that just published can take a while to become
+  // discoverable -- its GeohashToCatalog link has to reach whatever peer
+  // answers this read, not just the merchant's own chain (the project's
+  // own, long-documented DHT-propagation characteristic, roughly
+  // seconds-to-a-minute scale here, not instant). Without a poll, a
+  // customer already sitting on Browse when a merchant nearby publishes
+  // would see an empty list forever unless they happened to navigate away
+  // and back. Matches the ~8s poll cadence already used in driver
+  // Dashboard.tsx and customer OrderDetail.tsx for the same reason.
+  const BROWSE_POLL_MS = 8000;
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -80,8 +91,10 @@ export function Browse() {
       if (!cancelled) setRows(withRatings);
     }
     load();
+    const interval = setInterval(load, BROWSE_POLL_MS);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [location]);
 

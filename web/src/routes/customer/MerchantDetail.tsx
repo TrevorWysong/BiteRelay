@@ -38,6 +38,7 @@ export function MerchantDetail() {
     const wanted = hexToBytes(hash);
     setCatalogHash(wanted);
     setItems(null);
+    let cancelled = false;
 
     if (!routerState?.catalog) {
       // No direct "get catalog by ref" extern is exposed today -- reuse the
@@ -45,22 +46,36 @@ export function MerchantDetail() {
       // direct URL/refresh rather than a card click.
       getNearbyMerchants(encodeGeohash(location.lat, location.lon)).then((page) => {
         const match = page.catalogs.find((r) => bytesToHex(actionHash(r)) === hash);
-        if (match) setCatalog(decodeEntry<MerchantCatalog>(match));
+        if (match && !cancelled) setCatalog(decodeEntry<MerchantCatalog>(match));
       });
     }
-    listMenuItems(wanted).then((page) => {
-      const rows = page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }));
-      setItems(rows);
-      // Bounded by the page itself (a merchant's own menu, already capped --
-      // see list_menu_items' own pagination), same cost category as the
-      // per-restaurant review fetch Browse.tsx already does.
-      rows.forEach((row) => {
-        const hex = bytesToHex(row.hash);
-        getItemRatingSummary(row.hash)
-          .then((summary) => setItemRatings((prev) => ({ ...prev, [hex]: summary })))
-          .catch(() => {});
+
+    // Polled for the same reason Browse.tsx's list is -- a menu item added
+    // moments ago may not have gossiped to whatever peer answers this read
+    // yet, and a customer already sitting on this page shouldn't need to
+    // navigate away and back for it to show up.
+    function loadItems() {
+      listMenuItems(wanted).then((page) => {
+        if (cancelled) return;
+        const rows = page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }));
+        setItems(rows);
+        // Bounded by the page itself (a merchant's own menu, already capped
+        // -- see list_menu_items' own pagination), same cost category as
+        // the per-restaurant review fetch Browse.tsx already does.
+        rows.forEach((row) => {
+          const hex = bytesToHex(row.hash);
+          getItemRatingSummary(row.hash)
+            .then((summary) => !cancelled && setItemRatings((prev) => ({ ...prev, [hex]: summary })))
+            .catch(() => {});
+        });
       });
-    });
+    }
+    loadItems();
+    const interval = setInterval(loadItems, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash, location]);
 
