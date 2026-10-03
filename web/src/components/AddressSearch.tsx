@@ -15,6 +15,12 @@ export function AddressSearch({ value, onChange, label = "Delivery location" }: 
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
   const [manual, setManual] = useState(false);
+  // Tracks whether `query` (what's visibly typed) actually corresponds to
+  // `value` (what gets submitted) -- typing without ever picking a result
+  // leaves `value` at whatever it was before, which is the safe behavior,
+  // but silently: the box can show garbage text while the real location
+  // underneath is still the old, valid one. Surfaced so that's not hidden.
+  const [confirmed, setConfirmed] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resolvedForRef = useRef<string | null>(null);
@@ -38,6 +44,7 @@ export function AddressSearch({ value, onChange, label = "Delivery location" }: 
 
   function handleInput(text: string) {
     setQuery(text);
+    setConfirmed(false);
     setSearchError(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     abortRef.current?.abort();
@@ -65,6 +72,7 @@ export function AddressSearch({ value, onChange, label = "Delivery location" }: 
   function selectResult(result: GeocodeResult) {
     onChange(result.point);
     setQuery(result.label);
+    setConfirmed(true);
     setOpen(false);
     setResults([]);
   }
@@ -86,6 +94,9 @@ export function AddressSearch({ value, onChange, label = "Delivery location" }: 
             />
             {searching && <Spinner className="pointer-events-none absolute right-3 h-4 w-4 text-ink-400" />}
           </div>
+          {!confirmed && !open && query.trim() && (
+            <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">Pick an address below to update the location -- your previous one is still in use until you do.</p>
+          )}
           {open && (
             <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-ink-200/70 dark:border-ink-700/70 bg-white dark:bg-ink-900 shadow-lg">
               {results.length === 0 && !searching && (

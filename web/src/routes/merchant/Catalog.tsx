@@ -99,6 +99,7 @@ function buildReward(form: typeof EMPTY_PROMO_FORM): PromoReward | null {
 
 export function MerchantCatalog() {
   const location = useSession((s) => s.location);
+  const setLocation = useSession((s) => s.setLocation);
   const [pickupLocation, setPickupLocation] = useState(location);
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(null);
@@ -124,9 +125,9 @@ export function MerchantCatalog() {
   const [savingPromo, setSavingPromo] = useState(false);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
 
-  async function load() {
+  async function load(searchLocation = location) {
     const me = myAgentPubKey();
-    const page = await getNearbyMerchants(encodeGeohash(location.lat, location.lon));
+    const page = await getNearbyMerchants(encodeGeohash(searchLocation.lat, searchLocation.lon));
     const mine = page.catalogs.find((r) => bytesEqual(decodeEntry<MerchantCatalog>(r).owner, me));
     if (mine) {
       const decoded = decodeEntry<MerchantCatalog>(mine);
@@ -162,7 +163,16 @@ export function MerchantCatalog() {
     setPublishError(null);
     try {
       await publishCatalog({ business_name: businessName.trim(), location: pickupLocation });
-      await load();
+      // The merchant's real location may differ from whatever `location`
+      // was before they searched for an address here -- load() searches
+      // for "my own catalog" by geohash, so without this it would search
+      // the *old* cell, never find the catalog it just created, and the
+      // UI would silently sit on the publish card forever with no error
+      // (nothing actually failed -- the catalog exists, just undiscoverable
+      // from the stale search point). Sync the session location too, since
+      // every other geohash-based read in the app uses it.
+      setLocation(pickupLocation);
+      await load(pickupLocation);
     } catch (err) {
       setPublishError(describeError(err));
     } finally {
