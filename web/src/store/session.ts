@@ -127,6 +127,14 @@ export const useSession = create<SessionState>((set) => ({
         agentPubKey: myAgentPubKey(),
         profile,
         profileActionHash: profileRecord ? actionHash(profileRecord) : null,
+        // Every fresh page load starts a brand new store with `mode`
+        // defaulted to "customer" -- without restoring it here too, a
+        // driver or merchant reconnecting after any reload (a browser
+        // refresh, reopening a PWA, the auto-reconnect bootstrap itself)
+        // would land back on the right *route* but with the bottom nav
+        // and mode pill still showing customer-mode links, a real and
+        // confusing mismatch confirmed directly against a live reconnect.
+        mode: profile ? primaryModeForRoles(profile.roles) : "customer",
         isArbitrator: arbitrator,
         hasDeviceLock: !!stored.credentialId,
       });
