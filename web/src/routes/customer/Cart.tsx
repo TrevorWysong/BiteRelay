@@ -162,7 +162,7 @@ export function Cart() {
       return;
     }
     if (!isPromoEligible(match.promo.requirement, cart.lines, cart.total(), completedOrderCount)) {
-      setPromoError(`Not eligible yet — ${describeRequirement(match.promo.requirement, itemName).toLowerCase()} to use this code.`);
+      setPromoError(`Not eligible yet. ${describeRequirement(match.promo.requirement, itemName)} to use this code.`);
       return;
     }
     setAppliedPromo(match);
@@ -393,7 +393,7 @@ export function Cart() {
       </Section>
 
       <Section title="Delivery fee cap">
-        <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount — you're only ever charged what the winning bid actually offers, never more.</p>
+        <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount. You're only ever charged what the winning bid actually offers, never more.</p>
         <div className="flex flex-wrap gap-2">
           {DELIVERY_FEE_PRESETS_CENTS.map((cents) => (
             <ToggleChip
@@ -479,7 +479,7 @@ export function Cart() {
                 </button>
               </div>
               <p className="mt-0.5 text-xs opacity-80">{describeReward(appliedPromo.promo.reward, itemName)}</p>
-              {!promoEvaluation?.eligible && <p className="mt-1 text-xs text-red-600">No longer eligible — {describeRequirement(appliedPromo.promo.requirement, itemName).toLowerCase()}.</p>}
+              {!promoEvaluation?.eligible && <p className="mt-1 text-xs text-red-600">No longer eligible. {describeRequirement(appliedPromo.promo.requirement, itemName)}.</p>}
               {promoAwaitingRewardItem && <p className="mt-1 text-xs text-amber-600">Add the qualifying item to your cart to redeem this.</p>}
             </motion.div>
           ) : (
@@ -523,7 +523,7 @@ export function Cart() {
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mt-4 rounded-2xl bg-ink-100/60 dark:bg-ink-800/60 p-4 text-xs text-ink-500 dark:text-ink-400">
-        Placing this order notifies nearby drivers directly — if nobody picks it up right away, it stays visible until one does.
+        Placing this order notifies nearby drivers directly. If nobody picks it up right away, it stays visible until one does.
       </motion.div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}

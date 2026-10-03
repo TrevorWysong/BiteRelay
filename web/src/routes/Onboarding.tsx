@@ -93,7 +93,7 @@ export function Onboarding() {
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
         <h1 className="text-3xl font-black tracking-tight">Relay</h1>
         <p className="text-white/80 text-sm text-center max-w-xs">
-          A peer-to-peer delivery marketplace — no corporate middleman, no central server. Orders run directly between you and the people fulfilling them.
+          A peer-to-peer delivery marketplace with no corporate middleman and no central server. Orders run directly between you and the people fulfilling them.
         </p>
       </motion.div>
 
@@ -159,7 +159,7 @@ export function Onboarding() {
               <motion.div key="details" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
                 <h2 className="text-lg font-bold mb-1">Create your identity</h2>
                 <p className="text-sm text-ink-500 mb-4">
-                  This creates your own private identity, secured by a cryptographic key that only you hold — not an account on a shared server.
+                  This creates your own private identity, secured by a cryptographic key that only you hold. It's not an account on a shared server.
                 </p>
 
                 <div className="mb-4 flex justify-center">
@@ -184,7 +184,7 @@ export function Onboarding() {
                 </div>
                 <p className="text-[11px] text-ink-400 mb-4">
                   Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
-                  <code className="bg-ink-100 rounded px-1">web/</code>) — it starts a local test node and gives you this address.
+                  <code className="bg-ink-100 rounded px-1">web/</code>). This starts a local test node and gives you this address.
                 </p>
 
                 {showError && (

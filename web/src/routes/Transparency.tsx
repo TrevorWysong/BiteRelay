@@ -85,11 +85,11 @@ export function Transparency() {
           <ShieldCheck size={30} />
         </motion.div>
         <p className="relative text-4xl font-black tracking-tight">$0.00</p>
-        <p className="relative text-sm font-bold opacity-95">Platform fee taken from your orders — always, by design.</p>
+        <p className="relative text-sm font-bold opacity-95">Platform fee taken from your orders: always, by design.</p>
         <p className="relative mt-1 max-w-xs text-xs leading-relaxed opacity-80">
           Every cent you've ever paid or been paid through Relay is listed below, straight from your own cryptographically
-          signed ledger entries — not a report we generated, the actual data. There's no operator account anywhere in this
-          system for a cut to go to, so there's nothing to hide here.
+          signed ledger entries. It's not a report we generated, it's the actual data. There's no operator account anywhere
+          in this system for a cut to go to, so there's nothing to hide here.
         </p>
       </motion.div>
 
@@ -130,7 +130,7 @@ export function Transparency() {
       </motion.h2>
       {orderGroups.length === 0 && (
         <motion.p variants={fadeSlideUp} className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">
-          Nothing here yet — place or complete an order to see it appear.
+          Nothing here yet. Place or complete an order to see it appear.
         </motion.p>
       )}
       <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3 pb-6">

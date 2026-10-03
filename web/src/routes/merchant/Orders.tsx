@@ -85,7 +85,7 @@ export function MerchantOrders() {
                 )}
                 {order.status === "Open" && <p className="mt-2 text-xs text-ink-400">Waiting for a driver to be assigned.</p>}
                 {(order.status === "MerchantConfirmed" || order.status === "DriverEnRouteToMerchant") && (
-                  <p className="mt-2 text-xs text-ink-400">Driver is on the way to pick this up — stay connected so they can confirm the handoff with you directly.</p>
+                  <p className="mt-2 text-xs text-ink-400">Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.</p>
                 )}
               </Card>
             </motion.div>

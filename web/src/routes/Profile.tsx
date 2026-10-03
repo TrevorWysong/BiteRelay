@@ -174,7 +174,7 @@ export function ProfilePage() {
               </div>
             </motion.div>
           ) : (
-            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet — tap the pencil to add it.</motion.p>
+            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet. Tap the pencil to add it.</motion.p>
           )}
           </AnimatePresence>
         </Card>
@@ -184,15 +184,15 @@ export function ProfilePage() {
       <motion.div variants={fadeSlideUp}>
       <Card className="mb-4 p-4">
         <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Your identity</p>
-        <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "—"}</p>
+        <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "N/A"}</p>
         <p className="mt-2 text-xs text-ink-400">
-          This is your real cryptographic identity — there's no account behind it on any server, and nobody but you holds the private key.
+          This is your real cryptographic identity. There's no account behind it on any server, and nobody but you holds the private key.
         </p>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
           <Fingerprint size={13} className={hasDeviceLock ? "text-presence-600" : "text-ink-300"} />
           {hasDeviceLock
-            ? "Device lock enabled — reconnecting on this device requires your passkey (Face ID / Touch ID / Windows Hello)."
-            : "Device lock not set up — this device has no passkey gate, so reconnecting here doesn't ask for one."}
+            ? "Device lock enabled: reconnecting on this device requires your passkey (Face ID, Touch ID, or Windows Hello)."
+            : "Device lock not set up. This device has no passkey gate, so reconnecting here doesn't ask for one."}
         </p>
       </Card>
       </motion.div>
@@ -215,7 +215,7 @@ export function ProfilePage() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-ink-900 dark:text-ink-50">No-skim transparency</p>
-          <p className="text-xs text-ink-400">See every cent, verified from your own ledger — $0 platform fee, always.</p>
+          <p className="text-xs text-ink-400">See every cent, verified from your own ledger. $0 platform fee, always.</p>
         </div>
         <ChevronRight size={18} className="shrink-0 text-ink-300" />
       </Link>

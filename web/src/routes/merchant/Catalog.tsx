@@ -405,7 +405,7 @@ export function MerchantCatalog() {
             </button>
           </div>
           <p className="mb-2 text-xs text-ink-400">
-            Your share of each delivery fee, split with the customer automatically. Defaults to an even 50/50, since there's no platform cut here to offset — adjust it if your margins call for a different split.
+            Your share of each delivery fee, split with the customer automatically. Defaults to an even 50/50, since there's no platform cut here to offset. Adjust it if your margins call for a different split.
           </p>
           {editingSubsidy ? (
             <div className="flex items-center gap-2">
@@ -441,7 +441,7 @@ export function MerchantCatalog() {
                 <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-400">Requirement</p>
                 <div className="flex items-center gap-2">
                   <Select value={promoForm.requirementKind} onChange={(e) => setPromoForm((f) => ({ ...f, requirementKind: e.target.value as RequirementKind }))}>
-                    <option value="none">No requirement — always eligible</option>
+                    <option value="none">No requirement (always eligible)</option>
                     <option value="minSpend">Minimum spend</option>
                     <option value="minItemQty">Minimum quantity of an item</option>
                     <option value="loyalty">Order count at this restaurant</option>
@@ -472,7 +472,7 @@ export function MerchantCatalog() {
                 {promoForm.requirementKind === "loyalty" && (
                   <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
                     <Checkbox checked={promoForm.autoApply} onChange={(e) => setPromoForm((f) => ({ ...f, autoApply: e.target.checked }))} />
-                    Apply automatically — no code needed, eligible customers get it without typing anything
+                    Apply automatically, no code needed. Eligible customers get it without typing anything
                   </label>
                 )}
                 {promoForm.requirementKind === "minItemQty" && (

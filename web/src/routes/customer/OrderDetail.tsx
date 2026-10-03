@@ -285,7 +285,7 @@ export function OrderDetail() {
               ))}
             </div>
           )}
-          {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid — this updates live.</p>}
+          {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid. This updates live.</p>}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
               {bids?.map(({ hash: bidHash, bid }) => {
@@ -335,7 +335,7 @@ export function OrderDetail() {
       {(order.status === "BidAccepted" || order.status === "MerchantConfirmed" || order.status === "DriverEnRouteToMerchant") && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <Bike size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">Your driver is on it — this screen updates automatically as they progress.</p>
+          <p className="text-sm text-relay-700 dark:text-relay-300">Your driver is on it. This screen updates automatically as they progress.</p>
         </motion.div>
       )}
 
@@ -354,7 +354,7 @@ export function OrderDetail() {
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && (
         <motion.div variants={fadeSlideUp} className="mt-4">
           <LiveMap pickup={pickup} dropoff={order.dropoff} driver={driverLocation} />
-          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location — not every device shares this.</p>}
+          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location. Not every device shares this.</p>}
         </motion.div>
       )}
 

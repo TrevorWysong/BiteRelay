@@ -288,7 +288,7 @@ export function DriverDashboard() {
 
       {online && activeOrders.length >= MAX_CONCURRENT_DELIVERIES && (
         <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
-          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit — finish one to see new nearby orders again.
+          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit. Finish one to see new nearby orders again.
         </p>
       )}
 

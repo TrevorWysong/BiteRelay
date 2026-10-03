@@ -38,7 +38,7 @@ export function Earnings() {
       </motion.div>
 
       <motion.p variants={fadeSlideUp} className="mb-4 rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-xs text-ink-500 dark:text-ink-400">
-        This is a mutual-credit ledger, not a bank balance — a negative number means you currently owe the network, which nets
+        This is a mutual-credit ledger, not a bank balance. A negative number means you currently owe the network, which nets
         out against someone else's positive balance elsewhere. It's a stand-in for HoloFuel, shaped the same way on purpose.
       </motion.p>
 

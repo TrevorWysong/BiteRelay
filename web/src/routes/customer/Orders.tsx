@@ -172,7 +172,7 @@ export function Orders() {
 
       {rows.length === 0 && (
         <motion.div variants={fadeSlideUp}>
-          <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here — this reads your own RequesterToOrder links directly off the DHT." />
+          <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here automatically." />
         </motion.div>
       )}
 
