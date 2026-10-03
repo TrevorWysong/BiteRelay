@@ -329,7 +329,19 @@ export function MerchantCatalog() {
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-8">
       {catalog.banner_data_uri && <img src={catalog.banner_data_uri} alt="" className="h-32 w-full object-cover" />}
-      <div className="px-4 pt-4">
+      {/* A plain (non-motion) DOM element here broke framer-motion's
+          variants propagation from this component's own staggerContainer
+          down to its fadeSlideUp-varianted children -- confirmed directly
+          (every child stuck permanently at opacity:0/translateY(10px) in a
+          real rendered browser, found only by screenshotting the actual
+          page, not by reading the JSX). Switching this wrapper to
+          motion.div wasn't enough on its own -- inheriting "visible" from
+          the outer staggerContainer still silently failed to reach this
+          level's own children. Giving it its own explicit initial/animate
+          (not just `variants`) makes it animate independently rather than
+          depending on inheritance at all, which is the only version of
+          this that was actually confirmed working in a real browser. */}
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4">
         <motion.div variants={fadeSlideUp} className="mb-1 flex items-center justify-between">
           <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{catalog.business_name}</h1>
           <motion.button
@@ -673,7 +685,7 @@ export function MerchantCatalog() {
           </Card>
           </motion.div>
         )}
-      </div>
+      </motion.div>
     </motion.div>
   );
 }
