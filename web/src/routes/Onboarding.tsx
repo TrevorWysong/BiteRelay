@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Bike, ChefHat, ShoppingBag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { useSession } from "../store/session";
+import { primaryModeForRoles, useSession } from "../store/session";
 import { Button, Card, Input, Spinner, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
@@ -70,7 +70,7 @@ export function Onboarding() {
           photo_data_uri: vehiclePhoto,
         });
       }
-      const primary = roles.includes("Requester") ? "customer" : roles.includes("Provider") ? "driver" : "merchant";
+      const primary = primaryModeForRoles(roles);
       navigate(`/${primary}`);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));

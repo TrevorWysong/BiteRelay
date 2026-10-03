@@ -19,6 +19,20 @@ export function isWebAuthnAvailable(): boolean {
   return typeof window !== "undefined" && !!window.PublicKeyCredential && !!navigator.credentials;
 }
 
+/// The `timeout` field inside `publicKey` options is only ever a *hint* --
+/// the spec explicitly does not require a user agent to honor it, and in
+/// practice some do not (confirmed directly: a real `navigator.credentials
+/// .create()` call in a browser with no platform authenticator backend
+/// available never rejected on its own, even well past its own stated
+/// 60s timeout -- it just hung). `AbortController`'s `signal`, by
+/// contrast, *is* spec-required to actually abort the ceremony, so it's
+/// the only reliable way to guarantee this resolves in bounded time
+/// regardless of what the browser/OS does on its end.
+const CEREMONY_TIMEOUT_MS = 60000;
+function ceremonySignal(ms: number = CEREMONY_TIMEOUT_MS): AbortSignal {
+  return AbortSignal.timeout(ms);
+}
+
 // Typed as BufferSource at the source, rather than cast at every call site
 // -- TS's DOM lib narrows BufferSource to reject a generic
 // Uint8Array<ArrayBufferLike>, even though a freshly `new Uint8Array(n)`
@@ -49,8 +63,17 @@ function base64ToBuffer(b64: string): ArrayBuffer {
 /// separate ID to invent) but is not treated as secret by WebAuthn itself
 /// (`user.id` is opaque to relying parties, never asserted back to us in a
 /// way that would leak it further than it already is).
-export async function registerPasskey(displayName: string, userHandle: Uint8Array): Promise<string> {
+/// `timeoutMs` is shorter by default here than `verifyPasskey`'s bound on
+/// purpose: registration is an opportunistic, best-effort step during
+/// signup (see session.ts's `createIdentity` -- a device lock is a nice
+/// extra, never a requirement to finish onboarding), so a slow or absent
+/// authenticator should fail open quickly rather than leaving a brand new
+/// user staring at a spinner for a full minute over an optional feature.
+/// `verifyPasskey`'s reconnect gate is the opposite case -- the user is
+/// actively trying to get back in and *wants* to wait out a slow scan.
+export async function registerPasskey(displayName: string, userHandle: Uint8Array, timeoutMs = 15000): Promise<string> {
   const credential = (await navigator.credentials.create({
+    signal: ceremonySignal(timeoutMs),
     publicKey: {
       rp: { name: RP_NAME },
       user: { id: userHandle as BufferSource, name: displayName, displayName },
@@ -60,7 +83,7 @@ export async function registerPasskey(displayName: string, userHandle: Uint8Arra
         { type: "public-key", alg: -257 }, // RS256 -- broader authenticator support
       ],
       authenticatorSelection: { userVerification: "required" },
-      timeout: 60000,
+      timeout: timeoutMs,
     },
   })) as PublicKeyCredential | null;
   if (!credential) throw new Error("passkey registration was cancelled or failed");
@@ -73,11 +96,12 @@ export async function registerPasskey(displayName: string, userHandle: Uint8Arra
 /// as "do not proceed" -- there is no partial-success case here.
 export async function verifyPasskey(credentialIdB64: string): Promise<void> {
   const assertion = await navigator.credentials.get({
+    signal: ceremonySignal(),
     publicKey: {
       challenge: randomChallenge(),
       allowCredentials: [{ type: "public-key", id: base64ToBuffer(credentialIdB64) }],
       userVerification: "required",
-      timeout: 60000,
+      timeout: CEREMONY_TIMEOUT_MS,
     },
   });
   if (!assertion) throw new Error("passkey verification was cancelled or failed");

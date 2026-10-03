@@ -41,6 +41,21 @@ function saveStoredIdentity(id: StoredIdentity) {
 
 export type Mode = "customer" | "driver" | "merchant" | "arbitrator";
 
+/// The single source of truth for "which mode does a freshly-signed-up,
+/// possibly-multi-role agent land on first." Previously duplicated (once
+/// here, once in Onboarding.tsx's own `navigate()` target) with two
+/// *different* priority orders -- a Requester+Provider signup would
+/// navigate to `/customer` (Onboarding's own Requester-first order) while
+/// this store set `mode: "driver"` (the old Provider-first order here),
+/// leaving the shell's mode pill and bottom nav visibly out of sync with
+/// the actual route on first load. One function, one order, used by both
+/// call sites, so they can't drift apart again.
+export function primaryModeForRoles(roles: RoleTag[]): "customer" | "driver" | "merchant" {
+  if (roles.includes("Requester")) return "customer";
+  if (roles.includes("Provider")) return "driver";
+  return "merchant";
+}
+
 interface SessionState {
   status: "disconnected" | "connecting" | "connected" | "error";
   error: string | null;
@@ -153,7 +168,7 @@ export const useSession = create<SessionState>((set) => ({
       }
 
       saveStoredIdentity({ adminUrl, installedAppId, agentPubKeyB64: bytesToBase64(identity.agentPubKey), credentialId });
-      const initialMode: Mode = roles.includes("Provider") ? "driver" : roles.includes("Merchant") ? "merchant" : "customer";
+      const initialMode: Mode = primaryModeForRoles(roles);
       set({
         status: "connected",
         agentPubKey: myAgentPubKey(),
