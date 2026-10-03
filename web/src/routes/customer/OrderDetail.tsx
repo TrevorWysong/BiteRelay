@@ -16,6 +16,7 @@ import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { describeError } from "../../lib/errors";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
@@ -224,14 +225,31 @@ export function OrderDetail() {
   async function confirmReceipt() {
     setCompleting(true);
     setError(null);
-    try {
-      await completeDelivery(orderRef!);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCompleting(false);
+    // The two leg attestations are countersigned on the driver's chain and
+    // gossip to us from there, not written to our own chain -- so there's a
+    // real window right after the driver hands off where the network hasn't
+    // caught up yet and this call legitimately isn't satisfiable. Retry a
+    // few times with backoff before giving up, rather than surfacing a raw
+    // "0 of 2 attestations found" error for something that resolves itself
+    // within a few seconds to ~a minute.
+    const RETRY_DELAYS_MS = [1500, 3000, 6000, 10000, 15000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await completeDelivery(orderRef!);
+        await refresh();
+        break;
+      } catch (err) {
+        const message = describeError(err);
+        const isGossipDelay = message.includes("required leg attestations found");
+        if (isGossipDelay && attempt < RETRY_DELAYS_MS.length) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
+        setError(isGossipDelay ? "Still confirming with your driver's device. Please try again in a moment." : message);
+        break;
+      }
     }
+    setCompleting(false);
   }
 
   const canDispute = order.status === "Delivered" || order.status === "Cancelled";

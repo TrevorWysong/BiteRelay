@@ -10,6 +10,7 @@ import { actionHash } from "../holochain/decode";
 import { bytesToBase64, base64ToBytes } from "../holochain/client";
 import { isArbitrator as checkIsArbitrator } from "../holochain/governance";
 import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
+import { describeError } from "../lib/errors";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
 
 const STORAGE_KEY = "relay.identity.v1";
@@ -139,7 +140,7 @@ export const useSession = create<SessionState>((set) => ({
         hasDeviceLock: !!stored.credentialId,
       });
     } catch (err) {
-      set({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      set({ status: "error", error: describeError(err) });
       throw err;
     }
   },
@@ -187,7 +188,7 @@ export const useSession = create<SessionState>((set) => ({
         hasDeviceLock: !!credentialId,
       });
     } catch (err) {
-      set({ status: "error", error: err instanceof Error ? err.message : String(err) });
+      set({ status: "error", error: describeError(err) });
       throw err;
     }
   },

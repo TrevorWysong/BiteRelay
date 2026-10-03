@@ -15,6 +15,7 @@ import { formatCents } from "../../lib/format";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
 import { nextOccurrence, toMicros, WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { describeError } from "../../lib/errors";
 import type { ActionHash, DeliveryOrder, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
@@ -234,7 +235,7 @@ export function Cart() {
       cart.clear();
       navigate(`/customer/orders/${bytesToHex(orderRef)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setPlacing(false);
     }
@@ -265,7 +266,7 @@ export function Cart() {
       setRecurringSaved(true);
       setShowRecurring(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setSavingRecurring(false);
     }

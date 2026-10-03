@@ -16,6 +16,7 @@ import { PhotoInput } from "../../components/PhotoInput";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { describeError } from "../../lib/errors";
 import type { Bid, DeliveryOrder, DeliveryStatus, Review } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
@@ -148,7 +149,7 @@ export function DriverDashboard() {
       setNearby(null);
       return;
     }
-    announceOnline(location, ["Food"]).catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    announceOnline(location, ["Food"]).catch((err) => setError(describeError(err)));
     refreshNearby();
     const presenceInterval = setInterval(() => announceOnline(location, ["Food"]).catch(() => {}), PRESENCE_REFRESH_MS);
     const pollInterval = setInterval(refreshNearby, POLL_MS);
@@ -182,7 +183,7 @@ export function DriverDashboard() {
         collateral_commitment: { account: bytesToHex(driverKey), amount: 100, ledger_txn_ref: "pending" },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setBidding(null);
     }
@@ -335,7 +336,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       }
       await onAdvanced();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setBusy(false);
     }

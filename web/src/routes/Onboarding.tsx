@@ -9,6 +9,7 @@ import { PhotoInput } from "../components/PhotoInput";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
 import type { RoleTag } from "../holochain/types";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
+import { describeError } from "../lib/errors";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
   { role: "Requester", label: "Order food", icon: ShoppingBag, blurb: "Browse nearby restaurants and get food delivered." },
@@ -73,7 +74,7 @@ export function Onboarding() {
       const primary = primaryModeForRoles(roles);
       navigate(`/${primary}`);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : String(err));
+      setLocalError(describeError(err));
     }
   }
 

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Camera, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { fileToResizedDataUri } from "../lib/image";
+import { describeError } from "../lib/errors";
 
 interface Props {
   value: string;
@@ -22,7 +23,7 @@ export function PhotoInput({ value, onChange, shape = "circle", className }: Pro
     try {
       onChange(await fileToResizedDataUri(file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setBusy(false);
     }

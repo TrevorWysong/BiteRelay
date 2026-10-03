@@ -12,6 +12,7 @@ import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { Button, Card, Skeleton, EmptyState, Badge, Input, StatNumber, Textarea } from "../../components/ui";
 import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { describeError } from "../../lib/errors";
 import type { Dispute, DeliveryOrder } from "../../holochain/types";
 
 interface CaseRow {
@@ -65,7 +66,7 @@ export function ArbitratorDashboard() {
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
       throw err;
     }
   }
