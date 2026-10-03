@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, DisputeOutcome, HcRecord } from "../types";
+import type { ActionHash, DisputeOutcome, HcRecord, Timestamp } from "../types";
 
 /// Called by an arbitrator (rejected by `dispute_integrity::validate()` for
 /// anyone else) after reviewing a case raised via `dispatch::raise_dispute`
@@ -24,9 +24,9 @@ export async function getDisputeForOrder(orderRef: ActionHash): Promise<HcRecord
 
 export interface OpenDisputesPage {
   disputes: HcRecord[];
-  next_after: number | null;
+  next_after: Timestamp | null;
 }
 
-export async function listOpenDisputes(after: number | null = null): Promise<OpenDisputesPage> {
+export async function listOpenDisputes(after: Timestamp | null = null): Promise<OpenDisputesPage> {
   return callZome("dispute", "list_open_disputes", { after });
 }

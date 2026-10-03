@@ -5,6 +5,7 @@
 // switching away from this screen.
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
+import clsx from "clsx";
 import { sendChatMessage } from "../holochain/zomes/dispatch";
 import { onLocalSignal, myAgentPubKey } from "../holochain/client";
 import { bytesEqual, bytesToHex } from "../holochain/decode";
@@ -67,8 +68,8 @@ export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; 
         {lines.map((line, i) => {
           const mine = bytesEqual(line.from, me);
           return (
-            <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[80%] rounded-xl px-3 py-1.5 text-xs ${mine ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200"}`}>
+            <div key={i} className={clsx("flex", mine ? "justify-end" : "justify-start")}>
+              <div className={clsx("max-w-[80%] rounded-xl px-3 py-1.5 text-xs", mine ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200")}>
                 {!mine && <p className="mb-0.5 text-[10px] opacity-70">{shortAgentId(line.from)}</p>}
                 {line.text}
               </div>

@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -12,7 +12,7 @@ export async function requestDelivery(input: {
   max_delivery_fee: number | null;
   special_instructions?: string;
   tip_cents?: number;
-  requested_delivery_time?: number | null;
+  requested_delivery_time?: Timestamp | null;
   promo_code_ref?: ActionHash | null;
   dropoff_preference?: DropoffPreference;
 }): Promise<HcRecord> {
@@ -100,10 +100,10 @@ export async function acceptBid(orderOriginalAction: ActionHash, bidAction: Acti
 
 export interface BidsPage {
   bids: HcRecord[];
-  next_after: number | null;
+  next_after: Timestamp | null;
 }
 
-export async function listBidsForOrder(orderRef: ActionHash, after: number | null = null): Promise<BidsPage> {
+export async function listBidsForOrder(orderRef: ActionHash, after: Timestamp | null = null): Promise<BidsPage> {
   return callZome("dispatch", "list_bids_for_order", { order_ref: orderRef, after });
 }
 

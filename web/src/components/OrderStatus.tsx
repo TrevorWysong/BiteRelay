@@ -1,5 +1,6 @@
 import { Check, ChefHat, CircleDot, PackageCheck, Bike, XCircle, AlertTriangle, Clock } from "lucide-react";
 import { motion } from "framer-motion";
+import clsx from "clsx";
 import type { DeliveryStatus } from "../holochain/types";
 import { Badge } from "./ui";
 import { fadeSlideUp } from "../lib/motion";
@@ -40,7 +41,7 @@ function TerminalBanner({ icon, tone, children }: { icon: React.ReactNode; tone:
     danger: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300",
   };
   return (
-    <motion.div initial="hidden" animate="visible" variants={fadeSlideUp} className={`flex items-center gap-3 rounded-xl px-4 py-3 ${tones[tone]}`}>
+    <motion.div initial="hidden" animate="visible" variants={fadeSlideUp} className={clsx("flex items-center gap-3 rounded-xl px-4 py-3", tones[tone])}>
       {icon}
       <span className="font-medium">{children}</span>
     </motion.div>
@@ -92,10 +93,10 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
                 initial={false}
                 animate={{ scale: done || active ? 1 : 0.92, opacity: done || active ? 1 : 0.7 }}
                 transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                className={
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full " +
-                  (done || active ? "bg-relay-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600")
-                }
+                className={clsx(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                  done || active ? "bg-relay-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600",
+                )}
               >
                 <Icon size={16} />
               </motion.div>
@@ -110,7 +111,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
                 </div>
               )}
             </div>
-            <div className={"pt-1 text-sm font-medium " + (done || active ? "text-ink-900 dark:text-ink-50" : "text-ink-400 dark:text-ink-600")}>
+            <div className={clsx("pt-1 text-sm font-medium", done || active ? "text-ink-900 dark:text-ink-50" : "text-ink-400 dark:text-ink-600")}>
               {step.label}
               {active && <span className="ml-2 inline-block h-2 w-2 rounded-full bg-presence-500 animate-pulse align-middle" />}
             </div>

@@ -1,14 +1,14 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, Timestamp } from "../types";
 
 export interface NearbyMerchantsPage {
   catalogs: HcRecord[];
-  next_after: number | null;
+  next_after: Timestamp | null;
 }
 
 export interface MenuItemsPage {
   items: HcRecord[];
-  next_after: number | null;
+  next_after: Timestamp | null;
 }
 
 export interface CatalogDetails {
@@ -74,11 +74,11 @@ export async function updateMenuItem(originalAction: ActionHash, item: MenuItem)
   return callZome("catalog", "update_menu_item", { original_action: originalAction, item });
 }
 
-export async function listMenuItems(catalogRef: ActionHash, after: number | null = null): Promise<MenuItemsPage> {
+export async function listMenuItems(catalogRef: ActionHash, after: Timestamp | null = null): Promise<MenuItemsPage> {
   return callZome("catalog", "list_menu_items", { catalog_ref: catalogRef, after });
 }
 
-export async function getNearbyMerchants(geohash: string, after: number | null = null): Promise<NearbyMerchantsPage> {
+export async function getNearbyMerchants(geohash: string, after: Timestamp | null = null): Promise<NearbyMerchantsPage> {
   return callZome("catalog", "get_nearby_merchants", { geohash, after });
 }
 
@@ -89,7 +89,7 @@ export async function createPromoCode(input: {
   code: string;
   requirement: PromoRequirement;
   reward: PromoReward;
-  expires_at?: number | null;
+  expires_at?: Timestamp | null;
   auto_apply?: boolean;
 }): Promise<HcRecord> {
   return callZome("catalog", "create_promo_code", { expires_at: null, auto_apply: false, ...input });

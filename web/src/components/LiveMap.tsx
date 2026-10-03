@@ -5,15 +5,13 @@ import { PresenceDot } from "./ui";
 import type { GeoPoint } from "../holochain/types";
 
 // Vanilla Leaflet, not react-leaflet -- this app already writes small,
-// self-contained components (StarRating, LocationInput, ChatPanel) rather
+// self-contained components (StarRating, AddressSearch, ChatPanel) rather
 // than pulling in wrapper libraries, and a thin imperative ref-based
 // component sidesteps any react-leaflet/React-19 peer-dependency question
 // entirely. Tiles come from the public OpenStreetMap raster endpoint --
 // no API key, no vendor account, consistent with this project's "0
-// overhead" stance on infrastructure costs (architecture plan §12). This
-// is the same honest tradeoff named for `LocationInput` (raw lat/lon, no
-// address autocomplete): a real live map, but the plainest version of one
-// that needs no paid service to work.
+// overhead" stance on infrastructure costs (architecture plan §12) --
+// the same provider `AddressSearch`'s Nominatim-backed geocoding uses.
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 

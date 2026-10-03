@@ -7,7 +7,7 @@ import { connect, isConnected, myAgentPubKey } from "../holochain/client";
 import { provisionNewIdentity, reconnectIdentity } from "../holochain/admin";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
-import { bytesToBase64, base64ToBytes } from "../holochain/client";
+import { bytesToBase64, base64ToBytes } from "../lib/base64";
 import { isArbitrator as checkIsArbitrator } from "../holochain/governance";
 import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
 import { describeError } from "../lib/errors";

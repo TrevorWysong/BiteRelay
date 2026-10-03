@@ -53,6 +53,22 @@ async function fetchHappBundle(): Promise<Uint8Array> {
   return happBundleBytes;
 }
 
+/// Shared tail end of both provisionNewIdentity and reconnectIdentity: once
+/// an app is installed/enabled and signing is authorized, both need the
+/// same app-interface + auth token to hand back a usable ProvisionedIdentity.
+async function attachInterfaceAndIssueToken(adminWs: AdminWebsocket, adminUrl: string, installedAppId: InstalledAppId, agentPubKey: AgentPubKey): Promise<ProvisionedIdentity> {
+  const { port } = await adminWs.attachAppInterface({ allowed_origins: ALLOWED_ORIGINS });
+  const issued = await adminWs.issueAppAuthenticationToken({ installed_app_id: installedAppId });
+  const adminHost = new URL(adminUrl).hostname;
+  return {
+    adminUrl,
+    appUrl: `ws://${adminHost}:${port}`,
+    token: issued.token as unknown as number[],
+    installedAppId,
+    agentPubKey,
+  };
+}
+
 /// Creates a brand new agent identity and installs a fresh `relay` cell for
 /// it. `installedAppId` should be unique per browser-tab-identity (the
 /// caller persists it in localStorage to reconnect the *same* identity on
@@ -81,17 +97,7 @@ export async function provisionNewIdentity(adminUrl: string, installedAppId: Ins
     const appInfo = await adminWs.enableApp({ installed_app_id: installedAppId });
     await authorizeSigning(adminWs, appInfo);
 
-    const { port } = await adminWs.attachAppInterface({ allowed_origins: ALLOWED_ORIGINS });
-    const issued = await adminWs.issueAppAuthenticationToken({ installed_app_id: installedAppId });
-
-    const adminHost = new URL(adminUrl).hostname;
-    return {
-      adminUrl,
-      appUrl: `ws://${adminHost}:${port}`,
-      token: issued.token as unknown as number[],
-      installedAppId,
-      agentPubKey,
-    };
+    return await attachInterfaceAndIssueToken(adminWs, adminUrl, installedAppId, agentPubKey);
   } finally {
     adminWs.client.close();
   }
@@ -114,16 +120,7 @@ export async function reconnectIdentity(adminUrl: string, installedAppId: Instal
     const appInfo = await adminWs.enableApp({ installed_app_id: installedAppId });
     await authorizeSigning(adminWs, appInfo);
 
-    const { port } = await adminWs.attachAppInterface({ allowed_origins: ALLOWED_ORIGINS });
-    const issued = await adminWs.issueAppAuthenticationToken({ installed_app_id: installedAppId });
-    const adminHost = new URL(adminUrl).hostname;
-    return {
-      adminUrl,
-      appUrl: `ws://${adminHost}:${port}`,
-      token: issued.token as unknown as number[],
-      installedAppId,
-      agentPubKey,
-    };
+    return await attachInterfaceAndIssueToken(adminWs, adminUrl, installedAppId, agentPubKey);
   } finally {
     adminWs.client.close();
   }

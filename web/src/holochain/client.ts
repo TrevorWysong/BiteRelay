@@ -66,18 +66,3 @@ export function onLocalSignal(handler: (signal: LocalSignal) => void): () => voi
     handler(signal.value.payload as LocalSignal);
   });
 }
-
-// Base64 helpers -- connection tokens and pasted agent keys travel as plain
-// text (a URL param, a manually-copied dev value), never as raw bytes.
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
-}
-
-export function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}

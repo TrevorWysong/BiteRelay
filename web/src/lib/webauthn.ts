@@ -13,6 +13,8 @@
 // protect against a determined attacker with devtools/JS execution already
 // running on this origin -- naming both limits rather than letting the
 // name "WebAuthn" imply more than this actually buys.
+import { bytesToBase64, base64ToBytes } from "./base64";
+
 const RP_NAME = "Relay";
 
 export function isWebAuthnAvailable(): boolean {
@@ -44,17 +46,18 @@ function randomChallenge(): BufferSource {
   return bytes as BufferSource;
 }
 
+// WebAuthn's own types deal in ArrayBuffer, not Uint8Array -- these just
+// adapt the shared byte<->base64 codec (lib/base64.ts) to that view type
+// rather than carrying a second copy of the same encode/decode loop.
 function bufferToBase64(buf: ArrayBuffer): string {
-  let binary = "";
-  for (const b of new Uint8Array(buf)) binary += String.fromCharCode(b);
-  return btoa(binary);
+  return bytesToBase64(new Uint8Array(buf));
 }
 
 function base64ToBuffer(b64: string): ArrayBuffer {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
+  // Same reasoning as randomChallenge()'s cast above -- a freshly allocated
+  // Uint8Array's .buffer is always a real ArrayBuffer at runtime, never a
+  // SharedArrayBuffer; TS's lib.dom types just can't express that narrowing.
+  return base64ToBytes(b64).buffer as ArrayBuffer;
 }
 
 /// Registers a new passkey scoped to this origin, for use as a reconnect
