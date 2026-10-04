@@ -4,7 +4,7 @@
 //! on why this is never the actual trust source of truth.
 
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{fold_since_checkpoint, latest_checkpoint, resolve_latest, should_checkpoint};
 use reputation_integrity::*;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -19,13 +19,6 @@ pub struct RecordEventInput {
 /// identical `CHECKPOINT_INTERVAL`) for why this is O(n/K), not O(1).
 const CHECKPOINT_INTERVAL: u64 = 20;
 
-/// Same deterministic, counting-free trigger as `ledger::should_checkpoint`
-/// -- a pseudo-modulo derived from the just-created event's own action
-/// hash, not a maintained counter.
-fn should_checkpoint(event_hash: &ActionHash) -> bool {
-    event_hash.get_raw_36()[0] as u64 % CHECKPOINT_INTERVAL == 0
-}
-
 /// Best-effort, same posture as `ledger::maybe_write_checkpoint`: purely a
 /// read-side optimization, never required, so a failure here must never
 /// fail the event-recording it's piggybacking on. `recorded_at` is
@@ -33,7 +26,7 @@ fn should_checkpoint(event_hash: &ActionHash) -> bool {
 /// call -- see `ledger`'s identical reasoning for why that matters for the
 /// `after` boundary in `get_reputation_summary` below.
 fn maybe_write_checkpoint(subject: AgentPubKey, event_hash: ActionHash, event_recorded_at: Timestamp) {
-    if !should_checkpoint(&event_hash) {
+    if !should_checkpoint(&event_hash, CHECKPOINT_INTERVAL) {
         return;
     }
     let Ok(summary) = get_reputation_summary(subject.clone()) else { return };
@@ -101,22 +94,10 @@ pub struct ReputationSummary {
 /// exists: `LinkQuery.after` is `>=`, not strictly-greater).
 #[hdk_extern]
 pub fn get_reputation_summary(subject: AgentPubKey) -> ExternResult<ReputationSummary> {
-    let checkpoint_links = get_links(
-        LinkQuery::try_new(subject.clone(), LinkTypes::SubjectToReputationCheckpoint)?,
-        GetStrategy::Local,
-    )?;
-    let mut latest_checkpoint: Option<ReputationCheckpoint> = None;
-    for link in checkpoint_links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(checkpoint)) = record.entry().to_app_option::<ReputationCheckpoint>() else { continue };
-        let is_newer = latest_checkpoint.as_ref().map(|l| checkpoint.recorded_at > l.recorded_at).unwrap_or(true);
-        if is_newer {
-            latest_checkpoint = Some(checkpoint);
-        }
-    }
-
-    let (mut summary, since, already_counted) = match &latest_checkpoint {
+    let checkpoint = latest_checkpoint(subject.clone(), LinkTypes::SubjectToReputationCheckpoint, |c: &ReputationCheckpoint| {
+        c.recorded_at
+    })?;
+    let (mut summary, since, already_counted) = match &checkpoint {
         Some(checkpoint) => (
             ReputationSummary {
                 completed_count: checkpoint.completed_count,
@@ -131,24 +112,20 @@ pub fn get_reputation_summary(subject: AgentPubKey) -> ExternResult<ReputationSu
         None => (ReputationSummary::default(), None, None),
     };
 
-    let mut event_query = LinkQuery::try_new(subject, LinkTypes::SubjectToEvent)?;
-    event_query.after = since;
-    let links = get_links(event_query, GetStrategy::Local)?;
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if already_counted.as_ref() == Some(&action_hash) {
-            continue;
-        }
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(event)) = record.entry().to_app_option::<ReputationEvent>() else { continue };
-        match event.kind {
+    fold_since_checkpoint::<ReputationEvent, _, _>(
+        subject,
+        LinkTypes::SubjectToEvent,
+        since,
+        already_counted,
+        &mut summary,
+        |summary, event| match event.kind {
             ReputationEventKind::OrderCompleted { .. } => summary.completed_count += 1,
             ReputationEventKind::OrderCancelledByThem => summary.cancelled_by_them_count += 1,
             ReputationEventKind::DisputeRaised => summary.dispute_raised_count += 1,
             ReputationEventKind::DisputeResolvedAgainst => summary.dispute_resolved_against_count += 1,
             ReputationEventKind::CollateralForfeited { amount } => summary.total_collateral_forfeited += amount,
-        }
-    }
+        },
+    )?;
     Ok(summary)
 }
 
@@ -229,15 +206,11 @@ pub struct SubmitItemReviewInput {
 
 const ITEM_RATING_CHECKPOINT_INTERVAL: u64 = 20;
 
-fn should_checkpoint_item_rating(review_hash: &ActionHash) -> bool {
-    review_hash.get_raw_36()[0] as u64 % ITEM_RATING_CHECKPOINT_INTERVAL == 0
-}
-
 /// Best-effort, same posture as every other checkpoint writer in this
 /// codebase: a pure read-side optimization, never required, so a failure
 /// here must never fail the review submission it's piggybacking on.
 fn maybe_write_item_rating_checkpoint(item_ref: ActionHash, review_hash: ActionHash, review_created_at: Timestamp) {
-    if !should_checkpoint_item_rating(&review_hash) {
+    if !should_checkpoint(&review_hash, ITEM_RATING_CHECKPOINT_INTERVAL) {
         return;
     }
     let Ok(summary) = get_item_rating_summary(item_ref.clone()) else { return };
@@ -295,22 +268,10 @@ pub struct ItemRatingSummary {
 /// fresh every read.
 #[hdk_extern]
 pub fn get_item_rating_summary(item_ref: ActionHash) -> ExternResult<ItemRatingSummary> {
-    let checkpoint_links = get_links(
-        LinkQuery::try_new(item_ref.clone(), LinkTypes::ItemToRatingCheckpoint)?,
-        GetStrategy::Local,
-    )?;
-    let mut latest_checkpoint: Option<ItemRatingCheckpoint> = None;
-    for link in checkpoint_links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(checkpoint)) = record.entry().to_app_option::<ItemRatingCheckpoint>() else { continue };
-        let is_newer = latest_checkpoint.as_ref().map(|l| checkpoint.recorded_at > l.recorded_at).unwrap_or(true);
-        if is_newer {
-            latest_checkpoint = Some(checkpoint);
-        }
-    }
-
-    let (mut summary, since, already_counted) = match &latest_checkpoint {
+    let checkpoint = latest_checkpoint(item_ref.clone(), LinkTypes::ItemToRatingCheckpoint, |c: &ItemRatingCheckpoint| {
+        c.recorded_at
+    })?;
+    let (mut summary, since, already_counted) = match &checkpoint {
         Some(checkpoint) => (
             ItemRatingSummary { count: checkpoint.count, rating_sum: checkpoint.rating_sum },
             Some(checkpoint.recorded_at),
@@ -319,19 +280,10 @@ pub fn get_item_rating_summary(item_ref: ActionHash) -> ExternResult<ItemRatingS
         None => (ItemRatingSummary::default(), None, None),
     };
 
-    let mut review_query = LinkQuery::try_new(item_ref, LinkTypes::ItemToReview)?;
-    review_query.after = since;
-    let links = get_links(review_query, GetStrategy::Local)?;
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if already_counted.as_ref() == Some(&action_hash) {
-            continue;
-        }
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(review)) = record.entry().to_app_option::<ItemReview>() else { continue };
+    fold_since_checkpoint::<ItemReview, _, _>(item_ref, LinkTypes::ItemToReview, since, already_counted, &mut summary, |summary, review| {
         summary.count += 1;
         summary.rating_sum += review.rating as u32;
-    }
+    })?;
     Ok(summary)
 }
 

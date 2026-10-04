@@ -87,14 +87,10 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::Profile(profile) => validate_profile(&profile),
             EntryTypes::ProviderCredential(credential) => validate_provider_credential(&credential),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => match link_type {
-            LinkTypes::AgentToFavorite => validate_new_favorite(&action),
-            _ => Ok(ValidateCallbackResult::Valid),
-        },
-        FlatOp::Link(OpLink::DeleteLink { original_action, link_type, action }) => match link_type {
-            LinkTypes::AgentToFavorite => validate_favorite_removal(&original_action, &action),
-            _ => Ok(ValidateCallbackResult::Valid),
-        },
+        FlatOp::Link(OpLink::CreateLink { link_type: LinkTypes::AgentToFavorite, action }) => validate_new_favorite(&action),
+        FlatOp::Link(OpLink::DeleteLink { original_action, link_type: LinkTypes::AgentToFavorite, action }) => {
+            validate_favorite_removal(&original_action, &action)
+        }
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }

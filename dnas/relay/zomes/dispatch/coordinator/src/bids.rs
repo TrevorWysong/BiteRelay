@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, resolve_latest};
+use relay_coordinator_support::{entry_def_parts, next_page_cursor, resolve_latest_decoded, resolve_links_to_records};
 use relay_types::LedgerCommitmentRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,8 +34,7 @@ pub fn list_my_bids(_: ()) -> ExternResult<Vec<Record>> {
         status: BidStatus::Open,
         created_at: Timestamp(0),
     });
-    let scoped: ScopedEntryDefIndex = (&dummy).try_into().map_err(|e: WasmError| e)?;
-    let visibility = EntryVisibility::from(&dummy);
+    let (scoped, visibility) = entry_def_parts(&dummy)?;
     let filter = ChainQueryFilter::new()
         .entry_type(EntryType::App(AppEntryDef::new(scoped.zome_type, scoped.zome_index, visibility)))
         .include_entries(true);
@@ -45,12 +44,7 @@ pub fn list_my_bids(_: ()) -> ExternResult<Vec<Record>> {
 #[hdk_extern]
 pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     let bidder = agent_info()?.agent_initial_pubkey;
-    let order_record = resolve_latest(input.order_ref.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (_, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_ref.clone(), "DeliveryOrder")?;
 
     let bid = Bid {
         order_ref: input.order_ref.clone(),
@@ -80,12 +74,7 @@ pub struct WithdrawBidInput {
 
 #[hdk_extern]
 pub fn withdraw_bid(input: WithdrawBidInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.bid_action)?;
-    let mut bid: Bid = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (record, mut bid): (_, Bid) = resolve_latest_decoded(input.bid_action, "Bid")?;
     bid.status = BidStatus::Withdrawn;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::Bid(bid))?;
     get(updated, GetOptions::local())?
@@ -143,19 +132,8 @@ pub struct AcceptBidInput {
 /// BidReleased signal so their client can drop the local candidate.
 #[hdk_extern]
 pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let mut order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
-
-    let bid_record = resolve_latest(input.bid_action.clone())?;
-    let winning_bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+    let (_, winning_bid): (_, Bid) = resolve_latest_decoded(input.bid_action.clone(), "Bid")?;
 
     if !input.override_warrants {
         let warrants = check_warrants(winning_bid.bidder.clone())?;
@@ -188,13 +166,8 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         if other_bid_hash == input.bid_action {
             continue;
         }
-        if let Ok(other_record) = resolve_latest(other_bid_hash.clone()) {
-            if let Ok(Some(other_bid)) = other_record.entry().to_app_option::<Bid>() {
-                let _ = send_remote_signal(
-                    RemoteSignal::BidReleased { bid_hash: other_bid_hash },
-                    vec![other_bid.bidder],
-                );
-            }
+        if let Ok((_, other_bid)) = resolve_latest_decoded::<Bid>(other_bid_hash.clone(), "Bid") {
+            let _ = send_remote_signal(RemoteSignal::BidReleased { bid_hash: other_bid_hash }, vec![other_bid.bidder]);
         }
     }
 
@@ -229,12 +202,6 @@ pub fn list_bids_for_order(input: ListBidsInput) -> ExternResult<BidsPage> {
     links.sort_by_key(|l| l.timestamp);
     let next_after = if links.len() > BID_PAGE_SIZE { Some(next_page_cursor(links[BID_PAGE_SIZE - 1].timestamp)) } else { None };
     links.truncate(BID_PAGE_SIZE);
-    let mut bids = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            bids.push(record);
-        }
-    }
+    let bids = resolve_links_to_records(links);
     Ok(BidsPage { bids, next_after })
 }

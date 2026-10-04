@@ -15,8 +15,12 @@ import type { Record as HcRecord } from "@holochain/client";
 import { appSource, actionHash, bytesEqual, ST_PETE } from "./helpers.js";
 
 await runScenario(async (scenario) => {
-  const [customer, merchant] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
-  const all = [customer, merchant];
+  const [customer, merchant, otherMerchant] = await scenario.addPlayersWithApps([
+    { appBundleSource: appSource },
+    { appBundleSource: appSource },
+    { appBundleSource: appSource },
+  ]);
+  const all = [customer, merchant, otherMerchant];
   await scenario.shareAllAgents();
 
   const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
@@ -25,10 +29,15 @@ await runScenario(async (scenario) => {
   const now = Date.now() * 1000;
   const customerProfile = await profilesOf(customer)<HcRecord>("create_profile", { display_name: "Cara Customer", roles: ["Requester"], created_at: now });
   await profilesOf(merchant)("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });
+  await profilesOf(otherMerchant)("create_profile", { display_name: "Olive Owner", roles: ["Merchant"], created_at: now });
 
+  // Two distinct merchants, each with their own single storefront --
+  // publish_catalog enforces one storefront per owner, so two favorited
+  // restaurants means two separate merchant agents, not one merchant
+  // publishing twice.
   const catalogRecord = await catalogOf(merchant)<HcRecord>("publish_catalog", { business_name: "Mo's Kitchen", location: ST_PETE });
   const catalogRef = actionHash(catalogRecord);
-  const otherCatalogRecord = await catalogOf(merchant)<HcRecord>("publish_catalog", { business_name: "Mo's Other Spot", location: ST_PETE });
+  const otherCatalogRecord = await catalogOf(otherMerchant)<HcRecord>("publish_catalog", { business_name: "Olive's Other Spot", location: ST_PETE });
   const otherCatalogRef = actionHash(otherCatalogRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 

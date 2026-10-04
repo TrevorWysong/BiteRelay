@@ -86,15 +86,8 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
     // reading current status, "who owns this catalog" never changes after
     // creation, so the as-created record is the correct, and only,
     // reference point.
-    let record = must_get_valid_record(item.catalog_ref.clone())?;
-    let catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest(
-            "catalog_ref does not point at a MerchantCatalog entry".into()
-        )))?;
-    if &catalog.owner != author {
+    let owner = owner_of_catalog(&item.catalog_ref)?;
+    if &owner != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a menu item can only be authored by its catalog's own owner".into(),
         ));
@@ -104,13 +97,11 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
 
 fn owner_of_catalog(catalog_ref: &ActionHash) -> ExternResult<AgentPubKey> {
     let record = must_get_valid_record(catalog_ref.clone())?;
-    let catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest(
+    let Ok(Some(catalog)) = record.entry().to_app_option::<MerchantCatalog>() else {
+        return Err(wasm_error!(WasmErrorInner::Guest(
             "catalog_ref does not point at a MerchantCatalog entry".into()
-        )))?;
+        )));
+    };
     Ok(catalog.owner)
 }
 

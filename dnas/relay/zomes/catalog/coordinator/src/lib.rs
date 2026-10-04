@@ -6,7 +6,7 @@
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, resolve_latest};
+use relay_coordinator_support::{next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records};
 use relay_types::GeoPoint;
 
 fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::TypedPath> {
@@ -113,12 +113,7 @@ pub struct SetCatalogOpenInput {
 
 #[hdk_extern]
 pub fn set_catalog_open(input: SetCatalogOpenInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.is_open = input.is_open;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
@@ -144,12 +139,7 @@ pub struct UpdateCatalogDetailsInput {
 
 #[hdk_extern]
 pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.description = input.description;
     catalog.cuisine_type = input.cuisine_type;
     catalog.banner_data_uri = input.banner_data_uri;
@@ -180,12 +170,7 @@ pub fn get_catalog(catalog_ref: ActionHash) -> ExternResult<Record> {
 /// the same reasoning applied to `geo_presence`).
 #[hdk_extern]
 pub fn get_delivery_subsidy(catalog_ref: ActionHash) -> ExternResult<u8> {
-    let record = resolve_latest(catalog_ref)?;
-    let catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    let (_, catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref, "MerchantCatalog")?;
     Ok(catalog.delivery_subsidy_percent)
 }
 
@@ -202,12 +187,7 @@ pub struct SetDeliverySubsidyPercentInput {
 /// it stays proportional to whatever the winning bid turns out to be.
 #[hdk_extern]
 pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut catalog: MerchantCatalog = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a MerchantCatalog".into())))?;
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.delivery_subsidy_percent = input.delivery_subsidy_percent;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
@@ -241,12 +221,7 @@ fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<()> {
     tags.sort();
     tags.dedup();
 
-    let catalog_record = resolve_latest(catalog_ref.clone())?;
-    let mut catalog: MerchantCatalog = catalog_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref does not point at a MerchantCatalog".into())))?;
+    let (catalog_record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref.clone(), "MerchantCatalog")?;
     if catalog.dietary_tags != tags {
         catalog.dietary_tags = tags;
         update_entry(catalog_record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
@@ -306,14 +281,7 @@ pub fn list_menu_items(input: ListMenuItemsInput) -> ExternResult<MenuItemsPage>
         None
     };
     links.truncate(MENU_ITEM_PAGE_SIZE);
-    let mut items = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            items.push(record);
-        }
-    }
-    Ok(MenuItemsPage { items, next_after })
+    Ok(MenuItemsPage { items: resolve_links_to_records(links), next_after })
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -359,14 +327,7 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
         None
     };
     links.truncate(CATALOG_PAGE_SIZE);
-    let mut catalogs = Vec::new();
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            catalogs.push(record);
-        }
-    }
-    Ok(NearbyMerchantsPage { catalogs, next_after })
+    Ok(NearbyMerchantsPage { catalogs: resolve_links_to_records(links), next_after })
 }
 
 // --- promo codes (architecture plan: merchant-scoped discounts, built
@@ -427,12 +388,7 @@ pub struct SetPromoCodeActiveInput {
 
 #[hdk_extern]
 pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut promo: PromoCode = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a PromoCode".into())))?;
+    let (record, mut promo): (_, PromoCode) = resolve_latest_decoded(input.original_action, "PromoCode")?;
     promo.active = input.active;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PromoCode(promo))?;
     get(updated, GetOptions::local())?
@@ -452,12 +408,5 @@ pub fn list_promo_codes_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec
         Err(_) => return Ok(Vec::new()),
     };
     let links = get_links(LinkQuery::try_new(path_hash, LinkTypes::CatalogToPromoCode)?, GetStrategy::default())?;
-    let mut promos = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            promos.push(record);
-        }
-    }
-    Ok(promos)
+    Ok(resolve_links_to_records(links))
 }

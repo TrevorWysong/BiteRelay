@@ -5,7 +5,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{entry_def_parts, resolve_latest, resolve_latest_decoded};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -59,12 +59,7 @@ pub struct SetRecurringTemplateActiveInput {
 
 #[hdk_extern]
 pub fn set_recurring_template_active(input: SetRecurringTemplateActiveInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut template: RecurringOrderTemplate = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a RecurringOrderTemplate".into())))?;
+    let (record, mut template): (_, RecurringOrderTemplate) = resolve_latest_decoded(input.original_action, "RecurringOrderTemplate")?;
     template.active = input.active;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::RecurringOrderTemplate(template))?;
     get(updated, GetOptions::local())?
@@ -84,22 +79,11 @@ pub struct AdvanceRecurringTemplateInput {
 /// own, it just stores whatever timestamp the client computed.
 #[hdk_extern]
 pub fn advance_recurring_template(input: AdvanceRecurringTemplateInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let mut template: RecurringOrderTemplate = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a RecurringOrderTemplate".into())))?;
+    let (record, mut template): (_, RecurringOrderTemplate) = resolve_latest_decoded(input.original_action, "RecurringOrderTemplate")?;
     template.next_run_at = input.next_run_at;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::RecurringOrderTemplate(template))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back advanced recurring order template".into())))
-}
-
-fn entry_def_parts(entry: &EntryTypes) -> ExternResult<(ScopedEntryDefIndex, EntryVisibility)> {
-    let scoped: ScopedEntryDefIndex = entry.try_into().map_err(|e: WasmError| e)?;
-    let visibility = EntryVisibility::from(entry);
-    Ok((scoped, visibility))
 }
 
 /// Local chain query, filtered to `ActionType::Create` only -- a template

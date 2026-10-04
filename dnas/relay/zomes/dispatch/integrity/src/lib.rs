@@ -412,6 +412,88 @@ fn validate_cancellation_dispute_resolution_matches(dispute_ref: &ActionHash, au
     Ok(Ok(()))
 }
 
+/// The dispute being first raised (`PickedUp`/`Delivered -> Disputed`, or
+/// the `Cancelled -> Cancelled` cancellation-fairness case) -- extracted out
+/// of `validate_order_transition`'s own dispute-ref handling so that
+/// function's three-way branch (raise / resolve / resolve-cancellation)
+/// reads as three named checks rather than one long inline block, same
+/// pattern as `validate_delivery_receipts`/`validate_dispute_resolution_matches`
+/// above. `is_accepted_provider`/`accepted_bidder` are passed in rather than
+/// re-derived, since the caller already resolved them with the correct
+/// prior-state context.
+fn check_raising_dispute(
+    prior: &DeliveryOrder,
+    order: &DeliveryOrder,
+    author: &AgentPubKey,
+    is_accepted_provider: bool,
+    accepted_bidder: &Option<AgentPubKey>,
+    original_action_hash: &ActionHash,
+) -> ExternResult<Result<(), String>> {
+    if prior.dispute_ref.is_some() {
+        return Ok(Err("dispute_ref must be empty before a dispute is first raised".into()));
+    }
+    let Some(new_dispute_ref) = &order.dispute_ref else {
+        return Ok(Err("raising a dispute must set dispute_ref".into()));
+    };
+    // The order's *other* party relative to whoever raised this.
+    let expected_respondent = if is_accepted_provider {
+        prior.requester.clone()
+    } else {
+        match accepted_bidder {
+            Some(bidder) => bidder.clone(),
+            None => return Ok(Err("cannot raise a dispute on an order with no accepted bid".into())),
+        }
+    };
+    let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
+    validate_new_dispute_ref(&order_original_creation, new_dispute_ref, author, &expected_respondent)
+}
+
+/// The `Disputed -> Delivered`/`Cancelled` resolution transition -- see
+/// `check_raising_dispute`'s doc comment for why this is extracted.
+fn check_resolving_dispute(prior: &DeliveryOrder, order: &DeliveryOrder, author: &AgentPubKey) -> ExternResult<Result<(), String>> {
+    let Some(prior_dispute_ref) = &prior.dispute_ref else {
+        return Ok(Err("a Disputed order with no dispute_ref cannot be resolved".into()));
+    };
+    let Some(new_dispute_ref) = &order.dispute_ref else {
+        return Ok(Err("resolving a dispute must set dispute_ref to the resolved record".into()));
+    };
+    // dispute_ref is allowed to *advance* here, from the dispute's original
+    // creation hash to its resolved-update hash -- must_get_valid_record is
+    // literal, so validate_dispute_resolution_matches needs a reference that
+    // already points directly at the Resolved content (the creation hash
+    // would only ever show the original Open-status entry, the same
+    // "get() is literal" gotcha as delivery_receipts elsewhere in this
+    // file). Still must be the *same* dispute chain, not a swap to an
+    // unrelated one.
+    let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
+    if &new_dispute_original_creation != prior_dispute_ref {
+        return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
+    }
+    validate_dispute_resolution_matches(new_dispute_ref, &order.status, author)
+}
+
+/// The cancellation-fairness resolution transition (`Cancelled -> Cancelled`
+/// with `prior.dispute_ref` already set) -- see `check_raising_dispute`'s
+/// doc comment for why this is extracted. Arbitrator-only authorship is
+/// already enforced by `validate_order_transition`'s own `authorized` check
+/// before this runs, so there's nothing further to check on that front here.
+fn check_resolving_cancellation_dispute(prior: &DeliveryOrder, order: &DeliveryOrder, author: &AgentPubKey) -> ExternResult<Result<(), String>> {
+    // Safe: callers only reach this once resolving_cancellation_dispute has
+    // already established prior.dispute_ref.is_some().
+    let prior_dispute_ref = prior.dispute_ref.as_ref().unwrap();
+    let Some(new_dispute_ref) = &order.dispute_ref else {
+        return Ok(Err("dispute_ref must remain set while resolving a cancellation dispute".into()));
+    };
+    if new_dispute_ref == prior_dispute_ref {
+        return Ok(Err("applying a cancellation dispute resolution must advance dispute_ref to the resolved record".into()));
+    }
+    let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
+    if &new_dispute_original_creation != prior_dispute_ref {
+        return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
+    }
+    validate_cancellation_dispute_resolution_matches(new_dispute_ref, author)
+}
+
 fn validate_order_transition(
     order: &DeliveryOrder,
     author: &AgentPubKey,
@@ -560,86 +642,15 @@ fn validate_order_transition(
     let resolving_dispute =
         prior.status == DeliveryStatus::Disputed && matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Cancelled);
     if raising_dispute {
-        if prior.dispute_ref.is_some() {
-            return Ok(ValidateCallbackResult::Invalid(
-                "dispute_ref must be empty before a dispute is first raised".into(),
-            ));
-        }
-        let Some(new_dispute_ref) = &order.dispute_ref else {
-            return Ok(ValidateCallbackResult::Invalid(
-                "raising a dispute must set dispute_ref".into(),
-            ));
-        };
-        // The order's *other* party relative to whoever raised this --
-        // `is_accepted_provider`/`accepted_bidder` are already resolved
-        // above with the correct prior-state context.
-        let expected_respondent = if is_accepted_provider {
-            prior.requester.clone()
-        } else {
-            match &accepted_bidder {
-                Some(bidder) => bidder.clone(),
-                None => {
-                    return Ok(ValidateCallbackResult::Invalid(
-                        "cannot raise a dispute on an order with no accepted bid".into(),
-                    ));
-                }
-            }
-        };
-        let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
-        if let Err(reason) = validate_new_dispute_ref(&order_original_creation, new_dispute_ref, author, &expected_respondent)? {
+        if let Err(reason) = check_raising_dispute(&prior, order, author, is_accepted_provider, &accepted_bidder, original_action_hash)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
         }
     } else if resolving_dispute {
-        let Some(prior_dispute_ref) = &prior.dispute_ref else {
-            return Ok(ValidateCallbackResult::Invalid(
-                "a Disputed order with no dispute_ref cannot be resolved".into(),
-            ));
-        };
-        let Some(new_dispute_ref) = &order.dispute_ref else {
-            return Ok(ValidateCallbackResult::Invalid(
-                "resolving a dispute must set dispute_ref to the resolved record".into(),
-            ));
-        };
-        // dispute_ref is allowed to *advance* here, from the dispute's
-        // original creation hash to its resolved-update hash --
-        // must_get_valid_record is literal, so validate_dispute_resolution_matches
-        // needs a reference that already points directly at the Resolved
-        // content (the creation hash would only ever show the original
-        // Open-status entry, the same "get() is literal" gotcha as
-        // delivery_receipts elsewhere in this file). Still must be the
-        // *same* dispute chain, not a swap to an unrelated one.
-        let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
-        if &new_dispute_original_creation != prior_dispute_ref {
-            return Ok(ValidateCallbackResult::Invalid(
-                "dispute_ref update must resolve back to the same dispute originally raised".into(),
-            ));
-        }
-        if let Err(reason) = validate_dispute_resolution_matches(new_dispute_ref, &order.status, author)? {
+        if let Err(reason) = check_resolving_dispute(&prior, order, author)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
         }
     } else if resolving_cancellation_dispute {
-        // Arbitrator-only authorship is already enforced by the `authorized`
-        // check above (the `RequiredAuthor::Any if resolving_cancellation_dispute`
-        // arm) -- nothing further to check on that front here.
-        // Safe: resolving_cancellation_dispute already established prior.dispute_ref.is_some().
-        let prior_dispute_ref = prior.dispute_ref.as_ref().unwrap();
-        let Some(new_dispute_ref) = &order.dispute_ref else {
-            return Ok(ValidateCallbackResult::Invalid(
-                "dispute_ref must remain set while resolving a cancellation dispute".into(),
-            ));
-        };
-        if new_dispute_ref == prior_dispute_ref {
-            return Ok(ValidateCallbackResult::Invalid(
-                "applying a cancellation dispute resolution must advance dispute_ref to the resolved record".into(),
-            ));
-        }
-        let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
-        if &new_dispute_original_creation != prior_dispute_ref {
-            return Ok(ValidateCallbackResult::Invalid(
-                "dispute_ref update must resolve back to the same dispute originally raised".into(),
-            ));
-        }
-        if let Err(reason) = validate_cancellation_dispute_resolution_matches(new_dispute_ref, author)? {
+        if let Err(reason) = check_resolving_cancellation_dispute(&prior, order, author)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
         }
     } else if prior.dispute_ref != order.dispute_ref {

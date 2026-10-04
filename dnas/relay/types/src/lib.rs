@@ -107,6 +107,14 @@ pub fn bounding_box(geohash: &str) -> Option<(f64, f64, f64, f64)> {
 /// to each of the 8 adjacent box centers, and re-encoding -- simpler and less
 /// error-prone than the classic bit-flip neighbor algorithm, at the cost of
 /// relying on floating point cell-width math.
+/// Wraps a longitude into `[-180, 180)` -- `encode`/`bounding_box` both treat
+/// longitude as bounded to that range and never wrap, so a value computed
+/// slightly outside it (e.g. a neighbor cell just past the antimeridian)
+/// needs normalizing before re-encoding.
+fn wrap_lon(lon: f64) -> f64 {
+    (lon + 180.0).rem_euclid(360.0) - 180.0
+}
+
 pub fn cell_and_neighbors(geohash: &str) -> Vec<String> {
     let precision = geohash.chars().count();
     let Some((lat_min, lat_max, lon_min, lon_max)) = bounding_box(geohash) else {
@@ -127,7 +135,13 @@ pub fn cell_and_neighbors(geohash: &str) -> Vec<String> {
             }
             let neighbor = GeoPoint {
                 lat: (center.lat + d_lat * lat_span).clamp(-90.0, 90.0),
-                lon: center.lon + d_lon * lon_span,
+                // Wrapped, not clamped -- unlike latitude, longitude has no
+                // poles to clamp against: a cell just east of the antimeridian
+                // (lon near +180) has a real neighbor just west of it (lon near
+                // -180), not a nonexistent "lon > 180" cell. Clamping there
+                // would silently miss that neighbor for every cell straddling
+                // the date line.
+                lon: wrap_lon(center.lon + d_lon * lon_span),
             };
             let encoded = encode(neighbor, precision);
             if !out.contains(&encoded) {
@@ -180,6 +194,19 @@ mod tests {
         assert!(cells.contains(&gh));
         assert!(cells.len() <= 9);
         assert!(cells.len() >= 2);
+    }
+
+    #[test]
+    fn cell_and_neighbors_wraps_across_the_antimeridian() {
+        let p = GeoPoint { lat: 0.0, lon: 179.9999 };
+        let gh = encode(p, 6);
+        let cells = cell_and_neighbors(&gh);
+        // A neighbor east of this cell crosses from +180 to -180 -- without
+        // wrapping, that neighbor's longitude would stay stuck above +180,
+        // re-encoding to the same easternmost cell instead of the real one
+        // just past the date line.
+        let wrapped_neighbor = encode(GeoPoint { lat: 0.0, lon: -179.9999 }, 6);
+        assert!(cells.contains(&wrapped_neighbor));
     }
 
     #[test]

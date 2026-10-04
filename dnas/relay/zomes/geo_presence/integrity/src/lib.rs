@@ -7,7 +7,10 @@ use relay_types::DeliveryCapability;
 
 /// Precision for presence beacons: city-block scale, never per-GPS-tick.
 /// Matches `catalog::CATALOG_GEOHASH_PRECISION` so both discovery paths share
-/// one grid.
+/// one grid. Also duplicated as `dispatch_coordinator::matching::geo_presence_precision()`
+/// (coordinator zomes can't depend on each other's crates, only call across
+/// the zome-call boundary -- see that function's own doc comment) -- keep
+/// both in sync if this ever changes.
 pub const PRESENCE_GEOHASH_PRECISION: usize = 6;
 
 /// Beacons are refreshed by the client every 45-60s and are read with a

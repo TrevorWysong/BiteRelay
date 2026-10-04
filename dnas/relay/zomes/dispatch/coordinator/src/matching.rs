@@ -9,17 +9,17 @@ use crate::signals::RemoteSignal;
 use dispatch_integrity::LinkTypes;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{decode_or, resolve_latest};
 use relay_types::DeliveryCapability;
 
 pub(crate) fn open_order_anchor_path(geohash: &str, bucket: i64) -> ExternResult<hdi::hash_path::path::TypedPath> {
     Path::from(format!("open_order_geohash.{}.{}", geohash, bucket)).typed(LinkTypes::OpenOrderGeohashAnchor)
 }
 
-/// Matches `geo_presence::PRESENCE_GEOHASH_PRECISION` -- duplicated as a
-/// small constant here rather than a crate dependency on geo_presence, since
-/// coordinator zomes call each other over the zome-call boundary, not via
-/// Cargo dependencies.
+/// Matches `geo_presence_integrity::PRESENCE_GEOHASH_PRECISION` -- duplicated
+/// as a small constant here rather than a crate dependency on geo_presence,
+/// since coordinator zomes call each other over the zome-call boundary, not
+/// via Cargo dependencies. Keep both in sync if this ever changes.
 pub(crate) fn geo_presence_precision() -> usize {
     6
 }
@@ -117,10 +117,9 @@ pub fn get_open_orders_near(geohash: String) -> ExternResult<Vec<Record>> {
                 // hash -- resolve_latest is what makes this reflect the order's
                 // real current status rather than showing it as forever Open.
                 let Ok(record) = resolve_latest(action_hash) else { continue };
-                if let Ok(Some(order)) = record.entry().to_app_option::<DeliveryOrder>() {
-                    if order.status == DeliveryStatus::Open {
-                        orders.push(record);
-                    }
+                let Some(order) = decode_or::<DeliveryOrder>(&record) else { continue };
+                if order.status == DeliveryStatus::Open {
+                    orders.push(record);
                 }
             }
         }

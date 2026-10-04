@@ -6,7 +6,7 @@
 
 use dispatch_integrity::{Bid, DeliveryOrder};
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::resolve_latest_decoded;
 
 /// Resolves the order and its accepted bid. `unavailable_reason` becomes
 /// the error message if no bid has been accepted yet -- callers each pass
@@ -14,21 +14,11 @@ use relay_coordinator_support::resolve_latest;
 /// assigned") rather than this helper imposing one generic message on every
 /// caller.
 pub fn resolve_order_and_bid(order_ref: ActionHash, unavailable_reason: &str) -> ExternResult<(DeliveryOrder, Bid)> {
-    let order_record = resolve_latest(order_ref)?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (_, order): (_, DeliveryOrder) = resolve_latest_decoded(order_ref, "DeliveryOrder")?;
     let accepted_bid_ref = order
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest(unavailable_reason.into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
     Ok((order, bid))
 }

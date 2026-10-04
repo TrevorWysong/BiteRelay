@@ -6,7 +6,7 @@
 
 use hdk::prelude::*;
 use ledger_integrity::*;
-use relay_coordinator_support::next_page_cursor;
+use relay_coordinator_support::{fold_since_checkpoint, latest_checkpoint, next_page_cursor, should_checkpoint};
 use relay_types::LedgerCommitmentRef;
 
 /// No entry is created here -- there is nothing to "lock" in a mutual-credit
@@ -34,17 +34,6 @@ pub fn lock_collateral(input: LockCollateralInput) -> ExternResult<LedgerCommitm
 /// meaningful improvement rather than a complete fix.
 const CHECKPOINT_INTERVAL: u64 = 20;
 
-/// Deterministic, counting-free "is it time to checkpoint" trigger: derives
-/// a pseudo-modulo from the just-created transaction's own action hash
-/// (already available, no extra read) rather than maintaining a per-agent
-/// counter, which would itself require an O(n) read to keep accurate. This
-/// makes checkpoints land *roughly* every `CHECKPOINT_INTERVAL` transactions
-/// on average, not exactly -- fine for a read-cost optimization, not
-/// something anything else depends on being precise.
-fn should_checkpoint(txn_hash: &ActionHash) -> bool {
-    txn_hash.get_raw_36()[0] as u64 % CHECKPOINT_INTERVAL == 0
-}
-
 /// Best-effort: a checkpoint is purely a read-side optimization
 /// (`get_balance` falls back to summing more transactions if the latest one
 /// it finds is older, it never *requires* a checkpoint to exist), so a
@@ -55,7 +44,7 @@ fn should_checkpoint(txn_hash: &ActionHash) -> bool {
 /// transaction (already baked into `balance`) with no clock-ordering
 /// assumption needed.
 fn maybe_write_checkpoint(agent: AgentPubKey, txn_hash: ActionHash, txn_created_at: Timestamp) {
-    if !should_checkpoint(&txn_hash) {
+    if !should_checkpoint(&txn_hash, CHECKPOINT_INTERVAL) {
         return;
     }
     let Ok(balance) = get_balance(agent.clone()) else { return };
@@ -123,22 +112,8 @@ pub fn forfeit(input: SettleInput) -> ExternResult<Record> {
 /// behavior and still fully correct, just not fast.
 #[hdk_extern]
 pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
-    let checkpoint_links = get_links(
-        LinkQuery::try_new(agent.clone(), LinkTypes::AgentToBalanceCheckpoint)?,
-        GetStrategy::Local,
-    )?;
-    let mut latest_checkpoint: Option<BalanceCheckpoint> = None;
-    for link in checkpoint_links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(checkpoint)) = record.entry().to_app_option::<BalanceCheckpoint>() else { continue };
-        let is_newer = latest_checkpoint.as_ref().map(|l| checkpoint.recorded_at > l.recorded_at).unwrap_or(true);
-        if is_newer {
-            latest_checkpoint = Some(checkpoint);
-        }
-    }
-
-    let (mut balance, since, already_counted) = match &latest_checkpoint {
+    let checkpoint = latest_checkpoint(agent.clone(), LinkTypes::AgentToBalanceCheckpoint, |c: &BalanceCheckpoint| c.recorded_at)?;
+    let (mut balance, since, already_counted) = match &checkpoint {
         Some(checkpoint) => (checkpoint.balance, Some(checkpoint.recorded_at), Some(checkpoint.related_txn.clone())),
         None => (0_i64, None, None),
     };
@@ -150,22 +125,20 @@ pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
     // transaction would otherwise come back in this query too and get
     // double-counted (once via `checkpoint.balance`, once summed again).
     // Skip it explicitly by hash rather than relying on timestamp precision.
-    let mut txn_query = LinkQuery::try_new(agent.clone(), LinkTypes::AgentToTransaction)?;
-    txn_query.after = since;
-    let links = get_links(txn_query, GetStrategy::Local)?;
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if already_counted.as_ref() == Some(&action_hash) {
-            continue;
-        }
-        let Some(record) = get(action_hash, GetOptions::local())? else { continue };
-        let Ok(Some(txn)) = record.entry().to_app_option::<LedgerTransaction>() else { continue };
-        if txn.to == agent {
-            balance += txn.amount as i64;
-        } else if txn.from == agent {
-            balance -= txn.amount as i64;
-        }
-    }
+    fold_since_checkpoint::<LedgerTransaction, _, _>(
+        agent.clone(),
+        LinkTypes::AgentToTransaction,
+        since,
+        already_counted,
+        &mut balance,
+        |balance, txn| {
+            if txn.to == agent {
+                *balance += txn.amount as i64;
+            } else if txn.from == agent {
+                *balance -= txn.amount as i64;
+            }
+        },
+    )?;
     Ok(balance)
 }
 

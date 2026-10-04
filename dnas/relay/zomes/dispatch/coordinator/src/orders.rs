@@ -7,7 +7,7 @@
 use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path, OPEN_ORDER_BUCKET_MILLIS};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{resolve_latest, resolve_latest_decoded, resolve_links_to_records};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -130,12 +130,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
 /// matching backstop).
 #[hdk_extern]
 pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<Record> {
-    let record = resolve_latest(order_original_action)?;
-    let mut order: DeliveryOrder = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action, "DeliveryOrder")?;
     if order.status != DeliveryStatus::Scheduled {
         return Err(wasm_error!(WasmErrorInner::Guest("order is not Scheduled".into())));
     }
@@ -174,14 +169,7 @@ pub fn get_order(order_original_action: ActionHash) -> ExternResult<Record> {
 #[hdk_extern]
 pub fn get_orders_for_requester(requester: AgentPubKey) -> ExternResult<Vec<Record>> {
     let links = get_links(LinkQuery::try_new(requester, LinkTypes::RequesterToOrder)?, GetStrategy::default())?;
-    let mut orders = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            orders.push(record);
-        }
-    }
-    Ok(orders)
+    Ok(resolve_links_to_records(links))
 }
 
 /// The `MerchantToOrder` counterpart -- unlike the requester's own read
@@ -191,14 +179,7 @@ pub fn get_orders_for_requester(requester: AgentPubKey) -> ExternResult<Vec<Reco
 #[hdk_extern]
 pub fn get_orders_for_merchant(merchant: AgentPubKey) -> ExternResult<Vec<Record>> {
     let links = get_links(LinkQuery::try_new(merchant, LinkTypes::MerchantToOrder)?, GetStrategy::default())?;
-    let mut orders = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Ok(record) = resolve_latest(action_hash) {
-            orders.push(record);
-        }
-    }
-    Ok(orders)
+    Ok(resolve_links_to_records(links))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -220,12 +201,7 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
             "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
         )));
     }
-    let record = resolve_latest(input.order_original_action)?;
-    let mut order: DeliveryOrder = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
     order.status = input.next_status;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     get(updated, GetOptions::local())?
@@ -377,12 +353,7 @@ pub(crate) fn settle_delivery_fee(
 /// check missed, nothing gets paid out.
 #[hdk_extern]
 pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let mut order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
 
     if order.status != DeliveryStatus::PickedUp {
         return Err(wasm_error!(WasmErrorInner::Guest(
@@ -393,12 +364,7 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
     let receipts_response = call(
         CallTargetCell::Local,
@@ -487,12 +453,7 @@ pub struct ForceOrderUpdateInput {
 /// client should call this.
 #[hdk_extern]
 pub fn force_order_update_for_testing(input: ForceOrderUpdateInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.order_original_action)?;
-    let mut order: DeliveryOrder = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
     order.status = input.next_status;
     order.delivery_receipts = input.delivery_receipts;
     order.dispute_ref = input.dispute_ref;

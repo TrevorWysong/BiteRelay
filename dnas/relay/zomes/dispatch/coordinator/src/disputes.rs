@@ -14,7 +14,21 @@
 use crate::orders::{settle_delivery_fee, settle_order_total, RecordEventInputWire, ReputationEventKindWire, SettleInputWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::resolve_latest_decoded;
+
+/// Derives who the *other* party to a dispute is -- whichever side of the
+/// order didn't raise it. Shared by `raise_dispute` and
+/// `raise_cancellation_dispute`, which otherwise duplicated this exact
+/// branching with only the final error message's wording differing.
+fn derive_respondent(order: &DeliveryOrder, bid: &Bid, me: &AgentPubKey, unauthorized_reason: &str) -> ExternResult<AgentPubKey> {
+    if me == &bid.bidder {
+        Ok(order.requester.clone())
+    } else if me == &order.requester || me == &order.merchant {
+        Ok(bid.bidder.clone())
+    } else {
+        Err(wasm_error!(WasmErrorInner::Guest(unauthorized_reason.into())))
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum DisputeReasonWire {
@@ -51,34 +65,21 @@ pub struct RaiseDisputeInput {
 /// `Disputed` + `dispute_ref`.
 #[hdk_extern]
 pub fn raise_dispute(input: RaiseDisputeInput) -> ExternResult<Record> {
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (order_record, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
 
     let me = agent_info()?.agent_initial_pubkey;
     let accepted_bid_ref = order
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid to dispute".into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
-    let respondent = if me == bid.bidder {
-        order.requester.clone()
-    } else if me == order.requester || me == order.merchant {
-        bid.bidder.clone()
-    } else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "only the order's requester, merchant, or accepted provider may raise a dispute".into()
-        )));
-    };
+    let respondent = derive_respondent(
+        &order,
+        &bid,
+        &me,
+        "only the order's requester, merchant, or accepted provider may raise a dispute",
+    )?;
 
     let open_response = call(
         CallTargetCell::Local,
@@ -163,12 +164,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     if !relay_governance::is_arbitrator(&agent_info()?.agent_initial_pubkey)? {
         return Err(wasm_error!(WasmErrorInner::Guest("only an arbitrator may apply a dispute resolution".into())));
     }
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (order_record, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Disputed {
         return Err(wasm_error!(WasmErrorInner::Guest("an order can only have its dispute resolution applied from Disputed".into())));
     }
@@ -180,12 +176,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
     let get_response = call(CallTargetCell::Local, "dispute", "get_dispute".into(), None, dispute_ref)?;
     let ZomeCallResponse::Ok(extern_io) = get_response else {
@@ -333,12 +324,7 @@ pub struct RaiseCancellationDisputeInput {
 /// check `raise_dispute` relies on.
 #[hdk_extern]
 pub fn raise_cancellation_dispute(input: RaiseCancellationDisputeInput) -> ExternResult<Record> {
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (order_record, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Cancelled {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "a cancellation-fairness dispute can only be raised against an already-Cancelled order".into()
@@ -350,22 +336,14 @@ pub fn raise_cancellation_dispute(input: RaiseCancellationDisputeInput) -> Exter
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest("an order that never had an accepted bid cannot have a cancellation-fairness dispute -- there was no provider to be unfair to".into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
-    let respondent = if me == bid.bidder {
-        order.requester.clone()
-    } else if me == order.requester || me == order.merchant {
-        bid.bidder.clone()
-    } else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "only the order's requester, merchant, or accepted provider may raise a cancellation-fairness dispute".into()
-        )));
-    };
+    let respondent = derive_respondent(
+        &order,
+        &bid,
+        &me,
+        "only the order's requester, merchant, or accepted provider may raise a cancellation-fairness dispute",
+    )?;
 
     let open_response = call(
         CallTargetCell::Local,
@@ -438,12 +416,7 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
     if !relay_governance::is_arbitrator(&agent_info()?.agent_initial_pubkey)? {
         return Err(wasm_error!(WasmErrorInner::Guest("only an arbitrator may apply a cancellation-dispute resolution".into())));
     }
-    let order_record = resolve_latest(input.order_original_action.clone())?;
-    let order: DeliveryOrder = order_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a DeliveryOrder".into())))?;
+    let (order_record, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Cancelled {
         return Err(wasm_error!(WasmErrorInner::Guest("a cancellation dispute resolution can only be applied to a Cancelled order".into())));
     }
@@ -455,12 +428,7 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
         .accepted_bid
         .clone()
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
-    let bid_record = resolve_latest(accepted_bid_ref)?;
-    let bid: Bid = bid_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Bid".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
     let get_response = call(CallTargetCell::Local, "dispute", "get_dispute".into(), None, dispute_ref)?;
     let ZomeCallResponse::Ok(extern_io) = get_response else {

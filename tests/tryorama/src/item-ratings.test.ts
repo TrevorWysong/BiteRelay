@@ -97,6 +97,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] reviewing an item that was never part of the order is rejected");
 
   await reputationOf(customer)("submit_item_review", { item_ref: burgerRef, order_original_action: orderRef, rating: 5, comment: "excellent" });
+  await dhtSync(all, customer.cells[0].cell_id[0]);
   let summary = await reputationOf(merchant)<{ count: number; rating_sum: number }>("get_item_rating_summary", burgerRef);
   assert.equal(summary.count, 1);
   assert.equal(summary.rating_sum, 5);
@@ -145,6 +146,7 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   await reputationOf(customer)("submit_item_review", { item_ref: burgerRef, order_original_action: order2Ref, rating: 3, comment: "just okay this time" });
+  await dhtSync(all, customer.cells[0].cell_id[0]);
   summary = await reputationOf(merchant)<{ count: number; rating_sum: number }>("get_item_rating_summary", burgerRef);
   assert.equal(summary.count, 2, "both reviews should be counted");
   assert.equal(summary.rating_sum, 8, "the sum should be 5 + 3");
