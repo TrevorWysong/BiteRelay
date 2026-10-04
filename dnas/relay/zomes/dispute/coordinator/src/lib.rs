@@ -8,7 +8,7 @@
 use dispute_integrity::*;
 use hdi::hash_path::path::{Path, TypedPath};
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, resolve_latest};
+use relay_coordinator_support::{decode_or, next_page_cursor, resolve_latest, resolve_latest_decoded};
 
 fn open_dispute_anchor_path() -> ExternResult<TypedPath> {
     Path::from("open_disputes").typed(LinkTypes::OpenDisputeAnchor)
@@ -69,12 +69,7 @@ pub struct SubmitResolutionInput {
 /// forfeiture, reputation) and flips the order's own status.
 #[hdk_extern]
 pub fn submit_resolution(input: SubmitResolutionInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.dispute_original_action)?;
-    let mut dispute: Dispute = record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Dispute".into())))?;
+    let (record, mut dispute): (_, Dispute) = resolve_latest_decoded(input.dispute_original_action, "Dispute")?;
     let arbitrator = agent_info()?.agent_initial_pubkey;
     dispute.status = DisputeStatus::Resolved;
     dispute.outcome = Some(input.outcome);
@@ -137,8 +132,11 @@ pub fn list_open_disputes(input: ListOpenDisputesInput) -> ExternResult<OpenDisp
     let mut disputes = Vec::new();
     for link in links {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
-        let record = resolve_latest(action_hash)?;
-        let Some(dispute): Option<Dispute> = record.entry().to_app_option().map_err(|e| wasm_error!(e))? else { continue };
+        let Ok(record) = resolve_latest(action_hash) else { continue };
+        // decode_or, not `?` -- a single malformed/wrong-type entry here
+        // must not abort this whole paginated read for every arbitrator;
+        // it should just be skipped, same as the two guards right above it.
+        let Some(dispute): Option<Dispute> = decode_or(&record) else { continue };
         if dispute.status == DisputeStatus::Open {
             disputes.push(record);
         }

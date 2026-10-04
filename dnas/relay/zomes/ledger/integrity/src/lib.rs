@@ -94,7 +94,11 @@ fn is_authorized_party_or_order_principal(
         return Ok(true);
     }
     let order_record = must_get_valid_record(related_order.clone())?;
-    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    // `.to_app_option()` returns `Err`, not `Ok(None)`, for a genuinely
+    // wrong-typed entry -- matching directly instead of `?`-propagating
+    // routes that case through the same "not an order, so not authorized"
+    // answer the explicit `None` case already gets, instead of a hard error.
+    let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
         return Ok(false);
     };
     Ok(author == &order.requester || author == &order.merchant)
@@ -107,7 +111,7 @@ fn is_authorized_party_or_order_principal(
 /// specific transaction (reusing the exact same rule, not a looser one).
 fn validate_checkpoint(checkpoint: &BalanceCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let txn_record = must_get_valid_record(checkpoint.related_txn.clone())?;
-    let Some(txn): Option<LedgerTransaction> = txn_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(txn)) = txn_record.entry().to_app_option::<LedgerTransaction>() else {
         return Ok(ValidateCallbackResult::Invalid("related_txn does not point at a LedgerTransaction entry".into()));
     };
     if checkpoint.agent != txn.from && checkpoint.agent != txn.to {

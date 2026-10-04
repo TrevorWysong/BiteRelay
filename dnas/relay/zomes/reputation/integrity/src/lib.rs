@@ -168,7 +168,7 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
         ));
     }
     let order_record = must_get_valid_record(review.order_ref.clone())?;
-    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
         return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
     };
     if order.status != DeliveryStatus::Delivered {
@@ -193,7 +193,7 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
 /// independent of a real, already-validated `ItemReview`.
 fn validate_item_rating_checkpoint(checkpoint: &ItemRatingCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let review_record = must_get_valid_record(checkpoint.related_review.clone())?;
-    let Some(review): Option<ItemReview> = review_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(review)) = review_record.entry().to_app_option::<ItemReview>() else {
         return Ok(ValidateCallbackResult::Invalid("related_review does not point at an ItemReview entry".into()));
     };
     if checkpoint.item_ref != review.item_ref {
@@ -230,7 +230,7 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
         ));
     }
     let order_record = must_get_valid_record(review.order_ref.clone())?;
-    let Some(order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
         return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
     };
     if order.status != DeliveryStatus::Delivered {
@@ -246,7 +246,7 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
     let bidder = match &order.accepted_bid {
         Some(bid_ref) => {
             let bid_record = must_get_valid_record(bid_ref.clone())?;
-            let Some(bid): Option<Bid> = bid_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+            let Ok(Some(bid)) = bid_record.entry().to_app_option::<Bid>() else {
                 return Ok(ValidateCallbackResult::Invalid("accepted_bid does not point at a Bid entry".into()));
             };
             Some(bid.bidder)
@@ -268,7 +268,7 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
 /// counterparty), reusing the exact same rule rather than a looser one.
 fn validate_checkpoint(checkpoint: &ReputationCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let event_record = must_get_valid_record(checkpoint.related_event.clone())?;
-    let Some(event): Option<ReputationEvent> = event_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(event)) = event_record.entry().to_app_option::<ReputationEvent>() else {
         return Ok(ValidateCallbackResult::Invalid("related_event does not point at a ReputationEvent entry".into()));
     };
     if checkpoint.subject != event.subject {

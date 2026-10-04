@@ -51,13 +51,14 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
 
 fn validate_receipt(receipt: &ReceiptAttestation, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let leg_record = must_get_valid_record(receipt.leg.clone())?;
-    let leg: Leg = leg_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest(
-            "receipt.leg does not point at a Leg entry".into()
-        )))?;
+    // `to_app_option::<Leg>()` returns `Err`, not `Ok(None)`, for an entry
+    // that's genuinely a different type -- collapsing both cases into the
+    // same clean Invalid this already intends, rather than letting a
+    // decode error propagate as an opaque SerializedBytesError instead.
+    let leg: Leg = match leg_record.entry().to_app_option::<Leg>() {
+        Ok(Some(l)) => l,
+        _ => return Ok(ValidateCallbackResult::Invalid("receipt.leg does not point at a Leg entry".into())),
+    };
     if author != &leg.from && author != &leg.to {
         return Ok(ValidateCallbackResult::Invalid(
             "a receipt can only be authored by one of its leg's two parties".into(),

@@ -73,7 +73,7 @@ fn validate_new_dispute(dispute: &Dispute, author: &AgentPubKey) -> ExternResult
     // (`validate_new_dispute_ref`) when the order itself transitions to
     // `Disputed` -- this only guards against obviously malformed disputes.
     let order_record = must_get_valid_record(dispute.order_ref.clone())?;
-    let Some(_order): Option<DeliveryOrder> = order_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(_order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
         return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
     };
 
@@ -90,7 +90,7 @@ fn validate_resolution(
     original_action_hash: &ActionHash,
 ) -> ExternResult<ValidateCallbackResult> {
     let prior_record = must_get_valid_record(original_action_hash.clone())?;
-    let Some(prior): Option<Dispute> = prior_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
+    let Ok(Some(prior)) = prior_record.entry().to_app_option::<Dispute>() else {
         return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a Dispute entry".into()));
     };
     if prior.status != DisputeStatus::Open {
