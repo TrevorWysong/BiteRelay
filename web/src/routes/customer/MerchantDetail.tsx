@@ -4,7 +4,6 @@ import { ArrowLeft, Clock, Heart, MapPin, Phone, Plus, ShoppingBag, Star } from 
 import { motion, AnimatePresence } from "framer-motion";
 import { getNearbyMerchants, listMenuItems } from "../../holochain/zomes/catalog";
 import { getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
-import { addFavorite, removeFavorite, listFavorites } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
@@ -13,12 +12,10 @@ import { formatCents } from "../../lib/format";
 import { Skeleton, StatNumber } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { groupByCategory } from "../../lib/menu";
+import { useFavorites } from "../../lib/useFavorites";
+import type { ItemRow } from "../../lib/menu";
 import type { MenuItem, MerchantCatalog, Review } from "../../holochain/types";
-
-interface ItemRow {
-  hash: Uint8Array;
-  item: MenuItem;
-}
 
 export function MerchantDetail() {
   const { hash } = useParams<{ hash: string }>();
@@ -30,7 +27,8 @@ export function MerchantDetail() {
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(routerState?.catalogHash ?? null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [favorited, setFavorited] = useState(false);
+  const { favoritesHex, toggleFavorite } = useFavorites();
+  const favorited = catalogHash ? favoritesHex.has(bytesToHex(catalogHash)) : false;
   const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({});
 
   useEffect(() => {
@@ -84,26 +82,6 @@ export function MerchantDetail() {
     getReviewsFor(catalog.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
   }, [catalog]);
 
-  useEffect(() => {
-    if (!catalogHash) return;
-    const hex = bytesToHex(catalogHash);
-    listFavorites()
-      .then((hashes) => setFavorited(hashes.some((h) => bytesToHex(h) === hex)))
-      .catch(() => {});
-  }, [catalogHash]);
-
-  async function toggleFavorite() {
-    if (!catalogHash) return;
-    const next = !favorited;
-    setFavorited(next); // optimistic, same reasoning as Browse.tsx's toggle
-    try {
-      if (next) await addFavorite(catalogHash);
-      else await removeFavorite(catalogHash);
-    } catch {
-      setFavorited(!next);
-    }
-  }
-
   if (!catalog || !items || !catalogHash) {
     return (
       <div className="pb-24">
@@ -120,11 +98,7 @@ export function MerchantDetail() {
 
   const cartCount = cart.lines.reduce((n, l) => n + l.quantity, 0);
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
-  const grouped = new Map<string, ItemRow[]>();
-  for (const row of items) {
-    const key = row.item.category || "Menu";
-    grouped.set(key, [...(grouped.get(key) ?? []), row]);
-  }
+  const grouped = groupByCategory(items);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pb-24">
@@ -137,7 +111,11 @@ export function MerchantDetail() {
         <motion.button whileTap={{ scale: 0.9 }} onClick={() => navigate(-1)} className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm">
           <ArrowLeft size={18} className="text-ink-900" />
         </motion.button>
-        <motion.button whileTap={{ scale: 0.85 }} onClick={toggleFavorite} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm">
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={() => catalogHash && toggleFavorite(catalogHash)}
+          className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm"
+        >
           <Heart size={18} className="text-red-500" fill={favorited ? "currentColor" : "none"} />
         </motion.button>
       </div>

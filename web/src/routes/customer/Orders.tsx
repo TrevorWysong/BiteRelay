@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getOrdersForRequester, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
-import { myAgentPubKey } from "../../holochain/client";
+import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
 import { Button, Card, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge } from "../../components/OrderStatus";
@@ -24,6 +24,13 @@ interface RecurringRow {
   template: RecurringOrderTemplate;
   merchantName: string;
 }
+
+// Matches merchant/Orders.tsx, driver/Dashboard.tsx, and
+// arbitrator/Dashboard.tsx's identical cadence -- this was previously the
+// one "my list of X" screen with no refresh after its initial load, so a
+// status change (a bid accepted, a dispute resolved) wouldn't show up
+// without manually leaving and returning to the screen.
+const POLL_MS = 8000;
 
 export function Orders() {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -125,6 +132,12 @@ export function Orders() {
   useEffect(() => {
     refresh();
     refreshRecurring();
+    const interval = setInterval(refresh, POLL_MS);
+    const unsub = onLocalSignal(() => refresh());
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, [refresh, refreshRecurring]);
 
   if (rows === null) {

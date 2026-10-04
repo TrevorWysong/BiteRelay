@@ -9,6 +9,17 @@ export interface CartLine {
   quantity: number;
 }
 
+// item_refs on the wire is a plain Vec<ActionHash> with no parallel
+// quantity field, so "2x Burger" is represented as the same ref appearing
+// twice -- nothing reads item_refs as a set (dispatch_integrity only
+// checks non-emptiness and byte-identical-on-update), so repeating is a
+// safe, no-backend-change way to not silently drop quantity at checkout.
+// Shared by Cart.tsx's placeOrder() and saveRecurring(), which both need
+// the identical expansion.
+export function expandLineQuantities(lines: CartLine[]): ActionHash[] {
+  return lines.flatMap((l) => Array(l.quantity).fill(l.itemRef));
+}
+
 interface CartState {
   catalogRef: ActionHash | null;
   merchant: Uint8Array | null;

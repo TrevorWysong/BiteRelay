@@ -25,12 +25,9 @@ import { formatCents } from "../../lib/format";
 import { describeRequirement, describeReward } from "../../lib/promotions";
 import { describeError } from "../../lib/errors";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { groupByCategory } from "../../lib/menu";
+import type { ItemRow } from "../../lib/menu";
 import type { MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review } from "../../holochain/types";
-
-interface ItemRow {
-  hash: Uint8Array;
-  item: MenuItem;
-}
 
 interface PromoRow {
   hash: Uint8Array;
@@ -332,11 +329,7 @@ export function MerchantCatalog() {
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
   const itemNameByHex = new Map((items ?? []).map((row) => [bytesToHex(row.hash), row.item.name]));
   const itemName = (hex: string) => itemNameByHex.get(hex);
-  const grouped = new Map<string, ItemRow[]>();
-  for (const row of items ?? []) {
-    const key = row.item.category || "Menu";
-    grouped.set(key, [...(grouped.get(key) ?? []), row]);
-  }
+  const grouped = groupByCategory(items ?? []);
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-8">

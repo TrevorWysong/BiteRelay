@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Heart, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import { getNearbyMerchants } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
-import { addFavorite, removeFavorite, listFavorites } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
+import { useFavorites } from "../../lib/useFavorites";
 import type { MerchantCatalog, Review } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
 import { EmptyState, Skeleton } from "../../components/ui";
@@ -41,6 +41,17 @@ function Chip({ active, onClick, children, tone = "default" }: { active: boolean
   );
 }
 
+// A restaurant that just published can take a while to become discoverable
+// -- its GeohashToCatalog link has to reach whatever peer answers this
+// read, not just the merchant's own chain (the project's own,
+// long-documented DHT-propagation characteristic, roughly
+// seconds-to-a-minute scale here, not instant). Without a poll, a customer
+// already sitting on Browse when a merchant nearby publishes would see an
+// empty list forever unless they happened to navigate away and back.
+// Matches the ~8s poll cadence already used in driver Dashboard.tsx and
+// customer OrderDetail.tsx for the same reason.
+const BROWSE_POLL_MS = 8000;
+
 function CardSkeleton() {
   return (
     <div className="overflow-hidden rounded-2xl border border-ink-100/60 dark:border-ink-800">
@@ -59,20 +70,9 @@ export function Browse() {
   const [query, setQuery] = useState("");
   const [cuisine, setCuisine] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("relevance");
-  const [favoritesHex, setFavoritesHex] = useState<Set<string>>(new Set());
+  const { favoritesHex, toggleFavorite } = useFavorites();
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
-
-  // A restaurant that just published can take a while to become
-  // discoverable -- its GeohashToCatalog link has to reach whatever peer
-  // answers this read, not just the merchant's own chain (the project's
-  // own, long-documented DHT-propagation characteristic, roughly
-  // seconds-to-a-minute scale here, not instant). Without a poll, a
-  // customer already sitting on Browse when a merchant nearby publishes
-  // would see an empty list forever unless they happened to navigate away
-  // and back. Matches the ~8s poll cadence already used in driver
-  // Dashboard.tsx and customer OrderDetail.tsx for the same reason.
-  const BROWSE_POLL_MS = 8000;
 
   useEffect(() => {
     let cancelled = false;
@@ -97,38 +97,6 @@ export function Browse() {
       clearInterval(interval);
     };
   }, [location]);
-
-  // Independent of `location` -- a personal saved-restaurant list, not
-  // scoped to "what's nearby right now."
-  useEffect(() => {
-    listFavorites()
-      .then((hashes) => setFavoritesHex(new Set(hashes.map(bytesToHex))))
-      .catch(() => {});
-  }, []);
-
-  const toggleFavorite = useCallback(async (hash: Uint8Array) => {
-    const hex = bytesToHex(hash);
-    const wasFavorited = favoritesHex.has(hex);
-    // Optimistic -- a favorite toggle should feel instant, and reverting on
-    // the rare failure is cheap (just flips the Set back).
-    setFavoritesHex((prev) => {
-      const next = new Set(prev);
-      if (wasFavorited) next.delete(hex);
-      else next.add(hex);
-      return next;
-    });
-    try {
-      if (wasFavorited) await removeFavorite(hash);
-      else await addFavorite(hash);
-    } catch {
-      setFavoritesHex((prev) => {
-        const next = new Set(prev);
-        if (wasFavorited) next.add(hex);
-        else next.delete(hex);
-        return next;
-      });
-    }
-  }, [favoritesHex]);
 
   const cuisines = useMemo(() => {
     const set = new Set<string>();

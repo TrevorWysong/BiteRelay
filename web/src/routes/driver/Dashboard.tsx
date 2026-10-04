@@ -34,6 +34,28 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], stri
 const TRACKED_STATUSES: DeliveryStatus[] = ["MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 const LOCATION_BROADCAST_MS = 8000;
 
+// A placeholder collateral amount (in cents) -- the ledger is a stub today
+// (architecture plan §4: mutual-credit-shaped, not a real escrow), so this
+// isn't collecting anything real yet. `collateral_commitment` just needs
+// *some* reference value to exercise the field until a driver-set bond
+// amount becomes a real input.
+const PLACEHOLDER_COLLATERAL_CENTS = 100;
+
+/// Records a leg and completes the two-step attestation it needs to ever
+/// count toward delivery completion -- shared by both the "pickup" and
+/// "await_dropoff" branches of advance() below, which otherwise each
+/// inlined the identical three-call sequence.
+async function recordAndAttestLeg(input: Parameters<typeof recordLeg>[0]): Promise<void> {
+  const legRecord = await recordLeg(input);
+  const legHash = actionHash(legRecord);
+  const receiptRecord = await initiateLegAttestation(legHash);
+  // Required second step -- see initiateLegAttestation's own doc comment.
+  // Without this, the receipt commits fine but stays permanently
+  // undiscoverable, and completeDelivery later fails with "0 of N
+  // required leg attestations found".
+  await linkLegToReceipt(legHash, actionHash(receiptRecord));
+}
+
 /// Browser geolocation, throttled client-side (there's no way to
 /// deterministically rate-limit a signal on the backend -- see
 /// tracking.rs) and silently inert if the API is unavailable or the user
@@ -180,7 +202,7 @@ export function DriverDashboard() {
         order_ref: orderRef,
         eta_seconds: etaMinutes * 60,
         price_offer: feeCents,
-        collateral_commitment: { account: bytesToHex(driverKey), amount: 100, ledger_txn_ref: "pending" },
+        collateral_commitment: { account: bytesToHex(driverKey), amount: PLACEHOLDER_COLLATERAL_CENTS, ledger_txn_ref: "pending" },
       });
     } catch (err) {
       setError(describeError(err));
@@ -312,17 +334,10 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       if (action === "en_route") {
         await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
       } else if (action === "pickup") {
-        const legRecord = await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
-        const legHash = actionHash(legRecord);
-        const receiptRecord = await initiateLegAttestation(legHash);
-        // Required second step -- see initiateLegAttestation's own doc
-        // comment. Without this, the receipt commits fine but stays
-        // permanently undiscoverable, and completeDelivery later fails
-        // with "0 of N required leg attestations found".
-        await linkLegToReceipt(legHash, actionHash(receiptRecord));
+        await recordAndAttestLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
         await setOrderStatus(row.hash, "PickedUp");
       } else if (action === "await_dropoff") {
-        const legRecord = await recordLeg({
+        await recordAndAttestLeg({
           order_ref: row.hash,
           sequence: 1,
           kind: "CustomerHandoff",
@@ -330,9 +345,6 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           geo_at_completion: location,
           photo_data_uri: dropoffPhoto,
         });
-        const legHash = actionHash(legRecord);
-        const receiptRecord = await initiateLegAttestation(legHash);
-        await linkLegToReceipt(legHash, actionHash(receiptRecord));
       }
       await onAdvanced();
     } catch (err) {

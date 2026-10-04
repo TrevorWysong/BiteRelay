@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { AddressSearch } from "../../components/AddressSearch";
-import { useCart } from "../../store/cart";
+import { useCart, expandLineQuantities } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
@@ -214,13 +214,7 @@ export function Cart() {
       const record = await requestDelivery({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
-        // Repeated per quantity, not deduplicated -- item_refs is a plain
-        // Vec<ActionHash> with no parallel quantity field, so "2x Burger"
-        // is represented as the same ref appearing twice. Nothing reads
-        // item_refs as a set (dispatch_integrity only checks non-emptiness
-        // and byte-identical-on-update), so this is a safe, no-backend-
-        // change way to stop silently dropping quantity at checkout.
-        item_refs: cart.lines.flatMap((l) => Array(l.quantity).fill(l.itemRef)),
+        item_refs: expandLineQuantities(cart.lines),
         order_total: discountedSubtotalCents,
         dropoff,
         max_delivery_fee: maxFeeCents,
@@ -253,7 +247,7 @@ export function Cart() {
       await createRecurringTemplate({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
-        item_refs: cart.lines.flatMap((l) => Array(l.quantity).fill(l.itemRef)),
+        item_refs: expandLineQuantities(cart.lines),
         dropoff,
         max_delivery_fee: maxFeeCents,
         special_instructions: instructions.trim(),
