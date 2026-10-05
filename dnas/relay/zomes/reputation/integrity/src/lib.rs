@@ -2,7 +2,7 @@
 //! type's doc comment for why this is a cache, not the trust source of
 //! truth, and why append-only rather than a mutable score.
 
-use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus};
+use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus, PickupOrder, PickupStatus};
 use hdi::prelude::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -153,6 +153,53 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     }
 }
 
+/// What `validate_review`/`validate_item_review` both need from whichever
+/// order type `order_ref` actually resolves to -- a `Review`/`ItemReview`
+/// is generic over which vertical it's about (see `Dispute`'s own doc
+/// comment in `dispute_integrity` for the identical reasoning), so this
+/// resolves either `DeliveryOrder` or `PickupOrder` to the same shape
+/// rather than duplicating both review functions once per order type.
+struct ReviewableOrder {
+    requester: AgentPubKey,
+    item_refs: Vec<ActionHash>,
+    /// Who a `Review.subject` is allowed to name -- the merchant, plus the
+    /// accepted driver for a delivery (pickup has no driver at all).
+    valid_subjects: Vec<AgentPubKey>,
+}
+
+/// `not_yet_delivered_msg`/`not_yet_picked_up_msg` let each caller keep its
+/// own exact wording ("a review"/"an item") for the one error message that
+/// differs between `validate_review` and `validate_item_review`, rather
+/// than this shared helper flattening both into one generic string.
+fn resolve_reviewable_order(
+    order_ref: &ActionHash,
+    not_yet_delivered_msg: &str,
+    not_yet_picked_up_msg: &str,
+) -> ExternResult<Result<ReviewableOrder, String>> {
+    let order_record = must_get_valid_record(order_ref.clone())?;
+    if let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() {
+        if order.status != DeliveryStatus::Delivered {
+            return Ok(Err(not_yet_delivered_msg.into()));
+        }
+        let mut valid_subjects = vec![order.merchant.clone()];
+        if let Some(bid_ref) = &order.accepted_bid {
+            let bid_record = must_get_valid_record(bid_ref.clone())?;
+            let Ok(Some(bid)) = bid_record.entry().to_app_option::<Bid>() else {
+                return Ok(Err("accepted_bid does not point at a Bid entry".into()));
+            };
+            valid_subjects.push(bid.bidder);
+        }
+        return Ok(Ok(ReviewableOrder { requester: order.requester, item_refs: order.item_refs, valid_subjects }));
+    }
+    if let Ok(Some(order)) = order_record.entry().to_app_option::<PickupOrder>() {
+        if order.status != PickupStatus::PickedUp {
+            return Ok(Err(not_yet_picked_up_msg.into()));
+        }
+        return Ok(Ok(ReviewableOrder { requester: order.requester, item_refs: order.item_refs, valid_subjects: vec![order.merchant] }));
+    }
+    Ok(Err("order_ref does not point at a DeliveryOrder or PickupOrder entry".into()))
+}
+
 /// Same shape as `validate_review`, plus the one extra check that
 /// distinguishes an item rating from a plain agent review: `item_ref` must
 /// actually be one of the order's own `item_refs`, checked deterministically
@@ -167,15 +214,14 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
             "an item review's author field must match the actual action author".into(),
         ));
     }
-    let order_record = must_get_valid_record(review.order_ref.clone())?;
-    let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
-        return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
+    let order = match resolve_reviewable_order(
+        &review.order_ref,
+        "an item can only be reviewed against a Delivered order",
+        "an item can only be reviewed against a PickedUp order",
+    )? {
+        Ok(order) => order,
+        Err(reason) => return Ok(ValidateCallbackResult::Invalid(reason)),
     };
-    if order.status != DeliveryStatus::Delivered {
-        return Ok(ValidateCallbackResult::Invalid(
-            "an item can only be reviewed against a Delivered order".into(),
-        ));
-    }
     if &order.requester != author {
         return Ok(ValidateCallbackResult::Invalid(
             "only the order's requester may review an item from it".into(),
@@ -229,31 +275,20 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
             "a review's author field must match the actual action author".into(),
         ));
     }
-    let order_record = must_get_valid_record(review.order_ref.clone())?;
-    let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
-        return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
+    let order = match resolve_reviewable_order(
+        &review.order_ref,
+        "a review can only be left against a Delivered order",
+        "a review can only be left against a PickedUp order",
+    )? {
+        Ok(order) => order,
+        Err(reason) => return Ok(ValidateCallbackResult::Invalid(reason)),
     };
-    if order.status != DeliveryStatus::Delivered {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a review can only be left against a Delivered order".into(),
-        ));
-    }
     if &order.requester != author {
         return Ok(ValidateCallbackResult::Invalid(
             "only the order's requester may leave a review".into(),
         ));
     }
-    let bidder = match &order.accepted_bid {
-        Some(bid_ref) => {
-            let bid_record = must_get_valid_record(bid_ref.clone())?;
-            let Ok(Some(bid)) = bid_record.entry().to_app_option::<Bid>() else {
-                return Ok(ValidateCallbackResult::Invalid("accepted_bid does not point at a Bid entry".into()));
-            };
-            Some(bid.bidder)
-        }
-        None => None,
-    };
-    if review.subject != order.merchant && Some(review.subject.clone()) != bidder {
+    if !order.valid_subjects.contains(&review.subject) {
         return Ok(ValidateCallbackResult::Invalid(
             "subject must be either the order's merchant or its accepted driver".into(),
         ));

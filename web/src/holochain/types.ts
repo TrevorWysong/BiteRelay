@@ -24,7 +24,8 @@ export type LocalSignal =
   | { BidAccepted: ActionHash }
   | { BidReleased: ActionHash }
   | { ChatMessage: { order_ref: ActionHash; from: AgentPubKey; text: string; sent_at: Timestamp } }
-  | { LocationUpdate: { order_ref: ActionHash; lat: number; lon: number; sent_at: Timestamp } };
+  | { LocationUpdate: { order_ref: ActionHash; lat: number; lon: number; sent_at: Timestamp } }
+  | { PickupReady: ActionHash };
 
 export interface GeoPoint {
   lat: number;
@@ -172,9 +173,30 @@ export interface DeliveryOrder {
   /// `null` means no promo code applied.
   promo_code_ref: ActionHash | null;
   dropoff_preference: DropoffPreference;
+  /// `null` for an ordinary menu order. Set means this delivery originated
+  /// from a confirmed surprise-bag claim rather than a normal cart checkout.
+  bag_claim_ref: ActionHash | null;
 }
 
 export type DropoffPreference = "LeaveAtDoor" | "HandToMe" | "MeetOutside";
+
+export type PickupStatus = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "PickedUp" | "Cancelled" | "Disputed";
+
+/// `PickupOrder`'s own, much smaller lifecycle -- no driver, no bid, no
+/// dropoff at all. See `dispatch_integrity::PickupOrder`'s own doc comment.
+export interface PickupOrder {
+  requester: AgentPubKey;
+  merchant: AgentPubKey;
+  catalog_ref: ActionHash;
+  item_refs: ActionHash[];
+  order_total: number;
+  status: PickupStatus;
+  dispute_ref: ActionHash | null;
+  requested_at: Timestamp;
+  special_instructions: string;
+  promo_code_ref: ActionHash | null;
+  bag_claim_ref: ActionHash | null;
+}
 
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";
 

@@ -9,6 +9,7 @@ import { MerchantDetail } from "./routes/customer/MerchantDetail";
 import { Cart } from "./routes/customer/Cart";
 import { Orders } from "./routes/customer/Orders";
 import { OrderDetail } from "./routes/customer/OrderDetail";
+import { PickupOrderDetail } from "./routes/customer/PickupOrderDetail";
 import { DriverDashboard } from "./routes/driver/Dashboard";
 import { Earnings } from "./routes/driver/Earnings";
 import { MerchantOrders } from "./routes/merchant/Orders";
@@ -115,6 +116,7 @@ export default function App() {
           <Route path="/customer/cart" element={<Cart />} />
           <Route path="/customer/orders" element={<Orders />} />
           <Route path="/customer/orders/:hash" element={<OrderDetail />} />
+          <Route path="/customer/pickup-orders/:hash" element={<PickupOrderDetail />} />
           <Route path="/driver" element={<DriverDashboard />} />
           <Route path="/driver/earnings" element={<Earnings />} />
           <Route path="/merchant" element={<MerchantOrders />} />

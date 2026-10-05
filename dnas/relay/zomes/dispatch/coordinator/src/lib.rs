@@ -21,6 +21,9 @@
 //!   `chat` and `tracking`, not itself a zome-call surface.
 //! - `recurring` -- "same order every Monday" templates, client-fired
 //!   (no p2p cron), link-free (local chain query only).
+//! - `pickup` -- the pickup vertical's full lifecycle (creation, status,
+//!   completion, and its own dispute path) -- no bid/driver/leg-attestation
+//!   concept at all, so unlike delivery this stays one file.
 
 mod bids;
 mod chat;
@@ -28,6 +31,7 @@ mod disputes;
 mod matching;
 mod orders;
 mod parties;
+mod pickup;
 mod recurring;
 mod signals;
 mod tracking;
@@ -37,6 +41,7 @@ pub use chat::*;
 pub use disputes::*;
 pub use matching::get_open_orders_near;
 pub use orders::*;
+pub use pickup::*;
 pub use recurring::*;
 pub use signals::*;
 pub use tracking::*;

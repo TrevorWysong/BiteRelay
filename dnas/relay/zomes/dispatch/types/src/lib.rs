@@ -205,6 +205,16 @@ pub struct DeliveryOrder {
     /// `LeaveAtDoor` on decode for orders written before this field existed.
     #[serde(default)]
     pub dropoff_preference: DropoffPreference,
+    /// `None` for an ordinary menu order (the default, and every order
+    /// written before this field existed). `Some` means this delivery
+    /// originated from a confirmed `catalog::BagClaim` (a surprise bag
+    /// claimed for delivery rather than pickup) -- `validate_new_order`
+    /// independently checks the referenced claim is genuinely `Confirmed`
+    /// and names this same `requester` as its customer, same trust tier
+    /// and same cross-crate-without-cross-zome-wasm-link pattern already
+    /// used for `promo_code_ref`/`PromoCode` above.
+    #[serde(default)]
+    pub bag_claim_ref: Option<ActionHash>,
 }
 
 #[hdk_entry_helper]
@@ -217,4 +227,113 @@ pub struct Bid {
     pub collateral_commitment: LedgerCommitmentRef,
     pub status: BidStatus,
     pub created_at: Timestamp,
+}
+
+/// `PickupOrder`'s own, much smaller lifecycle -- see `DeliveryOrder`'s own
+/// doc comment for why this is a separate entry type (and separate status
+/// enum) rather than a flag on `DeliveryOrder`: there is no bid, no driver,
+/// no leg attestation here at all, just the requester and the merchant.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum PickupStatus {
+    Placed,
+    MerchantConfirmed,
+    ReadyForPickup,
+    PickedUp,
+    Cancelled,
+    Disputed,
+}
+
+impl PickupStatus {
+    /// `DeliveryStatus::transition_requirement`'s sibling, kept as its own
+    /// function rather than squeezed into that one -- same "rides/delivery
+    /// need separate state machines" reasoning `DeliveryOrder`'s doc comment
+    /// already states, now applied to pickup as the second such vertical.
+    pub fn transition_requirement(&self, next: &PickupStatus) -> Option<RequiredAuthor> {
+        use PickupStatus::*;
+        use RequiredAuthor::*;
+        match (self, next) {
+            // The merchant acknowledging + prepping the order -- the only
+            // two parties here are the requester and the merchant, so both
+            // are trusted for the customer-side cancellation path, same as
+            // DeliveryOrder's pre-pickup cancellation arms.
+            (Placed, MerchantConfirmed) => Some(RequesterOrMerchant),
+            (Placed, Cancelled) => Some(RequesterOrMerchant),
+            (MerchantConfirmed, Cancelled) => Some(RequesterOrMerchant),
+            // Only the merchant knows when it's actually ready.
+            (MerchantConfirmed, ReadyForPickup) => Some(RequesterOrMerchant),
+            (ReadyForPickup, Cancelled) => Some(RequesterOrMerchant),
+            // complete_pickup (dispatch coordinator) is always called by the
+            // requester confirming they received it -- not reachable via a
+            // generic status-set path, but still validated here regardless
+            // of which coordinator function got here, same posture as
+            // DeliveryOrder's (PickedUp, Delivered) arm.
+            (ReadyForPickup, PickedUp) => Some(RequesterOrMerchant),
+            // Disputes: whoever notices the problem should be able to raise
+            // one -- same as DeliveryOrder's dispute-raising arms.
+            (ReadyForPickup, Disputed) => Some(Any),
+            (PickedUp, Disputed) => Some(Any),
+            // Resolution: only a listed arbitrator, via
+            // dispatch::apply_pickup_dispute_resolution -- same posture as
+            // DeliveryOrder's own resolution arms.
+            (Disputed, PickedUp) => Some(Arbitrator),
+            (Disputed, Cancelled) => Some(Arbitrator),
+            _ => None,
+        }
+    }
+}
+
+/// The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
+/// comment for why this is concrete and separate rather than a flag on
+/// `DeliveryOrder`. Deliberately missing everything that only makes sense
+/// with a driver in the loop: no `dropoff`/`dropoff_geohash`, no
+/// `accepted_bid`, no `delivery_receipts`, no `tip_cents` (no driver to tip).
+///
+/// Named, accepted gap: every field this struct requires also exists with
+/// the same name and type on `DeliveryOrder`, and `PickupStatus` shares 4 of
+/// its 6 variant names with `DeliveryStatus` (`MerchantConfirmed`,
+/// `PickedUp`, `Cancelled`, `Disputed`) -- so a `DeliveryOrder` currently
+/// sitting in one of those statuses duck-type-decodes successfully as a
+/// `PickupOrder` too (extra fields like `dropoff` are silently ignored by
+/// serde's default struct deserialization). The reverse direction is
+/// already blocked: `PickupOrder`'s bytes are missing `DeliveryOrder`'s own
+/// required `dropoff`/`dropoff_geohash`/`delivery_receipts`, so that decode
+/// always fails outright. This is *not* a cross-user attack surface --
+/// every pickup coordinator function's authorization check (and
+/// `validate_pickup_order_transition`'s own) draws `requester`/`merchant`
+/// from fields that are genuinely real on whatever record actually got
+/// resolved, so a confused decode still only lets that *same real order's*
+/// own two legitimate parties touch it, never an unrelated third party, and
+/// never moves funds. The honest, bounded risk: one of those two parties
+/// (via a buggy or deliberately malicious custom client -- see
+/// `force_order_update_for_testing`'s own doc comment for the identical
+/// "coordinator zomes aren't part of the DNA hash" gap this app already
+/// accepts elsewhere) could author a confusingly-typed update on their own
+/// `DeliveryOrder`'s chain while it's in one of the 4 shared-name statuses,
+/// permanently breaking that one order's own future `DeliveryOrder` reads
+/// for every peer. Self-inflicted only, no cross-user harm, no fund theft.
+/// A full fix (renaming the overlapping status variants, or checking each
+/// resolved record's actual entry-type index rather than duck-typing) is a
+/// larger undertaking than this narrow, non-adversarial edge case warrants
+/// right now -- named here rather than silently missed.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct PickupOrder {
+    pub requester: AgentPubKey,
+    pub merchant: AgentPubKey,
+    pub catalog_ref: ActionHash,
+    pub item_refs: Vec<ActionHash>,
+    pub order_total: u64,
+    pub status: PickupStatus,
+    pub dispute_ref: Option<ActionHash>,
+    pub requested_at: Timestamp,
+    #[serde(default)]
+    pub special_instructions: String,
+    /// Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
+    #[serde(default)]
+    pub promo_code_ref: Option<ActionHash>,
+    /// Same meaning and same trust tier as `DeliveryOrder.bag_claim_ref` --
+    /// `Some` when this pickup originated from a confirmed surprise-bag
+    /// claim rather than an ordinary menu order.
+    #[serde(default)]
+    pub bag_claim_ref: Option<ActionHash>,
 }

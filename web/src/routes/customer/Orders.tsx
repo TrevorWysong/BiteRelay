@@ -2,21 +2,26 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ClipboardList, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrdersForRequester, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
+import { getOrdersForRequester, getMyPickupOrders, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
 import { Button, Card, EmptyState, Skeleton, StatNumber } from "../../components/ui";
-import { StatusBadge } from "../../components/OrderStatus";
+import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
 import { describeRecurrence } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { DeliveryOrder, MenuItem, MerchantCatalog, RecurringOrderTemplate } from "../../holochain/types";
+import type { DeliveryOrder, MenuItem, MerchantCatalog, PickupOrder, RecurringOrderTemplate } from "../../holochain/types";
 
 interface Row {
   hash: Uint8Array;
   order: DeliveryOrder;
+}
+
+interface PickupRow {
+  hash: Uint8Array;
+  order: PickupOrder;
 }
 
 interface RecurringRow {
@@ -34,6 +39,7 @@ const POLL_MS = 8000;
 
 export function Orders() {
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [pickupRows, setPickupRows] = useState<PickupRow[] | null>(null);
   const [reordering, setReordering] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [recurring, setRecurring] = useState<RecurringRow[]>([]);
@@ -77,6 +83,17 @@ export function Orders() {
       setRows(decoded);
     } catch {
       setRows([]);
+    }
+  }, []);
+
+  const refreshPickup = useCallback(async () => {
+    try {
+      const records = await getMyPickupOrders(myAgentPubKey());
+      const decoded = records.map((r) => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r) }));
+      decoded.sort((a, b) => b.order.requested_at - a.order.requested_at);
+      setPickupRows(decoded);
+    } catch {
+      setPickupRows([]);
     }
   }, []);
 
@@ -131,16 +148,23 @@ export function Orders() {
 
   useEffect(() => {
     refresh();
+    refreshPickup();
     refreshRecurring();
-    const interval = setInterval(refresh, POLL_MS);
-    const unsub = onLocalSignal(() => refresh());
+    const interval = setInterval(() => {
+      refresh();
+      refreshPickup();
+    }, POLL_MS);
+    const unsub = onLocalSignal(() => {
+      refresh();
+      refreshPickup();
+    });
     return () => {
       clearInterval(interval);
       unsub();
     };
-  }, [refresh, refreshRecurring]);
+  }, [refresh, refreshPickup, refreshRecurring]);
 
-  if (rows === null) {
+  if (rows === null || pickupRows === null) {
     return (
       <div className="px-4 pt-4">
         <Skeleton className="h-7 w-1/3 mb-4" />
@@ -183,12 +207,17 @@ export function Orders() {
         </motion.div>
       )}
 
-      {rows.length === 0 && (
+      {rows.length === 0 && pickupRows.length === 0 && (
         <motion.div variants={fadeSlideUp}>
           <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="Place one from Browse to see it show up here automatically." />
         </motion.div>
       )}
 
+      {rows.length > 0 && (
+        <motion.div variants={fadeSlideUp} className="mb-2">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Delivery orders</p>
+        </motion.div>
+      )}
       <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3 pb-6">
         <AnimatePresence initial={false}>
           {rows.map(({ hash, order }) => (
@@ -212,6 +241,27 @@ export function Orders() {
                 >
                   <RotateCcw size={13} />
                 </Button>
+              </Card>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </motion.div>
+
+      {pickupRows.length > 0 && (
+        <motion.div variants={fadeSlideUp} className="mb-2">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Pickup orders</p>
+        </motion.div>
+      )}
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3 pb-6">
+        <AnimatePresence initial={false}>
+          {pickupRows.map(({ hash, order }) => (
+            <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
+              <Card className="flex items-center gap-2 p-4">
+                <Link to={`/customer/pickup-orders/${bytesToHex(hash)}`} className="min-w-0 flex-1">
+                  <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
+                  <p className="text-xs text-ink-400">{order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}</p>
+                </Link>
+                <PickupStatusBadge status={order.status} />
               </Card>
             </motion.div>
           ))}

@@ -103,6 +103,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         requested_delivery_time: input.requested_delivery_time,
         promo_code_ref: input.promo_code_ref,
         dropoff_preference: input.dropoff_preference,
+        bag_claim_ref: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;

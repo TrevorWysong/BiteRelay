@@ -7,7 +7,7 @@ import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../
 import { AddressSearch } from "../../components/AddressSearch";
 import { useCart, expandLineQuantities } from "../../store/cart";
 import { useSession } from "../../store/session";
-import { requestDelivery, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
+import { requestDelivery, requestPickupOrder, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
 import { actionHash, bytesEqual, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
@@ -68,6 +68,11 @@ export function Cart() {
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
+  // Pickup orders skip the whole driver/dropoff/fee/tip half of this screen
+  // entirely -- there's no driver in that vertical at all, see
+  // `PickupOrder`'s own doc comment (`dispatch_integrity`) for why that's a
+  // separate entry type, not a flag on this same order.
+  const [fulfillment, setFulfillment] = useState<"Delivery" | "Pickup">("Delivery");
   // Defaults to the session's saved location, but editable per order --
   // previously frozen at whatever was set once during onboarding, with no
   // way to deliver anywhere else (e.g. a friend's place) or update it after
@@ -211,6 +216,20 @@ export function Cart() {
     setPlacing(true);
     setError(null);
     try {
+      if (fulfillment === "Pickup") {
+        const record = await requestPickupOrder({
+          merchant: cart.merchant,
+          catalog_ref: cart.catalogRef,
+          item_refs: expandLineQuantities(cart.lines),
+          order_total: discountedSubtotalCents,
+          special_instructions: instructions.trim(),
+          promo_code_ref: appliedPromo?.hash ?? null,
+        });
+        const orderRef = actionHash(record);
+        cart.clear();
+        navigate(`/customer/pickup-orders/${bytesToHex(orderRef)}`);
+        return;
+      }
       const record = await requestDelivery({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
@@ -278,6 +297,15 @@ export function Cart() {
         from {cart.merchantName}
       </motion.p>
 
+      <motion.div variants={fadeSlideUp} className="mb-4 flex gap-2">
+        <ToggleChip active={fulfillment === "Delivery"} onClick={() => setFulfillment("Delivery")} className="flex-1 text-center">
+          Delivery
+        </ToggleChip>
+        <ToggleChip active={fulfillment === "Pickup"} onClick={() => setFulfillment("Pickup")} className="flex-1 text-center">
+          Pickup
+        </ToggleChip>
+      </motion.div>
+
       <motion.div variants={fadeSlideUp}>
         <Card className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
           {cart.lines.map((line) => {
@@ -304,149 +332,159 @@ export function Cart() {
         </Card>
       </motion.div>
 
-      <Section title="Deliver to">
-        <AddressSearch value={dropoff} onChange={setDropoff} label="Delivery location" />
-        <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
-          <Checkbox checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
-          Save as my default location
-        </label>
-        <p className="mb-2 mt-3 text-xs font-bold uppercase tracking-wide text-ink-400">Drop-off</p>
-        <div className="flex gap-2">
-          {DROPOFF_PREFERENCE_OPTIONS.map(({ value, label }) => (
-            <ToggleChip key={value} active={dropoffPreference === value} onClick={() => setDropoffPreference(value)} className="flex-1">
-              {label}
+      {fulfillment === "Delivery" && (
+        <Section title="Deliver to">
+          <AddressSearch value={dropoff} onChange={setDropoff} label="Delivery location" />
+          <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
+            <Checkbox checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
+            Save as my default location
+          </label>
+          <p className="mb-2 mt-3 text-xs font-bold uppercase tracking-wide text-ink-400">Drop-off</p>
+          <div className="flex gap-2">
+            {DROPOFF_PREFERENCE_OPTIONS.map(({ value, label }) => (
+              <ToggleChip key={value} active={dropoffPreference === value} onClick={() => setDropoffPreference(value)} className="flex-1">
+                {label}
+              </ToggleChip>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {fulfillment === "Delivery" && (
+        <Section title="When">
+          <div className="mb-2 flex gap-2">
+            <ToggleChip active={!scheduled} onClick={() => setScheduled(false)}>
+              Now
             </ToggleChip>
-          ))}
-        </div>
-      </Section>
+            <ToggleChip active={scheduled} onClick={() => setScheduled(true)}>
+              Schedule for later
+            </ToggleChip>
+          </div>
+          <AnimatePresence initial={false}>
+            {scheduled && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+                <Input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} />
+                <p className="mt-1 text-xs text-ink-400">
+                  We won't look for a driver until this time. You can open it up early anytime from your Orders screen.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Section>
+      )}
 
-      <Section title="When">
-        <div className="mb-2 flex gap-2">
-          <ToggleChip active={!scheduled} onClick={() => setScheduled(false)}>
-            Now
-          </ToggleChip>
-          <ToggleChip active={scheduled} onClick={() => setScheduled(true)}>
-            Schedule for later
-          </ToggleChip>
-        </div>
-        <AnimatePresence initial={false}>
-          {scheduled && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
-              <Input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} />
-              <p className="mt-1 text-xs text-ink-400">
-                We won't look for a driver until this time. You can open it up early anytime from your Orders screen.
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </Section>
+      {fulfillment === "Delivery" && (
+        <Section
+          title="Repeat this order"
+          right={
+            <button onClick={() => setShowRecurring((v) => !v)} className="text-xs font-semibold text-relay-600">
+              {showRecurring ? "Cancel" : recurringSaved ? "Edit" : "Set up"}
+            </button>
+          }
+        >
+          {recurringSaved && !showRecurring && <p className="text-xs text-presence-600">Saved! Manage it from your Orders screen.</p>}
+          <AnimatePresence initial={false}>
+            {showRecurring && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <ToggleChip active={recurrenceKind === "Weekly"} onClick={() => setRecurrenceKind("Weekly")} className="flex-1">
+                    Weekly
+                  </ToggleChip>
+                  <ToggleChip active={recurrenceKind === "Daily"} onClick={() => setRecurrenceKind("Daily")} className="flex-1">
+                    Daily
+                  </ToggleChip>
+                </div>
+                {recurrenceKind === "Weekly" && (
+                  <Select value={recurrenceWeekday} onChange={(e) => setRecurrenceWeekday(Number(e.target.value))}>
+                    {WEEKDAYS.map((day, i) => (
+                      <option key={day} value={i}>
+                        {day}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                <Input type="time" value={recurrenceTime} onChange={(e) => setRecurrenceTime(e.target.value)} />
+                <p className="text-xs text-ink-400">
+                  This order will place itself automatically on that schedule while the app is open on your device. We'll match
+                  the items against the current menu each time, so prices or availability may change slightly.
+                </p>
+                <Button loading={savingRecurring} onClick={saveRecurring} className="py-2 text-xs">
+                  Save recurring order
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Section>
+      )}
 
-      <Section
-        title="Repeat this order"
-        right={
-          <button onClick={() => setShowRecurring((v) => !v)} className="text-xs font-semibold text-relay-600">
-            {showRecurring ? "Cancel" : recurringSaved ? "Edit" : "Set up"}
-          </button>
-        }
-      >
-        {recurringSaved && !showRecurring && <p className="text-xs text-presence-600">Saved! Manage it from your Orders screen.</p>}
-        <AnimatePresence initial={false}>
-          {showRecurring && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
-              <div className="flex gap-2">
-                <ToggleChip active={recurrenceKind === "Weekly"} onClick={() => setRecurrenceKind("Weekly")} className="flex-1">
-                  Weekly
-                </ToggleChip>
-                <ToggleChip active={recurrenceKind === "Daily"} onClick={() => setRecurrenceKind("Daily")} className="flex-1">
-                  Daily
-                </ToggleChip>
-              </div>
-              {recurrenceKind === "Weekly" && (
-                <Select value={recurrenceWeekday} onChange={(e) => setRecurrenceWeekday(Number(e.target.value))}>
-                  {WEEKDAYS.map((day, i) => (
-                    <option key={day} value={i}>
-                      {day}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              <Input type="time" value={recurrenceTime} onChange={(e) => setRecurrenceTime(e.target.value)} />
-              <p className="text-xs text-ink-400">
-                This order will place itself automatically on that schedule while the app is open on your device. We'll match
-                the items against the current menu each time, so prices or availability may change slightly.
-              </p>
-              <Button loading={savingRecurring} onClick={saveRecurring} className="py-2 text-xs">
-                Save recurring order
-              </Button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </Section>
-
-      <Section title="Delivery notes">
+      <Section title={fulfillment === "Pickup" ? "Pickup notes" : "Delivery notes"}>
         <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
       </Section>
 
-      <Section title="Delivery fee cap">
-        <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount. You're only ever charged what the winning bid actually offers, never more.</p>
-        <div className="flex flex-wrap gap-2">
-          {DELIVERY_FEE_PRESETS_CENTS.map((cents) => (
-            <ToggleChip
-              key={cents}
-              active={feePreset === cents}
-              onClick={() => {
-                setFeePreset(cents);
-                setCustomFee("");
+      {fulfillment === "Delivery" && (
+        <Section title="Delivery fee cap">
+          <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount. You're only ever charged what the winning bid actually offers, never more.</p>
+          <div className="flex flex-wrap gap-2">
+            {DELIVERY_FEE_PRESETS_CENTS.map((cents) => (
+              <ToggleChip
+                key={cents}
+                active={feePreset === cents}
+                onClick={() => {
+                  setFeePreset(cents);
+                  setCustomFee("");
+                }}
+              >
+                {formatCents(cents)}
+              </ToggleChip>
+            ))}
+            <Input
+              type="number"
+              min={0}
+              step={0.5}
+              value={customFee}
+              onChange={(e) => {
+                setCustomFee(e.target.value);
+                setFeePreset(null);
               }}
-            >
-              {formatCents(cents)}
-            </ToggleChip>
-          ))}
-          <Input
-            type="number"
-            min={0}
-            step={0.5}
-            value={customFee}
-            onChange={(e) => {
-              setCustomFee(e.target.value);
-              setFeePreset(null);
-            }}
-            placeholder="Custom"
-            prefix="$"
-            className="w-24 rounded-full py-1.5 text-xs"
-          />
-        </div>
-      </Section>
+              placeholder="Custom"
+              prefix="$"
+              className="w-24 rounded-full py-1.5 text-xs"
+            />
+          </div>
+        </Section>
+      )}
 
-      <Section title="Tip your driver">
-        <div className="flex flex-wrap gap-2">
-          {TIP_PRESETS_PERCENT.map((p) => (
-            <ToggleChip
-              key={p}
-              active={tipPercent === p}
-              onClick={() => {
-                setTipPercent(p);
-                setCustomTip("");
+      {fulfillment === "Delivery" && (
+        <Section title="Tip your driver">
+          <div className="flex flex-wrap gap-2">
+            {TIP_PRESETS_PERCENT.map((p) => (
+              <ToggleChip
+                key={p}
+                active={tipPercent === p}
+                onClick={() => {
+                  setTipPercent(p);
+                  setCustomTip("");
+                }}
+              >
+                {p === 0 ? "No tip" : `${p}%`}
+              </ToggleChip>
+            ))}
+            <Input
+              type="number"
+              min={0}
+              step={0.5}
+              value={customTip}
+              onChange={(e) => {
+                setCustomTip(e.target.value);
+                setTipPercent(null);
               }}
-            >
-              {p === 0 ? "No tip" : `${p}%`}
-            </ToggleChip>
-          ))}
-          <Input
-            type="number"
-            min={0}
-            step={0.5}
-            value={customTip}
-            onChange={(e) => {
-              setCustomTip(e.target.value);
-              setTipPercent(null);
-            }}
-            placeholder="Custom"
-            prefix="$"
-            className="w-24 rounded-full py-1.5 text-xs"
-          />
-        </div>
-      </Section>
+              placeholder="Custom"
+              prefix="$"
+              className="w-24 rounded-full py-1.5 text-xs"
+            />
+          </div>
+        </Section>
+      )}
 
       <Section title="Promo code">
         <AnimatePresence mode="wait">
@@ -501,31 +539,43 @@ export function Cart() {
               <span>-{formatCents(promoDiscountCents)}</span>
             </div>
           )}
-          <div className="flex justify-between text-ink-400">
-            <span>Delivery fee{subsidyPercent > 0 && <span className="text-presence-600"> (merchant covers {subsidyPercent}%)</span>}</span>
-            <span>up to {formatCents(customerFeeShareCents)}</span>
-          </div>
-          <div className="flex justify-between text-ink-400">
-            <span>Tip</span>
-            <span>{formatCents(tipCents)}</span>
-          </div>
+          {fulfillment === "Delivery" && (
+            <div className="flex justify-between text-ink-400">
+              <span>Delivery fee{subsidyPercent > 0 && <span className="text-presence-600"> (merchant covers {subsidyPercent}%)</span>}</span>
+              <span>up to {formatCents(customerFeeShareCents)}</span>
+            </div>
+          )}
+          {fulfillment === "Delivery" && (
+            <div className="flex justify-between text-ink-400">
+              <span>Tip</span>
+              <span>{formatCents(tipCents)}</span>
+            </div>
+          )}
           <div className="mt-1 flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-2">
             <span className="font-bold text-ink-900 dark:text-ink-50">Estimated total</span>
-            <span className="text-ink-400 text-xs mr-1">up to</span>
-            <StatNumber className="text-lg">{formatCents(estimatedTotalCents)}</StatNumber>
+            {fulfillment === "Delivery" && <span className="text-ink-400 text-xs mr-1">up to</span>}
+            <StatNumber className="text-lg">{formatCents(fulfillment === "Pickup" ? discountedSubtotalCents : estimatedTotalCents)}</StatNumber>
           </div>
         </Card>
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mt-4 rounded-2xl bg-ink-100/60 dark:bg-ink-800/60 p-4 text-xs text-ink-500 dark:text-ink-400">
-        Placing this order notifies nearby drivers directly. If nobody picks it up right away, it stays visible until one does.
+        {fulfillment === "Pickup"
+          ? "The merchant will confirm your order and let you know when it's ready to collect."
+          : "Placing this order notifies nearby drivers directly. If nobody picks it up right away, it stays visible until one does."}
       </motion.div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
-        <Button className="w-full" loading={placing} disabled={maxFeeCents <= 0 || scheduleInvalid} onClick={placeOrder}>
-          {scheduled ? "Schedule order" : "Place order"} · up to {formatCents(estimatedTotalCents)}
+        <Button
+          className="w-full"
+          loading={placing}
+          disabled={fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid)}
+          onClick={placeOrder}
+        >
+          {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}
+          {fulfillment === "Pickup" ? formatCents(discountedSubtotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
         </Button>
       </div>
     </motion.div>

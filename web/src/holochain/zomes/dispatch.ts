@@ -194,3 +194,67 @@ export async function advanceRecurringTemplate(originalAction: ActionHash, nextR
 export async function listMyRecurringTemplates(): Promise<HcRecord[]> {
   return callZome("dispatch", "list_my_recurring_templates", null);
 }
+
+// --- pickup orders -- no driver, no bid, no dropoff at all. See
+// dispatch_integrity::PickupOrder's own doc comment. ---
+
+export async function requestPickupOrder(input: {
+  merchant: AgentPubKey;
+  catalog_ref: ActionHash;
+  item_refs: ActionHash[];
+  order_total: number;
+  special_instructions?: string;
+  promo_code_ref?: ActionHash | null;
+  bag_claim_ref?: ActionHash | null;
+}): Promise<HcRecord> {
+  return callZome("dispatch", "request_pickup_order", {
+    special_instructions: "",
+    promo_code_ref: null,
+    bag_claim_ref: null,
+    ...input,
+  });
+}
+
+export async function getPickupOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "get_pickup_order", orderOriginalAction);
+}
+
+export async function getMyPickupOrders(requester: AgentPubKey): Promise<HcRecord[]> {
+  return callZome("dispatch", "get_my_pickup_orders", requester);
+}
+
+export async function getPickupOrdersForMerchant(merchant: AgentPubKey): Promise<HcRecord[]> {
+  return callZome("dispatch", "get_pickup_orders_for_merchant", merchant);
+}
+
+export async function confirmPickupPrep(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "confirm_pickup_prep", orderOriginalAction);
+}
+
+export async function markReadyForPickup(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "mark_ready_for_pickup", orderOriginalAction);
+}
+
+export async function cancelPickupOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "cancel_pickup_order", orderOriginalAction);
+}
+
+/// The gated completion path -- the requester confirming they received it.
+export async function completePickup(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "complete_pickup", orderOriginalAction);
+}
+
+export type PickupDisputeReasonWire = "NeverDelivered" | "WrongOrIncompleteItems" | "ProviderAbandoned" | "UnjustCancellation" | "Other";
+
+export async function raisePickupDispute(input: {
+  order_original_action: ActionHash;
+  reason: PickupDisputeReasonWire;
+  description: string;
+  evidence_refs: ActionHash[];
+}): Promise<HcRecord> {
+  return callZome("dispatch", "raise_pickup_dispute", input);
+}
+
+export async function applyPickupDisputeResolution(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "apply_pickup_dispute_resolution", { order_original_action: orderOriginalAction });
+}

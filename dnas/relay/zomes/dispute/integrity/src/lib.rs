@@ -7,7 +7,7 @@
 //! DNA-properties-baked roster is the deliberate, named centralization
 //! point here rather than a decentralized jury.
 
-use dispatch_types::DeliveryOrder;
+use dispatch_types::{DeliveryOrder, PickupOrder};
 use hdi::prelude::*;
 
 pub use dispute_types::{Dispute, DisputeOutcome, DisputeReason, DisputeStatus};
@@ -58,24 +58,32 @@ fn validate_new_dispute(dispute: &Dispute, author: &AgentPubKey) -> ExternResult
     }
 
     // `dispute.order_ref` is the order's *original creation* hash (a stable
-    // identifier reused across its whole lifecycle -- see `dispatch::raise_dispute`),
-    // and `must_get_valid_record` is deterministic-but-literal: it can only
-    // ever return that record *as created* (status `Open`, `accepted_bid`
-    // `None`), never the order's current mutable state. So this only checks
-    // that `order_ref` genuinely points at *some* `DeliveryOrder` -- it
-    // deliberately does NOT re-derive "is this order currently PickedUp or
-    // Delivered" or "is raised_by really the accepted provider," since
-    // neither is a deterministic fact from this entry's own perspective (an
-    // hdi `validate()` callback has no way to safely ask "what is the
-    // *latest* state of this other chain," only "what did this specific
-    // action look like"). That check already happens correctly, with the
-    // right temporal context, in `dispatch_integrity::validate_order_transition`
-    // (`validate_new_dispute_ref`) when the order itself transitions to
-    // `Disputed` -- this only guards against obviously malformed disputes.
+    // identifier reused across its whole lifecycle -- see `dispatch::raise_dispute`/
+    // `raise_pickup_dispute`), and `must_get_valid_record` is
+    // deterministic-but-literal: it can only ever return that record *as
+    // created* (status `Open`/`Placed`, no accepted bid), never the order's
+    // current mutable state. So this only checks that `order_ref` genuinely
+    // points at *some* order entry -- either vertical, `DeliveryOrder` or
+    // `PickupOrder` (a `Dispute` is generic over which one; see
+    // `DisputeOutcome`'s own doc comment) -- it deliberately does NOT
+    // re-derive "is this order currently PickedUp or Delivered" or "is
+    // raised_by really the accepted provider," since neither is a
+    // deterministic fact from this entry's own perspective (an hdi
+    // `validate()` callback has no way to safely ask "what is the *latest*
+    // state of this other chain," only "what did this specific action look
+    // like"). That check already happens correctly, with the right temporal
+    // context, in `dispatch_integrity::validate_order_transition`/
+    // `validate_pickup_order_transition` (`validate_new_dispute_ref`) when
+    // the order itself transitions to `Disputed` -- this only guards against
+    // obviously malformed disputes.
     let order_record = must_get_valid_record(dispute.order_ref.clone())?;
-    let Ok(Some(_order)) = order_record.entry().to_app_option::<DeliveryOrder>() else {
-        return Ok(ValidateCallbackResult::Invalid("order_ref does not point at a DeliveryOrder entry".into()));
-    };
+    let is_delivery_order = matches!(order_record.entry().to_app_option::<DeliveryOrder>(), Ok(Some(_)));
+    let is_pickup_order = matches!(order_record.entry().to_app_option::<PickupOrder>(), Ok(Some(_)));
+    if !is_delivery_order && !is_pickup_order {
+        return Ok(ValidateCallbackResult::Invalid(
+            "order_ref does not point at a DeliveryOrder or PickupOrder entry".into(),
+        ));
+    }
 
     for evidence_ref in &dispute.evidence_refs {
         must_get_valid_record(evidence_ref.clone())?;

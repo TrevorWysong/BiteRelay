@@ -15,7 +15,7 @@ use relay_types::GeoPoint;
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, RequiredAuthor};
+pub use dispatch_types::{Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, PickupOrder, PickupStatus, RequiredAuthor};
 
 /// How often a `RecurringOrderTemplate` fires. Deliberately just these two
 /// shapes -- the literal "same order every Monday" ask, plus daily as the
@@ -80,6 +80,7 @@ pub enum EntryTypes {
     DeliveryOrder(DeliveryOrder),
     Bid(Bid),
     RecurringOrderTemplate(RecurringOrderTemplate),
+    PickupOrder(PickupOrder),
 }
 
 #[hdk_link_types]
@@ -88,6 +89,12 @@ pub enum LinkTypes {
     MerchantToOrder,
     OpenOrderGeohashAnchor,
     OrderToBid,
+    /// `PickupOrder`'s discovery links -- no geohash anchor and no signal
+    /// fan-out needed (see `PickupOrder`'s own doc comment: there's no
+    /// driver to notify), just the same direct requester/merchant
+    /// discoverability `DeliveryOrder` also has via its own two link types.
+    RequesterToPickupOrder,
+    MerchantToPickupOrder,
 }
 
 #[hdk_extern]
@@ -97,6 +104,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp()),
             EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author()),
             EntryTypes::RecurringOrderTemplate(template) => validate_new_recurring_template(&template, action.author()),
+            EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author()),
         },
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::DeliveryOrder(order) => {
@@ -106,6 +114,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::RecurringOrderTemplate(template) => {
                 validate_recurring_template_update(&template, action.author(), &action.original_action_address)
             }
+            EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address),
         },
         _ => Ok(ValidateCallbackResult::Valid),
     }
@@ -249,6 +258,161 @@ fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timest
             }
         }
     }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// `PickupOrder`'s sibling of `validate_new_order` -- same shape, minus
+/// every check that only makes sense once a driver is in the loop
+/// (dropoff/geohash, accepted_bid, delivery_receipts all simply don't
+/// exist on this entry type at all, so there's nothing to check there).
+fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if &order.requester != author {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a pickup order can only be authored by its own requester".into(),
+        ));
+    }
+    if order.item_refs.is_empty() {
+        return Ok(ValidateCallbackResult::Invalid("an order must reference at least one item".into()));
+    }
+    if order.order_total == 0 {
+        return Ok(ValidateCallbackResult::Invalid("order_total must be greater than zero".into()));
+    }
+    if order.status != PickupStatus::Placed {
+        return Ok(ValidateCallbackResult::Invalid("a new pickup order must start Placed".into()));
+    }
+    if order.dispute_ref.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new pickup order cannot already have a dispute_ref".into()));
+    }
+    // promo_code_ref check deliberately omitted from this first pass --
+    // see validate_new_order's own doc comment for the full reasoning on
+    // why this is coordinator-level/best-effort anyway; wiring promo
+    // support into pickup orders is a separate, later addition, not part
+    // of this entry type's initial shape.
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// `PickupOrder`'s sibling of `check_raising_dispute`/`check_resolving_dispute`
+/// -- much simpler, since there are only ever two parties (requester,
+/// merchant) and no accepted-bidder derivation needed: whichever of the two
+/// didn't author this update is the respondent.
+fn pickup_other_party(order: &PickupOrder, author: &AgentPubKey) -> AgentPubKey {
+    if author == &order.requester {
+        order.merchant.clone()
+    } else {
+        order.requester.clone()
+    }
+}
+
+fn check_raising_pickup_dispute(
+    prior: &PickupOrder,
+    order: &PickupOrder,
+    author: &AgentPubKey,
+    original_action_hash: &ActionHash,
+) -> ExternResult<Result<(), String>> {
+    if prior.dispute_ref.is_some() {
+        return Ok(Err("dispute_ref must be empty before a dispute is first raised".into()));
+    }
+    let Some(new_dispute_ref) = &order.dispute_ref else {
+        return Ok(Err("raising a dispute must set dispute_ref".into()));
+    };
+    let expected_respondent = pickup_other_party(prior, author);
+    let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
+    validate_new_dispute_ref(&order_original_creation, new_dispute_ref, author, &expected_respondent)
+}
+
+fn check_resolving_pickup_dispute(prior: &PickupOrder, order: &PickupOrder, author: &AgentPubKey) -> ExternResult<Result<(), String>> {
+    let Some(prior_dispute_ref) = &prior.dispute_ref else {
+        return Ok(Err("a Disputed order with no dispute_ref cannot be resolved".into()));
+    };
+    let Some(new_dispute_ref) = &order.dispute_ref else {
+        return Ok(Err("resolving a dispute must set dispute_ref to the resolved record".into()));
+    };
+    let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
+    if &new_dispute_original_creation != prior_dispute_ref {
+        return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
+    }
+    // PickupOrder has no delivery-fee-split/FavorProvider-means-driver
+    // concept -- "Provider" is reinterpreted as "merchant" here, the only
+    // other party there is. validate_dispute_resolution_matches itself is
+    // generic over target status, not over DeliveryStatus specifically, so
+    // it's reused as-is: FavorProvider -> PickedUp (the merchant's side
+    // wins, order completes), FavorRequester -> Cancelled.
+    let target = match order.status {
+        PickupStatus::PickedUp => DeliveryStatus::Delivered,
+        PickupStatus::Cancelled => DeliveryStatus::Cancelled,
+        _ => return Ok(Err("resolving a pickup dispute must target PickedUp or Cancelled".into())),
+    };
+    validate_dispute_resolution_matches(new_dispute_ref, &target, author)
+}
+
+fn validate_pickup_order_transition(
+    order: &PickupOrder,
+    author: &AgentPubKey,
+    original_action_hash: &ActionHash,
+) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original_action_hash.clone())?;
+    let prior: PickupOrder = prior_record
+        .entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest(
+            "original_action_hash does not point at a PickupOrder entry".into()
+        )))?;
+
+    let Some(required_author) = prior.status.transition_requirement(&order.status) else {
+        return Ok(ValidateCallbackResult::Invalid(format!(
+            "illegal status transition: {:?} -> {:?}",
+            prior.status, order.status
+        )));
+    };
+
+    let is_requester_or_merchant = &prior.requester == author || &prior.merchant == author;
+    let authorized = match required_author {
+        RequiredAuthor::RequesterOrMerchant => is_requester_or_merchant,
+        RequiredAuthor::Any => is_requester_or_merchant,
+        RequiredAuthor::Arbitrator => relay_governance::is_arbitrator(author)?,
+        // Never produced by PickupStatus::transition_requirement -- there is
+        // no accepted-provider concept at all for this entry type.
+        RequiredAuthor::AcceptedProvider => false,
+    };
+    if !authorized {
+        return Ok(ValidateCallbackResult::Invalid(format!(
+            "transition {:?} -> {:?} requires author role {:?}, but the author holds none of the roles it permits",
+            prior.status, order.status, required_author
+        )));
+    }
+
+    let raising_dispute = matches!(prior.status, PickupStatus::ReadyForPickup | PickupStatus::PickedUp) && order.status == PickupStatus::Disputed;
+    let resolving_dispute = prior.status == PickupStatus::Disputed && matches!(order.status, PickupStatus::PickedUp | PickupStatus::Cancelled);
+    if raising_dispute {
+        if let Err(reason) = check_raising_pickup_dispute(&prior, order, author, original_action_hash)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
+        }
+    } else if resolving_dispute {
+        if let Err(reason) = check_resolving_pickup_dispute(&prior, order, author)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
+        }
+    } else if prior.dispute_ref != order.dispute_ref {
+        return Ok(ValidateCallbackResult::Invalid(
+            "dispute_ref may only change when a dispute is raised or resolved".into(),
+        ));
+    }
+
+    let unchanged = prior.requester == order.requester
+        && prior.merchant == order.merchant
+        && prior.catalog_ref == order.catalog_ref
+        && prior.item_refs == order.item_refs
+        && prior.order_total == order.order_total
+        && prior.requested_at == order.requested_at
+        && prior.special_instructions == order.special_instructions
+        && prior.promo_code_ref == order.promo_code_ref
+        && prior.bag_claim_ref == order.bag_claim_ref;
+    if !unchanged {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a pickup order update may only change status/dispute_ref -- every other field must stay the same".into(),
+        ));
+    }
+
     Ok(ValidateCallbackResult::Valid)
 }
 

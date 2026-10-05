@@ -32,6 +32,8 @@ pub enum LocalSignal {
     ChatMessage { order_ref: ActionHash, from: AgentPubKey, text: String, sent_at: Timestamp },
     /// See `tracking::send_location_update` -- driver -> requester only.
     LocationUpdate { order_ref: ActionHash, lat: f64, lon: f64, sent_at: Timestamp },
+    /// See `pickup::mark_ready_for_pickup` -- merchant -> requester only.
+    PickupReady(ActionHash),
 }
 
 /// Peer-to-peer signals -- Layer 2 of the matching mechanism. Every receiver
@@ -52,6 +54,10 @@ pub enum RemoteSignal {
     /// Sent only to the order's requester (see `tracking::send_location_update`)
     /// -- same already-known-AgentPubKey requirement as every signal here.
     LocationUpdate { order_hash: ActionHash, lat: f64, lon: f64, sent_at: Timestamp },
+    /// Sent only to the pickup order's own requester (see
+    /// `pickup::mark_ready_for_pickup`) -- same already-known-AgentPubKey
+    /// requirement as every signal here.
+    PickupReady { order_hash: ActionHash },
 }
 
 #[hdk_extern]
@@ -67,5 +73,6 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
         RemoteSignal::LocationUpdate { order_hash, lat, lon, sent_at } => {
             emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at })
         }
+        RemoteSignal::PickupReady { order_hash } => emit_signal(LocalSignal::PickupReady(order_hash)),
     }
 }
