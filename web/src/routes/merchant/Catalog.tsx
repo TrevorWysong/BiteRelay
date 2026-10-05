@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Gift, ListChecks, Pencil, Plus, Sparkles, Star, Store, Tag } from "lucide-react";
+import { Gift, ListChecks, PackageOpen, Pencil, Plus, Sparkles, Star, Store, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   publishCatalog,
@@ -13,6 +13,10 @@ import {
   createPromoCode,
   setPromoCodeActive,
   listPromoCodesForCatalog,
+  createGoodieBag,
+  listGoodieBagsForCatalog,
+  listPendingClaimsForMerchant,
+  confirmClaim,
 } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
@@ -27,14 +31,46 @@ import { describeError } from "../../lib/errors";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import type { ItemRow } from "../../lib/menu";
-import type { MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review } from "../../holochain/types";
+import type { BagClaim, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review, GoodieBag } from "../../holochain/types";
 
 interface PromoRow {
   hash: Uint8Array;
   promo: PromoCode;
 }
 
+interface BagRow {
+  hash: Uint8Array;
+  bag: GoodieBag;
+}
+
+interface ClaimRow {
+  hash: Uint8Array;
+  claim: BagClaim;
+}
+
 const EMPTY_ITEM_FORM = { name: "", price: 10, description: "", photo_data_uri: "", category: "", dietary_tags: "" };
+
+function defaultPickupWindow() {
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return { start: toLocalInput(start), end: toLocalInput(end) };
+}
+
+function emptyBagForm() {
+  return {
+    title: "",
+    description: "",
+    photo_data_uri: "",
+    originalValue: 15,
+    price: 5,
+    quantity_total: 3,
+    ...defaultPickupWindow(),
+    supports_pickup: true,
+    supports_delivery: false,
+  };
+}
+const EMPTY_BAG_FORM = emptyBagForm();
 
 // Requirement/reward are chosen independently in the UI (two separate
 // dropdowns), matching how `PromoRequirement`/`PromoReward` are two
@@ -119,13 +155,19 @@ export function MerchantCatalog() {
   const [promoForm, setPromoForm] = useState(EMPTY_PROMO_FORM);
   const [savingPromo, setSavingPromo] = useState(false);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
+  const [bags, setBags] = useState<BagRow[]>([]);
+  const [pendingClaims, setPendingClaims] = useState<ClaimRow[]>([]);
+  const [showAddBag, setShowAddBag] = useState(false);
+  const [bagForm, setBagForm] = useState(EMPTY_BAG_FORM);
+  const [savingBag, setSavingBag] = useState(false);
+  const [confirmingClaim, setConfirmingClaim] = useState<string | null>(null);
 
   async function load() {
     const mine = await getMyCatalog();
     if (mine) {
-      const decoded = decodeEntry<MerchantCatalog>(mine);
+      const decoded = decodeEntry<MerchantCatalog>(mine.record);
       setCatalog(decoded);
-      setCatalogHash(actionHash(mine));
+      setCatalogHash(mine.original_action);
       setDetailsDraft({
         description: decoded.description,
         cuisine_type: decoded.cuisine_type,
@@ -136,11 +178,15 @@ export function MerchantCatalog() {
         hours_close: decoded.hours_close,
       });
       setSubsidyDraft(decoded.delivery_subsidy_percent.toString());
-      const itemsPage = await listMenuItems(actionHash(mine));
+      const itemsPage = await listMenuItems(mine.original_action);
       setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
       getReviewsFor(decoded.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
-      const promoRecords = await listPromoCodesForCatalog(actionHash(mine));
+      const promoRecords = await listPromoCodesForCatalog(mine.original_action);
       setPromos(promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })));
+      const bagRecords = await listGoodieBagsForCatalog(mine.original_action);
+      setBags(bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })));
+      const claimRecords = await listPendingClaimsForMerchant(mine.original_action);
+      setPendingClaims(claimRecords.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })));
     }
     setLoading(false);
   }
@@ -229,6 +275,41 @@ export function MerchantCatalog() {
       await load();
     } finally {
       setTogglingPromo(null);
+    }
+  }
+
+  async function saveBag() {
+    if (!catalogHash || !bagForm.title.trim()) return;
+    setSavingBag(true);
+    try {
+      await createGoodieBag({
+        catalog_ref: catalogHash,
+        title: bagForm.title.trim(),
+        description: bagForm.description,
+        photo_data_uri: bagForm.photo_data_uri,
+        original_value_cents: Math.round(bagForm.originalValue * 100),
+        price_cents: Math.round(bagForm.price * 100),
+        quantity_total: bagForm.quantity_total,
+        pickup_window_start: new Date(bagForm.start).getTime() * 1000,
+        pickup_window_end: new Date(bagForm.end).getTime() * 1000,
+        supports_pickup: bagForm.supports_pickup,
+        supports_delivery: bagForm.supports_delivery,
+      });
+      await load();
+      setShowAddBag(false);
+      setBagForm(emptyBagForm());
+    } finally {
+      setSavingBag(false);
+    }
+  }
+
+  async function confirmClaimRow(row: ClaimRow) {
+    setConfirmingClaim(bytesToHex(row.hash));
+    try {
+      await confirmClaim(row.hash);
+      await load();
+    } finally {
+      setConfirmingClaim(null);
     }
   }
 
@@ -708,6 +789,133 @@ export function MerchantCatalog() {
           </motion.div>
         ))}
         </motion.div>
+
+        <motion.div variants={fadeSlideUp} className="mb-3 flex items-center justify-between">
+          <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Goodie bags</p>
+          <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setShowAddBag((v) => !v)}>
+            <PackageOpen size={14} /> {showAddBag ? "Cancel" : "Add a bag"}
+          </Button>
+        </motion.div>
+
+        <AnimatePresence initial={false}>
+          {showAddBag && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+              <Card className="mb-4 flex flex-col gap-2 p-4">
+                <div className="flex gap-3">
+                  <PhotoInput value={bagForm.photo_data_uri} onChange={(v) => setBagForm((f) => ({ ...f, photo_data_uri: v }))} shape="circle" className="shrink-0" />
+                  <div className="flex flex-1 flex-col gap-2">
+                    <Input value={bagForm.title} onChange={(e) => setBagForm((f) => ({ ...f, title: e.target.value }))} placeholder="Bag name (e.g. End-of-day goodie bag)" />
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={bagForm.originalValue}
+                        onChange={(e) => setBagForm((f) => ({ ...f, originalValue: Number(e.target.value) }))}
+                        placeholder="Value"
+                        prefix="$"
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={bagForm.price}
+                        onChange={(e) => setBagForm((f) => ({ ...f, price: Number(e.target.value) }))}
+                        placeholder="Price"
+                        prefix="$"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <Textarea value={bagForm.description} onChange={(e) => setBagForm((f) => ({ ...f, description: e.target.value }))} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={bagForm.quantity_total}
+                    onChange={(e) => setBagForm((f) => ({ ...f, quantity_total: Number(e.target.value) }))}
+                    placeholder="How many available"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <label className="flex-1 text-xs text-ink-500">
+                    Pickup window starts
+                    <Input type="datetime-local" value={bagForm.start} onChange={(e) => setBagForm((f) => ({ ...f, start: e.target.value }))} className="mt-1" />
+                  </label>
+                  <label className="flex-1 text-xs text-ink-500">
+                    Pickup window ends
+                    <Input type="datetime-local" value={bagForm.end} onChange={(e) => setBagForm((f) => ({ ...f, end: e.target.value }))} className="mt-1" />
+                  </label>
+                </div>
+                <div className="flex gap-4 pt-1">
+                  <label className="flex items-center gap-2 text-xs text-ink-500">
+                    <Checkbox checked={bagForm.supports_pickup} onChange={(e) => setBagForm((f) => ({ ...f, supports_pickup: e.target.checked }))} />
+                    Offer for pickup
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-ink-500">
+                    <Checkbox checked={bagForm.supports_delivery} onChange={(e) => setBagForm((f) => ({ ...f, supports_delivery: e.target.checked }))} />
+                    Offer for delivery
+                  </label>
+                </div>
+                <Button
+                  loading={savingBag}
+                  disabled={!bagForm.title.trim() || bagForm.price <= 0 || bagForm.price > bagForm.originalValue || (!bagForm.supports_pickup && !bagForm.supports_delivery)}
+                  onClick={saveBag}
+                  className="py-2.5 text-xs"
+                >
+                  List goodie bag
+                </Button>
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {bags.length === 0 && !showAddBag ? (
+          <p className="mb-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">No goodie bags listed right now.</p>
+        ) : (
+          <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="mb-4 flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
+            {bags.map((row) => (
+              <motion.div key={bytesToHex(row.hash)} variants={fadeSlideUp} className="flex items-center gap-3 p-4">
+                {row.bag.photo_data_uri && <img src={row.bag.photo_data_uri} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
+                  <p className="text-xs text-ink-400">
+                    {new Date(row.bag.pickup_window_start / 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} –{" "}
+                    {new Date(row.bag.pickup_window_end / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · {row.bag.quantity_total} available
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <StatNumber className="text-sm">{formatCents(row.bag.price_cents)}</StatNumber>
+                    <span className="text-xs text-ink-400 line-through">{formatCents(row.bag.original_value_cents)}</span>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+
+        {pendingClaims.length > 0 && (
+          <motion.div variants={fadeSlideUp} className="mb-6">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Pending bag claims</p>
+            <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
+              {pendingClaims.map((row) => {
+                const bagTitle = bags.find((b) => bytesToHex(b.hash) === bytesToHex(row.claim.bag_ref))?.bag.title ?? "Goodie bag";
+                const wantsDelivery = row.claim.fulfillment !== "Pickup";
+                return (
+                  <div key={bytesToHex(row.hash)} className="flex items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{bagTitle}</p>
+                      <p className="text-xs text-ink-400">{wantsDelivery ? "Wants delivery" : "Will pick up"}</p>
+                    </div>
+                    <Button loading={confirmingClaim === bytesToHex(row.hash)} className="px-3 py-1.5 text-xs" onClick={() => confirmClaimRow(row)}>
+                      Confirm
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
 
         {reviews.length > 0 && (
           <motion.div variants={fadeSlideUp}>

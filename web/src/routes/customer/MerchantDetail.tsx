@@ -1,21 +1,28 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, Heart, MapPin, Phone, Plus, ShoppingBag, Star } from "lucide-react";
+import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getNearbyMerchants, listMenuItems } from "../../holochain/zomes/catalog";
+import { getNearbyMerchants, listMenuItems, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
 import { getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
 import { formatCents } from "../../lib/format";
-import { Skeleton, StatNumber } from "../../components/ui";
+import { describeError } from "../../lib/errors";
+import { Button, Input, Skeleton, StatNumber } from "../../components/ui";
+import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { MenuItem, MerchantCatalog, Review } from "../../holochain/types";
+import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, Review, GoodieBag } from "../../holochain/types";
+
+interface BagRow {
+  hash: Uint8Array;
+  bag: GoodieBag;
+}
 
 export function MerchantDetail() {
   const { hash } = useParams<{ hash: string }>();
@@ -30,6 +37,14 @@ export function MerchantDetail() {
   const { favoritesHex, toggleFavorite } = useFavorites();
   const favorited = catalogHash ? favoritesHex.has(bytesToHex(catalogHash)) : false;
   const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({});
+  const [bags, setBags] = useState<BagRow[]>([]);
+  const [claimingBagHex, setClaimingBagHex] = useState<string | null>(null);
+  const [claimFulfillment, setClaimFulfillment] = useState<"Pickup" | "Delivery">("Pickup");
+  const [claimDropoff, setClaimDropoff] = useState<GeoPoint>(location);
+  const [claimFee, setClaimFee] = useState(5);
+  const [submittingClaim, setSubmittingClaim] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimedBagHexes, setClaimedBagHexes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!hash) return;
@@ -67,6 +82,17 @@ export function MerchantDetail() {
             .catch(() => {});
         });
       });
+      // Same client-side expiry filtering as Browse.tsx's own strip -- see
+      // `GoodieBag`'s named gap for why there's no on-chain expire.
+      listGoodieBagsForCatalog(wanted).then((records) => {
+        if (cancelled) return;
+        const now = Date.now() * 1000;
+        setBags(
+          records
+            .map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) }))
+            .filter((r) => r.bag.pickup_window_end > now),
+        );
+      });
     }
     loadItems();
     const interval = setInterval(loadItems, 8000);
@@ -81,6 +107,31 @@ export function MerchantDetail() {
     if (!catalog) return;
     getReviewsFor(catalog.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
   }, [catalog]);
+
+  function openClaim(row: BagRow) {
+    const hex = bytesToHex(row.hash);
+    setClaimingBagHex(claimingBagHex === hex ? null : hex);
+    setClaimFulfillment(row.bag.supports_pickup ? "Pickup" : "Delivery");
+    setClaimDropoff(location);
+    setClaimFee(5);
+    setClaimError(null);
+  }
+
+  async function submitClaim(row: BagRow) {
+    setSubmittingClaim(true);
+    setClaimError(null);
+    try {
+      const fulfillment: BagClaimFulfillment =
+        claimFulfillment === "Pickup" ? "Pickup" : { Delivery: { dropoff: claimDropoff, max_delivery_fee: Math.round(claimFee * 100) } };
+      await claimGoodieBag(row.hash, fulfillment);
+      setClaimedBagHexes((prev) => new Set(prev).add(bytesToHex(row.hash)));
+      setClaimingBagHex(null);
+    } catch (err) {
+      setClaimError(describeError(err));
+    } finally {
+      setSubmittingClaim(false);
+    }
+  }
 
   if (!catalog || !items || !catalogHash) {
     return (
@@ -145,6 +196,82 @@ export function MerchantDetail() {
             </span>
           )}
         </div>
+
+        {bags.length > 0 && (
+          <motion.div variants={fadeSlideUp} className="mt-6">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+              <PackageOpen size={13} className="text-relay-500" /> Goodie bags available here
+            </p>
+            <div className="flex flex-col gap-2">
+              {bags.map((row) => {
+                const hex = bytesToHex(row.hash);
+                const claimed = claimedBagHexes.has(hex);
+                const open = claimingBagHex === hex;
+                return (
+                  <div key={hex} className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
+                    <div className="flex items-center gap-3">
+                      {row.bag.photo_data_uri ? (
+                        <img src={row.bag.photo_data_uri} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+                      ) : (
+                        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-relay-500 text-xl">🎁</div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
+                        {row.bag.description && <p className="truncate text-xs text-ink-400">{row.bag.description}</p>}
+                        <div className="flex items-center gap-2">
+                          <StatNumber className="text-sm">{formatCents(row.bag.price_cents)}</StatNumber>
+                          <span className="text-xs text-ink-400 line-through">{formatCents(row.bag.original_value_cents)}</span>
+                        </div>
+                      </div>
+                      <Button
+                        variant={claimed ? "secondary" : "primary"}
+                        disabled={claimed}
+                        className="shrink-0 px-3 py-1.5 text-xs"
+                        onClick={() => openClaim(row)}
+                      >
+                        {claimed ? "Claimed" : open ? "Cancel" : "Claim"}
+                      </Button>
+                    </div>
+
+                    <AnimatePresence initial={false}>
+                      {open && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+                          <div className="mt-3 flex flex-col gap-2 border-t border-ink-100 dark:border-ink-800 pt-3">
+                            {row.bag.supports_pickup && row.bag.supports_delivery && (
+                              <div className="flex gap-2">
+                                {(["Pickup", "Delivery"] as const).map((f) => (
+                                  <button
+                                    key={f}
+                                    onClick={() => setClaimFulfillment(f)}
+                                    className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                                      claimFulfillment === f ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"
+                                    }`}
+                                  >
+                                    {f}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {claimFulfillment === "Delivery" && (
+                              <>
+                                <AddressSearch value={claimDropoff} onChange={setClaimDropoff} label="Delivery location" />
+                                <Input type="number" min={0} step={0.5} value={claimFee} onChange={(e) => setClaimFee(Number(e.target.value))} placeholder="Max delivery fee" prefix="$" />
+                              </>
+                            )}
+                            {claimError && <p className="text-xs text-red-500">{claimError}</p>}
+                            <Button loading={submittingClaim} onClick={() => submitClaim(row)} className="py-2 text-xs">
+                              Confirm claim
+                            </Button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
 
         {[...grouped.entries()].map(([category, rows]) => (
           <motion.div variants={fadeSlideUp} key={category} className="mt-6">

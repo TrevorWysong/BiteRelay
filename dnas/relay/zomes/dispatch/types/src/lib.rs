@@ -207,7 +207,7 @@ pub struct DeliveryOrder {
     pub dropoff_preference: DropoffPreference,
     /// `None` for an ordinary menu order (the default, and every order
     /// written before this field existed). `Some` means this delivery
-    /// originated from a confirmed `catalog::BagClaim` (a surprise bag
+    /// originated from a confirmed `catalog::BagClaim` (a goodie bag
     /// claimed for delivery rather than pickup) -- `validate_new_order`
     /// independently checks the referenced claim is genuinely `Confirmed`
     /// and names this same `requester` as its customer, same trust tier
@@ -332,7 +332,7 @@ pub struct PickupOrder {
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
     /// Same meaning and same trust tier as `DeliveryOrder.bag_claim_ref` --
-    /// `Some` when this pickup originated from a confirmed surprise-bag
+    /// `Some` when this pickup originated from a confirmed goodie-bag
     /// claim rather than an ordinary menu order.
     #[serde(default)]
     pub bag_claim_ref: Option<ActionHash>,

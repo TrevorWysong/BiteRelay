@@ -161,3 +161,74 @@ pub struct PromoCode {
     #[serde(default)]
     pub auto_apply: bool,
 }
+
+/// A goodie bag: a quantity-limited, time-windowed, discounted mystery bag
+/// of surplus food. Deliberately not itemized the
+/// way a `MenuItem`-based order is -- the contents are the merchant's own
+/// call at pickup/pack time, which is the entire point (the customer is
+/// buying "today's surplus," not a specific dish). Lives in `catalog_types`
+/// (not a new zome) for the same reason `MenuItem`/`PromoCode` do: it's a
+/// merchant-listing concept, sharing this crate's owner/catalog-ownership
+/// discipline rather than duplicating cross-zome wiring a whole new zome
+/// would need.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct GoodieBag {
+    pub catalog_ref: ActionHash,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub photo_data_uri: String,
+    pub original_value_cents: u64,
+    pub price_cents: u64,
+    pub quantity_total: u32,
+    pub pickup_window_start: Timestamp,
+    pub pickup_window_end: Timestamp,
+    pub supports_pickup: bool,
+    pub supports_delivery: bool,
+    pub created_at: Timestamp,
+}
+
+/// What a customer chose when claiming a bag -- captured once, up front, so
+/// confirmation can automatically finalize into a real order with no
+/// further input needed (see `BagClaim`'s own doc comment).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum BagClaimFulfillment {
+    Pickup,
+    Delivery { dropoff: GeoPoint, max_delivery_fee: Option<u64> },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BagClaimStatus {
+    Pending,
+    Confirmed,
+}
+
+/// A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
+/// this feature's scarcity resolution (see the architecture doc's own
+/// reasoning: a scarce resource on a DHT with no distributed locks is
+/// resolved by a single authoritative party deciding, the same shape
+/// `accept_bid` already uses, not a race on a shared counter).
+///
+/// Confirming a claim (`catalog::confirm_claim`) is authored by the
+/// merchant -- an agent authoring a record *about* someone else, the same
+/// "agent A updates a record naming agent B" pattern
+/// `dispute::submit_resolution`/`reputation::record_event` already use.
+/// Holochain requires every entry to be authored on its own agent's chain,
+/// so the merchant's confirmation can only flip *this* claim's own status;
+/// it cannot also author the resulting `PickupOrder`/`DeliveryOrder` on the
+/// customer's behalf. The customer's own client, seeing (via poll or
+/// signal) that their claim is `Confirmed`, finalizes it themselves by
+/// calling `dispatch::request_pickup_order`/`request_delivery` with this
+/// same `fulfillment` data already in hand -- fully automatic from their
+/// side, no extra tap needed.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct BagClaim {
+    pub bag_ref: ActionHash,
+    pub customer: AgentPubKey,
+    pub fulfillment: BagClaimFulfillment,
+    pub status: BagClaimStatus,
+    pub claimed_at: Timestamp,
+}

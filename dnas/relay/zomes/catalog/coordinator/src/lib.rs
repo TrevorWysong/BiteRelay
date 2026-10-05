@@ -1,7 +1,12 @@
 //! Coordinator zome for merchant catalogs: publishing a catalog, toggling
-//! it open/closed, adding menu items, and geohash-anchor discovery
-//! ("restaurants near me") -- the same anchor pattern `geo_presence` uses
-//! for provider beacons.
+//! it open/closed, adding menu items, goodie bags and their claims
+//! (`bags`), and geohash-anchor discovery ("restaurants near me") -- the
+//! same anchor pattern `geo_presence` uses for provider beacons.
+
+mod bags;
+mod signals;
+pub use bags::*;
+pub use signals::*;
 
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
@@ -43,6 +48,32 @@ pub struct PublishCatalogInput {
     pub hours_close: String,
 }
 
+/// Pairs a catalog's stable identity with its current content. `catalog_ref`
+/// everywhere else in this zome (`add_menu_item`, `create_promo_code`,
+/// `list_menu_items`, `list_promo_codes_for_catalog`, and this feature's own
+/// `CatalogToBag`) is keyed on the catalog's *original* creation action --
+/// see `validate_menu_item`'s own doc comment. `get_my_catalog` is the one
+/// place that content needs to reflect the *latest* state (is it open right
+/// now, current subsidy, ...), so it can't just hand back a single `Record`:
+/// a `Record`'s own action hash is whichever one it is, and collapsing those
+/// two needs into one value is exactly the bug this struct exists to avoid
+/// (see `original_action`'s own field doc for the bug it fixes).
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MyCatalogView {
+    /// The `OwnerToCatalog` link's target -- fixed forever at `publish_catalog`
+    /// time, since that link is never recreated by any later update. Found
+    /// the hard way: this extern used to just return `resolve_latest(...)`
+    /// directly, so a client naively caching that `Record`'s action hash as
+    /// its `catalog_ref` would have it silently drift to a new value on
+    /// every catalog edit (toggling open/closed, editing details, changing
+    /// subsidy) -- orphaning every menu item/promo code already linked
+    /// under the previous hash, since `list_menu_items`/
+    /// `list_promo_codes_for_catalog` key their reads the same way. Use
+    /// *this* field as `catalog_ref`, never the record's own action hash.
+    pub original_action: ActionHash,
+    pub record: Record,
+}
+
 /// Resolves "does this agent already have a catalog" via the `OwnerToCatalog`
 /// link created at publish time -- deterministic and independent of geohash
 /// matching, unlike discovering it through `get_nearby_merchants` (which
@@ -54,13 +85,14 @@ pub struct PublishCatalogInput {
 /// has duplicates (e.g. from before that guard existed) still gets a
 /// stable, repeatable answer instead of an arbitrary one each call.
 #[hdk_extern]
-pub fn get_my_catalog(_: ()) -> ExternResult<Option<Record>> {
+pub fn get_my_catalog(_: ()) -> ExternResult<Option<MyCatalogView>> {
     let owner = agent_info()?.agent_initial_pubkey;
     let mut links = get_links(LinkQuery::try_new(owner, LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
     links.sort_by_key(|l| l.timestamp);
     let Some(link) = links.pop() else { return Ok(None) };
-    let Some(action_hash) = link.target.into_action_hash() else { return Ok(None) };
-    Ok(Some(resolve_latest(action_hash)?))
+    let Some(original_action) = link.target.into_action_hash() else { return Ok(None) };
+    let record = resolve_latest(original_action.clone())?;
+    Ok(Some(MyCatalogView { original_action, record }))
 }
 
 #[hdk_extern]

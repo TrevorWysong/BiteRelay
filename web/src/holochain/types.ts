@@ -25,7 +25,11 @@ export type LocalSignal =
   | { BidReleased: ActionHash }
   | { ChatMessage: { order_ref: ActionHash; from: AgentPubKey; text: string; sent_at: Timestamp } }
   | { LocationUpdate: { order_ref: ActionHash; lat: number; lon: number; sent_at: Timestamp } }
-  | { PickupReady: ActionHash };
+  | { PickupReady: ActionHash }
+  /// `catalog_coordinator::signals::LocalSignal` -- see `bags::confirm_claim`.
+  /// Arrives on the same app websocket as every signal above, just from a
+  /// different zome's own `recv_remote_signal`.
+  | { ClaimConfirmed: ActionHash };
 
 export interface GeoPoint {
   lat: number;
@@ -174,8 +178,41 @@ export interface DeliveryOrder {
   promo_code_ref: ActionHash | null;
   dropoff_preference: DropoffPreference;
   /// `null` for an ordinary menu order. Set means this delivery originated
-  /// from a confirmed surprise-bag claim rather than a normal cart checkout.
+  /// from a confirmed goodie-bag claim rather than a normal cart checkout.
   bag_claim_ref: ActionHash | null;
+}
+
+/// A limited-quantity, time-windowed, discounted mystery bag of surplus
+/// food -- see `catalog_types::GoodieBag`'s own doc comment for why it's
+/// deliberately not itemized (contents are the merchant's own call at
+/// pack time).
+export interface GoodieBag {
+  catalog_ref: ActionHash;
+  title: string;
+  description: string;
+  photo_data_uri: string;
+  original_value_cents: number;
+  price_cents: number;
+  quantity_total: number;
+  pickup_window_start: Timestamp;
+  pickup_window_end: Timestamp;
+  supports_pickup: boolean;
+  supports_delivery: boolean;
+  created_at: Timestamp;
+}
+
+/// Captured once, up front, so confirmation can finalize automatically into
+/// a real order -- see `BagClaim`'s own Rust doc comment.
+export type BagClaimFulfillment = "Pickup" | { Delivery: { dropoff: GeoPoint; max_delivery_fee: number | null } };
+
+export type BagClaimStatus = "Pending" | "Confirmed";
+
+export interface BagClaim {
+  bag_ref: ActionHash;
+  customer: AgentPubKey;
+  fulfillment: BagClaimFulfillment;
+  status: BagClaimStatus;
+  claimed_at: Timestamp;
 }
 
 export type DropoffPreference = "LeaveAtDoor" | "HandToMe" | "MeetOutside";

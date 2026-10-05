@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
 import { getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
-import { listMenuItems } from "../../holochain/zomes/catalog";
+import { listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
 import { submitReview, submitItemReview } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { onLocalSignal } from "../../holochain/client";
@@ -13,7 +13,7 @@ import { StarRatingInput } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { MenuItem, PickupOrder } from "../../holochain/types";
+import type { BagClaim, MenuItem, PickupOrder, GoodieBag } from "../../holochain/types";
 
 const POLL_MS = 6000;
 
@@ -50,6 +50,15 @@ export function PickupOrderDetail() {
           setItemNames(names);
         })
         .catch(() => {});
+      // See OrderDetail.tsx's own identical comment -- a goodie-bag
+      // order's item_refs is `[bag_ref]`, not a real MenuItem.
+      if (decoded.bag_claim_ref && decoded.item_refs[0]) {
+        const key = bytesToHex(decoded.item_refs[0]);
+        getBagClaim(decoded.bag_claim_ref)
+          .then((claimRecord) => getGoodieBag(decodeEntry<BagClaim>(claimRecord).bag_ref))
+          .then((bagRecord) => setItemNames((prev) => ({ ...prev, [key]: `🎁 ${decodeEntry<GoodieBag>(bagRecord).title}` })))
+          .catch(() => {});
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
@@ -197,7 +206,7 @@ export function PickupOrderDetail() {
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
               {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
             </div>
-            {[...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
+            {!order.bag_claim_ref && [...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
               <div>
                 <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
                 <div className="flex flex-col gap-2">

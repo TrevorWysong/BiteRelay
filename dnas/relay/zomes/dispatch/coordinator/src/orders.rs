@@ -36,6 +36,14 @@ pub struct RequestDeliveryInput {
     /// comment.
     #[serde(default)]
     pub dropoff_preference: DropoffPreference,
+    /// `None` means this is a normal order, not a claimed goodie bag's
+    /// delivery. `Some` is set by the customer's own client immediately
+    /// after their `BagClaim` is confirmed (see `catalog::confirm_claim`'s
+    /// own doc comment) -- validated (real, `Confirmed`, belongs to this
+    /// requester, claimed for delivery) deterministically by
+    /// `validate_new_order`.
+    #[serde(default)]
+    pub bag_claim_ref: Option<ActionHash>,
 }
 
 /// Publishes an already-Open order to the discovery anchor and fires the
@@ -84,6 +92,28 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         }
     }
 
+    // Same best-effort shape as the promo-code pre-check just above, same
+    // reason: whether a claim is actually `Confirmed` isn't something
+    // `validate_new_order` can check deterministically (see its own doc
+    // comment), since that status only exists on the claim's *latest*
+    // state, not the literal record at `bag_claim_ref`'s own action hash.
+    // `catalog::get_bag_claim` resolves to latest, so this is the one place
+    // the question can genuinely be answered -- a failed lookup degrades to
+    // "let validate() decide on what it actually can check" rather than
+    // blocking the order over a convenience pre-check that couldn't resolve.
+    if let Some(claim_ref) = &input.bag_claim_ref {
+        let response = call(CallTargetCell::Local, "catalog", "get_bag_claim".into(), None, claim_ref.clone());
+        if let Ok(ZomeCallResponse::Ok(extern_io)) = response {
+            if let Ok(record) = extern_io.decode::<Record>() {
+                if let Ok(Some(claim)) = record.entry().to_app_option::<catalog_types::BagClaim>() {
+                    if claim.status != catalog_types::BagClaimStatus::Confirmed {
+                        return Err(wasm_error!(WasmErrorInner::Guest("goodie bag claim is not yet confirmed".into())));
+                    }
+                }
+            }
+        }
+    }
+
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -103,7 +133,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         requested_delivery_time: input.requested_delivery_time,
         promo_code_ref: input.promo_code_ref,
         dropoff_preference: input.dropoff_preference,
-        bag_claim_ref: None,
+        bag_claim_ref: input.bag_claim_ref,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;

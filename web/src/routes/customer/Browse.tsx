@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Heart, Search } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Heart, PackageOpen, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { getNearbyMerchants } from "../../holochain/zomes/catalog";
+import { getNearbyMerchants, getNearbyGoodieBags } from "../../holochain/zomes/catalog";
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useFavorites } from "../../lib/useFavorites";
-import type { MerchantCatalog, Review } from "../../holochain/types";
+import { formatCents } from "../../lib/format";
+import type { MerchantCatalog, Review, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
 import { EmptyState, Skeleton } from "../../components/ui";
 import { staggerContainer } from "../../lib/motion";
@@ -18,6 +20,11 @@ interface Row {
   catalog: MerchantCatalog;
   rating: number;
   reviewCount: number;
+}
+
+interface BagRow {
+  hash: Uint8Array;
+  bag: GoodieBag;
 }
 
 type Sort = "relevance" | "rating" | "name";
@@ -65,8 +72,10 @@ function CardSkeleton() {
 }
 
 export function Browse() {
+  const navigate = useNavigate();
   const location = useSession((s) => s.location);
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [bags, setBags] = useState<BagRow[]>([]);
   const [query, setQuery] = useState("");
   const [cuisine, setCuisine] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("relevance");
@@ -89,6 +98,18 @@ export function Browse() {
         }),
       );
       if (!cancelled) setRows(withRatings);
+
+      // No on-chain "expire" transition for a bag past its own window (see
+      // `GoodieBag`'s own named gap) -- filtered client-side here, same
+      // posture as every other scheduled-time check in this app.
+      const bagRecords = await getNearbyGoodieBags(geohash);
+      if (cancelled) return;
+      const now = Date.now() * 1000;
+      setBags(
+        bagRecords
+          .map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) }))
+          .filter((r) => r.bag.pickup_window_end > now),
+      );
     }
     load();
     const interval = setInterval(load, BROWSE_POLL_MS);
@@ -97,6 +118,12 @@ export function Browse() {
       clearInterval(interval);
     };
   }, [location]);
+
+  const catalogNameByHex = useMemo(() => {
+    const map = new Map<string, string>();
+    rows?.forEach((r) => map.set(bytesToHex(r.hash), r.catalog.business_name));
+    return map;
+  }, [rows]);
 
   const cuisines = useMemo(() => {
     const set = new Set<string>();
@@ -140,6 +167,37 @@ export function Browse() {
           className="w-full bg-transparent text-sm outline-none"
         />
       </div>
+
+      {bags.length > 0 && (
+        <div className="mb-5">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+            <PackageOpen size={13} className="text-relay-500" /> Goodie bags near me
+          </p>
+          <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
+            {bags.map((row) => (
+              <button
+                key={bytesToHex(row.hash)}
+                onClick={() => navigate(`/customer/merchant/${bytesToHex(row.bag.catalog_ref)}`)}
+                className="w-40 shrink-0 overflow-hidden rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 text-left"
+              >
+                {row.bag.photo_data_uri ? (
+                  <img src={row.bag.photo_data_uri} alt="" className="h-20 w-full object-cover" />
+                ) : (
+                  <div className="flex h-20 w-full items-center justify-center bg-gradient-to-br from-amber-300 to-relay-500 text-2xl">🎁</div>
+                )}
+                <div className="p-2.5">
+                  <p className="truncate text-xs font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
+                  <p className="truncate text-[11px] text-ink-400">{catalogNameByHex.get(bytesToHex(row.bag.catalog_ref)) ?? "Nearby restaurant"}</p>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className="text-sm font-black text-relay-600 dark:text-relay-400">{formatCents(row.bag.price_cents)}</span>
+                    <span className="text-[11px] text-ink-400 line-through">{formatCents(row.bag.original_value_cents)}</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <h1 className="mb-1 text-xl font-black tracking-tight">Restaurants near you</h1>
       <p className="mb-4 text-xs text-ink-400">

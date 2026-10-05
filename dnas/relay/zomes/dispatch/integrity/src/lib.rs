@@ -4,7 +4,7 @@
 //! concrete entry type rather than one generalized "Job".
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
-use catalog_types::PromoCode;
+use catalog_types::{BagClaim, BagClaimFulfillment, PromoCode};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 use relay_types::GeoPoint;
@@ -258,6 +258,44 @@ fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timest
             }
         }
     }
+    // `must_get_valid_record` is literal, like `hdi`'s every other read --
+    // it returns exactly the record at `claim_ref`'s own action hash, never
+    // "whatever it was most recently updated to" (see `resolve_latest`'s
+    // own doc comment for the general shape of this gap). `BagClaim.status`
+    // is exactly the field `catalog::confirm_claim` updates, so checking
+    // "is it Confirmed" via this literal fetch would almost always see the
+    // original `Pending` content instead -- the exact same trap already
+    // named for `promo_code_ref.active` above, for the same reason (`active`
+    // is also mutated via a later `update_entry`, after the record's
+    // original creation). So, also like `active`, "is this claim actually
+    // Confirmed" is NOT checked here -- it's a coordinator-level,
+    // non-deterministic pre-check in `request_delivery` instead (cross-zome
+    // `catalog::get_bag_claim`, which calls `resolve_latest`). What *is*
+    // checkable here are `customer`/`fulfillment`, since those are set once
+    // at creation and never touched by `confirm_claim`'s own update (see
+    // `validate_claim_confirmation`'s own "every other field must stay the
+    // same" check) -- so whatever this literal fetch sees for them is
+    // already correct, confirmed or not.
+    if let Some(claim_ref) = &order.bag_claim_ref {
+        let claim_record = must_get_valid_record(claim_ref.clone())?;
+        let claim: BagClaim = claim_record
+            .entry()
+            .to_app_option()
+            .map_err(|e| wasm_error!(e))?
+            .ok_or(wasm_error!(WasmErrorInner::Guest(
+                "bag_claim_ref does not point at a BagClaim entry".into()
+            )))?;
+        if claim.customer != order.requester {
+            return Ok(ValidateCallbackResult::Invalid(
+                "bag_claim_ref's own customer must match this order's requester".into(),
+            ));
+        }
+        if !matches!(claim.fulfillment, BagClaimFulfillment::Delivery { .. }) {
+            return Ok(ValidateCallbackResult::Invalid(
+                "bag_claim_ref was not claimed for delivery".into(),
+            ));
+        }
+    }
     Ok(ValidateCallbackResult::Valid)
 }
 
@@ -288,6 +326,40 @@ fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKey) -> Exter
     // why this is coordinator-level/best-effort anyway; wiring promo
     // support into pickup orders is a separate, later addition, not part
     // of this entry type's initial shape.
+    //
+    // bag_claim_ref *is* checked here, symmetrically with validate_new_order's
+    // own check -- same reasoning, "claimed for pickup" instead of delivery,
+    // and the same "can't check `status` deterministically" exemption (see
+    // validate_new_order's own doc comment for why -- `must_get_valid_record`
+    // is literal, and `status` is exactly the field `confirm_claim` updates).
+    // Named gap shared by both order types, not solved here: nothing stops
+    // the same Confirmed claim from being spent on two separate orders (no
+    // claim -> order back-link exists to detect that). Same honestly-named
+    // trust tier as `confirm_claim`'s own re-derived quantity_total count --
+    // low-stakes (at most a merchant over-delivers one extra bag's worth of
+    // food, no money moves twice, since each resulting order still settles
+    // its own independently-authored order_total), not worth a new link
+    // type/redeemed-flag mechanism for this first pass.
+    if let Some(claim_ref) = &order.bag_claim_ref {
+        let claim_record = must_get_valid_record(claim_ref.clone())?;
+        let claim: BagClaim = claim_record
+            .entry()
+            .to_app_option()
+            .map_err(|e| wasm_error!(e))?
+            .ok_or(wasm_error!(WasmErrorInner::Guest(
+                "bag_claim_ref does not point at a BagClaim entry".into()
+            )))?;
+        if claim.customer != order.requester {
+            return Ok(ValidateCallbackResult::Invalid(
+                "bag_claim_ref's own customer must match this order's requester".into(),
+            ));
+        }
+        if claim.fulfillment != BagClaimFulfillment::Pickup {
+            return Ok(ValidateCallbackResult::Invalid(
+                "bag_claim_ref was not claimed for pickup".into(),
+            ));
+        }
+    }
     Ok(ValidateCallbackResult::Valid)
 }
 
@@ -836,7 +908,8 @@ fn validate_order_transition(
         && prior.tip_cents == order.tip_cents
         && prior.requested_delivery_time == order.requested_delivery_time
         && prior.promo_code_ref == order.promo_code_ref
-        && prior.dropoff_preference == order.dropoff_preference;
+        && prior.dropoff_preference == order.dropoff_preference
+        && prior.bag_claim_ref == order.bag_claim_ref;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "an order update may only change status (and accepted_bid, on acceptance) -- every other field must stay the same".into(),

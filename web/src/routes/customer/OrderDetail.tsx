@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
-import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
+import { getCatalog, listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
 import { submitReview, submitItemReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
@@ -17,7 +17,7 @@ import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
+import type { BagClaim, Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, GoodieBag, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -100,6 +100,17 @@ export function OrderDetail() {
           setItemNames(names);
         })
         .catch(() => {});
+      // A goodie-bag order's item_refs is `[bag_ref]`, not a real
+      // MenuItem -- the listMenuItems lookup above never finds it, so
+      // resolve its display name separately (see useClaimFinalization's
+      // own construction of this order).
+      if (decoded.bag_claim_ref && decoded.item_refs[0]) {
+        const key = bytesToHex(decoded.item_refs[0]);
+        getBagClaim(decoded.bag_claim_ref)
+          .then((claimRecord) => getGoodieBag(decodeEntry<BagClaim>(claimRecord).bag_ref))
+          .then((bagRecord) => setItemNames((prev) => ({ ...prev, [key]: `🎁 ${decodeEntry<GoodieBag>(bagRecord).title}` })))
+          .catch(() => {});
+      }
     }
     if (!dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
       getLegsForOrder(orderRef)
@@ -422,7 +433,8 @@ export function OrderDetail() {
               {driverRating > 0 && <Textarea value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
             </div>
           )}
-          {[...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
+          {/* A goodie bag isn't itemized -- item_refs is just [bag_ref], not real MenuItems -- so there's nothing per-item to rate. */}
+          {!order.bag_claim_ref && [...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
               <div className="flex flex-col gap-2">

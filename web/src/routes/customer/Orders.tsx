@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ClipboardList, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
+import { ClipboardList, PackageOpen, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOrdersForRequester, getMyPickupOrders, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
-import { getCatalog, listMenuItems } from "../../holochain/zomes/catalog";
+import { getCatalog, listMenuItems, getMyBagClaims, getGoodieBag } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
 import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
@@ -12,7 +12,13 @@ import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
 import { describeRecurrence } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { DeliveryOrder, MenuItem, MerchantCatalog, PickupOrder, RecurringOrderTemplate } from "../../holochain/types";
+import type { BagClaim, DeliveryOrder, GoodieBag, MenuItem, MerchantCatalog, PickupOrder, RecurringOrderTemplate } from "../../holochain/types";
+
+interface PendingClaimRow {
+  hash: Uint8Array;
+  claim: BagClaim;
+  bagTitle: string;
+}
 
 interface Row {
   hash: Uint8Array;
@@ -44,6 +50,7 @@ export function Orders() {
   const [opening, setOpening] = useState<string | null>(null);
   const [recurring, setRecurring] = useState<RecurringRow[]>([]);
   const [togglingRecurring, setTogglingRecurring] = useState<string | null>(null);
+  const [pendingClaims, setPendingClaims] = useState<PendingClaimRow[]>([]);
   const cart = useCart();
   const navigate = useNavigate();
 
@@ -94,6 +101,27 @@ export function Orders() {
       setPickupRows(decoded);
     } catch {
       setPickupRows([]);
+    }
+  }, []);
+
+  // Once confirmed, a claim gets finalized into a real pickup/delivery
+  // order automatically (see useClaimFinalization) and then shows up in
+  // the sections above instead -- this only ever shows the still-`Pending`
+  // ones, i.e. "waiting on the merchant."
+  const refreshPendingClaims = useCallback(async () => {
+    try {
+      const records = await getMyBagClaims();
+      const pending = records.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })).filter((c) => c.claim.status === "Pending");
+      const withTitles = await Promise.all(
+        pending.map(async ({ hash, claim }) => ({
+          hash,
+          claim,
+          bagTitle: await getGoodieBag(claim.bag_ref).then((r) => decodeEntry<GoodieBag>(r).title).catch(() => "Goodie bag"),
+        })),
+      );
+      setPendingClaims(withTitles);
+    } catch {
+      setPendingClaims([]);
     }
   }, []);
 
@@ -150,19 +178,22 @@ export function Orders() {
     refresh();
     refreshPickup();
     refreshRecurring();
+    refreshPendingClaims();
     const interval = setInterval(() => {
       refresh();
       refreshPickup();
+      refreshPendingClaims();
     }, POLL_MS);
     const unsub = onLocalSignal(() => {
       refresh();
       refreshPickup();
+      refreshPendingClaims();
     });
     return () => {
       clearInterval(interval);
       unsub();
     };
-  }, [refresh, refreshPickup, refreshRecurring]);
+  }, [refresh, refreshPickup, refreshRecurring, refreshPendingClaims]);
 
   if (rows === null || pickupRows === null) {
     return (
@@ -201,6 +232,24 @@ export function Orders() {
                 >
                   {row.template.active ? <Pause size={13} /> : <Play size={13} />} {row.template.active ? "Active" : "Paused"}
                 </Button>
+              </Card>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {pendingClaims.length > 0 && (
+        <motion.div variants={fadeSlideUp} className="mb-5">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+            <PackageOpen size={13} className="text-relay-500" /> Pending goodie bag claims
+          </p>
+          <div className="flex flex-col gap-2">
+            {pendingClaims.map((row) => (
+              <Card key={bytesToHex(row.hash)} className="flex items-center justify-between p-3.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.bagTitle}</p>
+                  <p className="text-xs text-ink-400">Waiting for the merchant to confirm</p>
+                </div>
               </Card>
             ))}
           </div>

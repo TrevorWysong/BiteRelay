@@ -35,6 +35,22 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let requester = agent_info()?.agent_initial_pubkey;
     let merchant = input.merchant.clone();
 
+    // See `orders::request_delivery`'s own identical pre-check -- same
+    // reason (`validate_new_pickup_order` can't deterministically see a
+    // claim's latest `status`), same best-effort posture.
+    if let Some(claim_ref) = &input.bag_claim_ref {
+        let response = call(CallTargetCell::Local, "catalog", "get_bag_claim".into(), None, claim_ref.clone());
+        if let Ok(ZomeCallResponse::Ok(extern_io)) = response {
+            if let Ok(record) = extern_io.decode::<Record>() {
+                if let Ok(Some(claim)) = record.entry().to_app_option::<catalog_types::BagClaim>() {
+                    if claim.status != catalog_types::BagClaimStatus::Confirmed {
+                        return Err(wasm_error!(WasmErrorInner::Guest("goodie bag claim is not yet confirmed".into())));
+                    }
+                }
+            }
+        }
+    }
+
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
