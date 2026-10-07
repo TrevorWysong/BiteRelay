@@ -196,9 +196,9 @@ await runScenario(async (scenario) => {
 
   // --- Reviews ---
   const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
-  await reputationOf(customer)("submit_review", { subject: driver.agentPubKey, order_original_action: orderRef, rating: 5, comment: "Great driver!" });
+  await reputationOf(customer)("submit_review", { target: { Driver: driver.agentPubKey }, order_original_action: orderRef, rating: 5, comment: "Great driver!" });
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  const driverReviews = await reputationOf(driver)<HcRecord[]>("get_reviews_for", driver.agentPubKey);
+  const driverReviews = (await reputationOf(driver)<{ reviews: HcRecord[] }>("get_reviews_for", { target: { Driver: driver.agentPubKey }, before: null })).reviews;
   assert.equal(driverReviews.length, 1);
   const review = decodeEntry<{ rating: number; comment: string }>(driverReviews[0]);
   assert.equal(review.rating, 5);

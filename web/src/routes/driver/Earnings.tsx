@@ -16,7 +16,9 @@ export function Earnings() {
   useEffect(() => {
     const me = myAgentPubKey();
     getBalance(me).then(setBalance);
-    getReputationSummary(me).then(setRep);
+    // Driver-scoped: deliveries only, never completions at a store this
+    // agent might also run.
+    getReputationSummary({ Driver: me }).then(setRep);
   }, []);
 
   return (

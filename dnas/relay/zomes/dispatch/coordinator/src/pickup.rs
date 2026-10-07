@@ -6,7 +6,7 @@
 //! dispute path in one place, rather than splitting across files the way
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
-use crate::orders::{settle_order_total, RecordEventInputWire, ReputationEventKindWire, ReputationRoleWire, SettleInputWire};
+use crate::orders::{record_reputation_event, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -28,12 +28,12 @@ pub struct RequestPickupOrderInput {
 
 /// No matching/signal-fanout step here unlike `orders::request_delivery` --
 /// there's no driver to find, so the only two parties who ever need to know
-/// about this order are the two already named on it. The merchant still
-/// needs a discovery link, same reasoning as `MerchantToOrder`.
+/// about this order are the two already named on it. The store still
+/// needs a discovery link, same reasoning as `StoreToOrder`.
 #[hdk_extern]
 pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
-    let merchant = input.merchant.clone();
+    let catalog_ref = input.catalog_ref.clone();
 
     // See `orders::request_delivery`'s own identical pre-check -- same
     // reason (`validate_new_pickup_order` can't deterministically see a
@@ -66,7 +66,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToPickupOrder, ())?;
-    create_link(merchant, action_hash.clone(), LinkTypes::MerchantToPickupOrder, ())?;
+    create_link(catalog_ref, action_hash.clone(), LinkTypes::StoreToPickupOrder, ())?;
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back pickup order".into())))
@@ -83,9 +83,10 @@ pub fn get_my_pickup_orders(requester: AgentPubKey) -> ExternResult<Vec<Record>>
     Ok(resolve_links_to_records(links))
 }
 
+/// One store's pickup-order queue -- see `orders::get_orders_for_store`.
 #[hdk_extern]
-pub fn get_pickup_orders_for_merchant(merchant: AgentPubKey) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(merchant, LinkTypes::MerchantToPickupOrder)?, GetStrategy::default())?;
+pub fn get_pickup_orders_for_store(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
+    let links = get_links(LinkQuery::try_new(catalog_ref, LinkTypes::StoreToPickupOrder)?, GetStrategy::default())?;
     Ok(resolve_links_to_records(links))
 }
 
@@ -144,27 +145,19 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     }
     let requester = order.requester.clone();
     let merchant = order.merchant.clone();
+    let catalog_ref = order.catalog_ref.clone();
     let order_total = order.order_total;
     order.status = PickupStatus::PickedUp;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
 
     settle_order_total(order_original_action.clone(), requester, merchant.clone(), order_total)?;
 
-    // Best-effort: a reputation bump for the merchant is valuable but
+    // Best-effort: a reputation bump for the store is valuable but
     // shouldn't block payment or completion if it fails -- same posture as
-    // complete_delivery's own provider-reputation call. No driver-side
-    // event here at all -- there is no driver.
-    let _ = call(
-        CallTargetCell::Local,
-        "reputation",
-        "record_event".into(),
-        None,
-        RecordEventInputWire {
-            subject: merchant,
-            order_ref: order_original_action,
-            kind: ReputationEventKindWire::OrderCompleted { subject_role: ReputationRoleWire::Provider },
-        },
-    );
+    // complete_delivery's own calls. No driver-side event here at all --
+    // there is no driver. Skipped for a merchant picking up from their own
+    // store (see `record_reputation_event`).
+    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_original_action, ReputationEventKindWire::OrderCompleted)?;
 
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed pickup order".into())))
@@ -214,10 +207,13 @@ pub struct RaisePickupDisputeInput {
 pub fn raise_pickup_dispute(input: RaisePickupDisputeInput) -> ExternResult<Record> {
     let (order_record, order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action.clone(), "PickupOrder")?;
     let me = agent_info()?.agent_initial_pubkey;
-    let respondent = if me == order.requester {
-        order.merchant.clone()
+    // The respondent's reputation target follows the role they played on
+    // this order: the merchant answers for their *store* (never their
+    // other stores, or their driving), the requester as a customer.
+    let (respondent, respondent_target) = if me == order.requester {
+        (order.merchant.clone(), ReputationTargetWire::Store(order.catalog_ref.clone()))
     } else if me == order.merchant {
-        order.requester.clone()
+        (order.requester.clone(), ReputationTargetWire::Customer(order.requester.clone()))
     } else {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "only the pickup order's requester or merchant may raise a dispute".into()
@@ -243,17 +239,7 @@ pub fn raise_pickup_dispute(input: RaisePickupDisputeInput) -> ExternResult<Reco
     let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
     let dispute_ref = dispute_record.action_address().clone();
 
-    let _ = call(
-        CallTargetCell::Local,
-        "reputation",
-        "record_event".into(),
-        None,
-        RecordEventInputWire {
-            subject: respondent,
-            order_ref: input.order_original_action.clone(),
-            kind: ReputationEventKindWire::DisputeRaised,
-        },
-    );
+    record_reputation_event(&respondent, respondent_target, input.order_original_action.clone(), ReputationEventKindWire::DisputeRaised)?;
 
     let mut updated_order = order;
     updated_order.status = PickupStatus::Disputed;
@@ -308,6 +294,7 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
 
     let requester = order.requester.clone();
     let merchant = order.merchant.clone();
+    let catalog_ref = order.catalog_ref.clone();
     let order_total = order.order_total;
     let target_status = match &outcome {
         DisputeOutcome::FavorProvider { .. } => PickupStatus::PickedUp,
@@ -335,17 +322,7 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
                     },
                 );
             }
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: requester,
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
         DisputeOutcome::FavorRequester { forfeit_amount } => {
             if forfeit_amount > 0 {
@@ -365,29 +342,14 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
                     return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
                 }
             }
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: merchant.clone(),
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if forfeit_amount > 0 {
-                let _ = call(
-                    CallTargetCell::Local,
-                    "reputation",
-                    "record_event".into(),
-                    None,
-                    RecordEventInputWire {
-                        subject: merchant,
-                        order_ref: input.order_original_action.clone(),
-                        kind: ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
-                    },
-                );
+                record_reputation_event(
+                    &merchant,
+                    ReputationTargetWire::Store(catalog_ref),
+                    input.order_original_action.clone(),
+                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                )?;
             }
         }
     }

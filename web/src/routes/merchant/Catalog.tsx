@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
-import { Gift, ListChecks, PackageOpen, Pencil, Plus, Sparkles, Star, Store, Tag } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { Gift, ListChecks, PackageOpen, Pencil, Plus, Sparkles, Star, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  publishCatalog,
+  getCatalog,
   setCatalogOpen,
   updateCatalogDetails,
   setDeliverySubsidyPercent,
   addMenuItem,
   updateMenuItem,
   listMenuItems,
-  getMyCatalog,
   createPromoCode,
   setPromoCodeActive,
   listPromoCodesForCatalog,
@@ -18,20 +18,21 @@ import {
   listPendingClaimsForMerchant,
   confirmClaim,
 } from "../../holochain/zomes/catalog";
-import { getReviewsFor } from "../../holochain/zomes/reputation";
+import { averageRating, getRatingSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
-import { useSession } from "../../store/session";
+import { useMerchantStores } from "../../store/merchantStores";
 import { Button, Card, Checkbox, Field, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { SplitAddressFields } from "../../components/SplitAddressFields";
 import { StarRating } from "../../components/StarRating";
+import { StoreSwitcher } from "../../components/StoreSwitcher";
+import { NewStoreForm } from "./NewStore";
 import { formatCatalogAddress, formatCents } from "../../lib/format";
 import { describeRequirement, describeReward } from "../../lib/promotions";
-import { describeError } from "../../lib/errors";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaim, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review, GoodieBag } from "../../holochain/types";
+import type { BagClaim, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, RatingSummary, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface PromoRow {
   hash: Uint8Array;
@@ -128,26 +129,24 @@ function buildReward(form: typeof EMPTY_PROMO_FORM): PromoReward | null {
   }
 }
 
+/// The Menu tab: everything about the *currently selected* store (see
+/// `StoreSwitcher`/`merchantStores.ts`) -- details, delivery cost sharing,
+/// promos, menu, goodie bags and reviews. Switching stores reloads all of
+/// it; nothing here is ever shared between two stores.
 export function MerchantCatalog() {
-  const location = useSession((s) => s.location);
-  const setLocation = useSession((s) => s.setLocation);
-  const [pickupLocation, setPickupLocation] = useState(location);
-  // Populated by AddressSearch's own `onSelectComponents` on the publish
-  // form below -- captured here (rather than only inside the search box's
-  // own internal state) so `publish()` can hand all four straight to
-  // `publishCatalog`, prefilling storefront details' split address fields
-  // at creation time instead of leaving them blank until a merchant
-  // re-types the same address a second time in "Storefront details."
-  const [addressDraft, setAddressDraft] = useState({ address_street: "", address_city: "", address_state: "", address_zip: "" });
+  const routerState = useLocation().state as { editDetails?: boolean } | null;
+  const stores = useMerchantStores((s) => s.stores);
+  const activeHex = useMerchantStores((s) => s.activeHex);
+  const loadStores = useMerchantStores((s) => s.load);
+  const catalogHash = activeHex ? hexToBytes(activeHex) : null;
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
-  const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
+  const [rating, setRating] = useState<RatingSummary | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsBefore, setReviewsBefore] = useState<Timestamp | null>(null);
+  const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [businessName, setBusinessName] = useState("");
-  const [publishing, setPublishing] = useState(false);
-  const [publishError, setPublishError] = useState<string | null>(null);
-  const [editingDetails, setEditingDetails] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(!!routerState?.editDetails);
   const [detailsDraft, setDetailsDraft] = useState({
     description: "",
     cuisine_type: "",
@@ -181,12 +180,25 @@ export function MerchantCatalog() {
   const [savingBag, setSavingBag] = useState(false);
   const [confirmingClaim, setConfirmingClaim] = useState<string | null>(null);
 
+  // Every async read below is tagged with the store it was for -- a
+  // response for the store you just switched *away* from must never land
+  // on the one you switched to.
+  const loadingFor = useRef<string | null>(null);
+
   async function load() {
-    const mine = await getMyCatalog();
-    if (mine) {
-      const decoded = decodeEntry<MerchantCatalog>(mine.record);
+    if (!activeHex) {
+      setLoading(false);
+      return;
+    }
+    const hex = activeHex;
+    const ref = hexToBytes(hex);
+    loadingFor.current = hex;
+    const stale = () => loadingFor.current !== hex;
+    const record = await getCatalog(ref);
+    if (stale()) return;
+    {
+      const decoded = decodeEntry<MerchantCatalog>(record);
       setCatalog(decoded);
-      setCatalogHash(mine.original_action);
       setDetailsDraft({
         description: decoded.description,
         cuisine_type: decoded.cuisine_type,
@@ -201,55 +213,77 @@ export function MerchantCatalog() {
         max_delivery_radius_km: decoded.max_delivery_radius_km,
       });
       setSubsidyDraft(decoded.delivery_subsidy_percent.toString());
-      const itemsPage = await listMenuItems(mine.original_action);
-      setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
-      getReviewsFor(decoded.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
-      const promoRecords = await listPromoCodesForCatalog(mine.original_action);
-      setPromos(promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })));
-      const bagRecords = await listGoodieBagsForCatalog(mine.original_action);
-      setBags(bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })));
-      const claimRecords = await listPendingClaimsForMerchant(mine.original_action);
-      setPendingClaims(claimRecords.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })));
     }
+    const [itemsPage, promoRecords, bagRecords, claimRecords] = await Promise.all([
+      listMenuItems(ref),
+      listPromoCodesForCatalog(ref),
+      listGoodieBagsForCatalog(ref),
+      listPendingClaimsForMerchant(ref),
+    ]);
+    if (stale()) return;
+    setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
+    setPromos(promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })));
+    setBags(bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })));
+    setPendingClaims(claimRecords.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })));
     setLoading(false);
+    // Ratings are this store's own -- never the owner's other stores, and
+    // never their driving (see `reputation_integrity`'s module doc).
+    getRatingSummary({ Store: ref }).then((summary) => !stale() && setRating(summary));
+    getReviewsFor({ Store: ref }).then((page) => {
+      if (stale()) return;
+      setReviews(page.reviews.map((r) => decodeEntry<Review>(r)));
+      setReviewsBefore(page.next_before);
+    });
+  }
+
+  async function loadMoreReviews() {
+    if (!catalogHash || reviewsBefore === null) return;
+    const hex = activeHex;
+    setLoadingMoreReviews(true);
+    try {
+      const page = await getReviewsFor({ Store: catalogHash }, reviewsBefore);
+      if (loadingFor.current !== hex) return;
+      setReviews((prev) => [...prev, ...page.reviews.map((r) => decodeEntry<Review>(r))]);
+      setReviewsBefore(page.next_before);
+    } finally {
+      setLoadingMoreReviews(false);
+    }
   }
 
   useEffect(() => {
-    load();
+    if (stores === null) loadStores();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function publish() {
-    if (!businessName.trim()) return;
-    setPublishing(true);
-    setPublishError(null);
-    try {
-      await publishCatalog({ business_name: businessName.trim(), location: pickupLocation, ...addressDraft });
-      // load() finds "my own catalog" via the OwnerToCatalog link now, not
-      // by geohash, so it isn't location-dependent -- but every *other*
-      // geohash-based read in the app (customer browse, etc.) still uses
-      // the session location, so still sync it to where the merchant just
-      // said their real pickup point is.
-      setLocation(pickupLocation);
-      await load();
-      // Open the details editor immediately -- a freshly published
-      // storefront has nothing but a name and a pin; walking straight
-      // into "fill in the rest" (photo, description, cuisine, phone,
-      // hours -- the address is already prefilled from addressDraft
-      // above) reads as one continuous setup flow instead of a second,
-      // easy-to-miss step a merchant has to go find the edit pencil for.
-      setEditingDetails(true);
-    } catch (err) {
-      setPublishError(describeError(err));
-    } finally {
-      setPublishing(false);
-    }
-  }
+  // Switching stores starts from a clean slate -- nothing from the
+  // previous store may linger on screen while the next one loads. The
+  // first run is the initial mount, which keeps `editDetails` from a
+  // just-published store (see NewStore.tsx) open.
+  const firstStoreLoad = useRef(true);
+  useEffect(() => {
+    if (!firstStoreLoad.current) setEditingDetails(false);
+    firstStoreLoad.current = false;
+    setLoading(true);
+    setCatalog(null);
+    setItems(null);
+    setRating(null);
+    setReviews([]);
+    setReviewsBefore(null);
+    setPromos([]);
+    setBags([]);
+    setPendingClaims([]);
+    resetItemForm();
+    setShowAddPromo(false);
+    setShowAddBag(false);
+    setEditingSubsidy(false);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeHex]);
 
   async function toggleOpen() {
     if (!catalogHash || !catalog) return;
     await setCatalogOpen(catalogHash, !catalog.is_open);
-    await load();
+    await Promise.all([load(), loadStores()]);
   }
 
   async function saveDetails() {
@@ -257,7 +291,7 @@ export function MerchantCatalog() {
     setSavingDetails(true);
     try {
       await updateCatalogDetails(catalogHash, detailsDraft);
-      await load();
+      await Promise.all([load(), loadStores()]);
       setEditingDetails(false);
     } finally {
       setSavingDetails(false);
@@ -404,9 +438,14 @@ export function MerchantCatalog() {
     await load();
   }
 
-  if (loading) {
+  if (stores !== null && stores.length === 0) {
+    return <NewStoreForm firstStore />;
+  }
+
+  if (loading || stores === null) {
     return (
       <div className="px-4 pt-4">
+        {stores !== null && <StoreSwitcher />}
         <Skeleton className="h-32 w-full mb-4" />
         <Skeleton className="h-6 w-1/2 mb-3" />
         <Skeleton className="h-24 w-full mb-3" />
@@ -415,43 +454,18 @@ export function MerchantCatalog() {
     );
   }
 
-  if (!catalog || !catalogHash) {
-    return (
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-4 pt-8">
-        <div className="mb-5 flex flex-col items-center gap-2 text-center">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-relay-100 dark:bg-relay-900/30 text-relay-600">
-            <Store size={22} />
-          </div>
-          <h1 className="text-lg font-black text-ink-900 dark:text-ink-50">Publish your storefront</h1>
-          <p className="text-xs text-ink-400">This creates your restaurant's storefront, visible to customers near your current location right away.</p>
-        </div>
-        <Card className="flex flex-col gap-3 p-5">
-          <Field label="Business name">
-            <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Cara's Kitchen" />
-          </Field>
-          <SplitAddressFields
-            point={pickupLocation}
-            onPointChange={setPickupLocation}
-            address={{ street: addressDraft.address_street, city: addressDraft.address_city, state: addressDraft.address_state, zip: addressDraft.address_zip }}
-            onAddressChange={(a) => setAddressDraft({ address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip })}
-            streetLabel="Pickup location"
-          />
-          {publishError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{publishError}</p>}
-          <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
-            Publish catalog
-          </Button>
-        </Card>
-      </motion.div>
-    );
-  }
+  if (!catalog || !catalogHash) return null;
 
-  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
+  const avgRating = rating ? averageRating(rating) : null;
   const itemNameByHex = new Map((items ?? []).map((row) => [bytesToHex(row.hash), row.item.name]));
   const itemName = (hex: string) => itemNameByHex.get(hex);
   const grouped = groupByCategory(items ?? []);
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-8">
+      <div className="px-4 pt-4">
+        <StoreSwitcher />
+      </div>
       {catalog.banner_data_uri && <img src={catalog.banner_data_uri} alt="" className="h-32 w-full object-cover" />}
       {/* A plain (non-motion) DOM element here broke framer-motion's
           variants propagation from this component's own staggerContainer
@@ -478,7 +492,7 @@ export function MerchantCatalog() {
             {catalog.is_open ? "Open" : "Closed"} · toggle
           </motion.button>
         </motion.div>
-        {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} />}
+        {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} />}
 
         <motion.div variants={fadeSlideUp}>
         <Card className="my-4 p-4">
@@ -1000,11 +1014,19 @@ export function MerchantCatalog() {
             <div className="flex flex-col gap-3">
               {reviews.map((r, i) => (
                 <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-2 last:border-0 last:pb-0">
-                  <StarRating value={r.rating} size={12} />
+                  <div className="flex items-center justify-between">
+                    <StarRating value={r.rating} size={12} />
+                    <span className="text-[11px] text-ink-300">{new Date(r.created_at / 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                  </div>
                   {r.comment && <p className="mt-1 text-sm text-ink-600 dark:text-ink-300">{r.comment}</p>}
                 </div>
               ))}
             </div>
+            {reviewsBefore !== null && (
+              <Button variant="ghost" loading={loadingMoreReviews} onClick={loadMoreReviews} className="mt-3 w-full py-2 text-xs">
+                Show older reviews
+              </Button>
+            )}
           </Card>
           </motion.div>
         )}

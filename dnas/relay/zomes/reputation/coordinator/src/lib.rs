@@ -1,20 +1,44 @@
 //! Coordinator zome for reputation: `record_event` (called by a
 //! counterparty, never by the subject themselves) and `get_reputation_summary`,
 //! a derived, UI-cache-only read -- see the integrity crate's doc comment
-//! on why this is never the actual trust source of truth.
+//! on why this is never the actual trust source of truth -- plus store,
+//! driver and menu-item reviews with their checkpointed rating summaries.
+//!
+//! Every read and write is keyed by a scoped target (`ReputationTarget`/
+//! `ReviewTarget`), never a bare agent -- see the integrity crate's module
+//! doc comment for why.
 
 use hdk::prelude::*;
 use relay_coordinator_support::{fold_since_checkpoint, latest_checkpoint, resolve_latest, should_checkpoint};
 use reputation_integrity::*;
 
+/// Where a `ReputationTarget`'s events and checkpoints live: the link base
+/// plus the two link types reserved for that kind of target.
+fn event_links(target: &ReputationTarget) -> (AnyLinkableHash, LinkTypes, LinkTypes) {
+    match target {
+        ReputationTarget::Store(catalog_ref) => (catalog_ref.clone().into(), LinkTypes::StoreToEvent, LinkTypes::StoreToReputationCheckpoint),
+        ReputationTarget::Driver(agent) => (agent.clone().into(), LinkTypes::DriverToEvent, LinkTypes::DriverToReputationCheckpoint),
+        ReputationTarget::Customer(agent) => (agent.clone().into(), LinkTypes::CustomerToEvent, LinkTypes::CustomerToReputationCheckpoint),
+    }
+}
+
+/// `event_links`' sibling for `ReviewTarget`: base, review link type,
+/// rating-checkpoint link type.
+fn review_links(target: &ReviewTarget) -> (AnyLinkableHash, LinkTypes, LinkTypes) {
+    match target {
+        ReviewTarget::Store(catalog_ref) => (catalog_ref.clone().into(), LinkTypes::StoreToReview, LinkTypes::StoreToRatingCheckpoint),
+        ReviewTarget::Driver(agent) => (agent.clone().into(), LinkTypes::DriverToReview, LinkTypes::DriverToRatingCheckpoint),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordEventInput {
-    pub subject: AgentPubKey,
+    pub target: ReputationTarget,
     pub order_ref: ActionHash,
     pub kind: ReputationEventKind,
 }
 
-/// Roughly every this-many events per subject, a `ReputationCheckpoint` is
+/// Roughly every this-many events per target, a `ReputationCheckpoint` is
 /// also written -- see `ReputationCheckpoint`'s doc comment (and `ledger`'s
 /// identical `CHECKPOINT_INTERVAL`) for why this is O(n/K), not O(1).
 const CHECKPOINT_INTERVAL: u64 = 20;
@@ -25,13 +49,14 @@ const CHECKPOINT_INTERVAL: u64 = 20;
 /// deliberately the *event's own* `recorded_at`, not a fresh `sys_time()`
 /// call -- see `ledger`'s identical reasoning for why that matters for the
 /// `after` boundary in `get_reputation_summary` below.
-fn maybe_write_checkpoint(subject: AgentPubKey, event_hash: ActionHash, event_recorded_at: Timestamp) {
+fn maybe_write_checkpoint(target: ReputationTarget, event_hash: ActionHash, event_recorded_at: Timestamp) {
     if !should_checkpoint(&event_hash, CHECKPOINT_INTERVAL) {
         return;
     }
-    let Ok(summary) = get_reputation_summary(subject.clone()) else { return };
+    let Ok(summary) = get_reputation_summary(target.clone()) else { return };
+    let (base, _, checkpoint_link) = event_links(&target);
     let checkpoint = ReputationCheckpoint {
-        subject: subject.clone(),
+        target,
         completed_count: summary.completed_count,
         cancelled_by_them_count: summary.cancelled_by_them_count,
         dispute_raised_count: summary.dispute_raised_count,
@@ -41,7 +66,7 @@ fn maybe_write_checkpoint(subject: AgentPubKey, event_hash: ActionHash, event_re
         recorded_at: event_recorded_at,
     };
     if let Ok(action_hash) = create_entry(&EntryTypes::ReputationCheckpoint(checkpoint)) {
-        let _ = create_link(subject, action_hash, LinkTypes::SubjectToReputationCheckpoint, ());
+        let _ = create_link(base, action_hash, checkpoint_link, ());
     }
 }
 
@@ -53,20 +78,21 @@ fn maybe_write_checkpoint(subject: AgentPubKey, event_hash: ActionHash, event_re
 pub fn record_event(input: RecordEventInput) -> ExternResult<Record> {
     let counterparty = agent_info()?.agent_initial_pubkey;
     let recorded_at = sys_time()?;
+    let (base, event_link, _) = event_links(&input.target);
     let event = ReputationEvent {
-        subject: input.subject.clone(),
+        target: input.target.clone(),
         counterparty,
         order_ref: input.order_ref,
         kind: input.kind,
         recorded_at,
     };
     let action_hash = create_entry(&EntryTypes::ReputationEvent(event))?;
-    create_link(input.subject.clone(), action_hash.clone(), LinkTypes::SubjectToEvent, ())?;
+    create_link(base, action_hash.clone(), event_link, ())?;
     // get_reputation_summary (inside maybe_write_checkpoint) reads via
     // GetStrategy::Local, so it needs this event to already be visible
     // locally -- true here since we just authored it ourselves, in this
     // same call, on our own chain (the counterparty's, not the subject's).
-    maybe_write_checkpoint(input.subject, action_hash.clone(), recorded_at);
+    maybe_write_checkpoint(input.target, action_hash.clone(), recorded_at);
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back reputation event".into())))
 }
@@ -88,15 +114,14 @@ pub struct ReputationSummary {
 /// `get_balance` doc comment for why, on a small/fresh network.
 ///
 /// Finds the most recent `ReputationCheckpoint` and sums only the events
-/// since it, instead of this subject's *entire* event history -- O(n/K),
+/// since it, instead of this target's *entire* event history -- O(n/K),
 /// not O(1), exactly like `ledger::get_balance` (see that function's doc
 /// comment for the full reasoning, and for why `already_counted` below
 /// exists: `LinkQuery.after` is `>=`, not strictly-greater).
 #[hdk_extern]
-pub fn get_reputation_summary(subject: AgentPubKey) -> ExternResult<ReputationSummary> {
-    let checkpoint = latest_checkpoint(subject.clone(), LinkTypes::SubjectToReputationCheckpoint, |c: &ReputationCheckpoint| {
-        c.recorded_at
-    })?;
+pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
+    let (base, event_link, checkpoint_link) = event_links(&target);
+    let checkpoint = latest_checkpoint(base.clone(), checkpoint_link, |c: &ReputationCheckpoint| c.recorded_at)?;
     let (mut summary, since, already_counted) = match &checkpoint {
         Some(checkpoint) => (
             ReputationSummary {
@@ -112,29 +137,78 @@ pub fn get_reputation_summary(subject: AgentPubKey) -> ExternResult<ReputationSu
         None => (ReputationSummary::default(), None, None),
     };
 
-    fold_since_checkpoint::<ReputationEvent, _, _>(
-        subject,
-        LinkTypes::SubjectToEvent,
-        since,
-        already_counted,
-        &mut summary,
-        |summary, event| match event.kind {
-            ReputationEventKind::OrderCompleted { .. } => summary.completed_count += 1,
+    fold_since_checkpoint::<ReputationEvent, _, _>(base, event_link, since, already_counted, &mut summary, |summary, event| {
+        match event.kind {
+            ReputationEventKind::OrderCompleted => summary.completed_count += 1,
             ReputationEventKind::OrderCancelledByThem => summary.cancelled_by_them_count += 1,
             ReputationEventKind::DisputeRaised => summary.dispute_raised_count += 1,
             ReputationEventKind::DisputeResolvedAgainst => summary.dispute_resolved_against_count += 1,
             ReputationEventKind::CollateralForfeited { amount } => summary.total_collateral_forfeited += amount,
-        },
-    )?;
+        }
+    })?;
     Ok(summary)
 }
 
+/// How many `ReputationCheckpoint`s exist for `target` -- genuinely useful
+/// for debugging/monitoring the checkpoint mechanism itself (architecture
+/// plan §9.4: is it actually engaging, roughly how often), not just a test
+/// hook.
+#[hdk_extern]
+pub fn count_reputation_checkpoints(target: ReputationTarget) -> ExternResult<u32> {
+    let (base, _, checkpoint_link) = event_links(&target);
+    let links = get_links(LinkQuery::try_new(base, checkpoint_link)?, GetStrategy::Local)?;
+    Ok(links.len() as u32)
+}
+
+// --- store/driver reviews ---
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitReviewInput {
-    pub subject: AgentPubKey,
+    pub target: ReviewTarget,
     pub order_original_action: ActionHash,
     pub rating: u8,
     pub comment: String,
+}
+
+const RATING_CHECKPOINT_INTERVAL: u64 = 20;
+
+/// Best-effort, same posture as every other checkpoint writer here.
+fn maybe_write_rating_checkpoint(target: ReviewTarget, review_hash: ActionHash, review_created_at: Timestamp) {
+    if !should_checkpoint(&review_hash, RATING_CHECKPOINT_INTERVAL) {
+        return;
+    }
+    let Ok(summary) = get_rating_summary(target.clone()) else { return };
+    let (base, _, checkpoint_link) = review_links(&target);
+    let checkpoint = RatingCheckpoint {
+        target,
+        count: summary.count,
+        rating_sum: summary.rating_sum,
+        related_review: review_hash,
+        recorded_at: review_created_at,
+    };
+    if let Ok(action_hash) = create_entry(&EntryTypes::RatingCheckpoint(checkpoint)) {
+        let _ = create_link(base, action_hash, checkpoint_link, ());
+    }
+}
+
+/// Every review the caller has already left on this order, via its
+/// `OrderToReview` links -- a small, per-order link set (at most one store
+/// review and one driver review per order).
+fn my_reviews_for_order(order_original_action: &ActionHash) -> ExternResult<Vec<(Record, Review)>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let links = get_links(LinkQuery::try_new(order_original_action.clone(), LinkTypes::OrderToReview)?, GetStrategy::default())?;
+    let mut out = Vec::new();
+    for link in links {
+        if link.author != me {
+            continue;
+        }
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        let Some(record) = get(hash, GetOptions::default())? else { continue };
+        if let Ok(Some(review)) = record.entry().to_app_option::<Review>() {
+            out.push((record, review));
+        }
+    }
+    Ok(out)
 }
 
 /// `order_original_action` is resolved to its *latest* record before being
@@ -146,30 +220,82 @@ pub struct SubmitReviewInput {
 /// `apply_dispute_resolution` advancing `dispute_ref` to a resolved action
 /// for the same reason. This coordinator's own status check is a fast-fail
 /// convenience; `validate_review` is what actually enforces it.
+///
+/// One review per target per order, same as DoorDash/Uber Eats -- checked
+/// here against the caller's own `OrderToReview` links. A coordinator-level
+/// rule (the same trust tier as `confirm_claim`'s quantity count): counting
+/// sibling links isn't something `validate()` can do deterministically.
 #[hdk_extern]
 pub fn submit_review(input: SubmitReviewInput) -> ExternResult<Record> {
     if input.rating < 1 || input.rating > 5 {
         return Err(wasm_error!(WasmErrorInner::Guest("rating must be between 1 and 5".into())));
     }
-    let order_record = resolve_latest(input.order_original_action)?;
+    if my_reviews_for_order(&input.order_original_action)?.iter().any(|(_, r)| r.target == input.target) {
+        return Err(wasm_error!(WasmErrorInner::Guest("You've already rated this order.".into())));
+    }
+    let order_record = resolve_latest(input.order_original_action.clone())?;
     let author = agent_info()?.agent_initial_pubkey;
+    let created_at = sys_time()?;
     let review = Review {
-        subject: input.subject.clone(),
+        target: input.target.clone(),
         author,
         order_ref: order_record.action_address().clone(),
         rating: input.rating,
         comment: input.comment,
-        created_at: sys_time()?,
+        created_at,
     };
     let action_hash = create_entry(&EntryTypes::Review(review))?;
-    create_link(input.subject, action_hash.clone(), LinkTypes::SubjectToReview, ())?;
+    let (base, review_link, _) = review_links(&input.target);
+    create_link(base, action_hash.clone(), review_link, ())?;
+    create_link(input.order_original_action, action_hash.clone(), LinkTypes::OrderToReview, ())?;
+    maybe_write_rating_checkpoint(input.target, action_hash.clone(), created_at);
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back review".into())))
 }
 
+/// What the caller has already rated on this order -- lets an order screen
+/// show "thanks for rating" instead of the rating form again after a
+/// reload, rather than relying on in-memory UI state.
 #[hdk_extern]
-pub fn get_reviews_for(subject: AgentPubKey) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(subject, LinkTypes::SubjectToReview)?, GetStrategy::default())?;
+pub fn get_my_reviews_for_order(order_original_action: ActionHash) -> ExternResult<Vec<Record>> {
+    Ok(my_reviews_for_order(&order_original_action)?.into_iter().map(|(record, _)| record).collect())
+}
+
+const REVIEW_PAGE_SIZE: usize = 20;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetReviewsInput {
+    pub target: ReviewTarget,
+    /// Page cursor -- pass back the previous call's `next_before` to load
+    /// older reviews. `None` starts from the newest.
+    pub before: Option<Timestamp>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReviewsPage {
+    pub reviews: Vec<Record>,
+    pub next_before: Option<Timestamp>,
+}
+
+/// Newest-first, paginated -- a busy store accumulates reviews forever, and
+/// a store page only ever shows the most recent handful (the average comes
+/// from `get_rating_summary`, not from loading every review). `before` is
+/// inclusive (`<=`, the mirror of `after`'s `>=`, see `next_page_cursor`),
+/// so the next cursor steps one microsecond back from the oldest review
+/// included.
+#[hdk_extern]
+pub fn get_reviews_for(input: GetReviewsInput) -> ExternResult<ReviewsPage> {
+    let (base, review_link, _) = review_links(&input.target);
+    let mut query = LinkQuery::try_new(base, review_link)?;
+    query.before = input.before;
+    let mut links = get_links(query, GetStrategy::default())?;
+    links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
+    let next_before = if links.len() > REVIEW_PAGE_SIZE {
+        Some(Timestamp::from_micros(links[REVIEW_PAGE_SIZE - 1].timestamp.as_micros() - 1))
+    } else {
+        None
+    };
+    links.truncate(REVIEW_PAGE_SIZE);
     let mut reviews = Vec::with_capacity(links.len());
     for link in links {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
@@ -177,24 +303,40 @@ pub fn get_reviews_for(subject: AgentPubKey) -> ExternResult<Vec<Record>> {
             reviews.push(record);
         }
     }
-    Ok(reviews)
+    Ok(ReviewsPage { reviews, next_before })
 }
 
-/// How many `ReputationCheckpoint`s exist for `subject` -- genuinely useful
-/// for debugging/monitoring the checkpoint mechanism itself (architecture
-/// plan §9.4: is it actually engaging, roughly how often), not just a test
-/// hook.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct RatingSummary {
+    pub count: u32,
+    pub rating_sum: u32,
+}
+
+/// The star rating shown on a store card/page or a driver's bid --
+/// checkpoint-accelerated, same O(n/K) pattern and `>=` double-count guard
+/// as `get_reputation_summary`. See `get_item_rating_summary` for why the
+/// average itself isn't stored.
 #[hdk_extern]
-pub fn count_reputation_checkpoints(subject: AgentPubKey) -> ExternResult<u32> {
-    let links = get_links(
-        LinkQuery::try_new(subject, LinkTypes::SubjectToReputationCheckpoint)?,
-        GetStrategy::Local,
-    )?;
-    Ok(links.len() as u32)
+pub fn get_rating_summary(target: ReviewTarget) -> ExternResult<RatingSummary> {
+    let (base, review_link, checkpoint_link) = review_links(&target);
+    let checkpoint = latest_checkpoint(base.clone(), checkpoint_link, |c: &RatingCheckpoint| c.recorded_at)?;
+    let (mut summary, since, already_counted) = match &checkpoint {
+        Some(checkpoint) => (
+            RatingSummary { count: checkpoint.count, rating_sum: checkpoint.rating_sum },
+            Some(checkpoint.recorded_at),
+            Some(checkpoint.related_review.clone()),
+        ),
+        None => (RatingSummary::default(), None, None),
+    };
+    fold_since_checkpoint::<Review, _, _>(base, review_link, since, already_counted, &mut summary, |summary, review| {
+        summary.count += 1;
+        summary.rating_sum += review.rating as u32;
+    })?;
+    Ok(summary)
 }
 
-// --- per-item ratings -- same shape as Review/get_reputation_summary
-// above, keyed by a MenuItem's action hash instead of an agent pubkey ---
+// --- per-item ratings -- same shape as the store/driver reviews above,
+// keyed by a MenuItem's action hash instead ---
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitItemReviewInput {

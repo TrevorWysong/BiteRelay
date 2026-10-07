@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getNearbyMerchants, listMenuItems, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
-import { getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
+import { averageRating, getRatingSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
@@ -17,7 +17,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, Review, GoodieBag } from "../../holochain/types";
+import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, RatingSummary, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface BagRow {
   hash: Uint8Array;
@@ -33,7 +33,10 @@ export function MerchantDetail() {
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(routerState?.catalog ?? null);
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(routerState?.catalogHash ?? null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
+  const [rating, setRating] = useState<RatingSummary | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsBefore, setReviewsBefore] = useState<Timestamp | null>(null);
+  const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
   const { favoritesHex, toggleFavorite } = useFavorites();
   const favorited = catalogHash ? favoritesHex.has(bytesToHex(catalogHash)) : false;
   const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({});
@@ -110,10 +113,38 @@ export function MerchantDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash, location]);
 
+  // This store's own rating and reviews -- keyed by the store (`hash`),
+  // not its owner, so a multi-store owner's other locations (or their
+  // driving) never bleed into this page.
   useEffect(() => {
-    if (!catalog) return;
-    getReviewsFor(catalog.owner).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
-  }, [catalog]);
+    if (!hash) return;
+    const ref = hexToBytes(hash);
+    let cancelled = false;
+    setRating(null);
+    setReviews([]);
+    setReviewsBefore(null);
+    getRatingSummary({ Store: ref }).then((summary) => !cancelled && setRating(summary));
+    getReviewsFor({ Store: ref }).then((page) => {
+      if (cancelled) return;
+      setReviews(page.reviews.map((r) => decodeEntry<Review>(r)));
+      setReviewsBefore(page.next_before);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hash]);
+
+  async function loadMoreReviews() {
+    if (!hash || reviewsBefore === null) return;
+    setLoadingMoreReviews(true);
+    try {
+      const page = await getReviewsFor({ Store: hexToBytes(hash) }, reviewsBefore);
+      setReviews((prev) => [...prev, ...page.reviews.map((r) => decodeEntry<Review>(r))]);
+      setReviewsBefore(page.next_before);
+    } finally {
+      setLoadingMoreReviews(false);
+    }
+  }
 
   function openClaim(row: BagRow) {
     const hex = bytesToHex(row.hash);
@@ -173,7 +204,7 @@ export function MerchantDetail() {
   }
 
   const cartCount = cart.lines.reduce((n, l) => n + l.quantity, 0);
-  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
+  const avgRating = rating ? averageRating(rating) : null;
   const grouped = groupByCategory(filteredItems);
 
   return (
@@ -201,7 +232,7 @@ export function MerchantDetail() {
         {catalog.description && <p className="mt-1 text-sm text-ink-500">{catalog.description}</p>}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-400">
-          {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} />}
+          {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} />}
           <span className={catalog.is_open ? "font-semibold text-presence-600" : "font-semibold text-red-500"}>{catalog.is_open ? "Open now" : "Closed"}</span>
           {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
           {(catalog.hours_open || catalog.hours_close) && (
@@ -368,10 +399,18 @@ export function MerchantDetail() {
             <div className="flex flex-col gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
               {reviews.map((r, i) => (
                 <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-3 last:border-0 last:pb-0">
-                  <StarRating value={r.rating} size={12} />
+                  <div className="flex items-center justify-between">
+                    <StarRating value={r.rating} size={12} />
+                    <span className="text-[11px] text-ink-300">{new Date(r.created_at / 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                  </div>
                   {r.comment && <p className="mt-1 text-sm text-ink-600 dark:text-ink-300">{r.comment}</p>}
                 </div>
               ))}
+              {reviewsBefore !== null && (
+                <Button variant="ghost" loading={loadingMoreReviews} onClick={loadMoreReviews} className="w-full py-2 text-xs">
+                  Show older reviews
+                </Button>
+              )}
             </div>
           </motion.div>
         )}

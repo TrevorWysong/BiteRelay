@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
-import { submitReview, submitItemReview, getReputationSummary, getReviewsFor } from "../../holochain/zomes/reputation";
+import { averageRating, getMyReviewsForOrder, getRatingSummary, getReputationSummary, submitItemReview, submitReview } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
-import { onLocalSignal } from "../../holochain/client";
+import { myAgentPubKey, onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
@@ -47,15 +47,19 @@ const POLL_MS = 6000;
 /// that choice should actually be informed by the bidder's track record,
 /// not just price/ETA/warrants -- see the architecture plan's discussion
 /// of why the restaurant doesn't get a separate veto: shared visibility
-/// into the same trust signal covers that interest too. Also resolves a
-/// real display name instead of showing the bidder's raw identity hash --
-/// `null` (falling back to `shortAgentId`) just means they haven't set one.
+/// into the same trust signal covers that interest too. Driver-scoped
+/// only: a bidder who also runs a restaurant is judged on their deliveries
+/// here, never their store's food. Also resolves a real display name
+/// instead of showing the bidder's raw identity hash -- `null` (falling
+/// back to `shortAgentId`) just means they haven't set one.
 async function fetchDriverStats(agent: Uint8Array): Promise<DriverStats> {
-  const [summary, reviews, profileRecord] = await Promise.all([getReputationSummary(agent), getReviewsFor(agent), getProfileForAgent(agent)]);
-  const decoded = reviews.map((r) => decodeEntry<Review>(r));
-  const avgRating = decoded.length ? decoded.reduce((s, r) => s + r.rating, 0) / decoded.length : 0;
+  const [summary, rating, profileRecord] = await Promise.all([
+    getReputationSummary({ Driver: agent }),
+    getRatingSummary({ Driver: agent }),
+    getProfileForAgent(agent),
+  ]);
   const displayName = profileRecord ? decodeEntry<Profile>(profileRecord).display_name : null;
-  return { completedCount: summary.completed_count, avgRating, reviewCount: decoded.length, displayName: displayName || null };
+  return { completedCount: summary.completed_count, avgRating: averageRating(rating) ?? 0, reviewCount: rating.count, displayName: displayName || null };
 }
 
 export function OrderDetail() {
@@ -74,7 +78,12 @@ export function OrderDetail() {
   const [merchantComment, setMerchantComment] = useState("");
   const [driverRating, setDriverRating] = useState(0);
   const [driverComment, setDriverComment] = useState("");
-  const [reviewsSubmitted, setReviewsSubmitted] = useState(false);
+  // What this customer has already rated on this order, read back from
+  // the conductor (`get_my_reviews_for_order`) rather than kept only in
+  // memory -- otherwise a reload brings the rating form straight back and
+  // invites a duplicate. `null` until loaded.
+  const [rated, setRated] = useState<{ store: boolean; driver: boolean } | null>(null);
+  const [itemsRated, setItemsRated] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [pickup, setPickup] = useState<GeoPoint | null>(null);
   const [driverLocation, setDriverLocation] = useState<GeoPoint | null>(null);
@@ -90,7 +99,7 @@ export function OrderDetail() {
   // intended "fetch once" -- refs aren't captured by value the way a
   // closed-over state variable is, so reading `.current` here always sees
   // the latest write regardless of when this closure was created.
-  const loadedRef = useRef({ pickup: false, itemNames: false, dropoffPhoto: false, warrants: new Set<string>(), driverStats: new Set<string>() });
+  const loadedRef = useRef({ pickup: false, itemNames: false, dropoffPhoto: false, rated: false, warrants: new Set<string>(), driverStats: new Set<string>() });
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
@@ -140,6 +149,17 @@ export function OrderDetail() {
           loadedRef.current.dropoffPhoto = false;
         });
     }
+    if (!loadedRef.current.rated && decoded.status === "Delivered") {
+      loadedRef.current.rated = true;
+      getMyReviewsForOrder(orderRef)
+        .then((records) => {
+          const targets = records.map((r) => decodeEntry<Review>(r).target);
+          setRated({ store: targets.some((t) => "Store" in t), driver: targets.some((t) => "Driver" in t) });
+        })
+        .catch(() => {
+          loadedRef.current.rated = false;
+        });
+    }
     if (decoded.status === "Open") {
       const page = await listBidsForOrder(orderRef);
       const rows = page.bids.map((r) => ({ hash: actionHash(r), bid: decodeEntry<Bid>(r) }));
@@ -175,22 +195,32 @@ export function OrderDetail() {
   }, [hash]);
 
   async function submitReviews() {
-    if (!orderRef) return;
+    if (!orderRef || !order || !rated) return;
     setSubmittingReview(true);
     setError(null);
+    // Each successful piece is recorded immediately, so a failure partway
+    // through never re-offers (and so never double-submits) what already
+    // landed.
+    let next = { ...rated };
     try {
-      if (merchantRating > 0) {
-        await submitReview({ subject: order!.merchant, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
+      if (merchantRating > 0 && canRateStore) {
+        await submitReview({ target: { Store: order.catalog_ref }, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
+        next = { ...next, store: true };
+        setRated(next);
       }
-      if (driverRating > 0 && driver) {
-        await submitReview({ subject: driver, order_original_action: orderRef, rating: driverRating, comment: driverComment });
+      if (driverRating > 0 && driver && !next.driver) {
+        await submitReview({ target: { Driver: driver }, order_original_action: orderRef, rating: driverRating, comment: driverComment });
+        next = { ...next, driver: true };
+        setRated(next);
       }
-      for (const [itemHex, rating] of Object.entries(itemRatings)) {
-        if (rating > 0) {
-          await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
+      if (!itemsRated) {
+        for (const [itemHex, rating] of Object.entries(itemRatings)) {
+          if (rating > 0) {
+            await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
+          }
         }
+        if (Object.values(itemRatings).some((r) => r > 0)) setItemsRated(true);
       }
-      setReviewsSubmitted(true);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -290,6 +320,14 @@ export function OrderDetail() {
   }
 
   const canDispute = order.status === "Delivered" || order.status === "Cancelled";
+  // DoorDash/Uber Eats-style: one rating per store and per driver per
+  // order. A merchant who ordered from their own store isn't offered the
+  // store rating at all (validate_review rejects it anyway).
+  const selfOrder = bytesEqual(order.merchant, myAgentPubKey());
+  const canRateStore = !!rated && !rated.store && !selfOrder;
+  const canRateDriver = !!rated && !rated.driver && !!driver;
+  const canRateItems = !itemsRated && !order.bag_claim_ref && order.item_refs.length > 0;
+  const ratingDone = !!rated && !canRateStore && !canRateDriver;
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
@@ -443,16 +481,18 @@ export function OrderDetail() {
         </motion.div>
       )}
 
-      {order.status === "Delivered" && !reviewsSubmitted && (
+      {order.status === "Delivered" && rated && !ratingDone && (
         <motion.div variants={fadeSlideUp}>
         <Card className="mt-5 flex flex-col gap-4 p-4">
           <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Rate your order</p>
-          <div>
-            <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
-            <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-            {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
-          </div>
-          {driver && (
+          {canRateStore && (
+            <div>
+              <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
+              <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
+              {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
+            </div>
+          )}
+          {canRateDriver && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Your driver</p>
               <StarRatingInput value={driverRating} onChange={setDriverRating} />
@@ -460,7 +500,7 @@ export function OrderDetail() {
             </div>
           )}
           {/* A goodie bag isn't itemized -- item_refs is just [bag_ref], not real MenuItems -- so there's nothing per-item to rate. */}
-          {!order.bag_claim_ref && [...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
+          {canRateItems && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
               <div className="flex flex-col gap-2">
@@ -479,7 +519,7 @@ export function OrderDetail() {
           )}
           <Button
             loading={submittingReview}
-            disabled={merchantRating === 0 && driverRating === 0 && Object.values(itemRatings).every((r) => r === 0)}
+            disabled={(canRateStore ? merchantRating : 0) === 0 && (canRateDriver ? driverRating : 0) === 0 && (!canRateItems || Object.values(itemRatings).every((r) => r === 0))}
             onClick={submitReviews}
           >
             Submit review
@@ -488,7 +528,7 @@ export function OrderDetail() {
         </motion.div>
       )}
 
-      {reviewsSubmitted && (
+      {order.status === "Delivered" && ratingDone && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
           <CheckCircle2 size={20} />
           <p className="text-sm">Thanks for your feedback!</p>

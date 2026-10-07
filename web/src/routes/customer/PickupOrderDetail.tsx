@@ -4,16 +4,16 @@ import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
 import { getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
 import { listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
-import { submitReview, submitItemReview } from "../../holochain/zomes/reputation";
-import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
-import { onLocalSignal } from "../../holochain/client";
+import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
+import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
+import { myAgentPubKey, onLocalSignal } from "../../holochain/client";
 import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRatingInput } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { BagClaim, MenuItem, PickupOrder, GoodieBag } from "../../holochain/types";
+import type { BagClaim, MenuItem, PickupOrder, GoodieBag, Review } from "../../holochain/types";
 
 const POLL_MS = 6000;
 
@@ -32,7 +32,10 @@ export function PickupOrderDetail() {
   const [error, setError] = useState<string | null>(null);
   const [merchantRating, setMerchantRating] = useState(0);
   const [merchantComment, setMerchantComment] = useState("");
-  const [reviewsSubmitted, setReviewsSubmitted] = useState(false);
+  // Read back from the conductor so a reload doesn't re-offer the form --
+  // see OrderDetail.tsx's identical state. `null` until loaded.
+  const [storeRated, setStoreRated] = useState<boolean | null>(null);
+  const [itemsRated, setItemsRated] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [itemNames, setItemNames] = useState<Record<string, string>>({});
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
@@ -42,13 +45,21 @@ export function PickupOrderDetail() {
   // unconditional refetch on every poll instead of once. A ref's
   // `.current` always reads the latest write regardless of when this
   // closure was created.
-  const loadedRef = useRef({ itemNames: false });
+  const loadedRef = useRef({ itemNames: false, rated: false });
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
     const record = await getPickupOrder(orderRef);
     const decoded = decodeEntry<PickupOrder>(record);
     setOrder(decoded);
+    if (!loadedRef.current.rated && decoded.status === "PickedUp") {
+      loadedRef.current.rated = true;
+      getMyReviewsForOrder(orderRef)
+        .then((records) => setStoreRated(records.some((r) => "Store" in decodeEntry<Review>(r).target)))
+        .catch(() => {
+          loadedRef.current.rated = false;
+        });
+    }
     if (!loadedRef.current.itemNames) {
       loadedRef.current.itemNames = true;
       listMenuItems(decoded.catalog_ref)
@@ -125,19 +136,22 @@ export function PickupOrderDetail() {
   }
 
   async function submitReviews() {
-    if (!orderRef) return;
+    if (!orderRef || !order) return;
     setSubmittingReview(true);
     setError(null);
     try {
-      if (merchantRating > 0) {
-        await submitReview({ subject: order!.merchant, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
+      if (merchantRating > 0 && canRateStore) {
+        await submitReview({ target: { Store: order.catalog_ref }, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
+        setStoreRated(true);
       }
-      for (const [itemHex, rating] of Object.entries(itemRatings)) {
-        if (rating > 0) {
-          await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
+      if (canRateItems) {
+        for (const [itemHex, rating] of Object.entries(itemRatings)) {
+          if (rating > 0) {
+            await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
+          }
         }
+        if (Object.values(itemRatings).some((r) => r > 0)) setItemsRated(true);
       }
-      setReviewsSubmitted(true);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -146,6 +160,11 @@ export function PickupOrderDetail() {
   }
 
   const canDispute = order.status === "PickedUp" || order.status === "Cancelled";
+  // A merchant collecting from their own store has nothing to rate --
+  // validate_review/validate_item_review reject self-ratings anyway.
+  const selfOrder = bytesEqual(order.merchant, myAgentPubKey());
+  const canRateStore = storeRated === false && !selfOrder;
+  const canRateItems = !itemsRated && !selfOrder && !order.bag_claim_ref && order.item_refs.length > 0;
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
@@ -207,7 +226,7 @@ export function PickupOrderDetail() {
         </motion.div>
       )}
 
-      {order.status === "PickedUp" && !reviewsSubmitted && (
+      {order.status === "PickedUp" && canRateStore && (
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-5 flex flex-col gap-4 p-4">
             <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Rate your order</p>
@@ -216,7 +235,7 @@ export function PickupOrderDetail() {
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
               {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
             </div>
-            {!order.bag_claim_ref && [...new Set(order.item_refs.map(bytesToHex))].length > 0 && (
+            {canRateItems && (
               <div>
                 <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
                 <div className="flex flex-col gap-2">
@@ -229,14 +248,14 @@ export function PickupOrderDetail() {
                 </div>
               </div>
             )}
-            <Button loading={submittingReview} disabled={merchantRating === 0 && Object.values(itemRatings).every((r) => r === 0)} onClick={submitReviews}>
+            <Button loading={submittingReview} disabled={merchantRating === 0 && (!canRateItems || Object.values(itemRatings).every((r) => r === 0))} onClick={submitReviews}>
               Submit review
             </Button>
           </Card>
         </motion.div>
       )}
 
-      {reviewsSubmitted && (
+      {order.status === "PickedUp" && storeRated === true && !selfOrder && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
           <CheckCircle2 size={20} />
           <p className="text-sm">Thanks for your feedback!</p>

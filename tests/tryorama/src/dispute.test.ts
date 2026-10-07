@@ -108,14 +108,14 @@ await runScenario(async (scenario) => {
   console.log("[PASS] Payment settled on FavorProvider ruling, net-zero across both parties");
 
   const driverReputationA = await retryUntilOk(async () => {
-    const summary = await reputationOf(driver)<{ dispute_resolved_against_count: number }>("get_reputation_summary", driver.agentPubKey);
+    const summary = await reputationOf(driver)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Driver: driver.agentPubKey });
     assert.equal(summary.dispute_resolved_against_count, 0, "the winning side should not carry a DisputeResolvedAgainst event");
     return summary;
   });
   const customerReputationA = await retryUntilOk(async () => {
     const summary = await reputationOf(customer)<{ dispute_raised_count: number; dispute_resolved_against_count: number }>(
       "get_reputation_summary",
-      customer.agentPubKey,
+      { Customer: customer.agentPubKey },
     );
     assert.equal(summary.dispute_resolved_against_count, 1, "the customer raised in error and lost the ruling");
     return summary;
@@ -157,7 +157,7 @@ await runScenario(async (scenario) => {
   const driverReputationB = await retryUntilOk(async () => {
     const summary = await reputationOf(driver)<{ dispute_resolved_against_count: number; total_collateral_forfeited: number }>(
       "get_reputation_summary",
-      driver.agentPubKey,
+      { Driver: driver.agentPubKey },
     );
     assert.equal(summary.dispute_resolved_against_count, 1, "the driver lost this ruling");
     assert.equal(summary.total_collateral_forfeited, 50);

@@ -113,9 +113,9 @@ await runScenario(async (scenario) => {
   assert.equal(merchantBalanceB, 500, "FavorRequester forfeits from the merchant to the customer, no order_total settlement");
   console.log("[PASS] FavorRequester resolves to Cancelled and forfeits from the merchant, no order_total settlement");
 
-  const merchantReputation = await reputationOf(merchant)<{ dispute_resolved_against_count: number }>("get_reputation_summary", merchant.agentPubKey);
+  const merchantReputation = await reputationOf(merchant)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Store: catalogRef });
   assert.equal(merchantReputation.dispute_resolved_against_count, 1, "merchant lost scenario 2 only");
-  const customerReputation = await reputationOf(customer)<{ dispute_resolved_against_count: number }>("get_reputation_summary", customer.agentPubKey);
+  const customerReputation = await reputationOf(customer)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Customer: customer.agentPubKey });
   assert.equal(customerReputation.dispute_resolved_against_count, 1, "customer lost scenario 1 only");
   console.log("[PASS] Reputation events recorded correctly across both scenarios");
 });

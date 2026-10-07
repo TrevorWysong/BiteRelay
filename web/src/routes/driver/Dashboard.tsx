@@ -13,11 +13,11 @@ import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { PhotoInput } from "../../components/PhotoInput";
-import { getReviewsFor } from "../../holochain/zomes/reputation";
+import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { Bid, DeliveryOrder, DeliveryStatus, Review } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, RatingSummary } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -108,13 +108,15 @@ export function DriverDashboard() {
   const [activeOrders, setActiveOrders] = useState<OrderRow[]>([]);
   const [bidding, setBidding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<Review[]>([]);
+  const [rating, setRating] = useState<RatingSummary | null>(null);
 
+  // Driver ratings only -- if this agent also runs a store, that store's
+  // reviews live on the store, never here.
   useEffect(() => {
-    getReviewsFor(driverKey).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
+    getRatingSummary({ Driver: driverKey }).then(setRating);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
+  const avgRating = rating ? averageRating(rating) : null;
 
   const geohash = encodeGeohash(location.lat, location.lon);
 
@@ -246,7 +248,7 @@ export function DriverDashboard() {
             {online ? "You're online" : "You're offline"}
           </p>
           <p className="text-xs text-ink-400">{online ? "Nearby customers can see and signal you directly" : "Go online to start receiving orders"}</p>
-          {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} size={11} />}
+          {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} size={11} />}
         </div>
         <motion.button
           onClick={toggleOnline}

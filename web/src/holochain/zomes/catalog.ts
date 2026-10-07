@@ -53,23 +53,20 @@ export async function publishCatalog(input: { business_name: string; location: G
   return callZome("catalog", "publish_catalog", { ...EMPTY_DETAILS, ...input });
 }
 
-// Resolves the caller's own catalog directly via the OwnerToCatalog link,
-// not by geohash discovery -- independent of whatever `location` happens
-// to be set to right now, and stable even if a stale conductor build once
-// let a duplicate get created (see the Rust extern's own doc comment).
+// Every store the caller owns, oldest first, resolved directly via the
+// OwnerToCatalog links -- not by geohash discovery, so independent of
+// whatever `location` happens to be set to right now.
 //
-// Returns `original_action` separately from `record` -- always use
-// `original_action` as `catalog_ref` (passed to `addMenuItem`,
-// `createPromoCode`, `listMenuItems`, `listPromoCodesForCatalog`, ...),
-// never `actionHash(record)`. The record's own action hash reflects
-// whatever this catalog's *latest* state is, which changes on every edit;
-// using it as `catalog_ref` would silently orphan everything already
-// linked under the previous hash. Same `CatalogView` shape
-// `getNearbyMerchants` returns per-catalog, for the same reason -- see
-// that extern's own doc comment for where this exact bug was found a
-// second time.
-export async function getMyCatalog(): Promise<CatalogView | null> {
-  return callZome("catalog", "get_my_catalog", null);
+// Each entry carries `original_action` separately from `record` -- always
+// use `original_action` as `catalog_ref` (passed to `addMenuItem`,
+// `createPromoCode`, `listMenuItems`, `getOrdersForStore`, ...), never
+// `actionHash(record)`. The record's own action hash reflects whatever
+// this catalog's *latest* state is, which changes on every edit; using it
+// as `catalog_ref` would silently orphan everything already linked under
+// the previous hash. Same `CatalogView` shape `getNearbyMerchants` returns
+// per-catalog, for the same reason.
+export async function listMyCatalogs(): Promise<CatalogView[]> {
+  return callZome("catalog", "list_my_catalogs", null);
 }
 
 export async function updateCatalogDetails(originalAction: ActionHash, details: CatalogDetails): Promise<HcRecord> {
