@@ -118,13 +118,17 @@ interface SessionState {
     location: GeoPoint,
     extras?: { bio?: string; avatarDataUri?: string; phone?: string },
   ) => Promise<void>;
+  /// Signs this browser in as an identity that already exists on the node
+  /// (dev-only: the onboarding picker for seeded identities). No passkey is
+  /// registered for it -- those are per-device, set up at creation.
+  adoptIdentity: (adminUrl: string, installedAppId: string, agentPubKey: Uint8Array) => Promise<void>;
   setMode: (mode: Mode) => void;
   setLocation: (location: GeoPoint) => void;
   refreshProfile: () => Promise<void>;
   signOut: () => void;
 }
 
-export const useSession = create<SessionState>((set) => ({
+export const useSession = create<SessionState>((set, get) => ({
   status: "disconnected",
   error: null,
   agentPubKey: null,
@@ -253,6 +257,11 @@ export const useSession = create<SessionState>((set) => ({
       set({ status: "error", error: describeError(err) });
       throw err;
     }
+  },
+
+  adoptIdentity: async (adminUrl, installedAppId, agentPubKey) => {
+    saveStoredIdentity({ adminUrl, installedAppId, agentPubKeyB64: bytesToBase64(agentPubKey) });
+    await get().reconnect();
   },
 
   setMode: (mode) => set({ mode }),

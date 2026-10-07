@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:conductor": "node scripts/run-conductor.mjs",
+    "dev:conductor": "node scripts/dev-conductor.mjs",
+    "dev:reset": "node scripts/dev-conductor.mjs --reset --seed",
+    "backend": "node scripts/backend.mjs",
+    "seed": "node scripts/seed.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

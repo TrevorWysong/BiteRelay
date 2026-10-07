@@ -11,6 +11,8 @@ import { registerProviderCredential } from "../holochain/zomes/profiles";
 import type { GeoPoint, RoleTag } from "../holochain/types";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
+import { DEV_ADMIN_URL } from "../lib/devNode";
+import { DevIdentityPicker } from "../components/DevIdentityPicker";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
   { role: "Requester", label: "Order food", icon: ShoppingBag, blurb: "Browse nearby restaurants and get food delivered." },
@@ -30,8 +32,9 @@ const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 
 export function Onboarding() {
   const navigate = useNavigate();
-  const { createIdentity, reconnect, hasStoredIdentity, status, error, signOut } = useSession();
-  const [adminUrl, setAdminUrl] = useState("");
+  const { createIdentity, reconnect, adoptIdentity, hasStoredIdentity, status, error, signOut } = useSession();
+  // In dev, the persistent conductor always listens on the same address.
+  const [adminUrl, setAdminUrl] = useState(import.meta.env.DEV ? DEV_ADMIN_URL : "");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [phone, setPhone] = useState("");
@@ -65,12 +68,20 @@ export function Onboarding() {
       await reconnect();
       navigate("/");
     } catch (err) {
-      // Most likely cause in this dev setup: the local conductor was
-      // restarted (every restart is a brand new, empty sandbox -- see
-      // scripts/run-conductor.mjs's own doc comment) since this identity
-      // was created, so the admin URL it remembers no longer points at
-      // anything real. There's no way to recover that specific identity;
-      // the only way forward is to forget it and sign up fresh.
+      // Most likely causes in dev: the conductor isn't running, or its
+      // data was wiped (`npm run dev:reset`) since this identity was
+      // created -- in which case this identity is gone for good and the
+      // only way forward is to forget it.
+      setLocalError(describeError(err));
+    }
+  }
+
+  async function handleAdopt(installedAppId: string, agentPubKey: Uint8Array) {
+    setLocalError(null);
+    try {
+      await adoptIdentity(adminUrl, installedAppId, agentPubKey);
+      navigate("/");
+    } catch (err) {
       setLocalError(describeError(err));
     }
   }
@@ -223,7 +234,7 @@ export function Onboarding() {
                 </div>
                 <p className="text-[11px] text-ink-400 mb-4">
                   Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
-                  <code className="bg-ink-100 rounded px-1">web/</code>). This starts a local test node and gives you this address.
+                  <code className="bg-ink-100 rounded px-1">web/</code>). It starts a local node that keeps its data between restarts, always at this address.
                 </p>
 
                 {showError && (
@@ -294,6 +305,8 @@ export function Onboarding() {
             )}
           </AnimatePresence>
 
+          {import.meta.env.DEV && step === "roles" && <DevIdentityPicker adminUrl={adminUrl} onPick={handleAdopt} disabled={connecting} />}
+
           {hasStoredIdentity() && step === "roles" && (
             <div className="mt-4">
               <button onClick={handleReconnect} disabled={connecting} className="w-full text-center text-xs font-semibold text-relay-600 hover:underline">
@@ -303,7 +316,7 @@ export function Onboarding() {
                 <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
                   <p>{showError}</p>
                   <p className="mt-1.5 text-[11px] text-red-600">
-                    This usually means your local node was restarted, which wipes every identity on it -- there's no way to recover this one.{" "}
+                    Either your local node isn't running (start it with <code>npm run dev:conductor</code>), or its data was reset since this identity was created, in which case it can't be recovered.{" "}
                     <button onClick={signOut} className="font-semibold underline">
                       Forget it and start over
                     </button>
