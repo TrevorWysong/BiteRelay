@@ -53,11 +53,26 @@ async function fetchHappBundle(): Promise<Uint8Array> {
   return happBundleBytes;
 }
 
+/// An app interface any identity can use: one the conductor already has
+/// open if there is one, otherwise a newly attached one. Attached app
+/// interfaces persist across conductor restarts, so attaching a fresh one
+/// on every page load (what this used to do) opened one more port per
+/// reload, forever, on a long-lived conductor -- confirmed against the
+/// persistent dev conductor. App-scoped interfaces (`installed_app_id`
+/// set) are skipped: they'd reject every other identity's token.
+async function appInterfacePort(adminWs: AdminWebsocket): Promise<number> {
+  const existing = await adminWs.listAppInterfaces();
+  const shared = existing.find((i) => i.allowed_origins === ALLOWED_ORIGINS && !i.installed_app_id);
+  if (shared) return shared.port;
+  const { port } = await adminWs.attachAppInterface({ allowed_origins: ALLOWED_ORIGINS });
+  return port;
+}
+
 /// Shared tail end of both provisionNewIdentity and reconnectIdentity: once
 /// an app is installed/enabled and signing is authorized, both need the
 /// same app-interface + auth token to hand back a usable ProvisionedIdentity.
 async function attachInterfaceAndIssueToken(adminWs: AdminWebsocket, adminUrl: string, installedAppId: InstalledAppId, agentPubKey: AgentPubKey): Promise<ProvisionedIdentity> {
-  const { port } = await adminWs.attachAppInterface({ allowed_origins: ALLOWED_ORIGINS });
+  const port = await appInterfacePort(adminWs);
   const issued = await adminWs.issueAppAuthenticationToken({ installed_app_id: installedAppId });
   const adminHost = new URL(adminUrl).hostname;
   return {
@@ -106,9 +121,9 @@ export async function provisionNewIdentity(adminUrl: string, installedAppId: Ins
 /// Re-issues a fresh token for an *already-installed* app -- used when a
 /// returning browser tab has a persisted `installedAppId` from a previous
 /// session and just needs a new app-interface/token to reconnect with, not
-/// a whole new identity. Also re-attaches an app interface, since the
-/// conductor may have restarted since the last session (no interfaces
-/// survive a restart).
+/// a whole new identity. Signing credentials don't survive a page load, so
+/// they're re-authorized; the app interface is reused (see
+/// `appInterfacePort`).
 export async function reconnectIdentity(adminUrl: string, installedAppId: InstalledAppId, agentPubKey: AgentPubKey, wsClientOptions?: WsClientOptions): Promise<ProvisionedIdentity> {
   const adminWs = await AdminWebsocket.connect({ url: new URL(adminUrl), wsClientOptions });
   try {
@@ -121,6 +136,27 @@ export async function reconnectIdentity(adminUrl: string, installedAppId: Instal
     await authorizeSigning(adminWs, appInfo);
 
     return await attachInterfaceAndIssueToken(adminWs, adminUrl, installedAppId, agentPubKey);
+  } finally {
+    adminWs.client.close();
+  }
+}
+
+export interface NodeIdentity {
+  installedAppId: InstalledAppId;
+  agentPubKey: AgentPubKey;
+}
+
+/// Every `relay` identity installed on a node, oldest first -- for the
+/// dev-only "use an existing identity" picker on the onboarding screen
+/// (e.g. the people `npm run seed` creates).
+export async function listNodeIdentities(adminUrl: string): Promise<NodeIdentity[]> {
+  const adminWs = await AdminWebsocket.connect({ url: new URL(adminUrl) });
+  try {
+    const apps = await adminWs.listApps({});
+    return apps
+      .filter((app) => (app.cell_info[ROLE_NAME] ?? []).length > 0)
+      .sort((a, b) => a.installed_at - b.installed_at)
+      .map((app) => ({ installedAppId: app.installed_app_id, agentPubKey: app.agent_pub_key }));
   } finally {
     adminWs.client.close();
   }

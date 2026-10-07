@@ -5,3 +5,6 @@
 .hc-live-*
 node_modules
 .claude/
+
+# Persistent local dev conductor data, logs and pid (web/scripts/dev-conductor.mjs)
+.dev/
