@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ClipboardList, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOrdersForStore, getPickupOrdersForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
-import { onLocalSignal } from "../../holochain/client";
-import { useMerchantStores, type StoreRow } from "../../store/merchantStores";
+import { useMyStores, type StoreRow } from "../../store/merchantStores";
+import { useResource } from "../../lib/useResource";
 import { Button, Card, Chip, ChipRow, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
@@ -37,18 +37,10 @@ const ALL_STORES = "all";
 /// the first thing a multi-store owner needs to know.
 export function MerchantOrders() {
   const navigate = useNavigate();
-  const stores = useMerchantStores((s) => s.stores);
-  const loadStores = useMerchantStores((s) => s.load);
+  const stores = useMyStores();
   const [filter, setFilter] = useState(ALL_STORES);
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [pickupRows, setPickupRows] = useState<PickupRow[] | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [advancingPickup, setAdvancingPickup] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadStores();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // A store filter that no longer matches anything (e.g. stale state)
   // quietly falls back to everything rather than showing an empty queue.
@@ -59,47 +51,37 @@ export function MerchantOrders() {
   );
   const storeName = useMemo(() => new Map((stores ?? []).map((s) => [s.hex, s.catalog.business_name])), [stores]);
 
-  const refresh = useCallback(async () => {
-    const perStore = await Promise.all(
-      visibleStores.map(async (store) => (await getOrdersForStore(store.hash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r), storeHex: store.hex }))),
-    );
-    const decoded = perStore.flat();
-    decoded.sort((a, b) => b.order.requested_at - a.order.requested_at);
-    setRows(decoded);
-  }, [visibleStores]);
-
-  const refreshPickup = useCallback(async () => {
-    const perStore = await Promise.all(
-      visibleStores.map(async (store) => (await getPickupOrdersForStore(store.hash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r), storeHex: store.hex }))),
-    );
-    const decoded = perStore.flat();
-    decoded.sort((a, b) => b.order.requested_at - a.order.requested_at);
-    setPickupRows(decoded);
-  }, [visibleStores]);
-
-  useEffect(() => {
-    if (stores === null) return;
-    refresh();
-    refreshPickup();
-    const interval = setInterval(() => {
-      refresh();
-      refreshPickup();
-    }, POLL_MS);
-    const unsub = onLocalSignal(() => {
-      refresh();
-      refreshPickup();
-    });
-    return () => {
-      clearInterval(interval);
-      unsub();
-    };
-  }, [stores, refresh, refreshPickup]);
+  // Both queues for exactly the stores on screen, keyed by that set -- a
+  // slow reply for the filter you just switched away from is dropped
+  // rather than shown under the new one. Every dispatch signal (new order,
+  // status change, ...) triggers a re-read; polling backs signals up.
+  const queueKey = stores ? `merchant-orders:${visibleStores.map((s) => s.hex).join(",")}` : null;
+  const { data: queues, reload } = useResource(
+    queueKey,
+    async () => {
+      const perStore = await Promise.all(
+        visibleStores.map(async (store) => {
+          const [deliveries, pickups] = await Promise.all([getOrdersForStore(store.hash), getPickupOrdersForStore(store.hash)]);
+          return {
+            rows: deliveries.map((r): Row => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r), storeHex: store.hex })),
+            pickupRows: pickups.map((r): PickupRow => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r), storeHex: store.hex })),
+          };
+        }),
+      );
+      const rows = perStore.flatMap((p) => p.rows).sort((a, b) => b.order.requested_at - a.order.requested_at);
+      const pickupRows = perStore.flatMap((p) => p.pickupRows).sort((a, b) => b.order.requested_at - a.order.requested_at);
+      return { rows, pickupRows };
+    },
+    { pollMs: POLL_MS, refreshOn: () => true },
+  );
+  const rows = queues?.rows ?? null;
+  const pickupRows = queues?.pickupRows ?? null;
 
   async function confirmPrep(hash: Uint8Array) {
     setConfirming(bytesToHex(hash));
     try {
       await setOrderStatus(hash, "MerchantConfirmed");
-      await refresh();
+      await reload();
     } finally {
       setConfirming(null);
     }
@@ -109,7 +91,7 @@ export function MerchantOrders() {
     setAdvancingPickup(bytesToHex(hash));
     try {
       await action(hash);
-      await refreshPickup();
+      await reload();
     } finally {
       setAdvancingPickup(null);
     }

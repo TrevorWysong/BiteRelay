@@ -17,6 +17,7 @@ import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
+import { usePolling } from "../../lib/useResource";
 import type { BagClaim, Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, GoodieBag, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
@@ -228,20 +229,19 @@ export function OrderDetail() {
     }
   }
 
+  usePolling(refresh, { pollMs: POLL_MS, refreshOn: (signal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal }, true, hash);
+
+  // The driver's live position is pushed (signal-only, never stored), not
+  // read -- a genuine subscription, so it stays an effect.
   useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    const unsub = onLocalSignal((signal) => {
-      if ("BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal) refresh();
-      if ("LocationUpdate" in signal && orderRef && bytesEqual(signal.LocationUpdate.order_ref, orderRef)) {
+    if (!hash) return;
+    const ref = hexToBytes(hash);
+    return onLocalSignal((signal) => {
+      if ("LocationUpdate" in signal && bytesEqual(signal.LocationUpdate.order_ref, ref)) {
         setDriverLocation({ lat: signal.LocationUpdate.lat, lon: signal.LocationUpdate.lon });
       }
     });
-    return () => {
-      clearInterval(interval);
-      unsub();
-    };
-  }, [refresh]);
+  }, [hash]);
 
   if (!order || !orderRef) {
     return (

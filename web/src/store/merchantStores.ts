@@ -5,6 +5,7 @@
 // and every per-store screen (menu, promos, goodie bags, reviews) scoped to
 // the selected store. The incoming-orders screen can additionally show all
 // stores at once (see merchant/Orders.tsx).
+import { useEffect } from "react";
 import { create } from "zustand";
 import { listMyCatalogs } from "../holochain/zomes/catalog";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
@@ -53,21 +54,23 @@ interface MerchantStoresState {
   setActive: (hex: string) => void;
 }
 
-export const useMerchantStores = create<MerchantStoresState>((set, get) => ({
+/// Two screens mounting at once (or a re-render mid-load) share one
+/// in-flight read instead of racing two.
+let inflight: Promise<StoreRow[]> | null = null;
+
+export const useMerchantStores = create<MerchantStoresState>((set) => ({
   stores: null,
   activeHex: null,
 
   load: async (selectHex) => {
-    const views = await listMyCatalogs();
-    const stores = views.map((v) => ({ hash: v.original_action, hex: bytesToHex(v.original_action), catalog: decodeEntry<MerchantCatalog>(v.record) }));
-    // Keep the current/remembered selection if it still exists, otherwise
-    // fall back to the first store -- never leave a stale selection
-    // pointing at nothing.
-    const wanted = selectHex ?? get().activeHex ?? loadActive();
-    const activeHex = stores.find((s) => s.hex === wanted)?.hex ?? stores[0]?.hex ?? null;
-    if (activeHex) saveActive(activeHex);
-    set({ stores, activeHex });
-    return stores;
+    if (inflight && selectHex === undefined) return inflight;
+    const run = loadStores(selectHex);
+    inflight = run;
+    try {
+      return await run;
+    } finally {
+      if (inflight === run) inflight = null;
+    }
   },
 
   setActive: (hex) => {
@@ -75,6 +78,32 @@ export const useMerchantStores = create<MerchantStoresState>((set, get) => ({
     set({ activeHex: hex });
   },
 }));
+
+async function loadStores(selectHex: string | undefined): Promise<StoreRow[]> {
+  const views = await listMyCatalogs();
+  const stores = views.map((v) => ({ hash: v.original_action, hex: bytesToHex(v.original_action), catalog: decodeEntry<MerchantCatalog>(v.record) }));
+  // Keep the current/remembered selection if it still exists, otherwise
+  // fall back to the first store -- never leave a stale selection pointing
+  // at nothing.
+  const wanted = selectHex ?? useMerchantStores.getState().activeHex ?? loadActive();
+  const activeHex = stores.find((s) => s.hex === wanted)?.hex ?? stores[0]?.hex ?? null;
+  if (activeHex) saveActive(activeHex);
+  useMerchantStores.setState({ stores, activeHex });
+  return stores;
+}
+
+/// The merchant's store list, loaded on first use -- the one place any
+/// screen needs to ask for it, instead of each running its own load
+/// effect. `enabled: false` (e.g. a profile without the Merchant role)
+/// skips the read entirely.
+export function useMyStores(enabled = true): StoreRow[] | null {
+  const stores = useMerchantStores((s) => s.stores);
+  const load = useMerchantStores((s) => s.load);
+  useEffect(() => {
+    if (enabled && stores === null) void load();
+  }, [enabled, stores, load]);
+  return stores;
+}
 
 export function useActiveStore(): StoreRow | null {
   return useMerchantStores((s) => s.stores?.find((row) => row.hex === s.activeHex) ?? null);

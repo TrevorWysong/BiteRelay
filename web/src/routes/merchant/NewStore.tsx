@@ -42,11 +42,13 @@ export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
       // location across town shouldn't silently change where their own
       // customer-mode browsing is centered.
       if (firstStore) setLocation(pickupLocation);
-      await loadStores(bytesToHex(actionHash(record)));
+      const hex = bytesToHex(actionHash(record));
+      await loadStores(hex);
       // Straight into "fill in the rest" (photo, description, cuisine,
       // phone, hours) -- a freshly published store has nothing but a name
-      // and a pin, so this reads as one continuous setup flow.
-      navigate("/merchant/catalog", { state: { editDetails: true } });
+      // and a pin, so this reads as one continuous setup flow. Names the
+      // store so only *it* opens in edit mode (see Catalog.tsx).
+      navigate("/merchant/catalog", { state: { editDetails: hex } });
     } catch (err) {
       setError(describeError(err));
     } finally {

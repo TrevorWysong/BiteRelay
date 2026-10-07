@@ -3,7 +3,8 @@
 // property roster -- `dispute_integrity::validate()` is the real
 // enforcement either way, this screen just gives an actual arbitrator
 // somewhere to review and rule on the cases the network sees.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePolling } from "../../lib/useResource";
 import { Gavel } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listOpenDisputes, submitResolution } from "../../holochain/zomes/dispute";
@@ -45,11 +46,7 @@ export function ArbitratorDashboard() {
     setCases(rows);
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
-  }, [refresh]);
+  usePolling(refresh, { pollMs: POLL_MS });
 
   async function resolve(row: CaseRow, favor: "provider" | "requester", forfeitAmount: number, reasoning: string) {
     setError(null);

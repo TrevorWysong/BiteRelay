@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { addFavorite, removeFavorite, listFavorites } from "../holochain/zomes/profiles";
 import { bytesToHex } from "../holochain/decode";
+import { myAgentPubKey } from "../holochain/client";
+import { useResource } from "./useResource";
 
 // Shared by Browse.tsx (checking many restaurant cards against the set at
 // once) and MerchantDetail.tsx (checking a single one) -- both used to
@@ -9,16 +11,17 @@ import { bytesToHex } from "../holochain/decode";
 // either way. Returning the whole Set works for both: Browse checks
 // membership per card, a single-restaurant screen just checks membership
 // once for its own hash.
-export function useFavorites() {
-  const [favoritesHex, setFavoritesHex] = useState<Set<string>>(new Set());
+const EMPTY = new Set<string>();
 
+export function useFavorites() {
   // Independent of location/catalog -- a personal saved-restaurant list,
   // not scoped to "what's nearby right now" or "which restaurant is open."
-  useEffect(() => {
+  const { data, mutate } = useResource(`favorites:${bytesToHex(myAgentPubKey())}`, () =>
     listFavorites()
-      .then((hashes) => setFavoritesHex(new Set(hashes.map(bytesToHex))))
-      .catch(() => {});
-  }, []);
+      .then((hashes) => new Set(hashes.map(bytesToHex)))
+      .catch(() => new Set<string>()),
+  );
+  const favoritesHex = data ?? EMPTY;
 
   const toggleFavorite = useCallback(
     async (hash: Uint8Array) => {
@@ -26,8 +29,8 @@ export function useFavorites() {
       const wasFavorited = favoritesHex.has(hex);
       // Optimistic -- a favorite toggle should feel instant, and reverting
       // on the rare failure is cheap (just flips the Set back).
-      setFavoritesHex((prev) => {
-        const next = new Set(prev);
+      mutate((prev) => {
+        const next = new Set(prev ?? EMPTY);
         if (wasFavorited) next.delete(hex);
         else next.add(hex);
         return next;
@@ -36,15 +39,15 @@ export function useFavorites() {
         if (wasFavorited) await removeFavorite(hash);
         else await addFavorite(hash);
       } catch {
-        setFavoritesHex((prev) => {
-          const next = new Set(prev);
+        mutate((prev) => {
+          const next = new Set(prev ?? EMPTY);
           if (wasFavorited) next.add(hex);
           else next.delete(hex);
           return next;
         });
       }
     },
-    [favoritesHex],
+    [favoritesHex, mutate],
   );
 
   return { favoritesHex, toggleFavorite };

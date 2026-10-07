@@ -17,7 +17,8 @@ import { averageRating, getRatingSummary } from "../../holochain/zomes/reputatio
 import { formatCents, formatEta } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { Bid, DeliveryOrder, DeliveryStatus, RatingSummary } from "../../holochain/types";
+import { usePolling, useResource } from "../../lib/useResource";
+import type { Bid, DeliveryOrder, DeliveryStatus } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -108,14 +109,9 @@ export function DriverDashboard() {
   const [activeOrders, setActiveOrders] = useState<OrderRow[]>([]);
   const [bidding, setBidding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [rating, setRating] = useState<RatingSummary | null>(null);
-
   // Driver ratings only -- if this agent also runs a store, that store's
   // reviews live on the store, never here.
-  useEffect(() => {
-    getRatingSummary({ Driver: driverKey }).then(setRating);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: rating } = useResource(`driver-rating:${bytesToHex(driverKey)}`, () => getRatingSummary({ Driver: driverKey }));
   const avgRating = rating ? averageRating(rating) : null;
 
   const geohash = encodeGeohash(location.lat, location.lon);
@@ -156,23 +152,10 @@ export function DriverDashboard() {
     setActiveOrders(rows);
   }, []);
 
-  useEffect(() => {
-    refreshActiveOrders();
-    const interval = setInterval(refreshActiveOrders, POLL_MS);
-    const unsub = onLocalSignal((s) => {
-      if ("BidAccepted" in s || "BidReleased" in s) refreshActiveOrders();
-    });
-    return () => {
-      clearInterval(interval);
-      unsub();
-    };
-  }, [refreshActiveOrders]);
+  usePolling(refreshActiveOrders, { pollMs: POLL_MS, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s });
 
   useEffect(() => {
-    if (!online) {
-      setNearby(null);
-      return;
-    }
+    if (!online) return;
     announceOnline(location, ["Food"]).catch((err) => setError(describeError(err)));
     refreshNearby();
     const presenceInterval = setInterval(() => announceOnline(location, ["Food"]).catch(() => {}), PRESENCE_REFRESH_MS);
@@ -191,6 +174,7 @@ export function DriverDashboard() {
     if (online) {
       await announceOffline().catch(() => {});
       setOnline(false);
+      setNearby(null);
     } else {
       setOnline(true);
     }

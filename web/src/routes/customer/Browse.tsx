@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Heart, PackageOpen, Search } from "lucide-react";
 import { motion } from "framer-motion";
@@ -9,6 +9,7 @@ import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useFavorites } from "../../lib/useFavorites";
+import { useResource } from "../../lib/useResource";
 import { formatCents } from "../../lib/format";
 import type { MerchantCatalog, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
@@ -56,59 +57,47 @@ function CardSkeleton() {
 export function Browse() {
   const navigate = useNavigate();
   const location = useSession((s) => s.location);
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [bags, setBags] = useState<BagRow[]>([]);
   const [query, setQuery] = useState("");
   const [cuisine, setCuisine] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("relevance");
   const { favoritesHex, toggleFavorite } = useFavorites();
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const geohash = encodeGeohash(location.lat, location.lon);
+  // Keyed by the browsing cell -- changing address drops any in-flight
+  // reply for the old one instead of letting it overwrite the new list.
+  const geohash = encodeGeohash(location.lat, location.lon);
+  const { data: rows } = useResource<Row[]>(
+    `browse-stores:${geohash}`,
+    async () => {
       const page = await getNearbyMerchants(geohash);
-      if (cancelled) return;
-      const withRatings = await Promise.all(
-        // Use `view.original_action`, never `actionHash(view.record)` --
-        // the record is resolved to this catalog's *latest* state, so its
-        // own action hash drifts on every edit. See `CatalogView`'s own
-        // doc comment (this is the exact bug that made a merchant's menu
-        // items/goodie bags look unpublished from here once they'd ever
-        // toggled open/closed or edited their details).
-        // One bounded, checkpointed summary read per card -- this store's
-        // own rating only, never the owner's other stores or their driving
-        // (see `reputation_integrity`'s module doc) -- instead of
-        // downloading every review a store has ever received just to
-        // average them.
+      // Use `view.original_action`, never `actionHash(view.record)` -- the
+      // record is resolved to this catalog's *latest* state, so its own
+      // action hash drifts on every edit. See `CatalogView`'s own doc
+      // comment. One bounded, checkpointed summary read per card -- this
+      // store's own rating only, never the owner's other stores or their
+      // driving (see `reputation_integrity`'s module doc).
+      return Promise.all(
         page.catalogs.map(async (view) => {
           const catalog = decodeEntry<MerchantCatalog>(view.record);
           const summary = await getRatingSummary({ Store: view.original_action }).catch(() => ({ count: 0, rating_sum: 0 }));
           return { hash: view.original_action, catalog, rating: averageRating(summary) ?? 0, reviewCount: summary.count };
         }),
       );
-      if (!cancelled) setRows(withRatings);
-
-      // No on-chain "expire" transition for a bag past its own window (see
-      // `GoodieBag`'s own named gap) -- filtered client-side here, same
-      // posture as every other scheduled-time check in this app.
-      const bagRecords = await getNearbyGoodieBags(geohash);
-      if (cancelled) return;
+    },
+    { pollMs: BROWSE_POLL_MS },
+  );
+  // No on-chain "expire" transition for a bag past its own window (see
+  // `GoodieBag`'s own named gap) -- filtered client-side here, same posture
+  // as every other scheduled-time check in this app.
+  const { data: bags = [] } = useResource<BagRow[]>(
+    `browse-bags:${geohash}`,
+    async () => {
+      const records = await getNearbyGoodieBags(geohash);
       const now = Date.now() * 1000;
-      setBags(
-        bagRecords
-          .map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) }))
-          .filter((r) => r.bag.pickup_window_end > now),
-      );
-    }
-    load();
-    const interval = setInterval(load, BROWSE_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [location]);
+      return records.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })).filter((r) => r.bag.pickup_window_end > now);
+    },
+    { pollMs: BROWSE_POLL_MS },
+  );
 
   const catalogNameByHex = useMemo(() => {
     const map = new Map<string, string>();
@@ -221,7 +210,7 @@ export function Browse() {
         </div>
       </div>
 
-      {rows === null && (
+      {rows === undefined && (
         <div className="grid grid-cols-2 gap-3 pb-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <CardSkeleton key={i} />
@@ -229,7 +218,7 @@ export function Browse() {
         </div>
       )}
 
-      {rows !== null && filtered?.length === 0 && (
+      {rows !== undefined && filtered?.length === 0 && (
         <EmptyState title="No restaurants nearby yet" subtitle="Switch to Sell mode to add one and see how it looks here." />
       )}
 

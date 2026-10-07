@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { ArrowDownCircle, ArrowUpCircle, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import { useSession } from "../store/session";
@@ -7,6 +6,7 @@ import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../holochain/de
 import { Card, Skeleton, StatNumber } from "../components/ui";
 import { formatCents, timeAgo } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
+import { useResource } from "../lib/useResource";
 import type { LedgerTransaction } from "../holochain/types";
 
 interface Row {
@@ -28,18 +28,15 @@ interface Row {
 /// omitted from this view, structurally absent from the ledger itself.
 export function Transparency() {
   const agentPubKey = useSession((s) => s.agentPubKey);
-  const [rows, setRows] = useState<Row[] | null>(null);
-  const [balance, setBalance] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!agentPubKey) return;
-    getBalance(agentPubKey).then(setBalance).catch(() => setBalance(0));
+  const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
+  const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!).catch(() => 0));
+  const { data: rows } = useResource<Row[]>(agentHex && `transactions:${agentHex}`, () =>
     listMyTransactions(null)
-      .then((page) => setRows(page.transactions.map((r) => ({ hash: actionHash(r), txn: decodeEntry<LedgerTransaction>(r) }))))
-      .catch(() => setRows([]));
-  }, [agentPubKey]);
+      .then((page) => page.transactions.map((r) => ({ hash: actionHash(r), txn: decodeEntry<LedgerTransaction>(r) })))
+      .catch(() => []),
+  );
 
-  if (!agentPubKey || rows === null) {
+  if (!agentPubKey || rows === undefined) {
     return (
       <div className="px-4 pb-10 pt-4">
         <Skeleton className="h-44 w-full rounded-3xl mb-5" />
