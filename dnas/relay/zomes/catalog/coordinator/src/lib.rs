@@ -64,7 +64,7 @@ fn default_max_delivery_radius_km() -> f64 {
 /// everywhere else in this zome (`add_menu_item`, `create_promo_code`,
 /// `list_menu_items`, `list_promo_codes_for_catalog`, and this feature's own
 /// `CatalogToBag`) is keyed on the catalog's *original* creation action --
-/// see `validate_menu_item`'s own doc comment. Both `get_my_catalog` and
+/// see `validate_menu_item`'s own doc comment. Both `list_my_catalogs` and
 /// `get_nearby_merchants` are places content needs to reflect the *latest*
 /// state (is it open right now, current subsidy, ...), so neither can just
 /// hand back a single `Record`: a `Record`'s own action hash is whichever
@@ -76,8 +76,8 @@ fn default_max_delivery_radius_km() -> f64 {
 /// callers instead of two near-identical ones).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CatalogView {
-    /// The `OwnerToCatalog` (or, from `get_nearby_merchants`,
-    /// `GeohashToCatalog`) link's target -- fixed forever at
+    /// The `OwnerToCatalog` (from `list_my_catalogs`) or `GeohashToCatalog`
+    /// (from `get_nearby_merchants`) link's target -- fixed forever at
     /// `publish_catalog` time, since neither link is ever recreated by a
     /// later update. Found the hard way: `get_my_catalog` used to just
     /// return `resolve_latest(...)` directly, so a client naively caching
@@ -96,36 +96,33 @@ pub struct CatalogView {
     pub record: Record,
 }
 
-/// Resolves "does this agent already have a catalog" via the `OwnerToCatalog`
-/// link created at publish time -- deterministic and independent of geohash
-/// matching, unlike discovering it through `get_nearby_merchants` (which
-/// only works if the caller's current `location` happens to hash to the
-/// same cell the catalog itself did, and which has no stable tiebreak if
-/// more than one link exists for the same owner). `publish_catalog` below
-/// guards against ever creating more than one, but this picks the
-/// newest-by-link-timestamp regardless, so a client that somehow already
-/// has duplicates (e.g. from before that guard existed) still gets a
-/// stable, repeatable answer instead of an arbitrary one each call.
+/// Every store this agent owns, oldest first, via the `OwnerToCatalog`
+/// links created at publish time -- deterministic and independent of
+/// geohash matching, unlike discovering them through `get_nearby_merchants`
+/// (which only works if the caller's current `location` happens to hash to
+/// the same cell each store did). One owner running several stores is the
+/// normal case, not an edge case -- same as one DoorDash/Uber Eats business
+/// login managing several locations -- so everything per-store (menu,
+/// promo codes, goodie bags, order queue, reviews, reputation) is keyed by
+/// each store's own `original_action`, never by the owner. Creation order
+/// is the stable ordering a store switcher wants: a newly added store
+/// lands at the end instead of reshuffling the list.
 #[hdk_extern]
-pub fn get_my_catalog(_: ()) -> ExternResult<Option<CatalogView>> {
+pub fn list_my_catalogs(_: ()) -> ExternResult<Vec<CatalogView>> {
     let owner = agent_info()?.agent_initial_pubkey;
     let mut links = get_links(LinkQuery::try_new(owner, LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
     links.sort_by_key(|l| l.timestamp);
-    let Some(link) = links.pop() else { return Ok(None) };
-    let Some(original_action) = link.target.into_action_hash() else { return Ok(None) };
-    let record = resolve_latest(original_action.clone())?;
-    Ok(Some(CatalogView { original_action, record }))
+    Ok(resolve_links_to_records_with_original(links)
+        .into_iter()
+        .map(|(original_action, record)| CatalogView { original_action, record })
+        .collect())
 }
 
+/// Publishes a new store. Deliberately no "you already have one" guard --
+/// an owner adds as many stores as they run (see `list_my_catalogs`).
 #[hdk_extern]
 pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
     let owner = agent_info()?.agent_initial_pubkey;
-    let existing = get_links(LinkQuery::try_new(owner.clone(), LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
-    if !existing.is_empty() {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "You already have a published storefront -- there's no second one to create.".into()
-        )));
-    }
     let geohash = relay_types::encode(input.location, CATALOG_GEOHASH_PRECISION);
     let catalog = MerchantCatalog {
         owner: owner.clone(),

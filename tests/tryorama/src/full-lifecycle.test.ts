@@ -141,7 +141,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] Payment settled via the ledger stub, net-zero across both parties");
 
   const driverReputation = await retryUntilOk(async () => {
-    const summary = await reputationOf(driver)<{ completed_count: number }>("get_reputation_summary", driver.agentPubKey);
+    const summary = await reputationOf(driver)<{ completed_count: number }>("get_reputation_summary", { Driver: driver.agentPubKey });
     assert.equal(summary.completed_count, 1);
     return summary;
   });

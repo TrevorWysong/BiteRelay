@@ -137,9 +137,9 @@ await runScenario(async (scenario) => {
   assert.equal(driverBalanceB, 50, "no additional ledger movement on a zero-forfeit dismissal");
   console.log("[PASS] FavorRequester (dismissed, zero forfeiture) ruling applies cleanly with no ledger movement");
 
-  const driverReputation = await reputationOf(driver)<{ dispute_resolved_against_count: number }>("get_reputation_summary", driver.agentPubKey);
+  const driverReputation = await reputationOf(driver)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Driver: driver.agentPubKey });
   assert.equal(driverReputation.dispute_resolved_against_count, 1, "driver won scenario 1 but lost scenario 2's FavorRequester ruling");
-  const customerReputation = await reputationOf(customer)<{ dispute_resolved_against_count: number }>("get_reputation_summary", customer.agentPubKey);
+  const customerReputation = await reputationOf(customer)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Customer: customer.agentPubKey });
   assert.equal(customerReputation.dispute_resolved_against_count, 1, "customer lost scenario 1's ruling, won scenario 2's");
   console.log("[PASS] Reputation events recorded correctly across both scenarios");
 });

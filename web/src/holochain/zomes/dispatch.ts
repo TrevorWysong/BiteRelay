@@ -70,10 +70,11 @@ export async function getOrdersForRequester(requester: AgentPubKey): Promise<HcR
   return callZome("dispatch", "get_orders_for_requester", requester);
 }
 
-/// The `MerchantToOrder` counterpart -- see orders.rs's doc comment: without
-/// this a merchant has no way to discover an order naming them at all.
-export async function getOrdersForMerchant(merchant: AgentPubKey): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_orders_for_merchant", merchant);
+/// One store's delivery-order queue (`StoreToOrder`) -- see orders.rs's doc
+/// comment: without this a merchant has no way to discover an order at all.
+/// A multi-store owner's "all stores" view is one call per store.
+export async function getOrdersForStore(catalogRef: ActionHash): Promise<HcRecord[]> {
+  return callZome("dispatch", "get_orders_for_store", catalogRef);
 }
 
 // --- bids ---
@@ -228,8 +229,8 @@ export async function getMyPickupOrders(requester: AgentPubKey): Promise<HcRecor
   return callZome("dispatch", "get_my_pickup_orders", requester);
 }
 
-export async function getPickupOrdersForMerchant(merchant: AgentPubKey): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_pickup_orders_for_merchant", merchant);
+export async function getPickupOrdersForStore(catalogRef: ActionHash): Promise<HcRecord[]> {
+  return callZome("dispatch", "get_pickup_orders_for_store", catalogRef);
 }
 
 export async function confirmPickupPrep(orderOriginalAction: ActionHash): Promise<HcRecord> {

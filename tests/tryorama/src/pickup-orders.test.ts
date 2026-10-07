@@ -45,9 +45,9 @@ await runScenario(async (scenario) => {
   console.log("[PASS] request_pickup_order creates a Placed order, no driver/dropoff fields involved");
 
   // Discovery: the merchant can find it without already knowing the hash.
-  const merchantSide = await dispatchOf(merchant)<HcRecord[]>("get_pickup_orders_for_merchant", merchant.agentPubKey);
-  assert.equal(merchantSide.length, 1, "the merchant should discover this pickup order via MerchantToPickupOrder");
-  console.log("[PASS] get_pickup_orders_for_merchant discovers the order");
+  const merchantSide = await dispatchOf(merchant)<HcRecord[]>("get_pickup_orders_for_store", catalogRef);
+  assert.equal(merchantSide.length, 1, "the merchant should discover this pickup order via its store's StoreToPickupOrder queue");
+  console.log("[PASS] get_pickup_orders_for_store discovers the order");
 
   await dispatchOf(merchant)("confirm_pickup_prep", orderRef);
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -71,10 +71,10 @@ await runScenario(async (scenario) => {
   // a Delivered DeliveryOrder -- reputation_integrity's validate_review/
   // validate_item_review resolve either order type (see
   // resolve_reviewable_order's own doc comment).
-  await reputationOf(customer)("submit_review", { subject: merchant.agentPubKey, order_original_action: orderRef, rating: 5, comment: "Great food, ready fast" });
+  await reputationOf(customer)("submit_review", { target: { Store: catalogRef }, order_original_action: orderRef, rating: 5, comment: "Great food, ready fast" });
   await reputationOf(customer)("submit_item_review", { item_ref: menuItemRef, order_original_action: orderRef, rating: 4, comment: "" });
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  const merchantReviews = await reputationOf(merchant)<HcRecord[]>("get_reviews_for", merchant.agentPubKey);
+  const merchantReviews = (await reputationOf(merchant)<{ reviews: HcRecord[] }>("get_reviews_for", { target: { Store: catalogRef }, before: null })).reviews;
   assert.equal(merchantReviews.length, 1);
   const itemSummary = await reputationOf(merchant)<{ count: number; rating_sum: number }>("get_item_rating_summary", menuItemRef);
   assert.equal(itemSummary.count, 1);

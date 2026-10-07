@@ -66,7 +66,7 @@ fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: 
 #[hdk_extern]
 pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
-    let merchant = input.merchant.clone();
+    let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
     let dropoff_geohash = relay_types::encode(input.dropoff, geo_presence_precision());
     let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Open };
@@ -167,8 +167,9 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // The merchant is never in `notify_nearby_providers`'s signal audience
     // below (that's providers only) and has no anchor of their own to poll
     // -- without this link a merchant has no way to discover an order
-    // naming them at all, not even a delayed one. Mirrors RequesterToOrder.
-    create_link(merchant, action_hash.clone(), LinkTypes::MerchantToOrder, ())?;
+    // naming them at all, not even a delayed one. Keyed by the store, not
+    // the merchant agent -- see `StoreToOrder`'s own doc comment.
+    create_link(catalog_ref, action_hash.clone(), LinkTypes::StoreToOrder, ())?;
 
     if is_open {
         publish_to_open_anchor_and_notify(&action_hash, &dropoff_geohash, now)?;
@@ -230,13 +231,14 @@ pub fn get_orders_for_requester(requester: AgentPubKey) -> ExternResult<Vec<Reco
     Ok(resolve_links_to_records(links))
 }
 
-/// The `MerchantToOrder` counterpart -- unlike the requester's own read
-/// above, these links were authored by *other* agents (each order's
-/// requester), so this genuinely depends on gossip having propagated them
-/// to whatever authority holds basis for the merchant's own pubkey.
+/// One store's delivery-order queue (`StoreToOrder`) -- unlike the
+/// requester's own read above, these links were authored by *other*
+/// agents (each order's requester), so this genuinely depends on gossip
+/// having propagated them to whatever authority holds basis for the
+/// store's catalog hash.
 #[hdk_extern]
-pub fn get_orders_for_merchant(merchant: AgentPubKey) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(merchant, LinkTypes::MerchantToOrder)?, GetStrategy::default())?;
+pub fn get_orders_for_store(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
+    let links = get_links(LinkQuery::try_new(catalog_ref, LinkTypes::StoreToOrder)?, GetStrategy::default())?;
     Ok(resolve_links_to_records(links))
 }
 
@@ -287,22 +289,43 @@ pub(crate) struct SettleInputWire {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RecordEventInputWire {
-    pub(crate) subject: AgentPubKey,
+    pub(crate) target: ReputationTargetWire,
     pub(crate) order_ref: ActionHash,
     pub(crate) kind: ReputationEventKindWire,
 }
 
+/// Mirrors `reputation_integrity::ReputationTarget` -- an event is about a
+/// store, or an agent in one specific role, never a bare agent.
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) enum ReputationTargetWire {
+    Store(ActionHash),
+    Driver(AgentPubKey),
+    Customer(AgentPubKey),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum ReputationEventKindWire {
-    OrderCompleted { subject_role: ReputationRoleWire },
+    OrderCompleted,
     DisputeRaised,
     DisputeResolvedAgainst,
     CollateralForfeited { amount: u64 },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum ReputationRoleWire {
-    Provider,
+/// Best-effort reputation bookkeeping shared by every completion/dispute
+/// path in this crate. Skips an event whose subject would be the caller
+/// themselves -- `reputation_integrity::validate_event` rejects
+/// subject == counterparty, which happens legitimately when a merchant
+/// orders from their own store (see `settle_order_total`). That skip
+/// matters beyond tidiness: even behind `let _`, a nested `call` whose
+/// commit fails validation was observed to fail *this* call's whole commit
+/// too (pinned by `pickup-self-order.test.ts`), so an event that's certain
+/// to be rejected must never be attempted.
+pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationTargetWire, order_ref: ActionHash, kind: ReputationEventKindWire) -> ExternResult<()> {
+    if subject == &agent_info()?.agent_initial_pubkey {
+        return Ok(());
+    }
+    let _ = call(CallTargetCell::Local, "reputation", "record_event".into(), None, RecordEventInputWire { target, order_ref, kind });
+    Ok(())
 }
 
 const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
@@ -462,27 +485,20 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
 
     settle_delivery_fee(
         input.order_original_action.clone(),
-        catalog_ref,
+        catalog_ref.clone(),
         requester,
-        merchant,
+        merchant.clone(),
         bid.bidder.clone(),
         bid.price_offer,
         tip_cents,
     )?;
 
-    // Best-effort: a reputation bump for the provider is valuable but
-    // shouldn't block payment or delivery completion if it fails.
-    let _ = call(
-        CallTargetCell::Local,
-        "reputation",
-        "record_event".into(),
-        None,
-        RecordEventInputWire {
-            subject: bid.bidder,
-            order_ref: input.order_original_action.clone(),
-            kind: ReputationEventKindWire::OrderCompleted { subject_role: ReputationRoleWire::Provider },
-        },
-    );
+    // Best-effort: reputation bumps are valuable but shouldn't block
+    // payment or delivery completion if they fail. One per role this order
+    // actually involved -- the driver's completed delivery, and the store's
+    // completed order -- each counted only toward its own target.
+    record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted)?;
+    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted)?;
 
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed order".into())))

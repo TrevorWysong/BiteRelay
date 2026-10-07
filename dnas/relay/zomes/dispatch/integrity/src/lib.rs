@@ -4,7 +4,7 @@
 //! concrete entry type rather than one generalized "Job".
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
-use catalog_types::{BagClaim, BagClaimFulfillment, PromoCode};
+use catalog_types::{BagClaim, BagClaimFulfillment, MerchantCatalog, PromoCode};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 use relay_types::GeoPoint;
@@ -86,7 +86,12 @@ pub enum EntryTypes {
 #[hdk_link_types]
 pub enum LinkTypes {
     RequesterToOrder,
-    MerchantToOrder,
+    /// From the order's store (its `catalog_ref`), not the merchant agent --
+    /// one owner can run several stores, and each store has its own order
+    /// queue, the way each DoorDash/Uber Eats location's tablet only shows
+    /// that location's orders. A multi-store owner's "all stores" view is
+    /// just the union of each store's own queue.
+    StoreToOrder,
     OpenOrderGeohashAnchor,
     OrderToBid,
     /// `PickupOrder`'s discovery links -- no geohash anchor and no signal
@@ -94,7 +99,24 @@ pub enum LinkTypes {
     /// driver to notify), just the same direct requester/merchant
     /// discoverability `DeliveryOrder` also has via its own two link types.
     RequesterToPickupOrder,
-    MerchantToPickupOrder,
+    StoreToPickupOrder,
+}
+
+/// An order (or recurring template) names both a `merchant` and the store
+/// (`catalog_ref`) it's from -- and every per-store thing downstream (the
+/// store's order queue, its reviews, its reputation events) trusts that
+/// the two agree. `catalog_ref` is a catalog's original creation action
+/// and its `owner` never changes, so the literal record
+/// `must_get_valid_record` returns is the correct reference point.
+fn check_merchant_owns_catalog(merchant: &AgentPubKey, catalog_ref: &ActionHash) -> ExternResult<Option<String>> {
+    let record = must_get_valid_record(catalog_ref.clone())?;
+    let Ok(Some(catalog)) = record.entry().to_app_option::<MerchantCatalog>() else {
+        return Ok(Some("catalog_ref does not point at a MerchantCatalog entry".into()));
+    };
+    if &catalog.owner != merchant {
+        return Ok(Some("merchant must be the owner of catalog_ref's store".into()));
+    }
+    Ok(None)
 }
 
 #[hdk_extern]
@@ -142,6 +164,9 @@ fn validate_new_recurring_template(template: &RecurringOrderTemplate, author: &A
     }
     if let Some(reason) = validate_recurrence(&template.recurrence) {
         return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    if let Some(reason) = check_merchant_owns_catalog(&template.merchant, &template.catalog_ref)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
     Ok(ValidateCallbackResult::Valid)
 }
@@ -218,6 +243,9 @@ fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timest
     }
     if order.dispute_ref.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have a dispute_ref".into()));
+    }
+    if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
     // Only checks facts that are genuinely *immutable* once a PromoCode is
     // created (which merchant it belongs to, its fixed expiry) -- NOT
@@ -320,6 +348,9 @@ fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKey) -> Exter
     }
     if order.dispute_ref.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new pickup order cannot already have a dispute_ref".into()));
+    }
+    if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
     // promo_code_ref check deliberately omitted from this first pass --
     // see validate_new_order's own doc comment for the full reasoning on

@@ -14,6 +14,7 @@ import { DriverDashboard } from "./routes/driver/Dashboard";
 import { Earnings } from "./routes/driver/Earnings";
 import { MerchantOrders } from "./routes/merchant/Orders";
 import { MerchantCatalog } from "./routes/merchant/Catalog";
+import { NewStore } from "./routes/merchant/NewStore";
 import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
 import { ArbitratorDashboard } from "./routes/arbitrator/Dashboard";
@@ -121,6 +122,7 @@ export default function App() {
           <Route path="/driver/earnings" element={<Earnings />} />
           <Route path="/merchant" element={<MerchantOrders />} />
           <Route path="/merchant/catalog" element={<MerchantCatalog />} />
+          <Route path="/merchant/stores/new" element={<NewStore />} />
           <Route path="/arbitrator" element={<ArbitratorDashboard />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/transparency" element={<Transparency />} />

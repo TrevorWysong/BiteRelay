@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { ClipboardList } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ClipboardList, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrdersForMerchant, getPickupOrdersForMerchant, setOrderStatus, confirmPickupPrep, markReadyForPickup } from "../../holochain/zomes/dispatch";
+import { getOrdersForStore, getPickupOrdersForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
-import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
-import { Button, Card, EmptyState, Skeleton, StatNumber } from "../../components/ui";
+import { onLocalSignal } from "../../holochain/client";
+import { useMerchantStores, type StoreRow } from "../../store/merchantStores";
+import { Button, Card, Chip, ChipRow, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
@@ -13,36 +15,70 @@ import type { DeliveryOrder, PickupOrder } from "../../holochain/types";
 interface Row {
   hash: Uint8Array;
   order: DeliveryOrder;
+  storeHex: string;
 }
 
 interface PickupRow {
   hash: Uint8Array;
   order: PickupOrder;
+  storeHex: string;
 }
 
 const POLL_MS = 8000;
 
+/// "All stores" isn't a store hex, so it can't collide with one.
+const ALL_STORES = "all";
+
+/// Incoming orders across every store this merchant runs -- each store has
+/// its own queue on the DHT (`StoreToOrder`/`StoreToPickupOrder`), and this
+/// screen reads either one store's or all of them, the way Uber Eats
+/// Manager's multi-location view does. Every order is labelled with its
+/// store once there's more than one, since "which kitchen makes this" is
+/// the first thing a multi-store owner needs to know.
 export function MerchantOrders() {
+  const navigate = useNavigate();
+  const stores = useMerchantStores((s) => s.stores);
+  const loadStores = useMerchantStores((s) => s.load);
+  const [filter, setFilter] = useState(ALL_STORES);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [pickupRows, setPickupRows] = useState<PickupRow[] | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [advancingPickup, setAdvancingPickup] = useState<string | null>(null);
 
+  useEffect(() => {
+    loadStores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A store filter that no longer matches anything (e.g. stale state)
+  // quietly falls back to everything rather than showing an empty queue.
+  const effectiveFilter = stores?.some((s) => s.hex === filter) ? filter : ALL_STORES;
+  const visibleStores = useMemo<StoreRow[]>(
+    () => (stores ?? []).filter((s) => effectiveFilter === ALL_STORES || s.hex === effectiveFilter),
+    [stores, effectiveFilter],
+  );
+  const storeName = useMemo(() => new Map((stores ?? []).map((s) => [s.hex, s.catalog.business_name])), [stores]);
+
   const refresh = useCallback(async () => {
-    const records = await getOrdersForMerchant(myAgentPubKey());
-    const decoded = records.map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) }));
+    const perStore = await Promise.all(
+      visibleStores.map(async (store) => (await getOrdersForStore(store.hash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r), storeHex: store.hex }))),
+    );
+    const decoded = perStore.flat();
     decoded.sort((a, b) => b.order.requested_at - a.order.requested_at);
     setRows(decoded);
-  }, []);
+  }, [visibleStores]);
 
   const refreshPickup = useCallback(async () => {
-    const records = await getPickupOrdersForMerchant(myAgentPubKey());
-    const decoded = records.map((r) => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r) }));
+    const perStore = await Promise.all(
+      visibleStores.map(async (store) => (await getPickupOrdersForStore(store.hash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r), storeHex: store.hex }))),
+    );
+    const decoded = perStore.flat();
     decoded.sort((a, b) => b.order.requested_at - a.order.requested_at);
     setPickupRows(decoded);
-  }, []);
+  }, [visibleStores]);
 
   useEffect(() => {
+    if (stores === null) return;
     refresh();
     refreshPickup();
     const interval = setInterval(() => {
@@ -57,7 +93,7 @@ export function MerchantOrders() {
       clearInterval(interval);
       unsub();
     };
-  }, [refresh, refreshPickup]);
+  }, [stores, refresh, refreshPickup]);
 
   async function confirmPrep(hash: Uint8Array) {
     setConfirming(bytesToHex(hash));
@@ -79,6 +115,35 @@ export function MerchantOrders() {
     }
   }
 
+  if (stores !== null && stores.length === 0) {
+    return (
+      <div className="flex flex-col items-center px-4">
+        <EmptyState icon={<Store size={32} />} title="No storefront yet" subtitle="Publish a storefront to start receiving orders." />
+        <Button onClick={() => navigate("/merchant/catalog")}>Set up your store</Button>
+      </div>
+    );
+  }
+
+  const multiStore = (stores?.length ?? 0) > 1;
+  const storeFilter = multiStore && stores && (
+    <ChipRow>
+      <Chip active={effectiveFilter === ALL_STORES} onClick={() => setFilter(ALL_STORES)} tone="brand">
+        All stores
+      </Chip>
+      {stores.map((s) => (
+        <Chip key={s.hex} active={effectiveFilter === s.hex} onClick={() => setFilter(s.hex)} tone="brand">
+          {s.catalog.business_name}
+        </Chip>
+      ))}
+    </ChipRow>
+  );
+  const storeLabel = (hex: string) =>
+    multiStore && (
+      <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-relay-600">
+        <Store size={11} /> {storeName.get(hex) ?? "Store"}
+      </p>
+    );
+
   if (rows === null || pickupRows === null) {
     return (
       <div className="px-4 pt-4 pb-8">
@@ -90,7 +155,16 @@ export function MerchantOrders() {
   }
 
   if (rows.length === 0 && pickupRows.length === 0) {
-    return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle="New orders for your restaurant show up here automatically." />;
+    return (
+      <div className="px-4 pt-4">
+        {storeFilter}
+        <EmptyState
+          icon={<ClipboardList size={32} />}
+          title="No orders yet"
+          subtitle={effectiveFilter === ALL_STORES ? "New orders for your stores show up here automatically." : "New orders for this store show up here automatically."}
+        />
+      </div>
+    );
   }
 
   return (
@@ -98,12 +172,14 @@ export function MerchantOrders() {
       <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
         Incoming orders
       </motion.h1>
+      {storeFilter}
       {rows.length > 0 && <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Delivery orders</p>}
       <div className="flex flex-col gap-3">
         <AnimatePresence initial={false}>
-          {rows.map(({ hash, order }) => (
+          {rows.map(({ hash, order, storeHex }) => (
             <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
               <Card className="p-4">
+                {storeLabel(storeHex)}
                 <div className="flex items-center justify-between">
                   <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
                   <StatusBadge status={order.status} />
@@ -128,9 +204,10 @@ export function MerchantOrders() {
       {pickupRows.length > 0 && <p className="mb-2 mt-5 text-xs font-bold uppercase tracking-wide text-ink-400">Pickup orders</p>}
       <div className="flex flex-col gap-3">
         <AnimatePresence initial={false}>
-          {pickupRows.map(({ hash, order }) => (
+          {pickupRows.map(({ hash, order, storeHex }) => (
             <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
               <Card className="p-4">
+                {storeLabel(storeHex)}
                 <div className="flex items-center justify-between">
                   <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
                   <PickupStatusBadge status={order.status} />

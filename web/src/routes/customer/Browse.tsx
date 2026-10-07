@@ -4,13 +4,13 @@ import { Heart, PackageOpen, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import { getNearbyMerchants, getNearbyGoodieBags } from "../../holochain/zomes/catalog";
-import { getReviewsFor } from "../../holochain/zomes/reputation";
+import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useFavorites } from "../../lib/useFavorites";
 import { formatCents } from "../../lib/format";
-import type { MerchantCatalog, Review, GoodieBag } from "../../holochain/types";
+import type { MerchantCatalog, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { Chip, ChipRow, EmptyState, Skeleton } from "../../components/ui";
@@ -77,11 +77,15 @@ export function Browse() {
         // doc comment (this is the exact bug that made a merchant's menu
         // items/goodie bags look unpublished from here once they'd ever
         // toggled open/closed or edited their details).
+        // One bounded, checkpointed summary read per card -- this store's
+        // own rating only, never the owner's other stores or their driving
+        // (see `reputation_integrity`'s module doc) -- instead of
+        // downloading every review a store has ever received just to
+        // average them.
         page.catalogs.map(async (view) => {
           const catalog = decodeEntry<MerchantCatalog>(view.record);
-          const reviews = await getReviewsFor(catalog.owner).then((rs) => rs.map((r) => decodeEntry<Review>(r)));
-          const rating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
-          return { hash: view.original_action, catalog, rating, reviewCount: reviews.length };
+          const summary = await getRatingSummary({ Store: view.original_action }).catch(() => ({ count: 0, rating_sum: 0 }));
+          return { hash: view.original_action, catalog, rating: averageRating(summary) ?? 0, reviewCount: summary.count };
         }),
       );
       if (!cancelled) setRows(withRatings);

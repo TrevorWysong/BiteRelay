@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Truck } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Store, Truck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
+import { useMerchantStores } from "../store/merchantStores";
 import { getBalance } from "../holochain/zomes/ledger";
-import { getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
+import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
 import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { decodeEntry } from "../holochain/decode";
 import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
@@ -14,13 +15,24 @@ import { StarRating } from "../components/StarRating";
 import { formatCents } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
-import type { ProviderCredential, ReputationSummary, Review } from "../holochain/types";
+import type { ProviderCredential, RatingSummary, ReputationSummary, Review } from "../holochain/types";
 
+/// One identity, several hats: ratings and stats are shown per role (your
+/// driving) and per store (each restaurant you run), never blended into
+/// one agent-wide number -- see `reputation_integrity`'s module doc.
 export function ProfilePage() {
-  const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile } = useSession();
+  const navigate = useNavigate();
+  const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile, setMode } = useSession();
+  const stores = useMerchantStores((s) => s.stores);
+  const loadStores = useMerchantStores((s) => s.load);
+  const setActiveStore = useMerchantStores((s) => s.setActive);
+  const isDriver = !!profile?.roles.includes("Provider");
+  const isMerchant = !!profile?.roles.includes("Merchant");
   const [balance, setBalance] = useState<number | null>(null);
   const [rep, setRep] = useState<ReputationSummary | null>(null);
+  const [driverRating, setDriverRating] = useState<RatingSummary | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [storeRatings, setStoreRatings] = useState<Record<string, RatingSummary>>({});
   const [credential, setCredential] = useState<ProviderCredential | null>(null);
   const [editing, setEditing] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState(false);
@@ -32,9 +44,31 @@ export function ProfilePage() {
   useEffect(() => {
     if (!agentPubKey) return;
     getBalance(agentPubKey).then(setBalance);
-    getReputationSummary(agentPubKey).then(setRep);
-    getReviewsFor(agentPubKey).then((records) => setReviews(records.map((r) => decodeEntry<Review>(r))));
   }, [agentPubKey]);
+
+  useEffect(() => {
+    if (!agentPubKey || !isDriver) return;
+    getReputationSummary({ Driver: agentPubKey }).then(setRep);
+    getRatingSummary({ Driver: agentPubKey }).then(setDriverRating);
+    getReviewsFor({ Driver: agentPubKey }).then((page) => setReviews(page.reviews.map((r) => decodeEntry<Review>(r))));
+  }, [agentPubKey, isDriver]);
+
+  useEffect(() => {
+    if (isMerchant) loadStores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMerchant]);
+
+  useEffect(() => {
+    stores?.forEach((store) => {
+      getRatingSummary({ Store: store.hash }).then((summary) => setStoreRatings((prev) => ({ ...prev, [store.hex]: summary })));
+    });
+  }, [stores]);
+
+  function openStore(hex: string) {
+    setActiveStore(hex);
+    setMode("merchant");
+    navigate("/merchant/catalog");
+  }
 
   useEffect(() => {
     if (profile) setDraft({ bio: profile.bio, phone: profile.phone, avatar_data_uri: profile.avatar_data_uri });
@@ -88,7 +122,7 @@ export function ProfilePage() {
     }
   }
 
-  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
+  const avgDriverRating = driverRating ? averageRating(driverRating) : null;
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-6 pb-8">
@@ -105,7 +139,11 @@ export function ProfilePage() {
           )}
         </motion.div>
         <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{profile?.display_name}</h1>
-        {reviews.length > 0 && <StarRating value={avgRating} count={reviews.length} />}
+        {isDriver && avgDriverRating !== null && driverRating && (
+          <div className="flex items-center gap-1.5 text-xs text-ink-400">
+            <Truck size={12} /> <StarRating value={avgDriverRating} count={driverRating.count} />
+          </div>
+        )}
         <div className="flex gap-1.5">
           {profile?.roles.map((r) => (
             <span key={r} className="rounded-full bg-ink-100 dark:bg-ink-800 px-2.5 py-1 text-xs font-semibold text-ink-500 dark:text-ink-300">
@@ -211,11 +249,39 @@ export function ProfilePage() {
           <p className="text-xs text-ink-400">Balance</p>
           {balance === null ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
         </Card>
-        <Card className="p-4">
-          <p className="text-xs text-ink-400">Completed</p>
-          {rep === null ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
-        </Card>
+        {isDriver && (
+          <Card className="p-4">
+            <p className="text-xs text-ink-400">Deliveries</p>
+            {rep === null ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
+          </Card>
+        )}
       </motion.div>
+
+      {isMerchant && stores && stores.length > 0 && (
+        <motion.div variants={fadeSlideUp}>
+        <Card className="mb-4 p-4">
+          <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+            <Store size={13} /> {stores.length === 1 ? "Your store" : `Your stores (${stores.length})`}
+          </p>
+          <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
+            {stores.map((store) => {
+              const summary = storeRatings[store.hex];
+              const avg = summary ? averageRating(summary) : null;
+              return (
+                <button key={store.hex} onClick={() => openStore(store.hex)} className="flex items-center gap-3 py-2.5 text-left">
+                  <span className={store.catalog.is_open ? "h-2 w-2 shrink-0 rounded-full bg-presence-500" : "h-2 w-2 shrink-0 rounded-full bg-ink-300 dark:bg-ink-600"} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{store.catalog.business_name}</p>
+                    {avg !== null && summary ? <StarRating value={avg} count={summary.count} size={11} /> : <p className="text-xs text-ink-400">No ratings yet</p>}
+                  </div>
+                  <ChevronRight size={16} className="shrink-0 text-ink-300" />
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+        </motion.div>
+      )}
 
       <motion.div variants={fadeSlideUp} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
       <Link to="/transparency" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4 shadow-[var(--shadow-card)]">
@@ -233,7 +299,7 @@ export function ProfilePage() {
       {reviews.length > 0 && (
         <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Reviews</p>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Driver reviews</p>
           <div className="flex flex-col gap-3">
             {reviews.map((r, i) => (
               <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-2 last:border-0 last:pb-0">

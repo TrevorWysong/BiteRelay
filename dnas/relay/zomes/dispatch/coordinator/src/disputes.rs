@@ -11,20 +11,22 @@
 //! that were speculatively designed in the original architecture pass and
 //! never wired up until now).
 
-use crate::orders::{settle_delivery_fee, settle_order_total, RecordEventInputWire, ReputationEventKindWire, SettleInputWire};
+use crate::orders::{record_reputation_event, settle_delivery_fee, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_decoded;
 
 /// Derives who the *other* party to a dispute is -- whichever side of the
-/// order didn't raise it. Shared by `raise_dispute` and
-/// `raise_cancellation_dispute`, which otherwise duplicated this exact
-/// branching with only the final error message's wording differing.
-fn derive_respondent(order: &DeliveryOrder, bid: &Bid, me: &AgentPubKey, unauthorized_reason: &str) -> ExternResult<AgentPubKey> {
+/// order didn't raise it -- along with the reputation target that party
+/// answers as (a delivery dispute is always customer vs. driver). Shared by
+/// `raise_dispute` and `raise_cancellation_dispute`, which otherwise
+/// duplicated this exact branching with only the final error message's
+/// wording differing.
+fn derive_respondent(order: &DeliveryOrder, bid: &Bid, me: &AgentPubKey, unauthorized_reason: &str) -> ExternResult<(AgentPubKey, ReputationTargetWire)> {
     if me == &bid.bidder {
-        Ok(order.requester.clone())
+        Ok((order.requester.clone(), ReputationTargetWire::Customer(order.requester.clone())))
     } else if me == &order.requester || me == &order.merchant {
-        Ok(bid.bidder.clone())
+        Ok((bid.bidder.clone(), ReputationTargetWire::Driver(bid.bidder.clone())))
     } else {
         Err(wasm_error!(WasmErrorInner::Guest(unauthorized_reason.into())))
     }
@@ -74,7 +76,7 @@ pub fn raise_dispute(input: RaiseDisputeInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid to dispute".into())))?;
     let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
-    let respondent = derive_respondent(
+    let (respondent, respondent_target) = derive_respondent(
         &order,
         &bid,
         &me,
@@ -101,17 +103,7 @@ pub fn raise_dispute(input: RaiseDisputeInput) -> ExternResult<Record> {
     let dispute_ref = dispute_record.action_address().clone();
 
     // Best-effort, informational -- see doc comment above.
-    let _ = call(
-        CallTargetCell::Local,
-        "reputation",
-        "record_event".into(),
-        None,
-        RecordEventInputWire {
-            subject: respondent,
-            order_ref: input.order_original_action.clone(),
-            kind: ReputationEventKindWire::DisputeRaised,
-        },
-    );
+    record_reputation_event(&respondent, respondent_target, input.order_original_action.clone(), ReputationEventKindWire::DisputeRaised)?;
 
     let mut updated_order = order;
     updated_order.status = DeliveryStatus::Disputed;
@@ -246,17 +238,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
                     },
                 );
             }
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: requester,
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
         DisputeOutcome::FavorRequester { forfeit_amount } => {
             if forfeit_amount > 0 {
@@ -276,29 +258,14 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
                     return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
                 }
             }
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: bid.bidder.clone(),
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if forfeit_amount > 0 {
-                let _ = call(
-                    CallTargetCell::Local,
-                    "reputation",
-                    "record_event".into(),
-                    None,
-                    RecordEventInputWire {
-                        subject: bid.bidder,
-                        order_ref: input.order_original_action.clone(),
-                        kind: ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
-                    },
-                );
+                record_reputation_event(
+                    &bid.bidder,
+                    ReputationTargetWire::Driver(bid.bidder.clone()),
+                    input.order_original_action.clone(),
+                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                )?;
             }
         }
     }
@@ -338,7 +305,7 @@ pub fn raise_cancellation_dispute(input: RaiseCancellationDisputeInput) -> Exter
         .ok_or(wasm_error!(WasmErrorInner::Guest("an order that never had an accepted bid cannot have a cancellation-fairness dispute -- there was no provider to be unfair to".into())))?;
     let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
-    let respondent = derive_respondent(
+    let (respondent, respondent_target) = derive_respondent(
         &order,
         &bid,
         &me,
@@ -364,17 +331,7 @@ pub fn raise_cancellation_dispute(input: RaiseCancellationDisputeInput) -> Exter
     let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
     let dispute_ref = dispute_record.action_address().clone();
 
-    let _ = call(
-        CallTargetCell::Local,
-        "reputation",
-        "record_event".into(),
-        None,
-        RecordEventInputWire {
-            subject: respondent,
-            order_ref: input.order_original_action.clone(),
-            kind: ReputationEventKindWire::DisputeRaised,
-        },
-    );
+    record_reputation_event(&respondent, respondent_target, input.order_original_action.clone(), ReputationEventKindWire::DisputeRaised)?;
 
     let mut updated_order = order;
     // status is deliberately left as Cancelled -- only dispute_ref changes.
@@ -489,17 +446,7 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
             // them, not on the provider who just won. Mirrors
             // apply_dispute_resolution's own FavorProvider branch, which
             // correctly records this against `requester`.
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: requester,
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
         // The cancellation was fine (or the provider themselves caused it):
         // the provider compensates the requester, if anything is owed.
@@ -524,29 +471,14 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
             // Unconditional -- the provider lost this ruling regardless of
             // whether any amount was actually forfeited (mirrors
             // apply_dispute_resolution's identical FavorRequester shape).
-            let _ = call(
-                CallTargetCell::Local,
-                "reputation",
-                "record_event".into(),
-                None,
-                RecordEventInputWire {
-                    subject: bid.bidder.clone(),
-                    order_ref: input.order_original_action.clone(),
-                    kind: ReputationEventKindWire::DisputeResolvedAgainst,
-                },
-            );
+            record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if forfeit_amount > 0 {
-                let _ = call(
-                    CallTargetCell::Local,
-                    "reputation",
-                    "record_event".into(),
-                    None,
-                    RecordEventInputWire {
-                        subject: bid.bidder,
-                        order_ref: input.order_original_action.clone(),
-                        kind: ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
-                    },
-                );
+                record_reputation_event(
+                    &bid.bidder,
+                    ReputationTargetWire::Driver(bid.bidder.clone()),
+                    input.order_original_action.clone(),
+                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                )?;
             }
         }
     }

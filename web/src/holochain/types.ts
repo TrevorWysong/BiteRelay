@@ -318,8 +318,23 @@ export interface ReputationSummary {
   total_collateral_forfeited: number;
 }
 
+/// Who a reputation event/summary is about -- a store (by its catalog's
+/// `original_action`), or an agent in one specific role. Never a bare
+/// agent: one owner can run several stores and also drive, and each of
+/// those is tracked separately (see `reputation_integrity`'s module doc).
+export type ReputationTarget = { Store: ActionHash } | { Driver: AgentPubKey } | { Customer: AgentPubKey };
+
+/// What a customer rates after an order: the store, and (for a delivery)
+/// the driver.
+export type ReviewTarget = { Store: ActionHash } | { Driver: AgentPubKey };
+
+export interface RatingSummary {
+  count: number;
+  rating_sum: number;
+}
+
 export interface Review {
-  subject: AgentPubKey;
+  target: ReviewTarget;
   author: AgentPubKey;
   order_ref: ActionHash;
   rating: number;
@@ -337,7 +352,7 @@ export interface ItemReview {
 }
 
 export type ReputationEventKind =
-  | { OrderCompleted: { subject_role: "Requester" | "Provider" | "Merchant" } }
+  | "OrderCompleted"
   | "OrderCancelledByThem"
   | "DisputeRaised"
   | "DisputeResolvedAgainst"
