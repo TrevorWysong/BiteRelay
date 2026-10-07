@@ -11,7 +11,7 @@ pub use signals::*;
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original};
 use relay_types::GeoPoint;
 
 fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::TypedPath> {
@@ -41,35 +41,57 @@ pub struct PublishCatalogInput {
     #[serde(default)]
     pub phone: String,
     #[serde(default)]
-    pub address_line: String,
+    pub address_street: String,
+    #[serde(default)]
+    pub address_city: String,
+    #[serde(default)]
+    pub address_state: String,
+    #[serde(default)]
+    pub address_zip: String,
     #[serde(default)]
     pub hours_open: String,
     #[serde(default)]
     pub hours_close: String,
+    #[serde(default = "default_max_delivery_radius_km")]
+    pub max_delivery_radius_km: f64,
+}
+
+fn default_max_delivery_radius_km() -> f64 {
+    8.0
 }
 
 /// Pairs a catalog's stable identity with its current content. `catalog_ref`
 /// everywhere else in this zome (`add_menu_item`, `create_promo_code`,
 /// `list_menu_items`, `list_promo_codes_for_catalog`, and this feature's own
 /// `CatalogToBag`) is keyed on the catalog's *original* creation action --
-/// see `validate_menu_item`'s own doc comment. `get_my_catalog` is the one
-/// place that content needs to reflect the *latest* state (is it open right
-/// now, current subsidy, ...), so it can't just hand back a single `Record`:
-/// a `Record`'s own action hash is whichever one it is, and collapsing those
-/// two needs into one value is exactly the bug this struct exists to avoid
-/// (see `original_action`'s own field doc for the bug it fixes).
+/// see `validate_menu_item`'s own doc comment. Both `get_my_catalog` and
+/// `get_nearby_merchants` are places content needs to reflect the *latest*
+/// state (is it open right now, current subsidy, ...), so neither can just
+/// hand back a single `Record`: a `Record`'s own action hash is whichever
+/// one it is, and collapsing those two needs into one value is exactly the
+/// bug this struct exists to avoid (see `original_action`'s own field doc
+/// for the bug it fixes, first found on `get_my_catalog` and then found
+/// *again*, independently, on `get_nearby_merchants` -- the fix is the
+/// same shape both times, which is why this one struct now covers both
+/// callers instead of two near-identical ones).
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MyCatalogView {
-    /// The `OwnerToCatalog` link's target -- fixed forever at `publish_catalog`
-    /// time, since that link is never recreated by any later update. Found
-    /// the hard way: this extern used to just return `resolve_latest(...)`
-    /// directly, so a client naively caching that `Record`'s action hash as
-    /// its `catalog_ref` would have it silently drift to a new value on
-    /// every catalog edit (toggling open/closed, editing details, changing
-    /// subsidy) -- orphaning every menu item/promo code already linked
-    /// under the previous hash, since `list_menu_items`/
-    /// `list_promo_codes_for_catalog` key their reads the same way. Use
-    /// *this* field as `catalog_ref`, never the record's own action hash.
+pub struct CatalogView {
+    /// The `OwnerToCatalog` (or, from `get_nearby_merchants`,
+    /// `GeohashToCatalog`) link's target -- fixed forever at
+    /// `publish_catalog` time, since neither link is ever recreated by a
+    /// later update. Found the hard way: `get_my_catalog` used to just
+    /// return `resolve_latest(...)` directly, so a client naively caching
+    /// that `Record`'s action hash as its `catalog_ref` would have it
+    /// silently drift to a new value on every catalog edit (toggling
+    /// open/closed, editing details, changing subsidy) -- orphaning every
+    /// menu item/promo code/goodie bag already linked under the previous
+    /// hash, since `list_menu_items`/`list_promo_codes_for_catalog`/
+    /// `list_goodie_bags_for_catalog` key their reads the same way. Fixed
+    /// there, then found *again* on `get_nearby_merchants` (which fed
+    /// Browse.tsx's own restaurant list and `get_nearby_goodie_bags`) --
+    /// same bug, different extern, because `resolve_links_to_records`
+    /// alone always discards exactly this hash. Use *this* field as
+    /// `catalog_ref`, never the record's own action hash.
     pub original_action: ActionHash,
     pub record: Record,
 }
@@ -85,14 +107,14 @@ pub struct MyCatalogView {
 /// has duplicates (e.g. from before that guard existed) still gets a
 /// stable, repeatable answer instead of an arbitrary one each call.
 #[hdk_extern]
-pub fn get_my_catalog(_: ()) -> ExternResult<Option<MyCatalogView>> {
+pub fn get_my_catalog(_: ()) -> ExternResult<Option<CatalogView>> {
     let owner = agent_info()?.agent_initial_pubkey;
     let mut links = get_links(LinkQuery::try_new(owner, LinkTypes::OwnerToCatalog)?, GetStrategy::default())?;
     links.sort_by_key(|l| l.timestamp);
     let Some(link) = links.pop() else { return Ok(None) };
     let Some(original_action) = link.target.into_action_hash() else { return Ok(None) };
     let record = resolve_latest(original_action.clone())?;
-    Ok(Some(MyCatalogView { original_action, record }))
+    Ok(Some(CatalogView { original_action, record }))
 }
 
 #[hdk_extern]
@@ -115,10 +137,14 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         cuisine_type: input.cuisine_type,
         banner_data_uri: input.banner_data_uri,
         phone: input.phone,
-        address_line: input.address_line,
+        address_street: input.address_street,
+        address_city: input.address_city,
+        address_state: input.address_state,
+        address_zip: input.address_zip,
         hours_open: input.hours_open,
         hours_close: input.hours_close,
         delivery_subsidy_percent: 50,
+        max_delivery_radius_km: input.max_delivery_radius_km,
         dietary_tags: Vec::new(),
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
@@ -164,9 +190,13 @@ pub struct UpdateCatalogDetailsInput {
     pub cuisine_type: String,
     pub banner_data_uri: String,
     pub phone: String,
-    pub address_line: String,
+    pub address_street: String,
+    pub address_city: String,
+    pub address_state: String,
+    pub address_zip: String,
     pub hours_open: String,
     pub hours_close: String,
+    pub max_delivery_radius_km: f64,
 }
 
 #[hdk_extern]
@@ -176,9 +206,13 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
     catalog.cuisine_type = input.cuisine_type;
     catalog.banner_data_uri = input.banner_data_uri;
     catalog.phone = input.phone;
-    catalog.address_line = input.address_line;
+    catalog.address_street = input.address_street;
+    catalog.address_city = input.address_city;
+    catalog.address_state = input.address_state;
+    catalog.address_zip = input.address_zip;
     catalog.hours_open = input.hours_open;
     catalog.hours_close = input.hours_close;
+    catalog.max_delivery_radius_km = input.max_delivery_radius_km;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
@@ -326,7 +360,7 @@ pub struct NearbyMerchantsInput {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NearbyMerchantsPage {
-    pub catalogs: Vec<Record>,
+    pub catalogs: Vec<CatalogView>,
     pub next_after: Option<Timestamp>,
 }
 
@@ -359,7 +393,11 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
         None
     };
     links.truncate(CATALOG_PAGE_SIZE);
-    Ok(NearbyMerchantsPage { catalogs: resolve_links_to_records(links), next_after })
+    let catalogs = resolve_links_to_records_with_original(links)
+        .into_iter()
+        .map(|(original_action, record)| CatalogView { original_action, record })
+        .collect();
+    Ok(NearbyMerchantsPage { catalogs, next_after })
 }
 
 // --- promo codes (architecture plan: merchant-scoped discounts, built

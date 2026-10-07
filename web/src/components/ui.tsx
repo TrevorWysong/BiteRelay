@@ -56,6 +56,25 @@ export function Badge({ tone = "neutral", children }: { tone?: "neutral" | "bran
   return <span className={clsx("inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold", tones[tone])}>{children}</span>;
 }
 
+export function ChipRow({ children }: { children: ReactNode }) {
+  return <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto pb-0.5">{children}</div>;
+}
+
+export function Chip({ active, onClick, children, tone = "default" }: { active: boolean; onClick: () => void; children: ReactNode; tone?: "default" | "danger" | "brand" }) {
+  const activeClasses = tone === "danger" ? "bg-red-500 text-white" : tone === "brand" ? "bg-presence-500 text-white" : "bg-ink-900 text-white dark:bg-white dark:text-ink-900";
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition",
+        active ? activeClasses : "bg-ink-100 dark:bg-ink-800 text-ink-500 hover:bg-ink-200 dark:hover:bg-ink-700"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 /// The one place "this is live, p2p, right now" gets a visual signature --
 /// see index.css's doc comment on why presence-green is reserved rather
 /// than used as a generic accent.
@@ -165,5 +184,21 @@ export function Checkbox({ className, ...rest }: InputHTMLAttributes<HTMLInputEl
       )}
       {...rest}
     />
+  );
+}
+
+/// A persistent label above a field, rather than relying on placeholder
+/// text -- placeholder text disappears the instant something's typed,
+/// which reads as "this field has no label at all" once filled in.
+/// Shared by every form in the app (onboarding, merchant storefront
+/// details, goodie-bag creation, ...) specifically so every field looks
+/// and behaves the same way regardless of which screen it's on, rather
+/// than each screen inventing its own near-identical label markup.
+export function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <label className="mb-1 block text-xs font-semibold text-ink-500">{label}</label>
+      {children}
+    </div>
   );
 }

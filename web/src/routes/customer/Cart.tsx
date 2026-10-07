@@ -4,7 +4,8 @@ import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
-import { AddressSearch } from "../../components/AddressSearch";
+import { AddressSwitcher } from "../../components/AddressSwitcher";
+import { distanceKm } from "../../lib/geohash";
 import { useCart, expandLineQuantities } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
@@ -42,6 +43,21 @@ function Section({ title, right, children }: { title: string; right?: React.Reac
       </Card>
     </motion.div>
   );
+}
+
+// Client-side pre-check only -- `request_delivery`'s own coordinator-level
+// check (dispatch_coordinator::orders, same best-effort trust tier as its
+// promo-code/bag-claim checks) is the real enforcement. `null` for
+// `merchantLocation`/`merchantRadiusKm` (catalog still loading) means
+// nothing to check yet, so every pick is allowed rather than blocked on a
+// fetch that hasn't resolved.
+function validateDropoffRadius(point: GeoPoint, merchantLocation: GeoPoint | null, merchantRadiusKm: number | null): string | null {
+  if (!merchantLocation || merchantRadiusKm === null) return null;
+  const distance = distanceKm(merchantLocation, point);
+  if (distance > merchantRadiusKm) {
+    return `That's ${distance.toFixed(1)}km away -- this merchant only delivers within ${merchantRadiusKm}km.`;
+  }
+  return null;
 }
 
 function ToggleChip({ active, onClick, children, className }: { active: boolean; onClick: () => void; children: React.ReactNode; className?: string }) {
@@ -93,6 +109,16 @@ export function Cart() {
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
   const [subsidyPercent, setSubsidyPercent] = useState(0);
+  // Merchant's own delivery-range setting -- fetched alongside subsidyPercent
+  // from the same catalog read -- lets `onValidate` below reject an
+  // out-of-range dropoff pick client-side, before the order is even
+  // submitted. The real, authoritative enforcement is still
+  // `request_delivery`'s own coordinator-level check (dispatch_coordinator);
+  // this is purely a faster, friendlier pre-check -- `null` until the
+  // catalog loads, which `onValidate` treats as "nothing to check yet"
+  // rather than blocking every pick while the fetch is in flight.
+  const [merchantLocation, setMerchantLocation] = useState<GeoPoint | null>(null);
+  const [merchantRadiusKm, setMerchantRadiusKm] = useState<number | null>(null);
   const [promoCodes, setPromoCodes] = useState<{ hash: ActionHash; promo: PromoCode }[]>([]);
   const [menuItems, setMenuItems] = useState<{ hash: ActionHash; item: MenuItem }[]>([]);
   const [promoInput, setPromoInput] = useState("");
@@ -103,7 +129,12 @@ export function Cart() {
   useEffect(() => {
     if (!cart.catalogRef) return;
     getCatalog(cart.catalogRef)
-      .then((record) => setSubsidyPercent(decodeEntry<MerchantCatalog>(record).delivery_subsidy_percent))
+      .then((record) => {
+        const catalog = decodeEntry<MerchantCatalog>(record);
+        setSubsidyPercent(catalog.delivery_subsidy_percent);
+        setMerchantLocation(catalog.location);
+        setMerchantRadiusKm(catalog.max_delivery_radius_km);
+      })
       .catch(() => setSubsidyPercent(0));
     listPromoCodesForCatalog(cart.catalogRef)
       .then((records) => setPromoCodes(records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) }))))
@@ -334,7 +365,12 @@ export function Cart() {
 
       {fulfillment === "Delivery" && (
         <Section title="Deliver to">
-          <AddressSearch value={dropoff} onChange={setDropoff} label="Delivery location" />
+          <AddressSwitcher
+            value={dropoff}
+            onChange={setDropoff}
+            onValidate={(point) => validateDropoffRadius(point, merchantLocation, merchantRadiusKm)}
+            label="Deliver to"
+          />
           <label className="mt-2 flex items-center gap-2 text-xs text-ink-400">
             <Checkbox checked={saveAsDefault} onChange={(e) => setSaveAsDefault(e.target.checked)} />
             Save as my default location

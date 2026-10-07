@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,9 +8,9 @@ import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
-import { formatCents } from "../../lib/format";
+import { formatCatalogAddress, formatCents } from "../../lib/format";
 import { describeError } from "../../lib/errors";
-import { Button, Input, Skeleton, StatNumber } from "../../components/ui";
+import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
@@ -45,6 +45,7 @@ export function MerchantDetail() {
   const [submittingClaim, setSubmittingClaim] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimedBagHexes, setClaimedBagHexes] = useState<Set<string>>(new Set());
+  const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
 
   useEffect(() => {
     if (!hash) return;
@@ -58,8 +59,14 @@ export function MerchantDetail() {
       // nearby-merchants anchor read and find this one when arriving via a
       // direct URL/refresh rather than a card click.
       getNearbyMerchants(encodeGeohash(location.lat, location.lon)).then((page) => {
-        const match = page.catalogs.find((r) => bytesToHex(actionHash(r)) === hash);
-        if (match && !cancelled) setCatalog(decodeEntry<MerchantCatalog>(match));
+        // Match against `original_action`, not `actionHash(view.record)`
+        // -- the URL's own `:hash` param is itself an original_action
+        // (see RestaurantCard's Link), so matching against the record's
+        // drifting latest-state hash would fail here the moment this
+        // catalog had ever been edited. See `CatalogView`'s own doc
+        // comment.
+        const match = page.catalogs.find((v) => bytesToHex(v.original_action) === hash);
+        if (match && !cancelled) setCatalog(decodeEntry<MerchantCatalog>(match.record));
       });
     }
 
@@ -149,7 +156,22 @@ export function MerchantDetail() {
 
   const cartCount = cart.lines.reduce((n, l) => n + l.quantity, 0);
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
-  const grouped = groupByCategory(items);
+  // Scoped to this one restaurant's own menu, not a union across every
+  // nearby restaurant -- a per-merchant menu is naturally small and bounded,
+  // unlike the metro-area-wide tag set a Browse-screen version of this
+  // filter would have to show (see MerchantCatalog.dietary_tags' own doc
+  // comment: that field exists for a different purpose, denormalized
+  // discovery-level signal, not this screen's filter).
+  const dietaryTags = useMemo(() => {
+    const set = new Set<string>();
+    items?.forEach((row) => (row.item.dietary_tags ?? []).forEach((t) => set.add(t)));
+    return [...set].sort();
+  }, [items]);
+  const filteredItems = useMemo(() => {
+    if (dietaryFilter.length === 0) return items ?? [];
+    return (items ?? []).filter((row) => dietaryFilter.some((tag) => (row.item.dietary_tags ?? []).includes(tag)));
+  }, [items, dietaryFilter]);
+  const grouped = groupByCategory(filteredItems);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pb-24">
@@ -185,9 +207,9 @@ export function MerchantDetail() {
               {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
             </span>
           )}
-          {catalog.address_line && (
+          {formatCatalogAddress(catalog) && (
             <span className="flex items-center gap-1">
-              <MapPin size={12} /> {catalog.address_line}
+              <MapPin size={12} /> {formatCatalogAddress(catalog)}
             </span>
           )}
           {catalog.phone && (
@@ -271,6 +293,19 @@ export function MerchantDetail() {
               })}
             </div>
           </motion.div>
+        )}
+
+        {dietaryTags.length > 0 && (
+          <div className="mt-6 flex items-center gap-2">
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-ink-300 dark:text-ink-600">Diet</span>
+            <ChipRow>
+              {dietaryTags.map((tag) => (
+                <Chip key={tag} active={dietaryFilter.includes(tag)} onClick={() => setDietaryFilter((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))} tone="brand">
+                  {tag}
+                </Chip>
+              ))}
+            </ChipRow>
+          </div>
         )}
 
         {[...grouped.entries()].map(([category, rows]) => (

@@ -26,7 +26,7 @@ use crate::NearbyMerchantsInput;
 /// Keyed on the catalog's *original* creation hash -- same convention as
 /// `promo_anchor_path`, and the exact reason `get_my_catalog` was fixed to
 /// expose that stable hash separately from its latest-resolved content
-/// (see `MyCatalogView`'s own doc comment).
+/// (see `CatalogView`'s own doc comment).
 fn bag_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
     Path::from(format!("catalog_bag.{}", catalog_ref)).typed(LinkTypes::CatalogToBag)
 }
@@ -85,9 +85,8 @@ pub fn list_goodie_bags_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec
 pub fn get_nearby_goodie_bags(input: NearbyMerchantsInput) -> ExternResult<Vec<Record>> {
     let nearby = crate::get_nearby_merchants(input)?;
     let mut bags = Vec::new();
-    for catalog_record in nearby.catalogs {
-        let catalog_ref = catalog_record.action_address().clone();
-        bags.extend(list_goodie_bags_for_catalog(catalog_ref)?);
+    for catalog_view in nearby.catalogs {
+        bags.extend(list_goodie_bags_for_catalog(catalog_view.original_action)?);
     }
     Ok(bags)
 }

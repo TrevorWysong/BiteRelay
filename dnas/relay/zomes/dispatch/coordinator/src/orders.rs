@@ -114,6 +114,33 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         }
     }
 
+    // Best-effort, same shape and trust tier as the promo-code/bag-claim
+    // checks just above: `max_delivery_radius_km` is a merchant-editable
+    // setting (`catalog::update_catalog_details`), so it has exactly the
+    // same "can't be the deterministic source of truth" problem `active`
+    // already has in `validate_new_order`'s own doc comment -- a literal
+    // fetch of `catalog_ref` would only ever see the radius *as published*,
+    // not whatever the merchant has since changed it to, and checking a
+    // stale radius could just as easily wrongly reject a legitimately-
+    // widened order as wrongly admit one past a since-narrowed one. This
+    // cross-zome call resolves to latest, so it's the one place the
+    // question can genuinely be answered against the merchant's *current*
+    // setting. A failed lookup degrades to admitting the order rather than
+    // blocking it over a convenience pre-check that couldn't resolve.
+    if let Ok(ZomeCallResponse::Ok(extern_io)) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, input.catalog_ref.clone()) {
+        if let Ok(record) = extern_io.decode::<Record>() {
+            if let Ok(Some(catalog)) = record.entry().to_app_option::<catalog_types::MerchantCatalog>() {
+                let distance = relay_types::distance_km(catalog.location, input.dropoff);
+                if distance > catalog.max_delivery_radius_km {
+                    return Err(wasm_error!(WasmErrorInner::Guest(format!(
+                        "dropoff is {:.1}km away, past this merchant's {:.1}km delivery radius",
+                        distance, catalog.max_delivery_radius_km
+                    ))));
+                }
+            }
+        }
+    }
+
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: input.merchant,

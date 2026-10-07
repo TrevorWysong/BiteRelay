@@ -41,6 +41,35 @@ function saveStoredIdentity(id: StoredIdentity) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(id));
 }
 
+const LOCATION_STORAGE_KEY = "relay.location.v1";
+
+/// `location` drives every geohash-anchored discovery read in the app
+/// (Browse's "restaurants near me", goodie bags, driver/order matching).
+/// Found live: with no persistence here, every page reload/reconnect
+/// silently reset it back to the hardcoded Florida default below,
+/// regardless of whatever real address a merchant/customer had actually
+/// picked earlier in the same session -- reading as "0 restaurants
+/// nearby" for a real test location hundreds of miles from that default,
+/// with nothing about the discovery mechanism itself actually wrong
+/// (confirmed directly: `get_nearby_merchants`' own geohash walk finds a
+/// merchant from a customer location genuinely one house-lot away, see
+/// nearby-precision.test.ts). Same localStorage-backed persistence
+/// `StoredIdentity` already uses, so a returning user keeps browsing from
+/// wherever they actually are instead of resetting on every reload.
+function loadStoredLocation(): GeoPoint | null {
+  const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as GeoPoint;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredLocation(location: GeoPoint) {
+  localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(location));
+}
+
 export type Mode = "customer" | "driver" | "merchant" | "arbitrator";
 
 /// The single source of truth for "which mode does a freshly-signed-up,
@@ -104,7 +133,7 @@ export const useSession = create<SessionState>((set) => ({
   isArbitrator: false,
   hasDeviceLock: false,
   mode: "customer",
-  location: { lat: 27.7676, lon: -82.6403 }, // St. Petersburg, FL -- matches the backend test suite's own default
+  location: loadStoredLocation() ?? { lat: 27.7676, lon: -82.6403 }, // St. Petersburg, FL -- matches the backend test suite's own default, used only when nothing's been saved yet
 
   hasStoredIdentity: () => loadStoredIdentity() !== null,
 
@@ -173,6 +202,7 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   createIdentity: async (adminUrl, displayName, roles, location, extras) => {
+    saveStoredLocation(location);
     set({ status: "connecting", error: null, location });
     try {
       const installedAppId = `relay-${crypto.randomUUID()}`;
@@ -226,7 +256,10 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   setMode: (mode) => set({ mode }),
-  setLocation: (location) => set({ location }),
+  setLocation: (location) => {
+    saveStoredLocation(location);
+    set({ location });
+  },
 
   refreshProfile: async () => {
     if (!isConnected()) return;

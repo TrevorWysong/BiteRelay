@@ -28,8 +28,20 @@ pub struct MerchantCatalog {
     pub banner_data_uri: String,
     #[serde(default)]
     pub phone: String,
+    /// Split into one field per address component (street/city/state/zip)
+    /// rather than one flat string -- lets `publish_catalog`'s own address
+    /// search (`AddressSearch`'s `onSelectComponents`) prefill every field
+    /// at once, and keeps them independently editable afterward in
+    /// `update_catalog_details` without a merchant having to re-type the
+    /// whole address to fix just one part of it.
     #[serde(default)]
-    pub address_line: String,
+    pub address_street: String,
+    #[serde(default)]
+    pub address_city: String,
+    #[serde(default)]
+    pub address_state: String,
+    #[serde(default)]
+    pub address_zip: String,
     #[serde(default)]
     pub hours_open: String,
     #[serde(default)]
@@ -39,6 +51,18 @@ pub struct MerchantCatalog {
     /// this defaults to 50, not 0.
     #[serde(default = "default_delivery_subsidy_percent")]
     pub delivery_subsidy_percent: u8,
+    /// How far from `location` this merchant is willing to deliver, in
+    /// kilometers -- a per-merchant business rule, not a single app-wide
+    /// constant: a dense-downtown restaurant and a rural one have
+    /// genuinely different realistic delivery ranges, so this has to be
+    /// each merchant's own call, not something the app hardcodes for
+    /// everyone. Enforced for real in `dispatch_integrity::validate_new_order`
+    /// via `relay_types::distance_km` (deterministic, so every peer agrees
+    /// on the same reject/accept outcome) -- not just an advisory UI hint.
+    /// Defaults to a conservative 8km for every catalog published before
+    /// this field existed.
+    #[serde(default = "default_max_delivery_radius_km")]
+    pub max_delivery_radius_km: f64,
     /// A sorted, deduplicated union of every available menu item's
     /// `dietary_tags`, maintained by `catalog_coordinator::add_menu_item`/
     /// `update_menu_item` (never set directly by a client) -- denormalized
@@ -58,6 +82,10 @@ pub struct MerchantCatalog {
 
 pub fn default_delivery_subsidy_percent() -> u8 {
     50
+}
+
+pub fn default_max_delivery_radius_km() -> f64 {
+    8.0
 }
 
 #[hdk_entry_helper]

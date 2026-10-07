@@ -1,8 +1,18 @@
 import { callZome } from "../client";
 import type { ActionHash, BagClaimFulfillment, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
+// Pairs a catalog's stable identity with its current content -- see the
+// Rust `CatalogView`'s own doc comment for the bug this exists to avoid.
+// Always use `original_action` as `catalog_ref` downstream
+// (listMenuItems, listPromoCodesForCatalog, listGoodieBagsForCatalog,
+// ...), never `actionHash(record)`.
+export interface CatalogView {
+  original_action: ActionHash;
+  record: HcRecord;
+}
+
 export interface NearbyMerchantsPage {
-  catalogs: HcRecord[];
+  catalogs: CatalogView[];
   next_after: Timestamp | null;
 }
 
@@ -16,9 +26,13 @@ export interface CatalogDetails {
   cuisine_type?: string;
   banner_data_uri?: string;
   phone?: string;
-  address_line?: string;
+  address_street?: string;
+  address_city?: string;
+  address_state?: string;
+  address_zip?: string;
   hours_open?: string;
   hours_close?: string;
+  max_delivery_radius_km?: number;
 }
 
 const EMPTY_DETAILS: Required<CatalogDetails> = {
@@ -26,18 +40,17 @@ const EMPTY_DETAILS: Required<CatalogDetails> = {
   cuisine_type: "",
   banner_data_uri: "",
   phone: "",
-  address_line: "",
+  address_street: "",
+  address_city: "",
+  address_state: "",
+  address_zip: "",
   hours_open: "",
   hours_close: "",
+  max_delivery_radius_km: 8,
 };
 
 export async function publishCatalog(input: { business_name: string; location: GeoPoint } & CatalogDetails): Promise<HcRecord> {
   return callZome("catalog", "publish_catalog", { ...EMPTY_DETAILS, ...input });
-}
-
-export interface MyCatalogView {
-  original_action: ActionHash;
-  record: HcRecord;
 }
 
 // Resolves the caller's own catalog directly via the OwnerToCatalog link,
@@ -51,8 +64,11 @@ export interface MyCatalogView {
 // never `actionHash(record)`. The record's own action hash reflects
 // whatever this catalog's *latest* state is, which changes on every edit;
 // using it as `catalog_ref` would silently orphan everything already
-// linked under the previous hash.
-export async function getMyCatalog(): Promise<MyCatalogView | null> {
+// linked under the previous hash. Same `CatalogView` shape
+// `getNearbyMerchants` returns per-catalog, for the same reason -- see
+// that extern's own doc comment for where this exact bug was found a
+// second time.
+export async function getMyCatalog(): Promise<CatalogView | null> {
   return callZome("catalog", "get_my_catalog", null);
 }
 
