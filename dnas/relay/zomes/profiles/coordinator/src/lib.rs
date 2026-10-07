@@ -4,7 +4,7 @@
 
 use hdk::prelude::*;
 use profiles_integrity::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{resolve_latest, resolve_links_to_records_with_original};
 
 #[hdk_extern]
 pub fn create_profile(profile: Profile) -> ExternResult<Record> {
@@ -119,4 +119,73 @@ pub fn list_favorites(_: ()) -> ExternResult<Vec<ActionHash>> {
     let me = agent_info()?.agent_initial_pubkey;
     let links = get_links(LinkQuery::try_new(me, LinkTypes::AgentToFavorite)?, GetStrategy::default())?;
     Ok(links.into_iter().filter_map(|l| l.target.into_action_hash()).collect())
+}
+
+// --- saved addresses -- a customer's own named address book ("Home",
+// "Work", ...), the DoorDash/UberEats-style "deliver to" switcher. See
+// `SavedAddress`'s own doc comment for why this lives on-chain rather
+// than in `localStorage` the way `location`'s own ephemeral "which one am
+// I using right now" pointer does.
+
+#[hdk_extern]
+pub fn save_address(address: SavedAddress) -> ExternResult<Record> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let action_hash = create_entry(&EntryTypes::SavedAddress(address))?;
+    create_link(me, action_hash.clone(), LinkTypes::OwnerToSavedAddress, ())?;
+    get(action_hash, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back saved address".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateSavedAddressInput {
+    pub original_action: ActionHash,
+    pub address: SavedAddress,
+}
+
+#[hdk_extern]
+pub fn update_saved_address(input: UpdateSavedAddressInput) -> ExternResult<Record> {
+    let record = resolve_latest(input.original_action)?;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::SavedAddress(input.address))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated saved address".into())))
+}
+
+/// Finds and deletes the specific link for this `original_action` among
+/// the caller's own saved-address links -- same "always look up the real
+/// create-action hash, never trust a client-cached one" reasoning as
+/// `remove_favorite`. The entry itself stays on the DHT (nothing on
+/// Holochain can truly be erased); this just makes it stop showing up in
+/// `list_my_addresses`.
+#[hdk_extern]
+pub fn delete_saved_address(original_action: ActionHash) -> ExternResult<()> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let links = get_links(LinkQuery::try_new(me, LinkTypes::OwnerToSavedAddress)?, GetStrategy::default())?;
+    for link in links {
+        if link.target.into_action_hash().as_ref() == Some(&original_action) {
+            delete_link(link.create_link_hash, GetOptions::default())?;
+        }
+    }
+    Ok(())
+}
+
+/// Pairs each saved address's stable identity with its current content --
+/// same shape (and same reason) as catalog's own `CatalogView`: the
+/// `OwnerToSavedAddress` link target is fixed forever at `save_address`
+/// time, so a caller editing/deleting a saved address later needs that
+/// original hash, never whatever a resolved-to-latest `Record`'s own
+/// action hash happens to be.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SavedAddressView {
+    pub original_action: ActionHash,
+    pub record: Record,
+}
+
+#[hdk_extern]
+pub fn list_my_addresses(_: ()) -> ExternResult<Vec<SavedAddressView>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let links = get_links(LinkQuery::try_new(me, LinkTypes::OwnerToSavedAddress)?, GetStrategy::default())?;
+    Ok(resolve_links_to_records_with_original(links)
+        .into_iter()
+        .map(|(original_action, record)| SavedAddressView { original_action, record })
+        .collect())
 }

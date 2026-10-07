@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -81,25 +81,41 @@ export function OrderDetail() {
   const [dropoffPhoto, setDropoffPhoto] = useState<string | null>(null);
   const [itemNames, setItemNames] = useState<Record<string, string>>({});
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
+  // `refresh` only closes over `hash` (see its own dep array below) --
+  // reading `pickup`/`itemNames`/`dropoffPhoto`/`warrants`/`driverStats`
+  // directly as "already loaded?" guards would always see each one's
+  // *initial* value, since the closure capturing them is never recreated
+  // on a normal poll tick. That silently turned every one of these into an
+  // unconditional refetch on every single poll, forever, instead of the
+  // intended "fetch once" -- refs aren't captured by value the way a
+  // closed-over state variable is, so reading `.current` here always sees
+  // the latest write regardless of when this closure was created.
+  const loadedRef = useRef({ pickup: false, itemNames: false, dropoffPhoto: false, warrants: new Set<string>(), driverStats: new Set<string>() });
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
     const record = await getOrder(orderRef);
     const decoded = decodeEntry<DeliveryOrder>(record);
     setOrder(decoded);
-    if (!pickup) {
+    if (!loadedRef.current.pickup) {
+      loadedRef.current.pickup = true;
       getCatalog(decoded.catalog_ref)
         .then((r) => setPickup(decodeEntry<MerchantCatalog>(r).location))
-        .catch(() => {});
+        .catch(() => {
+          loadedRef.current.pickup = false;
+        });
     }
-    if (Object.keys(itemNames).length === 0) {
+    if (!loadedRef.current.itemNames) {
+      loadedRef.current.itemNames = true;
       listMenuItems(decoded.catalog_ref)
         .then((page) => {
           const names: Record<string, string> = {};
           for (const r of page.items) names[bytesToHex(actionHash(r))] = decodeEntry<MenuItem>(r).name;
           setItemNames(names);
         })
-        .catch(() => {});
+        .catch(() => {
+          loadedRef.current.itemNames = false;
+        });
       // A goodie-bag order's item_refs is `[bag_ref]`, not a real
       // MenuItem -- the listMenuItems lookup above never finds it, so
       // resolve its display name separately (see useClaimFinalization's
@@ -112,13 +128,17 @@ export function OrderDetail() {
           .catch(() => {});
       }
     }
-    if (!dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
+    if (!loadedRef.current.dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
+      loadedRef.current.dropoffPhoto = true;
       getLegsForOrder(orderRef)
         .then((records) => {
           const handoff = records.map((r) => decodeEntry<Leg>(r)).find((l) => l.kind === "CustomerHandoff");
           if (handoff?.photo_data_uri) setDropoffPhoto(handoff.photo_data_uri);
+          else loadedRef.current.dropoffPhoto = false; // not attested yet -- retry next poll
         })
-        .catch(() => {});
+        .catch(() => {
+          loadedRef.current.dropoffPhoto = false;
+        });
     }
     if (decoded.status === "Open") {
       const page = await listBidsForOrder(orderRef);
@@ -126,15 +146,21 @@ export function OrderDetail() {
       setBids(rows);
       for (const row of rows) {
         const key = bytesToHex(row.bid.bidder);
-        if (!(key in warrants)) {
+        if (!loadedRef.current.warrants.has(key)) {
+          loadedRef.current.warrants.add(key);
           checkWarrants(row.bid.bidder)
             .then((w) => setWarrants((prev) => ({ ...prev, [key]: w })))
-            .catch(() => {});
+            .catch(() => {
+              loadedRef.current.warrants.delete(key);
+            });
         }
-        if (!(key in driverStats)) {
+        if (!loadedRef.current.driverStats.has(key)) {
+          loadedRef.current.driverStats.add(key);
           fetchDriverStats(row.bid.bidder)
             .then((stats) => setDriverStats((prev) => ({ ...prev, [key]: stats })))
-            .catch(() => {});
+            .catch(() => {
+              loadedRef.current.driverStats.delete(key);
+            });
         }
       }
     } else if (decoded.accepted_bid) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
@@ -36,20 +36,30 @@ export function PickupOrderDetail() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [itemNames, setItemNames] = useState<Record<string, string>>({});
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
+  // See OrderDetail.tsx's own identical comment -- `refresh` only closes
+  // over `hash`, so reading `itemNames` directly as the "already loaded?"
+  // guard would always see its initial `{}`, turning this into an
+  // unconditional refetch on every poll instead of once. A ref's
+  // `.current` always reads the latest write regardless of when this
+  // closure was created.
+  const loadedRef = useRef({ itemNames: false });
 
   const refresh = useCallback(async () => {
     if (!orderRef) return;
     const record = await getPickupOrder(orderRef);
     const decoded = decodeEntry<PickupOrder>(record);
     setOrder(decoded);
-    if (Object.keys(itemNames).length === 0) {
+    if (!loadedRef.current.itemNames) {
+      loadedRef.current.itemNames = true;
       listMenuItems(decoded.catalog_ref)
         .then((page) => {
           const names: Record<string, string> = {};
           for (const r of page.items) names[bytesToHex(actionHash(r))] = decodeEntry<MenuItem>(r).name;
           setItemNames(names);
         })
-        .catch(() => {});
+        .catch(() => {
+          loadedRef.current.itemNames = false;
+        });
       // See OrderDetail.tsx's own identical comment -- a goodie-bag
       // order's item_refs is `[bag_ref]`, not a real MenuItem.
       if (decoded.bag_claim_ref && decoded.item_refs[0]) {

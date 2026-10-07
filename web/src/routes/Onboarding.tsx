@@ -4,9 +4,9 @@ import { Bike, ChefHat, ShoppingBag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { primaryModeForRoles, useSession } from "../store/session";
-import { Button, Card, Input, Spinner, Textarea } from "../components/ui";
+import { Button, Card, Field, Input, Spinner, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
-import { AddressSearch } from "../components/AddressSearch";
+import { SplitAddressFields, EMPTY_SPLIT_ADDRESS } from "../components/SplitAddressFields";
 import { registerProviderCredential } from "../holochain/zomes/profiles";
 import type { GeoPoint, RoleTag } from "../holochain/types";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
@@ -37,6 +37,15 @@ export function Onboarding() {
   const [phone, setPhone] = useState("");
   const [avatarDataUri, setAvatarDataUri] = useState("");
   const [location, setLocation] = useState<GeoPoint>(FALLBACK_LOCATION);
+  // Presentation-only right now -- `Profile` (profiles_integrity) has no
+  // address fields today, only `location` itself ever gets used (as the
+  // session's default browse/dropoff point). Captured here anyway so this
+  // screen matches the same split-address pattern every other "enter an
+  // address" moment in the app uses -- see SplitAddressFields' own doc
+  // comment. If a real saved mailing address for a customer/driver ever
+  // becomes a product need, this is already sitting here ready to wire
+  // into a Profile schema change.
+  const [addressDraft, setAddressDraft] = useState(EMPTY_SPLIT_ADDRESS);
   const [roles, setRoles] = useState<RoleTag[]>(["Requester"]);
   const [step, setStep] = useState<Step>("roles");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -185,20 +194,28 @@ export function Onboarding() {
                   <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
                 </div>
 
-                <div className="mb-4">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">Display name</label>
+                <Field label="Display name" className="mb-4">
                   <Input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
-                </div>
-                <div className="mb-4">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">Bio (optional)</label>
+                </Field>
+                <Field label="Bio (optional)" className="mb-4">
                   <Textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />
-                </div>
-                <div className="mb-4">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">Phone (optional)</label>
+                </Field>
+                <Field label="Phone (optional)" className="mb-4">
                   <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
-                </div>
-                <div className="mb-4">
-                  <AddressSearch value={location} onChange={setLocation} label="Your location" />
+                </Field>
+                {/* Same shared SplitAddressFields every other "enter an
+                    address" moment in the app uses (merchant storefront
+                    publish/edit) -- see this component's and
+                    addressDraft's own doc comments for why the split
+                    fields here are presentation-only for now. */}
+                <div className="mb-4 flex flex-col gap-2">
+                  <SplitAddressFields
+                    point={location}
+                    onPointChange={setLocation}
+                    address={addressDraft}
+                    onAddressChange={setAddressDraft}
+                    streetLabel="Your location"
+                  />
                 </div>
                 <div className="mb-1">
                   <label className="block text-xs font-semibold text-ink-500 mb-1">Local node address</label>

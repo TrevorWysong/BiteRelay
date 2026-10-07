@@ -73,7 +73,10 @@ await runScenario(async (scenario) => {
     cuisine_type: "Cuban",
     banner_data_uri: "data:image/jpeg;base64,banner",
     phone: "555-0200",
-    address_line: "123 Main St",
+    address_street: "123 Main St",
+    address_city: "St. Petersburg",
+    address_state: "FL",
+    address_zip: "33710",
     hours_open: "09:00",
     hours_close: "22:00",
   });
@@ -89,9 +92,13 @@ await runScenario(async (scenario) => {
     cuisine_type: "Cuban",
     banner_data_uri: "",
     phone: "555-0200",
-    address_line: "123 Main St",
+    address_street: "123 Main St",
+    address_city: "St. Petersburg",
+    address_state: "FL",
+    address_zip: "33710",
     hours_open: "08:00",
     hours_close: "23:00",
+    max_delivery_radius_km: 8,
   });
   catalog = decodeEntry(updatedCatalogRecord);
   assert.equal(catalog.description, "Updated Cuban food");
@@ -100,7 +107,7 @@ await runScenario(async (scenario) => {
 
   // --- Non-owner cannot update catalog details or add menu items ---
   await assert.rejects(
-    catalogOf(driver)("update_catalog_details", { original_action: catalogRef, description: "hijacked", cuisine_type: "", banner_data_uri: "", phone: "", address_line: "", hours_open: "", hours_close: "" }),
+    catalogOf(driver)("update_catalog_details", { original_action: catalogRef, description: "hijacked", cuisine_type: "", banner_data_uri: "", phone: "", address_street: "", address_city: "", address_state: "", address_zip: "", hours_open: "", hours_close: "", max_delivery_radius_km: 8 }),
     "a non-owner must not be able to update someone else's catalog details",
   );
   await assert.rejects(

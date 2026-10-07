@@ -21,11 +21,11 @@ import {
 import { getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { useSession } from "../../store/session";
-import { Button, Card, Checkbox, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
+import { Button, Card, Checkbox, Field, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
-import { AddressSearch } from "../../components/AddressSearch";
+import { SplitAddressFields } from "../../components/SplitAddressFields";
 import { StarRating } from "../../components/StarRating";
-import { formatCents } from "../../lib/format";
+import { formatCatalogAddress, formatCents } from "../../lib/format";
 import { describeRequirement, describeReward } from "../../lib/promotions";
 import { describeError } from "../../lib/errors";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
@@ -132,6 +132,13 @@ export function MerchantCatalog() {
   const location = useSession((s) => s.location);
   const setLocation = useSession((s) => s.setLocation);
   const [pickupLocation, setPickupLocation] = useState(location);
+  // Populated by AddressSearch's own `onSelectComponents` on the publish
+  // form below -- captured here (rather than only inside the search box's
+  // own internal state) so `publish()` can hand all four straight to
+  // `publishCatalog`, prefilling storefront details' split address fields
+  // at creation time instead of leaving them blank until a merchant
+  // re-types the same address a second time in "Storefront details."
+  const [addressDraft, setAddressDraft] = useState({ address_street: "", address_city: "", address_state: "", address_zip: "" });
   const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
   const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(null);
   const [items, setItems] = useState<ItemRow[] | null>(null);
@@ -141,7 +148,19 @@ export function MerchantCatalog() {
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
-  const [detailsDraft, setDetailsDraft] = useState({ description: "", cuisine_type: "", banner_data_uri: "", phone: "", address_line: "", hours_open: "", hours_close: "" });
+  const [detailsDraft, setDetailsDraft] = useState({
+    description: "",
+    cuisine_type: "",
+    banner_data_uri: "",
+    phone: "",
+    address_street: "",
+    address_city: "",
+    address_state: "",
+    address_zip: "",
+    hours_open: "",
+    hours_close: "",
+    max_delivery_radius_km: 8,
+  });
   const [savingDetails, setSavingDetails] = useState(false);
   const [editingSubsidy, setEditingSubsidy] = useState(false);
   const [subsidyDraft, setSubsidyDraft] = useState("50");
@@ -173,9 +192,13 @@ export function MerchantCatalog() {
         cuisine_type: decoded.cuisine_type,
         banner_data_uri: decoded.banner_data_uri,
         phone: decoded.phone,
-        address_line: decoded.address_line,
+        address_street: decoded.address_street,
+        address_city: decoded.address_city,
+        address_state: decoded.address_state,
+        address_zip: decoded.address_zip,
         hours_open: decoded.hours_open,
         hours_close: decoded.hours_close,
+        max_delivery_radius_km: decoded.max_delivery_radius_km,
       });
       setSubsidyDraft(decoded.delivery_subsidy_percent.toString());
       const itemsPage = await listMenuItems(mine.original_action);
@@ -201,7 +224,7 @@ export function MerchantCatalog() {
     setPublishing(true);
     setPublishError(null);
     try {
-      await publishCatalog({ business_name: businessName.trim(), location: pickupLocation });
+      await publishCatalog({ business_name: businessName.trim(), location: pickupLocation, ...addressDraft });
       // load() finds "my own catalog" via the OwnerToCatalog link now, not
       // by geohash, so it isn't location-dependent -- but every *other*
       // geohash-based read in the app (customer browse, etc.) still uses
@@ -209,6 +232,13 @@ export function MerchantCatalog() {
       // said their real pickup point is.
       setLocation(pickupLocation);
       await load();
+      // Open the details editor immediately -- a freshly published
+      // storefront has nothing but a name and a pin; walking straight
+      // into "fill in the rest" (photo, description, cuisine, phone,
+      // hours -- the address is already prefilled from addressDraft
+      // above) reads as one continuous setup flow instead of a second,
+      // easy-to-miss step a merchant has to go find the edit pencil for.
+      setEditingDetails(true);
     } catch (err) {
       setPublishError(describeError(err));
     } finally {
@@ -396,8 +426,16 @@ export function MerchantCatalog() {
           <p className="text-xs text-ink-400">This creates your restaurant's storefront, visible to customers near your current location right away.</p>
         </div>
         <Card className="flex flex-col gap-3 p-5">
-          <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Cara's Kitchen" />
-          <AddressSearch value={pickupLocation} onChange={setPickupLocation} label="Pickup location" />
+          <Field label="Business name">
+            <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Cara's Kitchen" />
+          </Field>
+          <SplitAddressFields
+            point={pickupLocation}
+            onPointChange={setPickupLocation}
+            address={{ street: addressDraft.address_street, city: addressDraft.address_city, state: addressDraft.address_state, zip: addressDraft.address_zip }}
+            onAddressChange={(a) => setAddressDraft({ address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip })}
+            streetLabel="Pickup location"
+          />
           {publishError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{publishError}</p>}
           <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
             Publish catalog
@@ -454,23 +492,55 @@ export function MerchantCatalog() {
           {editingDetails ? (
             <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={detailsDraft.banner_data_uri} onChange={(v) => setDetailsDraft((d) => ({ ...d, banner_data_uri: v }))} shape="banner" />
-              <Textarea
-                value={detailsDraft.description}
-                onChange={(e) => setDetailsDraft((d) => ({ ...d, description: e.target.value }))}
-                rows={2}
-                placeholder="Describe your restaurant"
+              <Field label="Description">
+                <Textarea
+                  value={detailsDraft.description}
+                  onChange={(e) => setDetailsDraft((d) => ({ ...d, description: e.target.value }))}
+                  rows={2}
+                  placeholder="Describe your restaurant"
+                />
+              </Field>
+              <Field label="Cuisine">
+                <Input
+                  value={detailsDraft.cuisine_type}
+                  onChange={(e) => setDetailsDraft((d) => ({ ...d, cuisine_type: e.target.value }))}
+                  placeholder="Cuban, Italian, …"
+                />
+              </Field>
+              {/* Pickup location itself (lat/lon) stays immutable after
+                  publish -- see publish_catalog/update_catalog_details'
+                  own doc comments for why -- so `pointIsEditable={false}`
+                  here, same shared SplitAddressFields every other
+                  "enter an address" moment in the app uses (publish form
+                  above, user registration). */}
+              <SplitAddressFields
+                point={catalog.location}
+                onPointChange={() => {}}
+                pointIsEditable={false}
+                address={{ street: detailsDraft.address_street, city: detailsDraft.address_city, state: detailsDraft.address_state, zip: detailsDraft.address_zip }}
+                onAddressChange={(a) => setDetailsDraft((d) => ({ ...d, address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip }))}
               />
-              <Input
-                value={detailsDraft.cuisine_type}
-                onChange={(e) => setDetailsDraft((d) => ({ ...d, cuisine_type: e.target.value }))}
-                placeholder="Cuisine (e.g. Cuban, Italian)"
-              />
-              <Input value={detailsDraft.address_line} onChange={(e) => setDetailsDraft((d) => ({ ...d, address_line: e.target.value }))} placeholder="Address" />
-              <Input value={detailsDraft.phone} onChange={(e) => setDetailsDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
+              <Field label="Phone">
+                <Input value={detailsDraft.phone} onChange={(e) => setDetailsDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="(555) 555-0100" />
+              </Field>
               <div className="flex gap-2">
-                <Input value={detailsDraft.hours_open} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_open: e.target.value }))} placeholder="Opens (09:00)" className="flex-1" />
-                <Input value={detailsDraft.hours_close} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_close: e.target.value }))} placeholder="Closes (22:00)" className="flex-1" />
+                <Field label="Opens">
+                  <Input value={detailsDraft.hours_open} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_open: e.target.value }))} placeholder="09:00" />
+                </Field>
+                <Field label="Closes">
+                  <Input value={detailsDraft.hours_close} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_close: e.target.value }))} placeholder="22:00" />
+                </Field>
               </div>
+              <Field label="Delivery radius (km)">
+                <Input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={detailsDraft.max_delivery_radius_km}
+                  onChange={(e) => setDetailsDraft((d) => ({ ...d, max_delivery_radius_km: Number(e.target.value) }))}
+                  placeholder="8"
+                />
+              </Field>
               <Button loading={savingDetails} onClick={saveDetails} className="py-2 text-xs">
                 Save
               </Button>
@@ -480,13 +550,14 @@ export function MerchantCatalog() {
               <p>{catalog.description || "No description yet."}</p>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-400">
                 {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
-                {catalog.address_line && <span>{catalog.address_line}</span>}
+                {formatCatalogAddress(catalog) && <span>{formatCatalogAddress(catalog)}</span>}
                 {catalog.phone && <span>{catalog.phone}</span>}
                 {(catalog.hours_open || catalog.hours_close) && (
                   <span>
                     {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
                   </span>
                 )}
+                <span>Delivers within {catalog.max_delivery_radius_km}km</span>
               </div>
             </motion.div>
           )}
@@ -804,49 +875,52 @@ export function MerchantCatalog() {
                 <div className="flex gap-3">
                   <PhotoInput value={bagForm.photo_data_uri} onChange={(v) => setBagForm((f) => ({ ...f, photo_data_uri: v }))} shape="circle" className="shrink-0" />
                   <div className="flex flex-1 flex-col gap-2">
-                    <Input value={bagForm.title} onChange={(e) => setBagForm((f) => ({ ...f, title: e.target.value }))} placeholder="Bag name (e.g. End-of-day goodie bag)" />
+                    <Field label="Bag name">
+                      <Input value={bagForm.title} onChange={(e) => setBagForm((f) => ({ ...f, title: e.target.value }))} placeholder="End-of-day goodie bag" />
+                    </Field>
                     <div className="flex gap-2">
-                      <Input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={bagForm.originalValue}
-                        onChange={(e) => setBagForm((f) => ({ ...f, originalValue: Number(e.target.value) }))}
-                        placeholder="Value"
-                        prefix="$"
-                      />
-                      <Input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={bagForm.price}
-                        onChange={(e) => setBagForm((f) => ({ ...f, price: Number(e.target.value) }))}
-                        placeholder="Price"
-                        prefix="$"
-                      />
+                      <Field label="Value">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          value={bagForm.originalValue}
+                          onChange={(e) => setBagForm((f) => ({ ...f, originalValue: Number(e.target.value) }))}
+                          prefix="$"
+                        />
+                      </Field>
+                      <Field label="Price">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          value={bagForm.price}
+                          onChange={(e) => setBagForm((f) => ({ ...f, price: Number(e.target.value) }))}
+                          prefix="$"
+                        />
+                      </Field>
                     </div>
                   </div>
                 </div>
-                <Textarea value={bagForm.description} onChange={(e) => setBagForm((f) => ({ ...f, description: e.target.value }))} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
-                <div className="flex gap-2">
+                <Field label="Description">
+                  <Textarea value={bagForm.description} onChange={(e) => setBagForm((f) => ({ ...f, description: e.target.value }))} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
+                </Field>
+                <Field label="Quantity available">
                   <Input
                     type="number"
                     min={1}
                     step={1}
                     value={bagForm.quantity_total}
                     onChange={(e) => setBagForm((f) => ({ ...f, quantity_total: Number(e.target.value) }))}
-                    placeholder="How many available"
                   />
-                </div>
+                </Field>
                 <div className="flex gap-2">
-                  <label className="flex-1 text-xs text-ink-500">
-                    Pickup window starts
-                    <Input type="datetime-local" value={bagForm.start} onChange={(e) => setBagForm((f) => ({ ...f, start: e.target.value }))} className="mt-1" />
-                  </label>
-                  <label className="flex-1 text-xs text-ink-500">
-                    Pickup window ends
-                    <Input type="datetime-local" value={bagForm.end} onChange={(e) => setBagForm((f) => ({ ...f, end: e.target.value }))} className="mt-1" />
-                  </label>
+                  <Field label="Pickup window starts">
+                    <Input type="datetime-local" value={bagForm.start} onChange={(e) => setBagForm((f) => ({ ...f, start: e.target.value }))} />
+                  </Field>
+                  <Field label="Pickup window ends">
+                    <Input type="datetime-local" value={bagForm.end} onChange={(e) => setBagForm((f) => ({ ...f, end: e.target.value }))} />
+                  </Field>
                 </div>
                 <div className="flex gap-4 pt-1">
                   <label className="flex items-center gap-2 text-xs text-ink-500">

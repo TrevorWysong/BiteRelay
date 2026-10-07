@@ -6,6 +6,33 @@ pub struct GeoPoint {
     pub lon: f64,
 }
 
+const EARTH_RADIUS_KM: f64 = 6371.0;
+
+/// Great-circle (haversine) distance in kilometers -- ported line-for-line
+/// from `web/src/lib/geohash.ts`'s own `distanceKm` (used there for the
+/// driver dashboard's client-side route sort) so the client-side delivery-
+/// radius pre-check and this zome's own deterministic enforcement
+/// (`dispatch_integrity::validate_new_order`) can never disagree about
+/// what "within range" means.
+///
+/// Safe to call from `validate()`: `sin`/`cos`/`asin`/`sqrt` on
+/// `wasm32-unknown-unknown` are implemented by the pure-Rust `libm` crate
+/// (there's no OS to link a native, platform-varying libm against on this
+/// target), so every peer's wasm runtime computes the exact same
+/// bit-for-bit result for the same inputs -- the same determinism
+/// guarantee every other piece of arithmetic in this codebase's own
+/// `validate()` callbacks already relies on, just applied to trigonometry
+/// for the first time here.
+pub fn distance_km(a: GeoPoint, b: GeoPoint) -> f64 {
+    let to_rad = |deg: f64| deg * std::f64::consts::PI / 180.0;
+    let d_lat = to_rad(b.lat - a.lat);
+    let d_lon = to_rad(b.lon - a.lon);
+    let sin_lat = (d_lat / 2.0).sin();
+    let sin_lon = (d_lon / 2.0).sin();
+    let h = sin_lat * sin_lat + to_rad(a.lat).cos() * to_rad(b.lat).cos() * sin_lon * sin_lon;
+    2.0 * EARTH_RADIUS_KM * h.sqrt().min(1.0).asin()
+}
+
 /// What a provider is willing to carry. Kept as an enum (not a single
 /// vertical flag) so a courier who does both restaurant runs and general
 /// package drops doesn't need two separate provider identities.
@@ -184,6 +211,30 @@ mod tests {
         let (lat_min, lat_max, lon_min, lon_max) = bounding_box(&gh).unwrap();
         assert!(p.lat >= lat_min && p.lat <= lat_max);
         assert!(p.lon >= lon_min && p.lon <= lon_max);
+    }
+
+    #[test]
+    fn distance_km_is_zero_for_the_same_point() {
+        let p = GeoPoint { lat: 27.7676, lon: -82.6403 };
+        assert_eq!(distance_km(p, p), 0.0);
+    }
+
+    #[test]
+    fn distance_km_matches_a_known_reference_distance() {
+        // One degree of latitude at the equator is ~111.19km -- a standard
+        // reference value, not something re-derived from this function's
+        // own logic.
+        let a = GeoPoint { lat: 0.0, lon: 0.0 };
+        let b = GeoPoint { lat: 1.0, lon: 0.0 };
+        let d = distance_km(a, b);
+        assert!((d - 111.19).abs() < 0.1, "expected ~111.19km, got {d}");
+    }
+
+    #[test]
+    fn distance_km_is_symmetric() {
+        let a = GeoPoint { lat: 27.7676, lon: -82.6403 };
+        let b = GeoPoint { lat: 40.7128, lon: -74.0060 };
+        assert_eq!(distance_km(a, b), distance_km(b, a));
     }
 
     #[test]

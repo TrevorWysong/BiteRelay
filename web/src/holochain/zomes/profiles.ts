@@ -1,6 +1,6 @@
 import { callZome } from "../client";
 import { decodeEntry } from "../decode";
-import type { ActionHash, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag } from "../types";
+import type { ActionHash, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag, SavedAddress } from "../types";
 
 export async function createProfile(input: {
   display_name: string;
@@ -57,4 +57,28 @@ export async function listFavorites(): Promise<ActionHash[]> {
 export async function fetchProviderCredential(profileAction: ActionHash): Promise<ProviderCredential | null> {
   const record = await getProviderCredentialForProfile(profileAction);
   return record ? decodeEntry<ProviderCredential>(record) : null;
+}
+
+// --- saved addresses -- a customer's own named address book ("Home",
+// "Work", ...), the DoorDash/UberEats-style "deliver to" switcher. ---
+
+export interface SavedAddressView {
+  original_action: ActionHash;
+  record: HcRecord;
+}
+
+export async function saveAddress(address: SavedAddress): Promise<HcRecord> {
+  return callZome("profiles", "save_address", address);
+}
+
+export async function updateSavedAddress(originalAction: ActionHash, address: SavedAddress): Promise<HcRecord> {
+  return callZome("profiles", "update_saved_address", { original_action: originalAction, address });
+}
+
+export async function deleteSavedAddress(originalAction: ActionHash): Promise<void> {
+  return callZome("profiles", "delete_saved_address", originalAction);
+}
+
+export async function listMyAddresses(): Promise<SavedAddressView[]> {
+  return callZome("profiles", "list_my_addresses", null);
 }

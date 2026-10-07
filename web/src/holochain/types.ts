@@ -73,6 +73,21 @@ export interface ProviderCredential {
   photo_data_uri: string;
 }
 
+/// A customer's own named address book entry ("Home", "Work", ...) -- the
+/// DoorDash/UberEats-style "deliver to" switcher. See
+/// `profiles_integrity::SavedAddress`'s own doc comment for why this lives
+/// on-chain rather than in `localStorage` the way `location`'s own
+/// ephemeral "which one am I using right now" pointer does.
+export interface SavedAddress {
+  label: string;
+  location: GeoPoint;
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  created_at: Timestamp;
+}
+
 export interface MerchantCatalog {
   owner: AgentPubKey;
   business_name: string;
@@ -83,7 +98,10 @@ export interface MerchantCatalog {
   cuisine_type: string;
   banner_data_uri: string;
   phone: string;
-  address_line: string;
+  address_street: string;
+  address_city: string;
+  address_state: string;
+  address_zip: string;
   hours_open: string;
   hours_close: string;
   /// The standard delivery-cost-sharing model (architecture plan §12,
@@ -91,6 +109,11 @@ export interface MerchantCatalog {
   /// this merchant covers, applied proportionally at settlement. Defaults
   /// to 50 (an even split with the customer) at catalog creation.
   delivery_subsidy_percent: number;
+  /// How far from `location` this merchant is willing to deliver, in
+  /// kilometers -- each merchant's own setting (not a single app-wide
+  /// constant), checked against a prospective dropoff in
+  /// `requestDelivery`'s own coordinator-level pre-check. Defaults to 8km.
+  max_delivery_radius_km: number;
   /// Sorted, deduplicated union of every available menu item's own
   /// `dietary_tags`, maintained server-side by `add_menu_item`/
   /// `update_menu_item` -- never set directly. Lets Browse filter by

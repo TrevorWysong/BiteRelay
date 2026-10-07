@@ -12,7 +12,8 @@ import { useFavorites } from "../../lib/useFavorites";
 import { formatCents } from "../../lib/format";
 import type { MerchantCatalog, Review, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
-import { EmptyState, Skeleton } from "../../components/ui";
+import { AddressSwitcher } from "../../components/AddressSwitcher";
+import { Chip, ChipRow, EmptyState, Skeleton } from "../../components/ui";
 import { staggerContainer } from "../../lib/motion";
 
 interface Row {
@@ -28,25 +29,6 @@ interface BagRow {
 }
 
 type Sort = "relevance" | "rating" | "name";
-
-function ChipRow({ children }: { children: React.ReactNode }) {
-  return <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto pb-0.5">{children}</div>;
-}
-
-function Chip({ active, onClick, children, tone = "default" }: { active: boolean; onClick: () => void; children: React.ReactNode; tone?: "default" | "danger" | "brand" }) {
-  const activeClasses = tone === "danger" ? "bg-red-500 text-white" : tone === "brand" ? "bg-presence-500 text-white" : "bg-ink-900 text-white dark:bg-white dark:text-ink-900";
-  return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition",
-        active ? activeClasses : "bg-ink-100 dark:bg-ink-800 text-ink-500 hover:bg-ink-200 dark:hover:bg-ink-700"
-      )}
-    >
-      {children}
-    </button>
-  );
-}
 
 // A restaurant that just published can take a while to become discoverable
 // -- its GeohashToCatalog link has to reach whatever peer answers this
@@ -81,7 +63,6 @@ export function Browse() {
   const [sort, setSort] = useState<Sort>("relevance");
   const { favoritesHex, toggleFavorite } = useFavorites();
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,11 +71,17 @@ export function Browse() {
       const page = await getNearbyMerchants(geohash);
       if (cancelled) return;
       const withRatings = await Promise.all(
-        page.catalogs.map(async (record) => {
-          const catalog = decodeEntry<MerchantCatalog>(record);
+        // Use `view.original_action`, never `actionHash(view.record)` --
+        // the record is resolved to this catalog's *latest* state, so its
+        // own action hash drifts on every edit. See `CatalogView`'s own
+        // doc comment (this is the exact bug that made a merchant's menu
+        // items/goodie bags look unpublished from here once they'd ever
+        // toggled open/closed or edited their details).
+        page.catalogs.map(async (view) => {
+          const catalog = decodeEntry<MerchantCatalog>(view.record);
           const reviews = await getReviewsFor(catalog.owner).then((rs) => rs.map((r) => decodeEntry<Review>(r)));
           const rating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
-          return { hash: actionHash(record), catalog, rating, reviewCount: reviews.length };
+          return { hash: view.original_action, catalog, rating, reviewCount: reviews.length };
         }),
       );
       if (!cancelled) setRows(withRatings);
@@ -131,21 +118,10 @@ export function Browse() {
     return [...set].sort();
   }, [rows]);
 
-  const dietaryTags = useMemo(() => {
-    const set = new Set<string>();
-    rows?.forEach((r) => (r.catalog.dietary_tags ?? []).forEach((t) => set.add(t)));
-    return [...set].sort();
-  }, [rows]);
-
   const filtered = useMemo(() => {
     let list = rows?.filter((r) => r.catalog.business_name.toLowerCase().includes(query.toLowerCase())) ?? null;
     if (list && cuisine) list = list.filter((r) => r.catalog.cuisine_type === cuisine);
     if (list && favoritesOnly) list = list.filter((r) => favoritesHex.has(bytesToHex(r.hash)));
-    // OR semantics -- "has at least one of the selected tags," the more
-    // forgiving reading for a browse filter (a restaurant with *some*
-    // vegetarian options is still worth showing to a vegetarian customer,
-    // even if its whole menu isn't vegetarian).
-    if (list && dietaryFilter.length > 0) list = list.filter((r) => dietaryFilter.some((tag) => (r.catalog.dietary_tags ?? []).includes(tag)));
     if (list) {
       list = [...list].sort((a, b) => {
         if (sort === "rating") return b.rating - a.rating;
@@ -154,10 +130,12 @@ export function Browse() {
       });
     }
     return list;
-  }, [rows, query, cuisine, sort, favoritesOnly, favoritesHex, dietaryFilter]);
+  }, [rows, query, cuisine, sort, favoritesOnly, favoritesHex]);
 
   return (
     <div className="px-4 pt-4">
+      <AddressSwitcher />
+
       <div className="mb-4 flex items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 transition focus-within:border-relay-400 focus-within:ring-2 focus-within:ring-relay-100">
         <Search size={16} className="text-ink-400" />
         <input
@@ -238,19 +216,6 @@ export function Browse() {
           ))}
         </div>
       </div>
-
-      {dietaryTags.length > 0 && (
-        <div className="mb-3 flex items-center gap-2">
-          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-ink-300 dark:text-ink-600">Diet</span>
-          <ChipRow>
-            {dietaryTags.map((tag) => (
-              <Chip key={tag} active={dietaryFilter.includes(tag)} onClick={() => setDietaryFilter((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))} tone="brand">
-                {tag}
-              </Chip>
-            ))}
-          </ChipRow>
-        </div>
-      )}
 
       {rows === null && (
         <div className="grid grid-cols-2 gap-3 pb-6">

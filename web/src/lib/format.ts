@@ -2,6 +2,17 @@ export function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/// Composes `MerchantCatalog`'s own split address fields (street/city/
+/// state/zip -- see that type's own doc comment for why they're split
+/// rather than one flat string) into a single display line, shared by
+/// merchant/Catalog.tsx's own view and customer/MerchantDetail.tsx so both
+/// read an address the same way. Returns "" (not any placeholder text) if
+/// every field is blank, so callers can just do `address && <span>...`.
+export function formatCatalogAddress(catalog: { address_street: string; address_city: string; address_state: string; address_zip: string }): string {
+  const stateZip = [catalog.address_state, catalog.address_zip].filter(Boolean).join(" ");
+  return [catalog.address_street, catalog.address_city, stateZip].filter(Boolean).join(", ");
+}
+
 export function formatEta(seconds: number): string {
   const minutes = Math.round(seconds / 60);
   return `${minutes} min`;
