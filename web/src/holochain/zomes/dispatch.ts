@@ -70,11 +70,33 @@ export async function getOrdersForRequester(requester: AgentPubKey): Promise<HcR
   return callZome("dispatch", "get_orders_for_requester", requester);
 }
 
-/// One store's delivery-order queue (`StoreToOrder`) -- see orders.rs's doc
-/// comment: without this a merchant has no way to discover an order at all.
-/// A multi-store owner's "all stores" view is one call per store.
-export async function getOrdersForStore(catalogRef: ActionHash): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_orders_for_store", catalogRef);
+// --- store queues (see dispatch_integrity::store_queue) ---
+
+/// One queue entry, either kind of order. `original_action` is the order's
+/// stable identity (pass it to every order call); `record` is its latest
+/// state, whose own action hash changes on every status update.
+export interface StoreOrder {
+  kind: "Delivery" | "Pickup";
+  original_action: ActionHash;
+  record: HcRecord;
+}
+
+/// Every order the store is still working on, oldest first. Bounded by the
+/// store's current workload, so it's the one to poll.
+export async function getActiveOrdersForStore(catalogRef: ActionHash): Promise<StoreOrder[]> {
+  return callZome("dispatch", "get_active_orders_for_store", catalogRef);
+}
+
+export interface OrderHistoryPage {
+  orders: StoreOrder[];
+  next_before: Timestamp | null;
+}
+
+/// Every order the store has received, newest first, a page at a time --
+/// pass the previous page's `next_before` to continue. Read on demand,
+/// never polled.
+export async function getOrderHistoryForStore(catalogRef: ActionHash, before: Timestamp | null = null, limit: number | null = null): Promise<OrderHistoryPage> {
+  return callZome("dispatch", "get_order_history_for_store", { catalog_ref: catalogRef, before, limit });
 }
 
 // --- bids ---
@@ -227,10 +249,6 @@ export async function getPickupOrder(orderOriginalAction: ActionHash): Promise<H
 
 export async function getMyPickupOrders(requester: AgentPubKey): Promise<HcRecord[]> {
   return callZome("dispatch", "get_my_pickup_orders", requester);
-}
-
-export async function getPickupOrdersForStore(catalogRef: ActionHash): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_pickup_orders_for_store", catalogRef);
 }
 
 export async function confirmPickupPrep(orderOriginalAction: ActionHash): Promise<HcRecord> {

@@ -8,6 +8,7 @@
 
 use crate::orders::{record_reputation_event, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
 use crate::signals::RemoteSignal;
+use crate::store_queue::{self, QueuedOrder};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{resolve_latest_decoded, resolve_links_to_records};
@@ -29,11 +30,12 @@ pub struct RequestPickupOrderInput {
 /// No matching/signal-fanout step here unlike `orders::request_delivery` --
 /// there's no driver to find, so the only two parties who ever need to know
 /// about this order are the two already named on it. The store still
-/// needs a discovery link, same reasoning as `StoreToOrder`.
+/// needs to find it, through the same store queues deliveries use.
 #[hdk_extern]
 pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     let catalog_ref = input.catalog_ref.clone();
+    let requested_at = sys_time()?;
 
     // See `orders::request_delivery`'s own identical pre-check -- same
     // reason (`validate_new_pickup_order` can't deterministically see a
@@ -59,14 +61,14 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         order_total: input.order_total,
         status: PickupStatus::Placed,
         dispute_ref: None,
-        requested_at: sys_time()?,
+        requested_at,
         special_instructions: input.special_instructions,
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToPickupOrder, ())?;
-    create_link(catalog_ref, action_hash.clone(), LinkTypes::StoreToPickupOrder, ())?;
+    store_queue::enqueue(&catalog_ref, &action_hash, requested_at)?;
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back pickup order".into())))
@@ -80,13 +82,6 @@ pub fn get_pickup_order(order_original_action: ActionHash) -> ExternResult<Recor
 #[hdk_extern]
 pub fn get_my_pickup_orders(requester: AgentPubKey) -> ExternResult<Vec<Record>> {
     let links = get_links(LinkQuery::try_new(requester, LinkTypes::RequesterToPickupOrder)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
-}
-
-/// One store's pickup-order queue -- see `orders::get_orders_for_store`.
-#[hdk_extern]
-pub fn get_pickup_orders_for_store(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(catalog_ref, LinkTypes::StoreToPickupOrder)?, GetStrategy::default())?;
     Ok(resolve_links_to_records(links))
 }
 
@@ -122,9 +117,10 @@ pub fn mark_ready_for_pickup(order_original_action: ActionHash) -> ExternResult<
 /// deliberately excluded (gated, below).
 #[hdk_extern]
 pub fn cancel_pickup_order(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action, "PickupOrder")?;
+    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     order.status = PickupStatus::Cancelled;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order.clone()))?;
+    store_queue::retire(QueuedOrder { order_ref: &order_original_action, catalog_ref: &order.catalog_ref, requester: &order.requester, merchant: &order.merchant })?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back cancelled pickup order".into())))
 }
@@ -149,6 +145,7 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     let order_total = order.order_total;
     order.status = PickupStatus::PickedUp;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+    store_queue::retire(QueuedOrder { order_ref: &order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
 
     settle_order_total(order_original_action.clone(), requester, merchant.clone(), order_total)?;
 
@@ -304,6 +301,8 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
     updated_order.status = target_status;
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::PickupOrder(updated_order))?;
+    // Both outcomes (PickedUp / Cancelled) are terminal.
+    store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {

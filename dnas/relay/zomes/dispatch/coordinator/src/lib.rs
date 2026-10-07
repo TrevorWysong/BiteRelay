@@ -24,6 +24,8 @@
 //! - `pickup` -- the pickup vertical's full lifecycle (creation, status,
 //!   completion, and its own dispute path) -- no bid/driver/leg-attestation
 //!   concept at all, so unlike delivery this stays one file.
+//! - `store_queue` -- each store's active queue and day-bucketed history,
+//!   shared by both verticals.
 
 mod bids;
 mod chat;
@@ -34,6 +36,7 @@ mod parties;
 mod pickup;
 mod recurring;
 mod signals;
+mod store_queue;
 mod tracking;
 
 pub use bids::*;
@@ -44,4 +47,5 @@ pub use orders::*;
 pub use pickup::*;
 pub use recurring::*;
 pub use signals::*;
+pub use store_queue::*;
 pub use tracking::*;

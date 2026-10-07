@@ -85,21 +85,23 @@ await runScenario(async (scenario) => {
   );
   await sync();
 
-  const deliveriesA = await retryUntilOk(async () => {
-    const rows = await dispatchOf(merchant)<HcRecord[]>("get_orders_for_store", storeA);
+  type StoreOrder = { kind: "Delivery" | "Pickup"; original_action: Uint8Array; record: HcRecord };
+  const activeA = await retryUntilOk(async () => {
+    const rows = await dispatchOf(merchant)<StoreOrder[]>("get_active_orders_for_store", storeA);
     assert.equal(rows.length, 1);
     return rows;
   });
-  assert.equal(decodeEntry<{ order_total: number }>(deliveriesA[0]).order_total, 1250);
-  assert.equal((await dispatchOf(merchant)<HcRecord[]>("get_orders_for_store", storeB)).length, 0, "store B must not see store A's delivery");
-  const pickupsB = await retryUntilOk(async () => {
-    const rows = await dispatchOf(merchant)<HcRecord[]>("get_pickup_orders_for_store", storeB);
+  assert.equal(activeA[0].kind, "Delivery");
+  assert.ok(bytesEqual(activeA[0].original_action, deliveryA));
+  assert.equal(decodeEntry<{ order_total: number }>(activeA[0].record).order_total, 1250);
+  const activeB = await retryUntilOk(async () => {
+    const rows = await dispatchOf(merchant)<StoreOrder[]>("get_active_orders_for_store", storeB);
     assert.equal(rows.length, 1);
     return rows;
   });
-  assert.equal(decodeEntry<{ order_total: number }>(pickupsB[0]).order_total, 900);
-  assert.equal((await dispatchOf(merchant)<HcRecord[]>("get_pickup_orders_for_store", storeA)).length, 0, "store A must not see store B's pickup");
-  console.log("[PASS] get_orders_for_store/get_pickup_orders_for_store return only that store's orders");
+  assert.equal(activeB[0].kind, "Pickup");
+  assert.equal(decodeEntry<{ order_total: number }>(activeB[0].record).order_total, 900);
+  console.log("[PASS] each store's active queue holds only that store's orders");
 
   // --- Reputation lands on the store the order came from. ---
   await dispatchOf(merchant)("confirm_pickup_prep", pickupB);

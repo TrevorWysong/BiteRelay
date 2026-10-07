@@ -5,6 +5,7 @@
 //! order actually reaches nearby providers.
 
 use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path, OPEN_ORDER_BUCKET_MILLIS};
+use crate::store_queue::{self, QueuedOrder};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{resolve_latest, resolve_latest_decoded, resolve_links_to_records};
@@ -165,11 +166,9 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;
     // The merchant is never in `notify_nearby_providers`'s signal audience
-    // below (that's providers only) and has no anchor of their own to poll
-    // -- without this link a merchant has no way to discover an order
-    // naming them at all, not even a delayed one. Keyed by the store, not
-    // the merchant agent -- see `StoreToOrder`'s own doc comment.
-    create_link(catalog_ref, action_hash.clone(), LinkTypes::StoreToOrder, ())?;
+    // below (that's providers only) -- the store's queues are how they find
+    // the order at all.
+    store_queue::enqueue(&catalog_ref, &action_hash, now)?;
 
     if is_open {
         publish_to_open_anchor_and_notify(&action_hash, &dropoff_geohash, now)?;
@@ -231,17 +230,6 @@ pub fn get_orders_for_requester(requester: AgentPubKey) -> ExternResult<Vec<Reco
     Ok(resolve_links_to_records(links))
 }
 
-/// One store's delivery-order queue (`StoreToOrder`) -- unlike the
-/// requester's own read above, these links were authored by *other*
-/// agents (each order's requester), so this genuinely depends on gossip
-/// having propagated them to whatever authority holds basis for the
-/// store's catalog hash.
-#[hdk_extern]
-pub fn get_orders_for_store(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(catalog_ref, LinkTypes::StoreToOrder)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetOrderStatusInput {
     pub order_original_action: ActionHash,
@@ -261,9 +249,12 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
             "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
         )));
     }
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     order.status = input.next_status;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
+    if order.status.is_terminal() {
+        store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &order.catalog_ref, requester: &order.requester, merchant: &order.merchant })?;
+    }
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated order".into())))
 }
@@ -476,6 +467,7 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
 
     // Food payment, entirely separate from the delivery-fee split above --
     // customer pays the merchant for what was ordered, regardless of how

@@ -45,9 +45,10 @@ await runScenario(async (scenario) => {
   console.log("[PASS] request_pickup_order creates a Placed order, no driver/dropoff fields involved");
 
   // Discovery: the merchant can find it without already knowing the hash.
-  const merchantSide = await dispatchOf(merchant)<HcRecord[]>("get_pickup_orders_for_store", catalogRef);
-  assert.equal(merchantSide.length, 1, "the merchant should discover this pickup order via its store's StoreToPickupOrder queue");
-  console.log("[PASS] get_pickup_orders_for_store discovers the order");
+  const merchantSide = await dispatchOf(merchant)<{ kind: string }[]>("get_active_orders_for_store", catalogRef);
+  assert.equal(merchantSide.length, 1, "the merchant should discover this pickup order in its store's active queue");
+  assert.equal(merchantSide[0].kind, "Pickup");
+  console.log("[PASS] get_active_orders_for_store discovers the order");
 
   await dispatchOf(merchant)("confirm_pickup_prep", orderRef);
   await dhtSync(all, customer.cells[0].cell_id[0]);
