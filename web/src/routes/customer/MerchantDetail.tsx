@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getNearbyMerchants, listMenuItems, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
+import { getCatalog, listMenuItems, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
+import { useResource } from "../../lib/useResource";
 import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
-import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
 import { formatCatalogAddress, formatCents } from "../../lib/format";
@@ -17,30 +17,81 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, RatingSummary, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface BagRow {
   hash: Uint8Array;
   bag: GoodieBag;
 }
 
+/// Polled for the same reason Browse.tsx's list is -- a menu item added
+/// moments ago may not have gossiped to whatever peer answers this read
+/// yet, and a customer already sitting on this page shouldn't need to
+/// navigate away and back for it to show up.
+const MENU_POLL_MS = 8000;
+
+interface StoreMenu {
+  catalog: MerchantCatalog;
+  items: ItemRow[];
+  bags: BagRow[];
+}
+
+async function fetchStoreMenu(catalogHash: Uint8Array): Promise<StoreMenu> {
+  const [record, page, bagRecords] = await Promise.all([getCatalog(catalogHash), listMenuItems(catalogHash), listGoodieBagsForCatalog(catalogHash)]);
+  // Same client-side expiry filtering as Browse.tsx's own strip -- see
+  // `GoodieBag`'s named gap for why there's no on-chain expire.
+  const now = Date.now() * 1000;
+  return {
+    catalog: decodeEntry<MerchantCatalog>(record),
+    items: page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })),
+    bags: bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })).filter((r) => r.bag.pickup_window_end > now),
+  };
+}
+
+/// Keyed by the store in the URL, so moving from one store page to another
+/// mounts a fresh page -- no state (reviews, claim forms, filters) can carry
+/// over from the previous store.
 export function MerchantDetail() {
   const { hash } = useParams<{ hash: string }>();
+  if (!hash) return null;
+  return <StorePage key={hash} hash={hash} />;
+}
+
+function StorePage({ hash }: { hash: string }) {
   const navigate = useNavigate();
-  const routerState = useLocation().state as { catalog?: MerchantCatalog; catalogHash?: Uint8Array } | null;
+  // A card click passes the catalog it already has, so the header renders
+  // instantly; the fetch below replaces it with the live version (and is
+  // the only source when arriving via a direct URL/refresh).
+  const routerState = useLocation().state as { catalog?: MerchantCatalog } | null;
   const location = useSession((s) => s.location);
   const cart = useCart();
-  const [catalog, setCatalog] = useState<MerchantCatalog | null>(routerState?.catalog ?? null);
-  const [catalogHash, setCatalogHash] = useState<Uint8Array | null>(routerState?.catalogHash ?? null);
-  const [items, setItems] = useState<ItemRow[] | null>(null);
-  const [rating, setRating] = useState<RatingSummary | null>(null);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [reviewsBefore, setReviewsBefore] = useState<Timestamp | null>(null);
+  const catalogHash = useMemo(() => hexToBytes(hash), [hash]);
+  const { data: menu } = useResource(`store-menu:${hash}`, () => fetchStoreMenu(catalogHash), { pollMs: MENU_POLL_MS });
+  const catalog = menu?.catalog ?? routerState?.catalog ?? null;
+  const items = menu?.items ?? null;
+  const bags = menu?.bags ?? [];
+  // Bounded by the menu page itself (a merchant's own menu, already capped
+  // -- see list_menu_items' own pagination). Keyed by the exact item set,
+  // so a newly added item gets its rating read too.
+  const itemsKey = items ? `item-ratings:${items.map((row) => bytesToHex(row.hash)).join(",")}` : null;
+  const { data: itemRatings = {} } = useResource<Record<string, ItemRatingSummary>>(itemsKey, async () => {
+    const entries = await Promise.all(
+      (items ?? []).map(async (row) => [bytesToHex(row.hash), await getItemRatingSummary(row.hash).catch(() => ({ count: 0, rating_sum: 0 }))] as const),
+    );
+    return Object.fromEntries(entries);
+  });
+  // This store's own rating and reviews -- keyed by the store, not its
+  // owner, so a multi-store owner's other locations (or their driving)
+  // never bleed into this page.
+  const { data: rating } = useResource(`store-rating:${hash}`, () => getRatingSummary({ Store: catalogHash }));
+  const { data: reviewFeed, mutate: mutateReviews } = useResource<{ reviews: Review[]; before: Timestamp | null }>(`store-reviews:${hash}`, () =>
+    getReviewsFor({ Store: catalogHash }).then((page) => ({ reviews: page.reviews.map((r) => decodeEntry<Review>(r)), before: page.next_before })),
+  );
+  const reviews = reviewFeed?.reviews ?? [];
+  const reviewsBefore = reviewFeed?.before ?? null;
   const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
   const { favoritesHex, toggleFavorite } = useFavorites();
-  const favorited = catalogHash ? favoritesHex.has(bytesToHex(catalogHash)) : false;
-  const [itemRatings, setItemRatings] = useState<Record<string, ItemRatingSummary>>({});
-  const [bags, setBags] = useState<BagRow[]>([]);
+  const favorited = favoritesHex.has(hash);
   const [claimingBagHex, setClaimingBagHex] = useState<string | null>(null);
   const [claimFulfillment, setClaimFulfillment] = useState<"Pickup" | "Delivery">("Pickup");
   const [claimDropoff, setClaimDropoff] = useState<GeoPoint>(location);
@@ -50,97 +101,12 @@ export function MerchantDetail() {
   const [claimedBagHexes, setClaimedBagHexes] = useState<Set<string>>(new Set());
   const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!hash) return;
-    const wanted = hexToBytes(hash);
-    setCatalogHash(wanted);
-    setItems(null);
-    let cancelled = false;
-
-    if (!routerState?.catalog) {
-      // No direct "get catalog by ref" extern is exposed today -- reuse the
-      // nearby-merchants anchor read and find this one when arriving via a
-      // direct URL/refresh rather than a card click.
-      getNearbyMerchants(encodeGeohash(location.lat, location.lon)).then((page) => {
-        // Match against `original_action`, not `actionHash(view.record)`
-        // -- the URL's own `:hash` param is itself an original_action
-        // (see RestaurantCard's Link), so matching against the record's
-        // drifting latest-state hash would fail here the moment this
-        // catalog had ever been edited. See `CatalogView`'s own doc
-        // comment.
-        const match = page.catalogs.find((v) => bytesToHex(v.original_action) === hash);
-        if (match && !cancelled) setCatalog(decodeEntry<MerchantCatalog>(match.record));
-      });
-    }
-
-    // Polled for the same reason Browse.tsx's list is -- a menu item added
-    // moments ago may not have gossiped to whatever peer answers this read
-    // yet, and a customer already sitting on this page shouldn't need to
-    // navigate away and back for it to show up.
-    function loadItems() {
-      listMenuItems(wanted).then((page) => {
-        if (cancelled) return;
-        const rows = page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }));
-        setItems(rows);
-        // Bounded by the page itself (a merchant's own menu, already capped
-        // -- see list_menu_items' own pagination), same cost category as
-        // the per-restaurant review fetch Browse.tsx already does.
-        rows.forEach((row) => {
-          const hex = bytesToHex(row.hash);
-          getItemRatingSummary(row.hash)
-            .then((summary) => !cancelled && setItemRatings((prev) => ({ ...prev, [hex]: summary })))
-            .catch(() => {});
-        });
-      });
-      // Same client-side expiry filtering as Browse.tsx's own strip -- see
-      // `GoodieBag`'s named gap for why there's no on-chain expire.
-      listGoodieBagsForCatalog(wanted).then((records) => {
-        if (cancelled) return;
-        const now = Date.now() * 1000;
-        setBags(
-          records
-            .map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) }))
-            .filter((r) => r.bag.pickup_window_end > now),
-        );
-      });
-    }
-    loadItems();
-    const interval = setInterval(loadItems, 8000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash, location]);
-
-  // This store's own rating and reviews -- keyed by the store (`hash`),
-  // not its owner, so a multi-store owner's other locations (or their
-  // driving) never bleed into this page.
-  useEffect(() => {
-    if (!hash) return;
-    const ref = hexToBytes(hash);
-    let cancelled = false;
-    setRating(null);
-    setReviews([]);
-    setReviewsBefore(null);
-    getRatingSummary({ Store: ref }).then((summary) => !cancelled && setRating(summary));
-    getReviewsFor({ Store: ref }).then((page) => {
-      if (cancelled) return;
-      setReviews(page.reviews.map((r) => decodeEntry<Review>(r)));
-      setReviewsBefore(page.next_before);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [hash]);
-
   async function loadMoreReviews() {
-    if (!hash || reviewsBefore === null) return;
+    if (reviewsBefore === null) return;
     setLoadingMoreReviews(true);
     try {
-      const page = await getReviewsFor({ Store: hexToBytes(hash) }, reviewsBefore);
-      setReviews((prev) => [...prev, ...page.reviews.map((r) => decodeEntry<Review>(r))]);
-      setReviewsBefore(page.next_before);
+      const page = await getReviewsFor({ Store: catalogHash }, reviewsBefore);
+      mutateReviews((prev) => ({ reviews: [...(prev?.reviews ?? []), ...page.reviews.map((r) => decodeEntry<Review>(r))], before: page.next_before }));
     } finally {
       setLoadingMoreReviews(false);
     }
@@ -189,7 +155,7 @@ export function MerchantDetail() {
     return (items ?? []).filter((row) => dietaryFilter.some((tag) => (row.item.dietary_tags ?? []).includes(tag)));
   }, [items, dietaryFilter]);
 
-  if (!catalog || !items || !catalogHash) {
+  if (!catalog || !items) {
     return (
       <div className="pb-24">
         <Skeleton className="h-40 w-full rounded-none" />
@@ -220,7 +186,7 @@ export function MerchantDetail() {
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.85 }}
-          onClick={() => catalogHash && toggleFavorite(catalogHash)}
+          onClick={() => toggleFavorite(catalogHash)}
           className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm"
         >
           <Heart size={18} className="text-red-500" fill={favorited ? "currentColor" : "none"} />

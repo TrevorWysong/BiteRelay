@@ -1,21 +1,22 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Store, Truck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
-import { useMerchantStores } from "../store/merchantStores";
+import { useMerchantStores, useMyStores } from "../store/merchantStores";
+import { useResource } from "../lib/useResource";
 import { getBalance } from "../holochain/zomes/ledger";
 import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
 import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
-import { decodeEntry } from "../holochain/decode";
+import { bytesToHex, decodeEntry } from "../holochain/decode";
 import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
 import { StarRating } from "../components/StarRating";
 import { formatCents } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
-import type { ProviderCredential, RatingSummary, ReputationSummary, Review } from "../holochain/types";
+import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
 
 /// One identity, several hats: ratings and stats are shown per role (your
 /// driving) and per store (each restaurant you run), never blended into
@@ -23,17 +24,30 @@ import type { ProviderCredential, RatingSummary, ReputationSummary, Review } fro
 export function ProfilePage() {
   const navigate = useNavigate();
   const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile, setMode } = useSession();
-  const stores = useMerchantStores((s) => s.stores);
-  const loadStores = useMerchantStores((s) => s.load);
   const setActiveStore = useMerchantStores((s) => s.setActive);
   const isDriver = !!profile?.roles.includes("Provider");
   const isMerchant = !!profile?.roles.includes("Merchant");
-  const [balance, setBalance] = useState<number | null>(null);
-  const [rep, setRep] = useState<ReputationSummary | null>(null);
-  const [driverRating, setDriverRating] = useState<RatingSummary | null>(null);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [storeRatings, setStoreRatings] = useState<Record<string, RatingSummary>>({});
-  const [credential, setCredential] = useState<ProviderCredential | null>(null);
+  const stores = useMyStores(isMerchant);
+  const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
+  const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!));
+  // Driver-scoped stats -- `null` key (no read at all) unless this
+  // identity actually drives.
+  const driverKey = agentHex && isDriver ? `driver:${agentHex}` : null;
+  const { data: rep } = useResource(driverKey && `${driverKey}:rep`, () => getReputationSummary({ Driver: agentPubKey! }));
+  const { data: driverRating } = useResource(driverKey && `${driverKey}:rating`, () => getRatingSummary({ Driver: agentPubKey! }));
+  const { data: reviews = [] } = useResource<Review[]>(driverKey && `${driverKey}:reviews`, () =>
+    getReviewsFor({ Driver: agentPubKey! }).then((page) => page.reviews.map((r) => decodeEntry<Review>(r))),
+  );
+  // Keyed by the exact set of stores, so adding a store re-reads ratings.
+  const storeHexes = stores?.map((s) => s.hex).join(",") ?? "";
+  const { data: storeRatings = {} } = useResource<Record<string, RatingSummary>>(storeHexes ? `store-ratings:${storeHexes}` : null, async () => {
+    const entries = await Promise.all((stores ?? []).map(async (store) => [store.hex, await getRatingSummary({ Store: store.hash })] as const));
+    return Object.fromEntries(entries);
+  });
+  const credentialKey = profileActionHash && isDriver ? `credential:${bytesToHex(profileActionHash)}` : null;
+  const { data: credential, mutate: setCredential } = useResource<ProviderCredential | null>(credentialKey, () =>
+    getProviderCredentialForProfile(profileActionHash!).then((record) => (record ? decodeEntry<ProviderCredential>(record) : null)),
+  );
   const [editing, setEditing] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState(false);
   const [draft, setDraft] = useState({ bio: "", phone: "", avatar_data_uri: "" });
@@ -41,49 +55,30 @@ export function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!agentPubKey) return;
-    getBalance(agentPubKey).then(setBalance);
-  }, [agentPubKey]);
-
-  useEffect(() => {
-    if (!agentPubKey || !isDriver) return;
-    getReputationSummary({ Driver: agentPubKey }).then(setRep);
-    getRatingSummary({ Driver: agentPubKey }).then(setDriverRating);
-    getReviewsFor({ Driver: agentPubKey }).then((page) => setReviews(page.reviews.map((r) => decodeEntry<Review>(r))));
-  }, [agentPubKey, isDriver]);
-
-  useEffect(() => {
-    if (isMerchant) loadStores();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMerchant]);
-
-  useEffect(() => {
-    stores?.forEach((store) => {
-      getRatingSummary({ Store: store.hash }).then((summary) => setStoreRatings((prev) => ({ ...prev, [store.hex]: summary })));
-    });
-  }, [stores]);
-
   function openStore(hex: string) {
     setActiveStore(hex);
     setMode("merchant");
     navigate("/merchant/catalog");
   }
 
-  useEffect(() => {
-    if (profile) setDraft({ bio: profile.bio, phone: profile.phone, avatar_data_uri: profile.avatar_data_uri });
-  }, [profile]);
+  // Drafts are filled from the saved values at the moment editing starts
+  // -- not kept in sync by an effect, which would let a background profile
+  // refresh overwrite whatever's mid-edit.
+  function toggleEditing() {
+    if (!editing && profile) setDraft({ bio: profile.bio, phone: profile.phone, avatar_data_uri: profile.avatar_data_uri });
+    setEditing((v) => !v);
+  }
 
-  useEffect(() => {
-    if (!profileActionHash || !profile?.roles.includes("Provider")) return;
-    getProviderCredentialForProfile(profileActionHash).then((record) => {
-      if (record) {
-        const decoded = decodeEntry<ProviderCredential>(record);
-        setCredential(decoded);
-        setVehicleDraft({ vehicle_description: decoded.vehicle_description, license_plate: decoded.license_plate, photo_data_uri: decoded.photo_data_uri });
-      }
-    });
-  }, [profileActionHash, profile]);
+  function toggleEditingVehicle() {
+    if (!editingVehicle) {
+      setVehicleDraft({
+        vehicle_description: credential?.vehicle_description ?? "",
+        license_plate: credential?.license_plate ?? "",
+        photo_data_uri: credential?.photo_data_uri ?? "",
+      });
+    }
+    setEditingVehicle((v) => !v);
+  }
 
   async function saveProfile() {
     if (!profile || !profileActionHash) return;
@@ -113,7 +108,7 @@ export function ProfilePage() {
         license_plate: vehicleDraft.license_plate,
         photo_data_uri: vehicleDraft.photo_data_uri,
       });
-      setCredential({ ...vehicleDraft, profile_action: profileActionHash, capabilities: ["Food"], verified: false });
+      setCredential(() => ({ ...vehicleDraft, profile_action: profileActionHash, capabilities: ["Food"], verified: false }));
       setEditingVehicle(false);
     } catch (err) {
       setSaveError(describeError(err));
@@ -157,7 +152,7 @@ export function ProfilePage() {
       <Card className="mb-4 p-4">
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-wide text-ink-400">About</p>
-          <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-relay-600">
+          <button onClick={toggleEditing} className="text-ink-400 hover:text-relay-600">
             <Pencil size={14} />
           </button>
         </div>
@@ -188,7 +183,7 @@ export function ProfilePage() {
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
               <Truck size={13} /> Vehicle
             </p>
-            <button onClick={() => setEditingVehicle((v) => !v)} className="text-ink-400 hover:text-relay-600">
+            <button onClick={toggleEditingVehicle} className="text-ink-400 hover:text-relay-600">
               <Pencil size={14} />
             </button>
           </div>
@@ -247,12 +242,12 @@ export function ProfilePage() {
       <motion.div variants={fadeSlideUp} className="mb-4 grid grid-cols-2 gap-3">
         <Card className="p-4">
           <p className="text-xs text-ink-400">Balance</p>
-          {balance === null ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
+          {balance === undefined ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
         </Card>
         {isDriver && (
           <Card className="p-4">
             <p className="text-xs text-ink-400">Deliveries</p>
-            {rep === null ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
+            {rep === undefined ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
           </Card>
         )}
       </motion.div>

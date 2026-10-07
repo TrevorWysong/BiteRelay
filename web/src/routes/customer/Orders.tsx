@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePolling } from "../../lib/useResource";
 import { Link, useNavigate } from "react-router-dom";
 import { ClipboardList, PackageOpen, Pause, Play, Repeat, RotateCcw, PlayCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOrdersForRequester, getMyPickupOrders, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, getMyBagClaims, getGoodieBag } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
-import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
+import { myAgentPubKey } from "../../holochain/client";
 import { useCart } from "../../store/cart";
 import { Button, Card, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
@@ -174,26 +175,17 @@ export function Orders() {
     }
   }
 
-  useEffect(() => {
-    refresh();
-    refreshPickup();
-    refreshRecurring();
-    refreshPendingClaims();
-    const interval = setInterval(() => {
+  usePolling(
+    () => {
       refresh();
       refreshPickup();
       refreshPendingClaims();
-    }, POLL_MS);
-    const unsub = onLocalSignal(() => {
-      refresh();
-      refreshPickup();
-      refreshPendingClaims();
-    });
-    return () => {
-      clearInterval(interval);
-      unsub();
-    };
-  }, [refresh, refreshPickup, refreshRecurring, refreshPendingClaims]);
+    },
+    { pollMs: POLL_MS, refreshOn: () => true },
+  );
+  // Recurring templates only change through this screen's own actions
+  // (which refresh them directly), so they're read once, not polled.
+  usePolling(refreshRecurring, {});
 
   if (rows === null || pickupRows === null) {
     return (

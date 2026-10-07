@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Gift, ListChecks, PackageOpen, Pencil, Plus, Sparkles, Star, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,7 +20,8 @@ import {
 } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReviewsFor } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesToHex, hexToBytes } from "../../holochain/decode";
-import { useMerchantStores } from "../../store/merchantStores";
+import { useMerchantStores, useMyStores } from "../../store/merchantStores";
+import { useResource } from "../../lib/useResource";
 import { Button, Card, Checkbox, Field, Input, Select, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { SplitAddressFields } from "../../components/SplitAddressFields";
@@ -32,7 +33,7 @@ import { describeRequirement, describeReward } from "../../lib/promotions";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { groupByCategory } from "../../lib/menu";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaim, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, RatingSummary, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import type { BagClaim, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface PromoRow {
   hash: Uint8Array;
@@ -131,35 +132,76 @@ function buildReward(form: typeof EMPTY_PROMO_FORM): PromoReward | null {
 
 /// The Menu tab: everything about the *currently selected* store (see
 /// `StoreSwitcher`/`merchantStores.ts`) -- details, delivery cost sharing,
-/// promos, menu, goodie bags and reviews. Switching stores reloads all of
-/// it; nothing here is ever shared between two stores.
+/// promos, menu, goodie bags and reviews. Each store renders as its own
+/// keyed `StoreCatalog`, so switching stores mounts a fresh component with
+/// fresh state -- nothing from one store can linger on another, without
+/// any hand-maintained "reset everything" list.
 export function MerchantCatalog() {
-  const routerState = useLocation().state as { editDetails?: boolean } | null;
-  const stores = useMerchantStores((s) => s.stores);
+  const routerState = useLocation().state as { editDetails?: string } | null;
+  const stores = useMyStores();
   const activeHex = useMerchantStores((s) => s.activeHex);
+
+  if (stores !== null && stores.length === 0) return <NewStoreForm firstStore />;
+  if (stores === null || !activeHex) return <CatalogSkeleton />;
+  // `editDetails` names the store just published (NewStore.tsx) -- only
+  // that store opens straight into its details editor, not whichever one
+  // gets switched to afterwards.
+  return <StoreCatalog key={activeHex} storeHex={activeHex} openDetailsOnArrival={routerState?.editDetails === activeHex} />;
+}
+
+function CatalogSkeleton() {
+  return (
+    <div className="px-4 pt-4">
+      <Skeleton className="h-32 w-full mb-4" />
+      <Skeleton className="h-6 w-1/2 mb-3" />
+      <Skeleton className="h-24 w-full mb-3" />
+      <Skeleton className="h-24 w-full" />
+    </div>
+  );
+}
+
+interface StoreData {
+  catalog: MerchantCatalog;
+  items: ItemRow[];
+  promos: PromoRow[];
+  bags: BagRow[];
+  pendingClaims: ClaimRow[];
+}
+
+async function fetchStoreData(ref: Uint8Array): Promise<StoreData> {
+  const [record, itemsPage, promoRecords, bagRecords, claimRecords] = await Promise.all([
+    getCatalog(ref),
+    listMenuItems(ref),
+    listPromoCodesForCatalog(ref),
+    listGoodieBagsForCatalog(ref),
+    listPendingClaimsForMerchant(ref),
+  ]);
+  return {
+    catalog: decodeEntry<MerchantCatalog>(record),
+    items: itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })),
+    promos: promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })),
+    bags: bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })),
+    pendingClaims: claimRecords.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })),
+  };
+}
+
+interface ReviewFeed {
+  reviews: Review[];
+  before: Timestamp | null;
+}
+
+function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; openDetailsOnArrival: boolean }) {
   const loadStores = useMerchantStores((s) => s.load);
-  const catalogHash = activeHex ? hexToBytes(activeHex) : null;
-  const [catalog, setCatalog] = useState<MerchantCatalog | null>(null);
-  const [items, setItems] = useState<ItemRow[] | null>(null);
-  const [rating, setRating] = useState<RatingSummary | null>(null);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [reviewsBefore, setReviewsBefore] = useState<Timestamp | null>(null);
+  const catalogHash = hexToBytes(storeHex);
+  const { data, reload } = useResource(`store:${storeHex}`, () => fetchStoreData(catalogHash));
+  // Ratings are this store's own -- never the owner's other stores, and
+  // never their driving (see `reputation_integrity`'s module doc).
+  const { data: rating } = useResource(`store-rating:${storeHex}`, () => getRatingSummary({ Store: catalogHash }));
+  const { data: reviewFeed, mutate: mutateReviews } = useResource<ReviewFeed>(`store-reviews:${storeHex}`, () =>
+    getReviewsFor({ Store: catalogHash }).then((page) => ({ reviews: page.reviews.map((r) => decodeEntry<Review>(r)), before: page.next_before })),
+  );
   const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [editingDetails, setEditingDetails] = useState(!!routerState?.editDetails);
-  const [detailsDraft, setDetailsDraft] = useState({
-    description: "",
-    cuisine_type: "",
-    banner_data_uri: "",
-    phone: "",
-    address_street: "",
-    address_city: "",
-    address_state: "",
-    address_zip: "",
-    hours_open: "",
-    hours_close: "",
-    max_delivery_radius_km: 8,
-  });
+  const [editingDetails, setEditingDetails] = useState(openDetailsOnArrival);
   const [savingDetails, setSavingDetails] = useState(false);
   const [editingSubsidy, setEditingSubsidy] = useState(false);
   const [subsidyDraft, setSubsidyDraft] = useState("50");
@@ -168,142 +210,63 @@ export function MerchantCatalog() {
   const [editingItemHash, setEditingItemHash] = useState<string | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
   const [savingItem, setSavingItem] = useState(false);
-  const [promos, setPromos] = useState<PromoRow[]>([]);
   const [showAddPromo, setShowAddPromo] = useState(false);
   const [promoForm, setPromoForm] = useState(EMPTY_PROMO_FORM);
   const [savingPromo, setSavingPromo] = useState(false);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
-  const [bags, setBags] = useState<BagRow[]>([]);
-  const [pendingClaims, setPendingClaims] = useState<ClaimRow[]>([]);
   const [showAddBag, setShowAddBag] = useState(false);
   const [bagForm, setBagForm] = useState(EMPTY_BAG_FORM);
   const [savingBag, setSavingBag] = useState(false);
   const [confirmingClaim, setConfirmingClaim] = useState<string | null>(null);
 
-  // Every async read below is tagged with the store it was for -- a
-  // response for the store you just switched *away* from must never land
-  // on the one you switched to.
-  const loadingFor = useRef<string | null>(null);
-
-  async function load() {
-    if (!activeHex) {
-      setLoading(false);
-      return;
-    }
-    const hex = activeHex;
-    const ref = hexToBytes(hex);
-    loadingFor.current = hex;
-    const stale = () => loadingFor.current !== hex;
-    const record = await getCatalog(ref);
-    if (stale()) return;
-    {
-      const decoded = decodeEntry<MerchantCatalog>(record);
-      setCatalog(decoded);
-      setDetailsDraft({
-        description: decoded.description,
-        cuisine_type: decoded.cuisine_type,
-        banner_data_uri: decoded.banner_data_uri,
-        phone: decoded.phone,
-        address_street: decoded.address_street,
-        address_city: decoded.address_city,
-        address_state: decoded.address_state,
-        address_zip: decoded.address_zip,
-        hours_open: decoded.hours_open,
-        hours_close: decoded.hours_close,
-        max_delivery_radius_km: decoded.max_delivery_radius_km,
-      });
-      setSubsidyDraft(decoded.delivery_subsidy_percent.toString());
-    }
-    const [itemsPage, promoRecords, bagRecords, claimRecords] = await Promise.all([
-      listMenuItems(ref),
-      listPromoCodesForCatalog(ref),
-      listGoodieBagsForCatalog(ref),
-      listPendingClaimsForMerchant(ref),
-    ]);
-    if (stale()) return;
-    setItems(itemsPage.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })));
-    setPromos(promoRecords.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })));
-    setBags(bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })));
-    setPendingClaims(claimRecords.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })));
-    setLoading(false);
-    // Ratings are this store's own -- never the owner's other stores, and
-    // never their driving (see `reputation_integrity`'s module doc).
-    getRatingSummary({ Store: ref }).then((summary) => !stale() && setRating(summary));
-    getReviewsFor({ Store: ref }).then((page) => {
-      if (stale()) return;
-      setReviews(page.reviews.map((r) => decodeEntry<Review>(r)));
-      setReviewsBefore(page.next_before);
-    });
-  }
-
   async function loadMoreReviews() {
-    if (!catalogHash || reviewsBefore === null) return;
-    const hex = activeHex;
+    if (!reviewFeed || reviewFeed.before === null) return;
     setLoadingMoreReviews(true);
     try {
-      const page = await getReviewsFor({ Store: catalogHash }, reviewsBefore);
-      if (loadingFor.current !== hex) return;
-      setReviews((prev) => [...prev, ...page.reviews.map((r) => decodeEntry<Review>(r))]);
-      setReviewsBefore(page.next_before);
+      const page = await getReviewsFor({ Store: catalogHash }, reviewFeed.before);
+      mutateReviews((prev) => ({ reviews: [...(prev?.reviews ?? []), ...page.reviews.map((r) => decodeEntry<Review>(r))], before: page.next_before }));
     } finally {
       setLoadingMoreReviews(false);
     }
   }
 
-  useEffect(() => {
-    if (stores === null) loadStores();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Switching stores starts from a clean slate -- nothing from the
-  // previous store may linger on screen while the next one loads. The
-  // first run is the initial mount, which keeps `editDetails` from a
-  // just-published store (see NewStore.tsx) open.
-  const firstStoreLoad = useRef(true);
-  useEffect(() => {
-    if (!firstStoreLoad.current) setEditingDetails(false);
-    firstStoreLoad.current = false;
-    setLoading(true);
-    setCatalog(null);
-    setItems(null);
-    setRating(null);
-    setReviews([]);
-    setReviewsBefore(null);
-    setPromos([]);
-    setBags([]);
-    setPendingClaims([]);
-    resetItemForm();
-    setShowAddPromo(false);
-    setShowAddBag(false);
-    setEditingSubsidy(false);
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeHex]);
+  const catalog = data?.catalog ?? null;
+  const items = data?.items ?? null;
+  const promos = data?.promos ?? [];
+  const bags = data?.bags ?? [];
+  const pendingClaims = data?.pendingClaims ?? [];
+  const reviews = reviewFeed?.reviews ?? [];
+  const reviewsBefore = reviewFeed?.before ?? null;
 
   async function toggleOpen() {
-    if (!catalogHash || !catalog) return;
+    if (!catalog) return;
     await setCatalogOpen(catalogHash, !catalog.is_open);
-    await Promise.all([load(), loadStores()]);
+    await Promise.all([reload(), loadStores()]);
   }
 
-  async function saveDetails() {
-    if (!catalogHash) return;
+  async function saveDetails(draft: DetailsDraft) {
     setSavingDetails(true);
     try {
-      await updateCatalogDetails(catalogHash, detailsDraft);
-      await Promise.all([load(), loadStores()]);
+      await updateCatalogDetails(catalogHash, draft);
+      await Promise.all([reload(), loadStores()]);
       setEditingDetails(false);
     } finally {
       setSavingDetails(false);
     }
   }
 
+  // The draft is filled from the saved value at the moment editing
+  // starts, not kept in sync by an effect.
+  function toggleEditingSubsidy() {
+    if (!editingSubsidy && catalog) setSubsidyDraft(catalog.delivery_subsidy_percent.toString());
+    setEditingSubsidy((v) => !v);
+  }
+
   async function saveSubsidy() {
-    if (!catalogHash) return;
     setSavingSubsidy(true);
     try {
       await setDeliverySubsidyPercent(catalogHash, Math.min(100, Math.max(0, Math.round(Number(subsidyDraft || 0)))));
-      await load();
+      await reload();
       setEditingSubsidy(false);
     } finally {
       setSavingSubsidy(false);
@@ -311,7 +274,7 @@ export function MerchantCatalog() {
   }
 
   async function savePromo() {
-    if (!catalogHash || !promoForm.code.trim()) return;
+    if (!promoForm.code.trim()) return;
     const requirement = buildRequirement(promoForm);
     const reward = buildReward(promoForm);
     if (!requirement || !reward) return;
@@ -324,7 +287,7 @@ export function MerchantCatalog() {
         reward,
         auto_apply: promoForm.autoApply,
       });
-      await load();
+      await reload();
       setShowAddPromo(false);
       setPromoForm(EMPTY_PROMO_FORM);
     } finally {
@@ -336,14 +299,14 @@ export function MerchantCatalog() {
     setTogglingPromo(bytesToHex(row.hash));
     try {
       await setPromoCodeActive(row.hash, !row.promo.active);
-      await load();
+      await reload();
     } finally {
       setTogglingPromo(null);
     }
   }
 
   async function saveBag() {
-    if (!catalogHash || !bagForm.title.trim()) return;
+    if (!bagForm.title.trim()) return;
     setSavingBag(true);
     try {
       await createGoodieBag({
@@ -359,7 +322,7 @@ export function MerchantCatalog() {
         supports_pickup: bagForm.supports_pickup,
         supports_delivery: bagForm.supports_delivery,
       });
-      await load();
+      await reload();
       setShowAddBag(false);
       setBagForm(emptyBagForm());
     } finally {
@@ -371,7 +334,7 @@ export function MerchantCatalog() {
     setConfirmingClaim(bytesToHex(row.hash));
     try {
       await confirmClaim(row.hash);
-      await load();
+      await reload();
     } finally {
       setConfirmingClaim(null);
     }
@@ -397,7 +360,7 @@ export function MerchantCatalog() {
   }
 
   async function saveItem() {
-    if (!catalogHash || !itemForm.name.trim()) return;
+    if (!itemForm.name.trim()) return;
     setSavingItem(true);
     const tags = itemForm.dietary_tags.split(",").map((t) => t.trim()).filter(Boolean);
     try {
@@ -427,7 +390,7 @@ export function MerchantCatalog() {
         });
       }
       resetItemForm();
-      await load();
+      await reload();
     } finally {
       setSavingItem(false);
     }
@@ -435,26 +398,17 @@ export function MerchantCatalog() {
 
   async function toggleAvailable(row: ItemRow) {
     await updateMenuItem(row.hash, { ...row.item, available: !row.item.available });
-    await load();
+    await reload();
   }
 
-  if (stores !== null && stores.length === 0) {
-    return <NewStoreForm firstStore />;
-  }
-
-  if (loading || stores === null) {
+  if (!catalog) {
     return (
       <div className="px-4 pt-4">
-        {stores !== null && <StoreSwitcher />}
-        <Skeleton className="h-32 w-full mb-4" />
-        <Skeleton className="h-6 w-1/2 mb-3" />
-        <Skeleton className="h-24 w-full mb-3" />
-        <Skeleton className="h-24 w-full" />
+        <StoreSwitcher />
+        <CatalogSkeleton />
       </div>
     );
   }
-
-  if (!catalog || !catalogHash) return null;
 
   const avgRating = rating ? averageRating(rating) : null;
   const itemNameByHex = new Map((items ?? []).map((row) => [bytesToHex(row.hash), row.item.name]));
@@ -504,60 +458,8 @@ export function MerchantCatalog() {
           </div>
           <AnimatePresence mode="wait" initial={false}>
           {editingDetails ? (
-            <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
-              <PhotoInput value={detailsDraft.banner_data_uri} onChange={(v) => setDetailsDraft((d) => ({ ...d, banner_data_uri: v }))} shape="banner" />
-              <Field label="Description">
-                <Textarea
-                  value={detailsDraft.description}
-                  onChange={(e) => setDetailsDraft((d) => ({ ...d, description: e.target.value }))}
-                  rows={2}
-                  placeholder="Describe your restaurant"
-                />
-              </Field>
-              <Field label="Cuisine">
-                <Input
-                  value={detailsDraft.cuisine_type}
-                  onChange={(e) => setDetailsDraft((d) => ({ ...d, cuisine_type: e.target.value }))}
-                  placeholder="Cuban, Italian, …"
-                />
-              </Field>
-              {/* Pickup location itself (lat/lon) stays immutable after
-                  publish -- see publish_catalog/update_catalog_details'
-                  own doc comments for why -- so `pointIsEditable={false}`
-                  here, same shared SplitAddressFields every other
-                  "enter an address" moment in the app uses (publish form
-                  above, user registration). */}
-              <SplitAddressFields
-                point={catalog.location}
-                onPointChange={() => {}}
-                pointIsEditable={false}
-                address={{ street: detailsDraft.address_street, city: detailsDraft.address_city, state: detailsDraft.address_state, zip: detailsDraft.address_zip }}
-                onAddressChange={(a) => setDetailsDraft((d) => ({ ...d, address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip }))}
-              />
-              <Field label="Phone">
-                <Input value={detailsDraft.phone} onChange={(e) => setDetailsDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="(555) 555-0100" />
-              </Field>
-              <div className="flex gap-2">
-                <Field label="Opens">
-                  <Input value={detailsDraft.hours_open} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_open: e.target.value }))} placeholder="09:00" />
-                </Field>
-                <Field label="Closes">
-                  <Input value={detailsDraft.hours_close} onChange={(e) => setDetailsDraft((d) => ({ ...d, hours_close: e.target.value }))} placeholder="22:00" />
-                </Field>
-              </div>
-              <Field label="Delivery radius (km)">
-                <Input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={detailsDraft.max_delivery_radius_km}
-                  onChange={(e) => setDetailsDraft((d) => ({ ...d, max_delivery_radius_km: Number(e.target.value) }))}
-                  placeholder="8"
-                />
-              </Field>
-              <Button loading={savingDetails} onClick={saveDetails} className="py-2 text-xs">
-                Save
-              </Button>
+            <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+              <DetailsEditor catalog={catalog} saving={savingDetails} onSave={saveDetails} />
             </motion.div>
           ) : (
             <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-600 dark:text-ink-300">
@@ -583,7 +485,7 @@ export function MerchantCatalog() {
         <Card className="mb-4 p-4">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Delivery cost sharing</p>
-            <button onClick={() => setEditingSubsidy((v) => !v)} className="text-ink-400 hover:text-relay-600">
+            <button onClick={toggleEditingSubsidy} className="text-ink-400 hover:text-relay-600">
               <Pencil size={14} />
             </button>
           </div>
@@ -1032,5 +934,88 @@ export function MerchantCatalog() {
         )}
       </motion.div>
     </motion.div>
+  );
+}
+
+type DetailsDraft = ReturnType<typeof detailsDraftFrom>;
+
+function detailsDraftFrom(catalog: MerchantCatalog) {
+  return {
+    description: catalog.description,
+    cuisine_type: catalog.cuisine_type,
+    banner_data_uri: catalog.banner_data_uri,
+    phone: catalog.phone,
+    address_street: catalog.address_street,
+    address_city: catalog.address_city,
+    address_state: catalog.address_state,
+    address_zip: catalog.address_zip,
+    hours_open: catalog.hours_open,
+    hours_close: catalog.hours_close,
+    max_delivery_radius_km: catalog.max_delivery_radius_km,
+  };
+}
+
+/// Owns its own draft, initialized from the store's saved details when the
+/// editor mounts (i.e. when the pencil is tapped) -- so nothing ever has to
+/// copy fetched data into form state after the fact, and a background
+/// refresh can't overwrite an edit in progress.
+function DetailsEditor({ catalog, saving, onSave }: { catalog: MerchantCatalog; saving: boolean; onSave: (draft: DetailsDraft) => void }) {
+  const [draft, setDraft] = useState(() => detailsDraftFrom(catalog));
+  return (
+    <div className="flex flex-col gap-2">
+      <PhotoInput value={draft.banner_data_uri} onChange={(v) => setDraft((d) => ({ ...d, banner_data_uri: v }))} shape="banner" />
+      <Field label="Description">
+        <Textarea
+          value={draft.description}
+          onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+          rows={2}
+          placeholder="Describe your restaurant"
+        />
+      </Field>
+      <Field label="Cuisine">
+        <Input
+          value={draft.cuisine_type}
+          onChange={(e) => setDraft((d) => ({ ...d, cuisine_type: e.target.value }))}
+          placeholder="Cuban, Italian, …"
+        />
+      </Field>
+      {/* Pickup location itself (lat/lon) stays immutable after
+          publish -- see publish_catalog/update_catalog_details'
+          own doc comments for why -- so `pointIsEditable={false}`
+          here, same shared SplitAddressFields every other
+          "enter an address" moment in the app uses (publish form
+          above, user registration). */}
+      <SplitAddressFields
+        point={catalog.location}
+        onPointChange={() => {}}
+        pointIsEditable={false}
+        address={{ street: draft.address_street, city: draft.address_city, state: draft.address_state, zip: draft.address_zip }}
+        onAddressChange={(a) => setDraft((d) => ({ ...d, address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip }))}
+      />
+      <Field label="Phone">
+        <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="(555) 555-0100" />
+      </Field>
+      <div className="flex gap-2">
+        <Field label="Opens">
+          <Input value={draft.hours_open} onChange={(e) => setDraft((d) => ({ ...d, hours_open: e.target.value }))} placeholder="09:00" />
+        </Field>
+        <Field label="Closes">
+          <Input value={draft.hours_close} onChange={(e) => setDraft((d) => ({ ...d, hours_close: e.target.value }))} placeholder="22:00" />
+        </Field>
+      </div>
+      <Field label="Delivery radius (km)">
+        <Input
+          type="number"
+          min={0}
+          step="any"
+          value={draft.max_delivery_radius_km}
+          onChange={(e) => setDraft((d) => ({ ...d, max_delivery_radius_km: Number(e.target.value) }))}
+          placeholder="8"
+        />
+      </Field>
+      <Button loading={saving} onClick={() => onSave(draft)} className="py-2 text-xs">
+        Save
+      </Button>
+    </div>
   );
 }

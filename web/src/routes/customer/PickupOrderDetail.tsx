@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { usePolling } from "../../lib/useResource";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
@@ -6,7 +7,7 @@ import { getPickupOrder, raisePickupDispute, completePickup } from "../../holoch
 import { listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
-import { myAgentPubKey, onLocalSignal } from "../../holochain/client";
+import { myAgentPubKey } from "../../holochain/client";
 import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRatingInput } from "../../components/StarRating";
@@ -84,17 +85,7 @@ export function PickupOrderDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    const unsub = onLocalSignal((signal) => {
-      if ("PickupReady" in signal) refresh();
-    });
-    return () => {
-      clearInterval(interval);
-      unsub();
-    };
-  }, [refresh]);
+  usePolling(refresh, { pollMs: POLL_MS, refreshOn: (signal) => "PickupReady" in signal });
 
   if (!order || !orderRef) {
     return (

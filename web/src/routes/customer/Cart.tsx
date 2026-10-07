@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { distanceKm } from "../../lib/geohash";
-import { useCart, expandLineQuantities } from "../../store/cart";
+import { useCart, expandLineQuantities, type CartLine } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
 import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
@@ -17,6 +17,7 @@ import { computePromoEffect, describeRequirement, describeReward, evaluatePromo,
 import { nextOccurrence, toMicros, WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
+import { useResource } from "../../lib/useResource";
 import type { ActionHash, DeliveryOrder, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
@@ -76,6 +77,80 @@ function ToggleChip({ active, onClick, children, className }: { active: boolean;
   );
 }
 
+type PromoRow = { hash: ActionHash; promo: PromoCode };
+const NO_PROMOS: PromoRow[] = [];
+const NO_ITEMS: { hash: ActionHash; item: MenuItem }[] = [];
+
+interface CartStoreInfo {
+  subsidyPercent: number;
+  // Merchant's own delivery-range setting -- lets `onValidate` below
+  // reject an out-of-range dropoff pick client-side, before the order is
+  // even submitted. The real, authoritative enforcement is still
+  // `request_delivery`'s own coordinator-level check; this is purely a
+  // faster, friendlier pre-check -- `null` until the catalog loads, which
+  // `onValidate` treats as "nothing to check yet".
+  merchantLocation: GeoPoint | null;
+  merchantRadiusKm: number | null;
+  promoCodes: PromoRow[];
+  menuItems: { hash: ActionHash; item: MenuItem }[];
+  completedOrderCount: number;
+}
+
+/// Everything the cart needs about the store it's ordering from, read
+/// once per store. Each part degrades independently on failure, same as
+/// before -- a missing promo list shouldn't block checkout.
+async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo> {
+  const [catalog, promoCodes, menuItems, completedOrderCount] = await Promise.all([
+    getCatalog(catalogRef)
+      .then((record) => decodeEntry<MerchantCatalog>(record))
+      .catch(() => null),
+    listPromoCodesForCatalog(catalogRef)
+      .then((records) => records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })))
+      .catch(() => []),
+    // Needed to describe/evaluate item-scoped requirements and rewards
+    // (BOGO, "spend $X get item Y free") even when the item they name isn't
+    // already sitting in the cart.
+    listMenuItems(catalogRef)
+      .then((page) => page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })))
+      .catch(() => []),
+    // Loyalty rewards ("order 5 times, your 6th is discounted") need this
+    // customer's own completed-order count at *this* store -- their own
+    // RequesterToOrder links, a purely local, agent-centric read.
+    getOrdersForRequester(myAgentPubKey())
+      .then((records) =>
+        records.filter((r) => {
+          const o = decodeEntry<DeliveryOrder>(r);
+          return o.status === "Delivered" && bytesEqual(o.catalog_ref, catalogRef);
+        }).length,
+      )
+      .catch(() => 0),
+  ]);
+  return {
+    subsidyPercent: catalog?.delivery_subsidy_percent ?? 0,
+    merchantLocation: catalog?.location ?? null,
+    merchantRadiusKm: catalog?.max_delivery_radius_km ?? null,
+    promoCodes,
+    menuItems,
+    completedOrderCount,
+  };
+}
+
+/// The best currently-eligible auto-apply promo for this cart, or `null`.
+function bestAutoApplyPromo(promoCodes: PromoRow[], lines: CartLine[], total: number, completedOrderCount: number): PromoRow | null {
+  const now = Date.now() * 1000;
+  const eligible = promoCodes.filter(
+    (p) =>
+      p.promo.auto_apply &&
+      p.promo.active &&
+      (p.promo.expires_at === null || p.promo.expires_at > now) &&
+      isPromoEligible(p.promo.requirement, lines, total, completedOrderCount),
+  );
+  if (eligible.length === 0) return null;
+  return eligible.reduce((a, b) =>
+    computePromoEffect(b.promo.reward, lines, total).subtotalDiscountCents > computePromoEffect(a.promo.reward, lines, total).subtotalDiscountCents ? b : a,
+  );
+}
+
 export function Cart() {
   const cart = useCart();
   const location = useSession((s) => s.location);
@@ -108,84 +183,31 @@ export function Cart() {
   const [customTip, setCustomTip] = useState("");
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
-  const [subsidyPercent, setSubsidyPercent] = useState(0);
-  // Merchant's own delivery-range setting -- fetched alongside subsidyPercent
-  // from the same catalog read -- lets `onValidate` below reject an
-  // out-of-range dropoff pick client-side, before the order is even
-  // submitted. The real, authoritative enforcement is still
-  // `request_delivery`'s own coordinator-level check (dispatch_coordinator);
-  // this is purely a faster, friendlier pre-check -- `null` until the
-  // catalog loads, which `onValidate` treats as "nothing to check yet"
-  // rather than blocking every pick while the fetch is in flight.
-  const [merchantLocation, setMerchantLocation] = useState<GeoPoint | null>(null);
-  const [merchantRadiusKm, setMerchantRadiusKm] = useState<number | null>(null);
-  const [promoCodes, setPromoCodes] = useState<{ hash: ActionHash; promo: PromoCode }[]>([]);
-  const [menuItems, setMenuItems] = useState<{ hash: ActionHash; item: MenuItem }[]>([]);
+  const catalogRef = cart.catalogRef;
+  const { data: storeInfo } = useResource(catalogRef && `cart-store:${bytesToHex(catalogRef)}`, () => fetchCartStoreInfo(catalogRef!));
+  const subsidyPercent = storeInfo?.subsidyPercent ?? 0;
+  const merchantLocation = storeInfo?.merchantLocation ?? null;
+  const merchantRadiusKm = storeInfo?.merchantRadiusKm ?? null;
+  const promoCodes = storeInfo?.promoCodes ?? NO_PROMOS;
+  const menuItems = storeInfo?.menuItems ?? NO_ITEMS;
+  const completedOrderCount = storeInfo?.completedOrderCount ?? 0;
   const [promoInput, setPromoInput] = useState("");
-  const [appliedPromo, setAppliedPromo] = useState<{ hash: ActionHash; promo: PromoCode } | null>(null);
+  // A code the customer typed always wins. Otherwise the best *eligible,
+  // auto_apply* code (a loyalty reward, say) applies by itself -- computed
+  // from the live cart every render rather than picked once by an effect,
+  // so adding/removing items re-evaluates which auto code (if any)
+  // currently qualifies. Removing an auto-applied code dismisses auto-apply
+  // for this cart visit.
+  const [manualPromo, setManualPromo] = useState<PromoRow | null>(null);
+  const [autoPromoDismissed, setAutoPromoDismissed] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
-  const [completedOrderCount, setCompletedOrderCount] = useState(0);
-
-  useEffect(() => {
-    if (!cart.catalogRef) return;
-    getCatalog(cart.catalogRef)
-      .then((record) => {
-        const catalog = decodeEntry<MerchantCatalog>(record);
-        setSubsidyPercent(catalog.delivery_subsidy_percent);
-        setMerchantLocation(catalog.location);
-        setMerchantRadiusKm(catalog.max_delivery_radius_km);
-      })
-      .catch(() => setSubsidyPercent(0));
-    listPromoCodesForCatalog(cart.catalogRef)
-      .then((records) => setPromoCodes(records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) }))))
-      .catch(() => setPromoCodes([]));
-    // Needed to describe/evaluate item-scoped requirements and rewards
-    // (BOGO, "spend $X get item Y free") even when the item they name isn't
-    // already sitting in the cart -- cart lines alone can't resolve a
-    // reward item's name if the customer hasn't added it yet.
-    listMenuItems(cart.catalogRef)
-      .then((page) => setMenuItems(page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) }))))
-      .catch(() => setMenuItems([]));
-    // Loyalty rewards ("order 5 times, your 6th is discounted") need this
-    // customer's own completed-order count at *this* merchant -- their own
-    // RequesterToOrder links, a purely local, agent-centric read, same
-    // category as the no-skim dashboard's own personal ledger.
-    getOrdersForRequester(myAgentPubKey())
-      .then((records) => {
-        const count = records.filter((r) => {
-          const o = decodeEntry<DeliveryOrder>(r);
-          return o.status === "Delivered" && bytesEqual(o.catalog_ref, cart.catalogRef!);
-        }).length;
-        setCompletedOrderCount(count);
-      })
-      .catch(() => setCompletedOrderCount(0));
+  const autoPromo = useMemo(
+    () => (autoPromoDismissed ? null : bestAutoApplyPromo(promoCodes, cart.lines, cart.total(), completedOrderCount)),
+    // cart.lines is the cart's whole content; total() is derived from it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Auto-apply: once promo codes and the loyalty count are both known, the
-  // best *eligible, auto_apply* code gets applied without the customer
-  // typing anything -- but only if they haven't already applied a
-  // (manually typed) code of their own, which always wins.
-  useEffect(() => {
-    if (appliedPromo || promoCodes.length === 0) return;
-    const now = Date.now() * 1000;
-    const eligibleAutoApply = promoCodes.filter(
-      (p) =>
-        p.promo.auto_apply &&
-        p.promo.active &&
-        (p.promo.expires_at === null || p.promo.expires_at > now) &&
-        isPromoEligible(p.promo.requirement, cart.lines, cart.total(), completedOrderCount),
-    );
-    if (eligibleAutoApply.length === 0) return;
-    const best = eligibleAutoApply.reduce((a, b) =>
-      computePromoEffect(b.promo.reward, cart.lines, cart.total()).subtotalDiscountCents >
-      computePromoEffect(a.promo.reward, cart.lines, cart.total()).subtotalDiscountCents
-        ? b
-        : a,
-    );
-    setAppliedPromo(best);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [promoCodes, completedOrderCount]);
+    [autoPromoDismissed, promoCodes, cart.lines, completedOrderCount],
+  );
+  const appliedPromo = manualPromo ?? autoPromo;
 
   const itemName = (hex: string) => menuItems.find((m) => bytesToHex(m.hash) === hex)?.item.name;
 
@@ -202,7 +224,7 @@ export function Cart() {
       setPromoError(`Not eligible yet. ${describeRequirement(match.promo.requirement, itemName)} to use this code.`);
       return;
     }
-    setAppliedPromo(match);
+    setManualPromo(match);
   }
 
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
@@ -539,7 +561,8 @@ export function Cart() {
                 </span>
                 <button
                   onClick={() => {
-                    setAppliedPromo(null);
+                    if (manualPromo) setManualPromo(null);
+                    else setAutoPromoDismissed(true);
                     setPromoInput("");
                   }}
                   className="text-xs underline"

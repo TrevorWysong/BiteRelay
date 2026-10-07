@@ -92,12 +92,19 @@ export function AddressSwitcher({
       .catch(() => setAddresses([]));
   }
 
-  useEffect(() => {
-    if (open) loadAddresses();
-    else setValidationError(null);
-  }, [open]);
+  // Opening/closing is always a user action, so its side effects live in
+  // the handlers rather than an effect watching `open`.
+  function openSheet() {
+    setOpen(true);
+    loadAddresses();
+  }
 
-  function useAddress(point: GeoPoint) {
+  function closeSheet() {
+    setOpen(false);
+    setValidationError(null);
+  }
+
+  function pickAddress(point: GeoPoint) {
     const error = onValidate?.(point) ?? null;
     if (error) {
       setValidationError(error);
@@ -105,7 +112,7 @@ export function AddressSwitcher({
     }
     setValidationError(null);
     setLocation(point);
-    setOpen(false);
+    closeSheet();
     setPicked(null);
     setNewLabel("");
   }
@@ -124,7 +131,7 @@ export function AddressSwitcher({
         created_at: Date.now() * 1000,
       });
       loadAddresses();
-      useAddress(picked.point);
+      pickAddress(picked.point);
     } finally {
       setSaving(false);
     }
@@ -150,7 +157,7 @@ export function AddressSwitcher({
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        onClick={openSheet}
         className="mb-3 flex w-full items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 text-left transition hover:border-relay-300"
       >
         <MapPin size={16} className="shrink-0 text-relay-500" />
@@ -166,7 +173,7 @@ export function AddressSwitcher({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
-              onClick={() => setOpen(false)}
+              onClick={closeSheet}
             >
               <motion.div
                 initial={{ y: "100%" }}
@@ -178,7 +185,7 @@ export function AddressSwitcher({
               >
                 <div className="flex items-center justify-between p-4 pb-0">
                   <h2 className="text-base font-black text-ink-900 dark:text-ink-50">{label}</h2>
-                  <button onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-full text-ink-400 hover:bg-ink-100 dark:hover:bg-ink-800">
+                  <button onClick={closeSheet} className="grid h-8 w-8 place-items-center rounded-full text-ink-400 hover:bg-ink-100 dark:hover:bg-ink-800">
                     <X size={18} />
                   </button>
                 </div>
@@ -209,7 +216,7 @@ export function AddressSwitcher({
                     </div>
                   )}
                   {picked && (
-                    <button onClick={() => useAddress(picked.point)} className="mt-2 text-xs font-semibold text-relay-600 underline-offset-2 hover:underline">
+                    <button onClick={() => pickAddress(picked.point)} className="mt-2 text-xs font-semibold text-relay-600 underline-offset-2 hover:underline">
                       Just use this address once, without saving
                     </button>
                   )}
@@ -225,7 +232,7 @@ export function AddressSwitcher({
                         const isCurrent = location.lat === row.address.location.lat && location.lon === row.address.location.lon;
                         return (
                           <div key={hex} className="flex items-center gap-2 py-3">
-                            <button onClick={() => useAddress(row.address.location)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                            <button onClick={() => pickAddress(row.address.location)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                               <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${isCurrent ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}>
                                 <MapPin size={15} />
                               </div>
