@@ -1,103 +1,58 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ClipboardList, Store } from "lucide-react";
+import { Bike, ClipboardList, ShoppingBag, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrdersForStore, getPickupOrdersForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup } from "../../holochain/zomes/dispatch";
-import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
+import clsx from "clsx";
+import { getActiveOrdersForStore, getOrderHistoryForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup, type StoreOrder } from "../../holochain/zomes/dispatch";
+import { decodeEntry, bytesToHex } from "../../holochain/decode";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { useResource } from "../../lib/useResource";
 import { Button, Card, Chip, ChipRow, EmptyState, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents } from "../../lib/format";
+import { formatCents, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { DeliveryOrder, PickupOrder } from "../../holochain/types";
-
-interface Row {
-  hash: Uint8Array;
-  order: DeliveryOrder;
-  storeHex: string;
-}
-
-interface PickupRow {
-  hash: Uint8Array;
-  order: PickupOrder;
-  storeHex: string;
-}
+import type { DeliveryOrder, PickupOrder, Timestamp } from "../../holochain/types";
 
 const POLL_MS = 8000;
 
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
 
-/// Incoming orders across every store this merchant runs -- each store has
-/// its own queue on the DHT (`StoreToOrder`/`StoreToPickupOrder`), and this
-/// screen reads either one store's or all of them, the way Uber Eats
-/// Manager's multi-location view does. Every order is labelled with its
-/// store once there's more than one, since "which kitchen makes this" is
-/// the first thing a multi-store owner needs to know.
+type QueueRow =
+  | { kind: "Delivery"; ref: Uint8Array; hex: string; order: DeliveryOrder; storeHex: string }
+  | { kind: "Pickup"; ref: Uint8Array; hex: string; order: PickupOrder; storeHex: string };
+
+function toRow(entry: StoreOrder, storeHex: string): QueueRow {
+  const base = { ref: entry.original_action, hex: bytesToHex(entry.original_action), storeHex };
+  return entry.kind === "Delivery"
+    ? { ...base, kind: "Delivery", order: decodeEntry<DeliveryOrder>(entry.record) }
+    : { ...base, kind: "Pickup", order: decodeEntry<PickupOrder>(entry.record) };
+}
+
+const storesKey = (stores: StoreRow[]) => stores.map((s) => s.hex).join(",");
+
+/// A merchant's orders across every store they run, the way a DoorDash/
+/// Uber Eats store tablet splits them: the **active** queue (what the
+/// kitchen is working on, oldest first, polled) and **history** (every
+/// order, newest first, paginated, read on demand). Each store's queues are
+/// its own on the DHT (see `dispatch_integrity::store_queue`); with several
+/// stores, every order is labelled with its store, since "which kitchen
+/// makes this" is the first thing a multi-store owner needs to know.
 export function MerchantOrders() {
   const navigate = useNavigate();
   const stores = useMyStores();
   const [filter, setFilter] = useState(ALL_STORES);
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [advancingPickup, setAdvancingPickup] = useState<string | null>(null);
+  const [tab, setTab] = useState<"active" | "history">("active");
 
   // A store filter that no longer matches anything (e.g. stale state)
   // quietly falls back to everything rather than showing an empty queue.
   const effectiveFilter = stores?.some((s) => s.hex === filter) ? filter : ALL_STORES;
-  const visibleStores = useMemo<StoreRow[]>(
-    () => (stores ?? []).filter((s) => effectiveFilter === ALL_STORES || s.hex === effectiveFilter),
-    [stores, effectiveFilter],
-  );
+  const visibleStores = useMemo(() => (stores ?? []).filter((s) => effectiveFilter === ALL_STORES || s.hex === effectiveFilter), [stores, effectiveFilter]);
   const storeName = useMemo(() => new Map((stores ?? []).map((s) => [s.hex, s.catalog.business_name])), [stores]);
+  const multiStore = (stores?.length ?? 0) > 1;
 
-  // Both queues for exactly the stores on screen, keyed by that set -- a
-  // slow reply for the filter you just switched away from is dropped
-  // rather than shown under the new one. Every dispatch signal (new order,
-  // status change, ...) triggers a re-read; polling backs signals up.
-  const queueKey = stores ? `merchant-orders:${visibleStores.map((s) => s.hex).join(",")}` : null;
-  const { data: queues, reload } = useResource(
-    queueKey,
-    async () => {
-      const perStore = await Promise.all(
-        visibleStores.map(async (store) => {
-          const [deliveries, pickups] = await Promise.all([getOrdersForStore(store.hash), getPickupOrdersForStore(store.hash)]);
-          return {
-            rows: deliveries.map((r): Row => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r), storeHex: store.hex })),
-            pickupRows: pickups.map((r): PickupRow => ({ hash: actionHash(r), order: decodeEntry<PickupOrder>(r), storeHex: store.hex })),
-          };
-        }),
-      );
-      const rows = perStore.flatMap((p) => p.rows).sort((a, b) => b.order.requested_at - a.order.requested_at);
-      const pickupRows = perStore.flatMap((p) => p.pickupRows).sort((a, b) => b.order.requested_at - a.order.requested_at);
-      return { rows, pickupRows };
-    },
-    { pollMs: POLL_MS, refreshOn: () => true },
-  );
-  const rows = queues?.rows ?? null;
-  const pickupRows = queues?.pickupRows ?? null;
-
-  async function confirmPrep(hash: Uint8Array) {
-    setConfirming(bytesToHex(hash));
-    try {
-      await setOrderStatus(hash, "MerchantConfirmed");
-      await reload();
-    } finally {
-      setConfirming(null);
-    }
-  }
-
-  async function advancePickup(hash: Uint8Array, action: (h: Uint8Array) => Promise<unknown>) {
-    setAdvancingPickup(bytesToHex(hash));
-    try {
-      await action(hash);
-      await reload();
-    } finally {
-      setAdvancingPickup(null);
-    }
-  }
-
-  if (stores !== null && stores.length === 0) {
+  if (stores === null) return <QueueSkeleton />;
+  if (stores.length === 0) {
     return (
       <div className="flex flex-col items-center px-4">
         <EmptyState icon={<Store size={32} />} title="No storefront yet" subtitle="Publish a storefront to start receiving orders." />
@@ -106,112 +61,228 @@ export function MerchantOrders() {
     );
   }
 
-  const multiStore = (stores?.length ?? 0) > 1;
-  const storeFilter = multiStore && stores && (
-    <ChipRow>
-      <Chip active={effectiveFilter === ALL_STORES} onClick={() => setFilter(ALL_STORES)} tone="brand">
-        All stores
-      </Chip>
-      {stores.map((s) => (
-        <Chip key={s.hex} active={effectiveFilter === s.hex} onClick={() => setFilter(s.hex)} tone="brand">
-          {s.catalog.business_name}
-        </Chip>
-      ))}
-    </ChipRow>
-  );
-  const storeLabel = (hex: string) =>
-    multiStore && (
-      <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-relay-600">
-        <Store size={11} /> {storeName.get(hex) ?? "Store"}
-      </p>
-    );
-
-  if (rows === null || pickupRows === null) {
-    return (
-      <div className="px-4 pt-4 pb-8">
-        <Skeleton className="h-7 w-1/2 mb-4" />
-        <Skeleton className="h-28 w-full mb-3" />
-        <Skeleton className="h-28 w-full" />
-      </div>
-    );
-  }
-
-  if (rows.length === 0 && pickupRows.length === 0) {
-    return (
-      <div className="px-4 pt-4">
-        {storeFilter}
-        <EmptyState
-          icon={<ClipboardList size={32} />}
-          title="No orders yet"
-          subtitle={effectiveFilter === ALL_STORES ? "New orders for your stores show up here automatically." : "New orders for this store show up here automatically."}
-        />
-      </div>
-    );
-  }
+  const label = (hex: string) => (multiStore ? (storeName.get(hex) ?? "Store") : null);
+  const scope = effectiveFilter === ALL_STORES ? "your stores" : "this store";
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4 pb-8">
-      <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
-        Incoming orders
-      </motion.h1>
-      {storeFilter}
-      {rows.length > 0 && <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Delivery orders</p>}
-      <div className="flex flex-col gap-3">
-        <AnimatePresence initial={false}>
-          {rows.map(({ hash, order, storeHex }) => (
-            <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-              <Card className="p-4">
-                {storeLabel(storeHex)}
-                <div className="flex items-center justify-between">
-                  <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
-                  <StatusBadge status={order.status} />
-                </div>
-                <p className="mt-1 text-xs text-ink-400">{order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}</p>
-                {order.special_instructions && <p className="mt-1 text-xs italic text-ink-500">"{order.special_instructions}"</p>}
-                {order.status === "BidAccepted" && (
-                  <Button className="mt-3 w-full py-2 text-xs" loading={confirming === bytesToHex(hash)} onClick={() => confirmPrep(hash)}>
-                    Confirm prep started
-                  </Button>
-                )}
-                {order.status === "Open" && <p className="mt-2 text-xs text-ink-400">Waiting for a driver to be assigned.</p>}
-                {(order.status === "MerchantConfirmed" || order.status === "DriverEnRouteToMerchant") && (
-                  <p className="mt-2 text-xs text-ink-400">Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.</p>
-                )}
-              </Card>
-            </motion.div>
+      <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Orders</h1>
+        <div className="flex rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
+          {(["active", "history"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={clsx("rounded-full px-3 py-1 capitalize transition", tab === t ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400")}
+            >
+              {t}
+            </button>
           ))}
-        </AnimatePresence>
-      </div>
-
-      {pickupRows.length > 0 && <p className="mb-2 mt-5 text-xs font-bold uppercase tracking-wide text-ink-400">Pickup orders</p>}
-      <div className="flex flex-col gap-3">
-        <AnimatePresence initial={false}>
-          {pickupRows.map(({ hash, order, storeHex }) => (
-            <motion.div key={bytesToHex(hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-              <Card className="p-4">
-                {storeLabel(storeHex)}
-                <div className="flex items-center justify-between">
-                  <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
-                  <PickupStatusBadge status={order.status} />
-                </div>
-                <p className="mt-1 text-xs text-ink-400">{order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}</p>
-                {order.special_instructions && <p className="mt-1 text-xs italic text-ink-500">"{order.special_instructions}"</p>}
-                {order.status === "Placed" && (
-                  <Button className="mt-3 w-full py-2 text-xs" loading={advancingPickup === bytesToHex(hash)} onClick={() => advancePickup(hash, confirmPickupPrep)}>
-                    Confirm prep started
-                  </Button>
-                )}
-                {order.status === "MerchantConfirmed" && (
-                  <Button className="mt-3 w-full py-2 text-xs" loading={advancingPickup === bytesToHex(hash)} onClick={() => advancePickup(hash, markReadyForPickup)}>
-                    Mark ready for pickup
-                  </Button>
-                )}
-                {order.status === "ReadyForPickup" && <p className="mt-2 text-xs text-ink-400">Waiting for the customer to collect it.</p>}
-              </Card>
-            </motion.div>
+        </div>
+      </motion.div>
+      {multiStore && (
+        <ChipRow>
+          <Chip active={effectiveFilter === ALL_STORES} onClick={() => setFilter(ALL_STORES)} tone="brand">
+            All stores
+          </Chip>
+          {stores.map((s) => (
+            <Chip key={s.hex} active={effectiveFilter === s.hex} onClick={() => setFilter(s.hex)} tone="brand">
+              {s.catalog.business_name}
+            </Chip>
           ))}
-        </AnimatePresence>
-      </div>
+        </ChipRow>
+      )}
+      {/* Keyed by the stores shown: changing the filter mounts a fresh list
+          (and, for history, fresh pagination) instead of resetting state. */}
+      {tab === "active" ? (
+        <ActiveQueue key={storesKey(visibleStores)} stores={visibleStores} storeLabel={label} scope={scope} />
+      ) : (
+        <OrderHistory key={storesKey(visibleStores)} stores={visibleStores} storeLabel={label} scope={scope} />
+      )}
     </motion.div>
+  );
+}
+
+function QueueSkeleton() {
+  return (
+    <div className="px-4 pt-4 pb-8">
+      <Skeleton className="h-7 w-1/2 mb-4" />
+      <Skeleton className="h-28 w-full mb-3" />
+      <Skeleton className="h-28 w-full" />
+    </div>
+  );
+}
+
+interface ListProps {
+  stores: StoreRow[];
+  storeLabel: (storeHex: string) => string | null;
+  scope: string;
+}
+
+/// Polled, and re-read on every dispatch signal (a new order, a status
+/// change) -- cheap because the active queue only ever holds in-progress
+/// orders. Oldest first: the order a kitchen works through them.
+function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
+  const [busyHex, setBusyHex] = useState<string | null>(null);
+  const { data: rows, reload } = useResource(
+    `merchant-active:${storesKey(stores)}`,
+    async () => {
+      const perStore = await Promise.all(stores.map(async (store) => (await getActiveOrdersForStore(store.hash)).map((entry) => toRow(entry, store.hex))));
+      return perStore.flat().sort((a, b) => a.order.requested_at - b.order.requested_at);
+    },
+    { pollMs: POLL_MS, refreshOn: () => true },
+  );
+
+  async function advance(row: QueueRow, action: (ref: Uint8Array) => Promise<unknown>) {
+    setBusyHex(row.hex);
+    try {
+      await action(row.ref);
+      await reload();
+    } finally {
+      setBusyHex(null);
+    }
+  }
+
+  if (rows === undefined) return <QueueSkeleton />;
+  if (rows.length === 0) {
+    return <EmptyState icon={<ClipboardList size={32} />} title="No active orders" subtitle={`New orders for ${scope} show up here automatically.`} />;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <AnimatePresence initial={false}>
+        {rows.map((row) => (
+          <motion.div key={row.hex} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <OrderCard row={row} storeLabel={storeLabel(row.storeHex)}>
+              <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
+            </OrderCard>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/// What the merchant can do next for an in-progress order, or what they're
+/// waiting on.
+function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean; onAdvance: (action: (ref: Uint8Array) => Promise<unknown>) => void }) {
+  const button = (label: string, action: (ref: Uint8Array) => Promise<unknown>) => (
+    <Button className="mt-3 w-full py-2 text-xs" loading={busy} onClick={() => onAdvance(action)}>
+      {label}
+    </Button>
+  );
+  const note = (text: string) => <p className="mt-2 text-xs text-ink-400">{text}</p>;
+  if (row.kind === "Delivery") {
+    switch (row.order.status) {
+      case "BidAccepted":
+        return button("Confirm prep started", (ref) => setOrderStatus(ref, "MerchantConfirmed"));
+      case "Open":
+        return note("Waiting for a driver to be assigned.");
+      case "Scheduled":
+        return note("Scheduled for later -- it opens to drivers at its requested time.");
+      case "MerchantConfirmed":
+      case "DriverEnRouteToMerchant":
+        return note("Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.");
+      case "PickedUp":
+        return note("Out for delivery.");
+      default:
+        return null;
+    }
+  }
+  switch (row.order.status) {
+    case "Placed":
+      return button("Confirm prep started", confirmPickupPrep);
+    case "MerchantConfirmed":
+      return button("Mark ready for pickup", markReadyForPickup);
+    case "ReadyForPickup":
+      return note("Waiting for the customer to collect it.");
+    default:
+      return null;
+  }
+}
+
+interface HistoryState {
+  rows: QueueRow[];
+  /// Per store: where its next page starts, or null once it's exhausted.
+  cursors: Record<string, Timestamp | null>;
+}
+
+/// Every order, newest first, a page per store at a time -- never polled
+/// (history doesn't change under you), and each "Load more" only reads the
+/// next page of each store that still has one.
+function OrderHistory({ stores, storeLabel, scope }: ListProps) {
+  const [loadingMore, setLoadingMore] = useState(false);
+  const { data, mutate } = useResource<HistoryState>(`merchant-history:${storesKey(stores)}`, () => fetchHistoryPages(stores, null));
+  const hasMore = !!data && Object.values(data.cursors).some((cursor) => cursor !== null);
+
+  async function loadMore() {
+    if (!data) return;
+    setLoadingMore(true);
+    try {
+      const next = await fetchHistoryPages(stores.filter((s) => data.cursors[s.hex] !== null), data.cursors);
+      mutate((prev) => ({
+        rows: mergeNewestFirst(prev?.rows ?? [], next.rows),
+        cursors: { ...(prev?.cursors ?? {}), ...next.cursors },
+      }));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  if (data === undefined) return <QueueSkeleton />;
+  if (data.rows.length === 0) return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle={`Every order ${scope} receives will be listed here.`} />;
+  return (
+    <div className="flex flex-col gap-3">
+      {data.rows.map((row) => (
+        <OrderCard key={row.hex} row={row} storeLabel={storeLabel(row.storeHex)} showTime />
+      ))}
+      {hasMore && (
+        <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="w-full py-2 text-xs">
+          Load more
+        </Button>
+      )}
+    </div>
+  );
+}
+
+async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Timestamp | null> | null): Promise<HistoryState> {
+  const pages = await Promise.all(stores.map(async (store) => ({ store, page: await getOrderHistoryForStore(store.hash, cursors?.[store.hex] ?? null) })));
+  return {
+    rows: mergeNewestFirst([], pages.flatMap(({ store, page }) => page.orders.map((entry) => toRow(entry, store.hex)))),
+    cursors: Object.fromEntries(pages.map(({ store, page }) => [store.hex, page.next_before])),
+  };
+}
+
+function mergeNewestFirst(existing: QueueRow[], incoming: QueueRow[]): QueueRow[] {
+  const seen = new Set(existing.map((row) => row.hex));
+  return [...existing, ...incoming.filter((row) => !seen.has(row.hex))].sort((a, b) => b.order.requested_at - a.order.requested_at);
+}
+
+function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {
+  const { order } = row;
+  const itemCount = order.item_refs.length;
+  return (
+    <Card className="p-4">
+      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
+        <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-relay-600" : "text-presence-600")}>
+          {row.kind === "Delivery" ? <Bike size={11} /> : <ShoppingBag size={11} />}
+          {row.kind === "Delivery" ? "Delivery" : "Pickup"}
+        </span>
+        {storeLabel && (
+          <span className="flex items-center gap-1 text-ink-400">
+            <Store size={11} /> {storeLabel}
+          </span>
+        )}
+        {showTime && <span className="ml-auto font-normal normal-case tracking-normal text-ink-300">{timeAgo(order.requested_at)}</span>}
+      </div>
+      <div className="flex items-center justify-between">
+        <StatNumber className="text-sm">{formatCents(order.order_total)}</StatNumber>
+        {row.kind === "Delivery" ? <StatusBadge status={row.order.status} /> : <PickupStatusBadge status={row.order.status} />}
+      </div>
+      <p className="mt-1 text-xs text-ink-400">
+        {itemCount} item{itemCount === 1 ? "" : "s"}
+      </p>
+      {order.special_instructions && <p className="mt-1 text-xs italic text-ink-500">"{order.special_instructions}"</p>}
+      {children}
+    </Card>
   );
 }

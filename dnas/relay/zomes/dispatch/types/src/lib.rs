@@ -52,6 +52,12 @@ pub enum RequiredAuthor {
 }
 
 impl DeliveryStatus {
+    /// Finished from the store's point of view -- it leaves the store's
+    /// active queue (see `dispatch_integrity::store_queue`).
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, DeliveryStatus::Delivered | DeliveryStatus::Cancelled)
+    }
+
     /// The order lifecycle's allowed forward transitions *and* who is
     /// allowed to author each one. `None` means the transition is illegal
     /// regardless of author. Encoded once here so a validation fix for one
@@ -244,6 +250,11 @@ pub enum PickupStatus {
 }
 
 impl PickupStatus {
+    /// See `DeliveryStatus::is_terminal`.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, PickupStatus::PickedUp | PickupStatus::Cancelled)
+    }
+
     /// `DeliveryStatus::transition_requirement`'s sibling, kept as its own
     /// function rather than squeezed into that one -- same "rides/delivery
     /// need separate state machines" reasoning `DeliveryOrder`'s doc comment

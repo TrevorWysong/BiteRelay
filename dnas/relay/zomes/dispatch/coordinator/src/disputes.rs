@@ -11,6 +11,7 @@
 //! that were speculatively designed in the original architecture pass and
 //! never wired up until now).
 
+use crate::store_queue::{self, QueuedOrder};
 use crate::orders::{record_reputation_event, settle_delivery_fee, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -202,6 +203,8 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     // exactly that -- `dispute::get_dispute` already resolved it to latest.
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
+    // Both outcomes (Delivered / Cancelled) are terminal.
+    store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {

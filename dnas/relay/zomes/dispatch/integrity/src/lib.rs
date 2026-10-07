@@ -9,6 +9,10 @@ use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 use relay_types::GeoPoint;
 
+mod store_queue;
+pub use store_queue::{history_day, store_history_day, store_history_root, HISTORY_BUCKET_MICROS};
+use store_queue::{validate_queue_link_create, validate_queue_link_delete, OpLinkFields};
+
 // DeliveryStatus/RequiredAuthor/BidStatus/DeliveryOrder/Bid now live in
 // dispatch_types so dispute_integrity can decode a DeliveryOrder too, for
 // its own dispute-eligibility validation -- see that crate's doc comment
@@ -86,12 +90,6 @@ pub enum EntryTypes {
 #[hdk_link_types]
 pub enum LinkTypes {
     RequesterToOrder,
-    /// From the order's store (its `catalog_ref`), not the merchant agent --
-    /// one owner can run several stores, and each store has its own order
-    /// queue, the way each DoorDash/Uber Eats location's tablet only shows
-    /// that location's orders. A multi-store owner's "all stores" view is
-    /// just the union of each store's own queue.
-    StoreToOrder,
     OpenOrderGeohashAnchor,
     OrderToBid,
     /// `PickupOrder`'s discovery links -- no geohash anchor and no signal
@@ -99,7 +97,16 @@ pub enum LinkTypes {
     /// driver to notify), just the same direct requester/merchant
     /// discoverability `DeliveryOrder` also has via its own two link types.
     RequesterToPickupOrder,
-    StoreToPickupOrder,
+    /// A store's order queues, keyed by the store (its `catalog_ref`), not
+    /// the merchant agent -- one owner can run several stores, and each
+    /// store has its own queue, the way each DoorDash/Uber Eats location's
+    /// tablet only shows that location's orders. Both order types share
+    /// them. See `store_queue` for the active/history split.
+    StoreToActiveOrder,
+    /// Day-bucket anchor path links under a store's history root.
+    StoreHistoryPath,
+    /// From a store's day bucket to each order placed that day.
+    StoreHistoryToOrder,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -138,6 +145,18 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             }
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_queue_link_create(OpLinkFields {
+            link_type: &link_type,
+            base: &action.base_address,
+            target: &action.target_address,
+            author: action.author(),
+        }),
+        FlatOp::Link(OpLink::DeleteLink { link_type, original_action, action }) => validate_queue_link_delete(OpLinkFields {
+            link_type: &link_type,
+            base: &original_action.base_address,
+            target: &original_action.target_address,
+            author: action.author(),
+        }),
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }
