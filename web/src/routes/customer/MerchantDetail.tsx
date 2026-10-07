@@ -140,6 +140,24 @@ export function MerchantDetail() {
     }
   }
 
+  // Scoped to this one restaurant's own menu, not a union across every
+  // nearby restaurant -- a per-merchant menu is naturally small and bounded,
+  // unlike the metro-area-wide tag set a Browse-screen version of this
+  // filter would have to show (see MerchantCatalog.dietary_tags' own doc
+  // comment: that field exists for a different purpose, denormalized
+  // discovery-level signal, not this screen's filter). Kept above the
+  // loading early-return below -- hooks after it would only run once
+  // `items` loads, changing the hook count between renders and crashing.
+  const dietaryTags = useMemo(() => {
+    const set = new Set<string>();
+    items?.forEach((row) => (row.item.dietary_tags ?? []).forEach((t) => set.add(t)));
+    return [...set].sort();
+  }, [items]);
+  const filteredItems = useMemo(() => {
+    if (dietaryFilter.length === 0) return items ?? [];
+    return (items ?? []).filter((row) => dietaryFilter.some((tag) => (row.item.dietary_tags ?? []).includes(tag)));
+  }, [items, dietaryFilter]);
+
   if (!catalog || !items || !catalogHash) {
     return (
       <div className="pb-24">
@@ -156,21 +174,6 @@ export function MerchantDetail() {
 
   const cartCount = cart.lines.reduce((n, l) => n + l.quantity, 0);
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
-  // Scoped to this one restaurant's own menu, not a union across every
-  // nearby restaurant -- a per-merchant menu is naturally small and bounded,
-  // unlike the metro-area-wide tag set a Browse-screen version of this
-  // filter would have to show (see MerchantCatalog.dietary_tags' own doc
-  // comment: that field exists for a different purpose, denormalized
-  // discovery-level signal, not this screen's filter).
-  const dietaryTags = useMemo(() => {
-    const set = new Set<string>();
-    items?.forEach((row) => (row.item.dietary_tags ?? []).forEach((t) => set.add(t)));
-    return [...set].sort();
-  }, [items]);
-  const filteredItems = useMemo(() => {
-    if (dietaryFilter.length === 0) return items ?? [];
-    return (items ?? []).filter((row) => dietaryFilter.some((tag) => (row.item.dietary_tags ?? []).includes(tag)));
-  }, [items, dietaryFilter]);
   const grouped = groupByCategory(filteredItems);
 
   return (
