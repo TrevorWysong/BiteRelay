@@ -16,7 +16,7 @@ test("a customer browses nearby stores, opens a menu, and sees their orders", as
   await expect(page.getByRole("heading", { name: "Your orders" })).toBeVisible();
   // Sam's seeded delivery is still waiting for a driver.
   await expect(page.getByText("No orders in progress")).toHaveCount(0);
-  await expect(page.locator('a[href^="/customer/orders/"]').first()).toBeVisible();
+  await expect(page.locator('a[href*="/customer/orders/"]').first()).toBeVisible();
 
   await page.getByRole("tab", { name: "Past" }).click();
   await expect(page.getByRole("tab", { name: "Past", selected: true })).toBeVisible();
