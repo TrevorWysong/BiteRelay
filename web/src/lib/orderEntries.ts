@@ -1,17 +1,18 @@
 // Decoded order-queue entries (see `dispatch_integrity::order_queues`),
 // shared by every screen that lists orders -- customer, merchant, driver.
-import { decodeEntry, bytesToHex } from "../holochain/decode";
+import { decodeEntry, bytesToHex, timestampOf } from "../holochain/decode";
 import type { OrderEntry } from "../holochain/zomes/dispatch";
 import type { DeliveryOrder, OrderLine, PickupOrder } from "../holochain/types";
 
 /// `ref` is the order's stable identity (its original action) -- what every
 /// order call and detail route takes; `hex` is the same, as a React key.
-export type OrderRow =
-  | { kind: "Delivery"; ref: Uint8Array; hex: string; order: DeliveryOrder }
-  | { kind: "Pickup"; ref: Uint8Array; hex: string; order: PickupOrder };
+/// `writtenAt` is when its current version was written (microseconds) --
+/// for an order waiting on its store, when it reached the store.
+type RowBase = { ref: Uint8Array; hex: string; writtenAt: number };
+export type OrderRow = (RowBase & { kind: "Delivery"; order: DeliveryOrder }) | (RowBase & { kind: "Pickup"; order: PickupOrder });
 
 export function toOrderRow(entry: OrderEntry): OrderRow {
-  const base = { ref: entry.original_action, hex: bytesToHex(entry.original_action) };
+  const base = { ref: entry.original_action, hex: bytesToHex(entry.original_action), writtenAt: timestampOf(entry.record) };
   return entry.kind === "Delivery"
     ? { ...base, kind: "Delivery", order: decodeEntry<DeliveryOrder>(entry.record) }
     : { ...base, kind: "Pickup", order: decodeEntry<PickupOrder>(entry.record) };

@@ -88,6 +88,12 @@ export async function getCatalog(catalogRef: ActionHash): Promise<HcRecord> {
   return callZome("catalog", "get_catalog", catalogRef);
 }
 
+/// Whether the store's conductor accepts new orders on its own -- see
+/// `MerchantCatalog.auto_accept_orders`.
+export async function setAutoAcceptOrders(originalAction: ActionHash, autoAcceptOrders: boolean): Promise<HcRecord> {
+  return callZome("catalog", "set_auto_accept_orders", { original_action: originalAction, auto_accept_orders: autoAcceptOrders });
+}
+
 export async function setDeliverySubsidyPercent(originalAction: ActionHash, deliverySubsidyPercent: number): Promise<HcRecord> {
   return callZome("catalog", "set_delivery_subsidy_percent", { original_action: originalAction, delivery_subsidy_percent: deliverySubsidyPercent });
 }

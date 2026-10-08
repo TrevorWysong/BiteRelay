@@ -89,6 +89,14 @@
   /* Skeleton loading placeholders -- a moving highlight band over a flat
      base, used by components/ui.tsx's `Skeleton` instead of every screen
      showing a bare centered spinner while its first real content loads. */
+  /* A store's window to accept an order, draining in real time -- see
+     components/ResponseCountdown.tsx. */
+  @keyframes drain {
+    to {
+      width: 0%;
+    }
+  }
+
   @keyframes shimmer {
     100% {
       transform: translateX(100%);

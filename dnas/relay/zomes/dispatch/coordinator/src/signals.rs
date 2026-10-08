@@ -3,6 +3,7 @@
 //! else in this crate sends `RemoteSignal`s; this module is just where the
 //! wire format and the receiving end live.
 
+use crate::upkeep;
 use hdk::prelude::*;
 use std::collections::HashSet;
 
@@ -21,6 +22,9 @@ pub fn init() -> ExternResult<InitCallbackResult> {
     // A store pays its delivery-fee shares from its conductor -- see
     // `settlement::settle_store_shares_periodically`.
     schedule("settle_store_shares_periodically")?;
+    // Tending a customer's waiting orders and answering a store's new ones
+    // -- see `upkeep`.
+    schedule("tend_orders_periodically")?;
     Ok(InitCallbackResult::Pass)
 }
 
@@ -74,7 +78,11 @@ pub enum RemoteSignal {
 #[hdk_extern]
 pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
     match payload {
-        RemoteSignal::OrderPlaced { order_hash } => emit_signal(LocalSignal::OrderPlaced(order_hash)),
+        // A store set to auto-accept answers it from its conductor.
+        RemoteSignal::OrderPlaced { order_hash } => {
+            upkeep::answer_new_orders_soon()?;
+            emit_signal(LocalSignal::OrderPlaced(order_hash))
+        }
         RemoteSignal::NewOrderPosted { order_hash } => emit_signal(LocalSignal::NewOrderNearby(order_hash)),
         RemoteSignal::BidPlaced { bid_hash, .. } => emit_signal(LocalSignal::BidPlaced(bid_hash)),
         RemoteSignal::BidAccepted { bid_hash } => emit_signal(LocalSignal::BidAccepted(bid_hash)),

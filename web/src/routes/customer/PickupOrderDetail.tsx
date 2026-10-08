@@ -3,14 +3,15 @@ import { useResource } from "../../lib/useResource";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
-import { getOrderPrivateDetails, getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
+import { cancelPickupOrder, getOrderPrivateDetails, getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
 import { fetchOrderItemNames } from "../../lib/menu";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
-import { decodeEntry, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
+import { decodeEntry, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
 import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRatingInput } from "../../components/StarRating";
+import { WaitingForStore } from "../../components/WaitingForStore";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
@@ -29,6 +30,7 @@ export function PickupOrderDetail() {
   const orderRef = hexToBytes(hash);
   const [disputing, setDisputing] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [merchantRating, setMerchantRating] = useState(0);
   const [merchantComment, setMerchantComment] = useState("");
@@ -36,10 +38,17 @@ export function PickupOrderDetail() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
 
-  const { data: order, reload: reloadOrder } = useResource(`pickup-order:${hash}`, async () => decodeEntry<PickupOrder>(await getPickupOrder(orderRef)), {
-    pollMs: POLL_MS,
-    refreshOn: (signal) => "PickupReady" in signal,
-  });
+  // `writtenAt` (when its current version was written) and `now` (when it
+  // was read) time the store's window to accept it.
+  const { data: snapshot, reload: reloadOrder } = useResource(
+    `pickup-order:${hash}`,
+    async () => {
+      const record = await getPickupOrder(orderRef);
+      return { order: decodeEntry<PickupOrder>(record), writtenAt: timestampOf(record), now: Date.now() };
+    },
+    { pollMs: POLL_MS, refreshOn: (signal) => "PickupReady" in signal },
+  );
+  const order = snapshot?.order;
   // The kitchen note is sealed to the store; the zome opens it for us.
   const { data: details } = useResource(`pickup-order-details:${hash}`, () => getOrderPrivateDetails(orderRef));
   const { data: itemNames = {} } = useResource(order ? `pickup-order-items:${hash}` : null, () => fetchOrderItemNames(order!));
@@ -112,7 +121,22 @@ export function PickupOrderDetail() {
     }
   }
 
-  const canDispute = order.status === "PickedUp" || order.status === "Cancelled";
+  // Validation only takes a pickup dispute once the order is ready or
+  // collected.
+  const canDispute = order.status === "PickedUp";
+
+  async function cancel() {
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelPickupOrder(orderRef);
+      await reloadOrder();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setCancelling(false);
+    }
+  }
   // A merchant collecting from their own store has nothing to rate --
   // validate_review/validate_item_review reject self-ratings anyway.
   const selfOrder = bytesEqual(order.merchant, myAgentPubKey());
@@ -130,7 +154,7 @@ export function PickupOrderDetail() {
 
       <motion.div variants={fadeSlideUp}>
         <Card className="p-4">
-          <PickupStatusTimeline status={order.status} />
+          <PickupStatusTimeline status={order.status} cancellation={order.cancellation} />
         </Card>
       </motion.div>
 
@@ -145,12 +169,16 @@ export function PickupOrderDetail() {
         </motion.div>
       )}
 
-      {(order.status === "Placed" || order.status === "MerchantConfirmed") && (
+      {order.status === "Placed" && snapshot && (
+        <motion.div variants={fadeSlideUp}>
+          <WaitingForStore writtenAt={snapshot.writtenAt} now={snapshot.now} cancelling={cancelling} onCancel={cancel} />
+        </motion.div>
+      )}
+
+      {order.status === "MerchantConfirmed" && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <ChefHat size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">
-            {order.status === "Placed" ? "Waiting for the store to accept your order." : "The store is preparing your order."} This screen updates automatically.
-          </p>
+          <p className="text-sm text-relay-700 dark:text-relay-300">The store is preparing your order. This screen updates automatically.</p>
         </motion.div>
       )}
 

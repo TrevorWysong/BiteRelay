@@ -213,6 +213,23 @@ export function Checkbox({ className, ...rest }: InputHTMLAttributes<HTMLInputEl
 /// details, goodie-bag creation, ...) specifically so every field looks
 /// and behaves the same way regardless of which screen it's on, rather
 /// than each screen inventing its own near-identical label markup.
+/// An on/off setting -- a labelled switch, announced as one.
+export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (checked: boolean) => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={clsx("relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-40", checked ? "bg-relay-500" : "bg-ink-200 dark:bg-ink-700")}
+    >
+      <span className={clsx("inline-block h-5 w-5 rounded-full bg-white shadow transition-transform", checked ? "translate-x-5" : "translate-x-0.5")} />
+    </button>
+  );
+}
+
 export function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
     <div className={className}>

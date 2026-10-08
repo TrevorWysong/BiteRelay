@@ -1,13 +1,15 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Home, ClipboardList, ShoppingCart, User, Car, Store, DollarSign, Gavel } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Gavel } from "lucide-react";
 import { useSession } from "../store/session";
 import { useCart } from "../store/cart";
 import { useRecurringOrderFiring } from "../hooks/useRecurringOrderFiring";
 import { useClaimFinalization } from "../hooks/useClaimFinalization";
 import { pageVariants } from "../lib/motion";
 import { PresenceDot } from "./ui";
+import { BottomNavLink } from "./BottomNavLink";
+import { MerchantNav } from "./MerchantNav";
 
 /// Wraps whichever route is active in a short fade+rise so navigating
 /// between screens (Browse -> cart, an order's detail page, switching
@@ -23,31 +25,6 @@ function AnimatedOutlet() {
         <Outlet />
       </motion.div>
     </AnimatePresence>
-  );
-}
-
-function BottomNavLink({ to, icon: Icon, label, badge }: { to: string; icon: typeof Home; label: string; badge?: number }) {
-  return (
-    <NavLink
-      to={to}
-      end
-      className={({ isActive }) =>
-        clsx(
-          "relative flex flex-1 flex-col items-center justify-center gap-1 py-2 text-xs font-medium transition",
-          isActive ? "text-relay-600 dark:text-relay-400" : "text-ink-400 dark:text-ink-500"
-        )
-      }
-    >
-      <div className="relative">
-        <Icon size={22} strokeWidth={2.25} />
-        {!!badge && (
-          <span className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-relay-500 px-1 text-[10px] font-bold text-white">
-            {badge}
-          </span>
-        )}
-      </div>
-      {label}
-    </NavLink>
   );
 }
 
@@ -119,12 +96,7 @@ export function AppShell() {
             <BottomNavLink to="/driver/earnings" icon={DollarSign} label="Earnings" />
           </>
         )}
-        {mode === "merchant" && (
-          <>
-            <BottomNavLink to="/merchant" icon={ClipboardList} label="Orders" />
-            <BottomNavLink to="/merchant/catalog" icon={Store} label="Menu" />
-          </>
-        )}
+        {mode === "merchant" && <MerchantNav />}
         {mode === "arbitrator" && <BottomNavLink to="/arbitrator" icon={Gavel} label="Cases" />}
       </nav>
 

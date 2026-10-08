@@ -62,7 +62,7 @@ await runScenario(async (scenario) => {
   // (driver) was allowed to author *any* legal transition on this order --
   // including cancelling it, which should never have been theirs to do.
   await assert.rejects(
-    dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "Cancelled" }),
+    dispatchOf(driver)("cancel_order", orderRef),
     "the accepted provider must not be able to cancel the order",
   );
   console.log("[PASS] Accepted provider cannot cancel the order");

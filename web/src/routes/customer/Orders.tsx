@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bike, ClipboardList, PackageOpen, Pause, Play, PlayCircle, Repeat, RotateCcw, ShoppingBag } from "lucide-react";
+import { Bike, ClipboardList, PackageOpen, Pause, Play, Repeat, RotateCcw, ShoppingBag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { getMyActiveOrders, getMyOrderHistory, openScheduledOrder, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
+import { getMyActiveOrders, getMyOrderHistory, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, getMyBagClaims, getGoodieBag } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
 import { useCart } from "../../store/cart";
@@ -45,29 +45,9 @@ export function Orders() {
 }
 
 function ActiveOrders() {
-  const [opening, setOpening] = useState<string | null>(null);
-  // `checkedAt` is when this snapshot was read -- what "is a scheduled
-  // order due yet" is judged against, refreshed with every poll.
-  const { data, reload } = useResource(
-    "customer-active-orders",
-    async () => ({ rows: (await getMyActiveOrders()).map(toOrderRow), checkedAt: Date.now() * 1000 }),
-    { pollMs: POLL_MS, refreshOn: () => true },
-  );
-  const rows = data?.rows;
-
-  async function openNow(row: OrderRow) {
-    setOpening(row.hex);
-    try {
-      await openScheduledOrder(row.ref);
-      await reload();
-    } catch {
-      // Most likely "too early" -- validation is the real enforcement; this
-      // button only appears once the time has passed, so a failure here is
-      // a clock-skew edge, not worth an error banner.
-    } finally {
-      setOpening(null);
-    }
-  }
+  // Scheduled orders are sent to their stores by the customer's conductor
+  // when due (`dispatch::upkeep`) -- nothing to do here but show them.
+  const { data: rows } = useResource("customer-active-orders", async () => (await getMyActiveOrders()).map(toOrderRow), { pollMs: POLL_MS, refreshOn: () => true });
 
   if (rows === undefined) return <ListSkeleton />;
   return (
@@ -78,20 +58,11 @@ function ActiveOrders() {
       ) : (
         <div className="flex flex-col gap-3">
           <AnimatePresence initial={false}>
-            {rows.map((row) => {
-              const scheduledDue = row.kind === "Delivery" && row.order.status === "Scheduled" && row.order.requested_delivery_time !== null && row.order.requested_delivery_time <= data!.checkedAt;
-              return (
-                <motion.div key={row.hex} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                  <OrderCard row={row}>
-                    {scheduledDue && (
-                      <Button variant="primary" className="px-2.5 py-1.5 text-xs" loading={opening === row.hex} onClick={() => openNow(row)}>
-                        <PlayCircle size={13} /> Send now
-                      </Button>
-                    )}
-                  </OrderCard>
-                </motion.div>
-              );
-            })}
+            {rows.map((row) => (
+              <motion.div key={row.hex} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <OrderCard row={row} />
+              </motion.div>
+            ))}
           </AnimatePresence>
         </div>
       )}

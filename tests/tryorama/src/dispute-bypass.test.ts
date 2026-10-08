@@ -116,6 +116,7 @@ await runScenario(async (scenario) => {
       next_status: "Cancelled",
       delivery_receipts: [],
       dispute_ref: resolvedDisputeRef,
+      cancellation: "ByArbitrator",
     }),
     /outcome/,
     "a FavorProvider ruling must not be applicable to a Cancelled target",

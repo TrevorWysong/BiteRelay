@@ -80,7 +80,12 @@ await runScenario(async (scenario) => {
     await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: burgerV1, quantity: 1 }], order_total: 1200 }),
   );
   await sync();
-  await assert.rejects(call(customer, "dispatch")("confirm_pickup_prep", pickup), /requires author role Merchant/, "a customer can't accept their own pickup");
+  await assert.rejects(call(customer, "dispatch")("confirm_pickup_prep", pickup), /only the order's store can accept it/, "a customer can't accept their own pickup");
+  await assert.rejects(
+    call(customer, "dispatch")("force_pickup_update_for_testing", { order_original_action: pickup, next_status: "MerchantConfirmed", cancellation: null }),
+    /Placed -> MerchantConfirmed requires author role Merchant/,
+    "even by writing the update directly",
+  );
   await call(merchant, "dispatch")("confirm_pickup_prep", pickup);
   await sync();
   await assert.rejects(call(customer, "dispatch")("mark_ready_for_pickup", pickup), /requires author role Merchant/, "or say it's ready");
@@ -109,7 +114,7 @@ await runScenario(async (scenario) => {
   );
   await sync();
   await assert.rejects(call(merchant, "dispatch")("confirm_pickup_prep", pinned), /Burger was priced from an outdated menu/, "the store refuses it");
-  await call(merchant, "dispatch")("cancel_pickup_order", pinned);
+  await call(merchant, "dispatch")("decline_pickup_order", { order_original_action: pinned, reason: "OutdatedPrices" });
   assert.equal(await status(merchant, "get_pickup_order", pinned), "Cancelled");
   console.log("[PASS] the store refuses an order priced from an outdated menu, and declines it");
 });

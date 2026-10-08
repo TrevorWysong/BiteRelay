@@ -36,15 +36,24 @@ test("a merchant sees their order queue and manages their menu and promos", asyn
   await expect(page.getByText(cafe.promos![0].code)).toBeVisible();
 });
 
-test("a store sees new orders waiting for it to accept or decline", async ({ page }) => {
-  // Mo's stores each have a seeded order waiting on them. Read-only, so
-  // the seeded world stays as it is for the next run.
+test("a customer's order waits on the store, which can accept or decline it", async ({ page }) => {
+  const tacos = store("tacos");
+  await signInAs(page, "lee");
+  await page.getByText(tacos.name, { exact: true }).first().click();
+  await page.getByRole("button", { name: `Add ${tacos.menu[0].name}` }).click();
+  await page.getByRole("link", { name: "Cart" }).click();
+  await page.getByText("Pickup", { exact: true }).click();
+  await page.getByRole("button", { name: /Place pickup order/ }).click();
+  await expect(page.getByText(/Waiting for the store to accept your order/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel order" })).toBeVisible();
+
+  // Mo runs Mo's Tacos; he also orders and drives, so switch to the store side.
   await signInAs(page, "mo");
-  // Mo also orders and drives, so switch to the store side.
   await page.getByRole("button", { name: "Sell" }).click();
   await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Accept order" }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Decline" }).first()).toBeVisible();
+  await expect(page.getByText(/Accept by/).first()).toBeVisible();
 });
 
 test("a driver goes online and sees the nearby order feed", async ({ page }) => {

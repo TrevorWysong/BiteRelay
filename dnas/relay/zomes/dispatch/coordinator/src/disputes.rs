@@ -193,6 +193,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     };
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let mut updated_order = order;
+    updated_order.cancellation = (target_status == DeliveryStatus::Cancelled).then_some(Cancellation::ByArbitrator);
     updated_order.status = target_status;
     // Advance dispute_ref to the dispute's resolved version: validation reads
     // it literally (`must_get_valid_record`), so it must point straight at

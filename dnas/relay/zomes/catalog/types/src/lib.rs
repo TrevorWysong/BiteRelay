@@ -54,6 +54,11 @@ pub struct MerchantCatalog {
     /// this defaults to 50, not 0.
     #[serde(default = "default_delivery_subsidy_percent")]
     pub delivery_subsidy_percent: u8,
+    /// Whether the store's conductor accepts new orders as they arrive
+    /// (still declining any priced from an outdated menu), rather than
+    /// waiting for someone to tap Accept.
+    #[serde(default)]
+    pub auto_accept_orders: bool,
     /// How far from `location` this merchant is willing to deliver, in
     /// kilometers -- a per-merchant business rule, not a single app-wide
     /// constant: a dense-downtown restaurant and a rural one have

@@ -2,6 +2,7 @@
 //! machine, and pickup disputes.
 
 use super::*;
+use crate::cancellation::{check_cancellation, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
 
@@ -20,6 +21,9 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
     }
     if order.dispute_ref.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new pickup order cannot already have a dispute_ref".into()));
+    }
+    if order.cancellation.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new pickup order can't already be cancelled".into()));
     }
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
@@ -103,6 +107,7 @@ pub(crate) fn validate_pickup_order_transition(
     order: &PickupOrder,
     author: &AgentPubKey,
     original_action_hash: &ActionHash,
+    action_timestamp: Timestamp,
 ) -> ExternResult<ValidateCallbackResult> {
     let prior_record = must_get_valid_record(original_action_hash.clone())?;
     let prior: PickupOrder = prior_record
@@ -136,6 +141,25 @@ pub(crate) fn validate_pickup_order_transition(
             "transition {:?} -> {:?} requires author role {:?}, but the author holds none of the roles it permits",
             prior.status, order.status, required_author
         )));
+    }
+
+    let update = OrderUpdate {
+        requester: &prior.requester,
+        merchant: &prior.merchant,
+        author,
+        prior_written_at: prior_record.action().timestamp(),
+        written_at: action_timestamp,
+    };
+    if prior.status == PickupStatus::Placed && order.status == PickupStatus::MerchantConfirmed && !update.within_response_window() {
+        return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
+    }
+    let cancelled_from = (prior.status != PickupStatus::Cancelled && order.status == PickupStatus::Cancelled).then(|| match prior.status {
+        PickupStatus::Placed => CancelledFrom::Placed,
+        PickupStatus::Disputed => CancelledFrom::Disputed,
+        _ => CancelledFrom::Elsewhere,
+    });
+    if let Some(reason) = check_cancellation(&update, cancelled_from, &prior.cancellation, &order.cancellation) {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
 
     let raising_dispute = matches!(prior.status, PickupStatus::ReadyForPickup | PickupStatus::PickedUp) && order.status == PickupStatus::Disputed;

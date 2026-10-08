@@ -10,6 +10,7 @@ use hdi::prelude::*;
 use relay_types::GeoPoint;
 
 mod bids;
+mod cancellation;
 mod checks;
 mod delivery;
 mod disputes;
@@ -32,7 +33,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
+pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -99,7 +100,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::RecurringOrderTemplate(template) => {
                 validate_recurring_template_update(&template, action.author(), &action.original_action_address)
             }
-            EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address),
+            EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
         },
         FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(OpLinkFields {
             link_type: &link_type,

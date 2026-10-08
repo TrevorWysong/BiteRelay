@@ -2,6 +2,7 @@
 //! leg-attestation completion gate, and delivery disputes.
 
 use super::*;
+use crate::cancellation::{check_cancellation, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
 
@@ -10,6 +11,9 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
         return Ok(ValidateCallbackResult::Invalid(
             "a delivery order can only be authored by its own requester".into(),
         ));
+    }
+    if order.cancellation.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new order can't already be cancelled".into()));
     }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
@@ -207,6 +211,25 @@ pub(crate) fn validate_order_transition(
             prior.status, order.status
         )));
     };
+
+    let update = OrderUpdate {
+        requester: &prior.requester,
+        merchant: &prior.merchant,
+        author,
+        prior_written_at: prior_record.action().timestamp(),
+        written_at: action_timestamp,
+    };
+    if prior.status == DeliveryStatus::Placed && order.status == DeliveryStatus::Open && !update.within_response_window() {
+        return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
+    }
+    let cancelled_from = (prior.status != DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled).then(|| match prior.status {
+        DeliveryStatus::Placed => CancelledFrom::Placed,
+        DeliveryStatus::Disputed => CancelledFrom::Disputed,
+        _ => CancelledFrom::Elsewhere,
+    });
+    if let Some(reason) = check_cancellation(&update, cancelled_from, &prior.cancellation, &order.cancellation) {
+        return Ok(ValidateCallbackResult::Invalid(reason));
+    }
 
     let is_requester_or_merchant = &prior.requester == author || &prior.merchant == author;
     let accepted_bidder: Option<AgentPubKey> = match &prior.accepted_bid {
