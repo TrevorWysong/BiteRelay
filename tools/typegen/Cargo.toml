@@ -1,0 +1,12 @@
+[package]
+name = "typegen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Generates web/src/holochain/generated.ts from the Rust wire types"
+
+# Standalone: a host tool, never part of the wasm zome workspace.
+[workspace]
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
