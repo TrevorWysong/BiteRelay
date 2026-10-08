@@ -64,9 +64,12 @@ await runScenario(async (scenario) => {
   assert.equal(customerBalance, -600, "customer should be debited exactly order_total, nothing else");
   console.log("[PASS] complete_pickup settles order_total with no delivery-fee concept at all");
 
-  const customerOrders = await dispatchOf(customer)<HcRecord[]>("get_my_pickup_orders", customer.agentPubKey);
-  assert.equal(customerOrders.length, 1);
-  console.log("[PASS] get_my_pickup_orders discovers the requester's own order");
+  // Finished, so it's left the customer's active queue but stays in history.
+  const active = await dispatchOf(customer)<unknown[]>("get_my_active_orders", null);
+  assert.equal(active.length, 0, "a picked-up order is no longer in progress");
+  const history = await dispatchOf(customer)<{ orders: { kind: string }[] }>("get_my_order_history", { before: null, limit: null });
+  assert.deepEqual(history.orders.map((o) => o.kind), ["Pickup"], "the customer's history should hold the one pickup order");
+  console.log("[PASS] the customer's queues move a finished pickup order from active to history");
 
   // Reviews/item-reviews must work against a PickedUp PickupOrder, not just
   // a Delivered DeliveryOrder -- reputation_integrity's validate_review/

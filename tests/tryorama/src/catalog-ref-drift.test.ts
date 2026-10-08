@@ -58,9 +58,9 @@ await runScenario(async (scenario) => {
   assert.ok(bytesEqual(refBeforeEdits, originalCatalogRef), "get_nearby_merchants' original_action should match the catalog's real creation hash");
   console.log("[PASS] get_nearby_merchants exposes the catalog's stable original_action");
 
-  let items = await catalogOf(customer)<{ items: HcRecord[] }>("list_menu_items", { catalog_ref: refBeforeEdits, after: null });
+  let items = await catalogOf(customer)<{ items: { original_action: Uint8Array; record: HcRecord }[] }>("list_menu_items", { catalog_ref: refBeforeEdits, after: null });
   assert.equal(items.items.length, 1);
-  let bags = await catalogOf(customer)<HcRecord[]>("get_nearby_goodie_bags", { geohash, after: null });
+  let bags = await catalogOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("get_nearby_goodie_bags", { geohash, after: null });
   assert.equal(bags.length, 1);
   console.log("[PASS] menu items and goodie bags are discoverable via get_nearby_merchants' original_action before any catalog edit");
 
@@ -90,9 +90,9 @@ await runScenario(async (scenario) => {
   assert.ok(bytesEqual(refAfterEdits, originalCatalogRef), "original_action must stay the same even after the catalog's latest state has changed twice");
   console.log("[PASS] get_nearby_merchants' original_action is stable across catalog edits");
 
-  items = await catalogOf(customer)<{ items: HcRecord[] }>("list_menu_items", { catalog_ref: refAfterEdits, after: null });
+  items = await catalogOf(customer)<{ items: { original_action: Uint8Array; record: HcRecord }[] }>("list_menu_items", { catalog_ref: refAfterEdits, after: null });
   assert.equal(items.items.length, 1, "the menu item added before any edit must still be discoverable after the catalog has been edited");
-  bags = await catalogOf(customer)<HcRecord[]>("get_nearby_goodie_bags", { geohash, after: null });
+  bags = await catalogOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("get_nearby_goodie_bags", { geohash, after: null });
   assert.equal(bags.length, 1, "the goodie bag created before any edit must still be discoverable after the catalog has been edited");
   console.log("[PASS] menu items and goodie bags remain discoverable via get_nearby_merchants after the catalog has been edited -- the real bug this test guards against");
 });

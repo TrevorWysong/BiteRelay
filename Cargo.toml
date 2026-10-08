@@ -4,6 +4,7 @@ members = [
     "dnas/relay/types",
     "dnas/relay/coordinator_support",
     "dnas/relay/governance",
+    "dnas/relay/integrity_support",
     "dnas/relay/zomes/profiles/integrity",
     "dnas/relay/zomes/profiles/coordinator",
     "dnas/relay/zomes/catalog/types",
@@ -44,6 +45,7 @@ relay_types = { path = "dnas/relay/types" }
 relay_coordinator_support = { path = "dnas/relay/coordinator_support" }
 attestation_types = { path = "dnas/relay/zomes/attestation/types" }
 relay_governance = { path = "dnas/relay/governance" }
+relay_integrity_support = { path = "dnas/relay/integrity_support" }
 dispatch_types = { path = "dnas/relay/zomes/dispatch/types" }
 dispute_types = { path = "dnas/relay/zomes/dispute/types" }
 catalog_types = { path = "dnas/relay/zomes/catalog/types" }

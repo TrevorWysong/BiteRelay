@@ -189,3 +189,10 @@ pub fn list_my_addresses(_: ()) -> ExternResult<Vec<SavedAddressView>> {
         .map(|(original_action, record)| SavedAddressView { original_action, record })
         .collect())
 }
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use profiles_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(AgentToProfile, ProfileToProviderCredential, AgentToFavorite, OwnerToSavedAddress);
+}

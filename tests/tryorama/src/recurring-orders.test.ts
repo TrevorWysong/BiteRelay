@@ -57,23 +57,23 @@ await runScenario(async (scenario) => {
   assert.deepEqual(decodeEntry<{ recurrence: unknown }>(templateRecord).recurrence, { Weekly: { weekday: 1, hour: 9, minute: 0 } });
   console.log("[PASS] a valid Weekly recurring template is created and round-trips");
 
-  let templates = await dispatchOf(customer)<HcRecord[]>("list_my_recurring_templates", null);
+  let templates = await dispatchOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_recurring_templates", null);
   assert.equal(templates.length, 1, "exactly one template should be listed after one creation");
   console.log("[PASS] list_my_recurring_templates returns the newly created template");
 
   // Toggle active off, then on -- list must still show exactly one Record,
   // not one per update action.
   await dispatchOf(customer)("set_recurring_template_active", { original_action: templateRef, active: false });
-  templates = await dispatchOf(customer)<HcRecord[]>("list_my_recurring_templates", null);
+  templates = await dispatchOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_recurring_templates", null);
   assert.equal(templates.length, 1, "toggling active must not duplicate the template in the list");
-  assert.equal(decodeEntry<{ active: boolean }>(templates[0]).active, false, "the toggled template should reflect active: false");
+  assert.equal(decodeEntry<{ active: boolean }>(templates[0].record).active, false, "the toggled template should reflect active: false");
   console.log("[PASS] set_recurring_template_active updates in place, no duplicate Record");
 
   const nextRun = now + 14 * 24 * 60 * 60 * 1_000_000;
   await dispatchOf(customer)("advance_recurring_template", { original_action: templateRef, next_run_at: nextRun });
-  templates = await dispatchOf(customer)<HcRecord[]>("list_my_recurring_templates", null);
+  templates = await dispatchOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_recurring_templates", null);
   assert.equal(templates.length, 1, "advancing next_run_at must still not duplicate the template");
-  assert.equal(decodeEntry<{ next_run_at: number }>(templates[0]).next_run_at, nextRun, "next_run_at should reflect the advanced value");
+  assert.equal(decodeEntry<{ next_run_at: number }>(templates[0].record).next_run_at, nextRun, "next_run_at should reflect the advanced value");
   console.log("[PASS] advance_recurring_template advances in place, no duplicate Record");
 
   // A non-owner can't tamper with someone else's template. Needs a real

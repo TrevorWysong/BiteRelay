@@ -15,6 +15,8 @@
 use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus, PickupOrder, PickupStatus};
 use hdi::prelude::*;
 
+mod links;
+
 /// Who a `ReputationEvent` (and its checkpoint) is about.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ReputationTarget {
@@ -180,8 +182,7 @@ pub enum EntryTypes {
 /// One link type per (target kind, purpose) rather than one shared type
 /// per purpose: a `Driver` and a `Customer` target share the same base (the
 /// agent's pubkey), so a single `AgentToEvent` link type would mix the two
-/// roles back together on every read -- exactly the bug this design exists
-/// to fix. A store's links hang off its catalog's original action instead.
+/// roles on every read. A store's links hang off its catalog's original action instead.
 #[hdk_link_types]
 pub enum LinkTypes {
     StoreToEvent,
@@ -215,6 +216,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::ItemRatingCheckpoint(checkpoint) => validate_item_rating_checkpoint(&checkpoint, action.author()),
             EntryTypes::RatingCheckpoint(checkpoint) => validate_rating_checkpoint(&checkpoint, action.author()),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { .. }) => links::validate_delete_link(),
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }

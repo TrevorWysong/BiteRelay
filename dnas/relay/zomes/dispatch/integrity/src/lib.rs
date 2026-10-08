@@ -10,18 +10,21 @@ use hdi::prelude::*;
 use relay_types::GeoPoint;
 
 mod bids;
+mod checks;
 mod delivery;
 mod disputes;
+mod links;
 mod pickup;
 mod recurring;
-mod store_queue;
-pub use store_queue::{history_day, store_history_day, store_history_root, HISTORY_BUCKET_MICROS};
+mod order_queues;
+pub use order_queues::{history_day, QueueOwner, HISTORY_BUCKET_MICROS};
 pub use recurring::{RecurrenceRule, RecurringOrderTemplate};
 use bids::{validate_bid_update, validate_new_bid};
 use delivery::{validate_new_order, validate_order_transition};
 use pickup::{validate_new_pickup_order, validate_pickup_order_transition};
 use recurring::{validate_new_recurring_template, validate_recurring_template_update};
-use store_queue::{validate_queue_link_create, validate_queue_link_delete, OpLinkFields};
+pub use links::{open_order_anchor, OPEN_ORDER_BUCKET_MILLIS};
+use links::{validate_create_link, validate_delete_link, OpLinkFields};
 
 // DeliveryStatus/RequiredAuthor/BidStatus/DeliveryOrder/Bid now live in
 // dispatch_types so dispute_integrity can decode a DeliveryOrder too, for
@@ -42,24 +45,24 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
-    RequesterToOrder,
     OpenOrderGeohashAnchor,
     OrderToBid,
     /// `PickupOrder`'s discovery links -- no geohash anchor and no signal
     /// fan-out needed (see `PickupOrder`'s own doc comment: there's no
     /// driver to notify), just the same direct requester/merchant
     /// discoverability `DeliveryOrder` also has via its own two link types.
-    RequesterToPickupOrder,
-    /// A store's order queues, keyed by the store (its `catalog_ref`), not
-    /// the merchant agent -- one owner can run several stores, and each
-    /// store has its own queue, the way each DoorDash/Uber Eats location's
-    /// tablet only shows that location's orders. Both order types share
-    /// them. See `store_queue` for the active/history split.
+    /// Order queues -- see `order_queues` for the model. A store's are
+    /// keyed by the store (its `catalog_ref`), not the merchant agent: one
+    /// owner can run several stores, each with its own queue. Both order
+    /// types share every queue.
     StoreToActiveOrder,
-    /// Day-bucket anchor path links under a store's history root.
     StoreHistoryPath,
-    /// From a store's day bucket to each order placed that day.
     StoreHistoryToOrder,
+    CustomerToActiveOrder,
+    CustomerHistoryPath,
+    CustomerHistoryToOrder,
+    /// A driver's in-progress deliveries; the tag is the accepted bid.
+    DriverToActiveDelivery,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -83,10 +86,10 @@ pub(crate) fn check_merchant_owns_catalog(merchant: &AgentPubKey, catalog_ref: &
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match op.flattened::<EntryTypes, LinkTypes>()? {
         FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
-            EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp()),
+            EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author()),
             EntryTypes::RecurringOrderTemplate(template) => validate_new_recurring_template(&template, action.author()),
-            EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author()),
+            EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author(), action.timestamp(), action.prev_action()),
         },
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::DeliveryOrder(order) => {
@@ -98,17 +101,21 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             }
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_queue_link_create(OpLinkFields {
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(OpLinkFields {
             link_type: &link_type,
             base: &action.base_address,
             target: &action.target_address,
+            tag: &action.tag,
             author: action.author(),
+            timestamp: action.timestamp(),
         }),
-        FlatOp::Link(OpLink::DeleteLink { link_type, original_action, action }) => validate_queue_link_delete(OpLinkFields {
+        FlatOp::Link(OpLink::DeleteLink { link_type, original_action, action }) => validate_delete_link(OpLinkFields {
             link_type: &link_type,
             base: &original_action.base_address,
             target: &original_action.target_address,
+            tag: &original_action.tag,
             author: action.author(),
+            timestamp: action.timestamp(),
         }),
         _ => Ok(ValidateCallbackResult::Valid),
     }

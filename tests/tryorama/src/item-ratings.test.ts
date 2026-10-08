@@ -152,7 +152,7 @@ await runScenario(async (scenario) => {
   assert.equal(summary.rating_sum, 8, "the sum should be 5 + 3");
   console.log("[PASS] get_item_rating_summary correctly folds multiple reviews (avg = 8/2 = 4.0)");
 
-  const reviews = await reputationOf(customer)<HcRecord[]>("get_item_reviews", burgerRef);
+  const { reviews } = await reputationOf(customer)<{ reviews: HcRecord[] }>("get_item_reviews", { item_ref: burgerRef, before: null });
   assert.equal(reviews.length, 2, "get_item_reviews should return both individual reviews");
   console.log("[PASS] get_item_reviews returns the individual reviews, not just the summary");
 });

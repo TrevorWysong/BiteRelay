@@ -31,21 +31,38 @@ mod bids;
 mod chat;
 mod disputes;
 mod matching;
+mod order_queues;
 mod orders;
 mod parties;
 mod pickup;
 mod recurring;
 mod signals;
-mod store_queue;
 mod tracking;
 
 pub use bids::*;
 pub use chat::*;
 pub use disputes::*;
 pub use matching::get_open_orders_near;
+pub use order_queues::*;
 pub use orders::*;
 pub use pickup::*;
 pub use recurring::*;
 pub use signals::*;
-pub use store_queue::*;
 pub use tracking::*;
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use dispatch_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(
+        OpenOrderGeohashAnchor,
+        OrderToBid,
+        StoreToActiveOrder,
+        StoreHistoryPath,
+        StoreHistoryToOrder,
+        CustomerToActiveOrder,
+        CustomerHistoryPath,
+        CustomerHistoryToOrder,
+        DriverToActiveDelivery
+    );
+}

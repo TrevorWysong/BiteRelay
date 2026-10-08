@@ -8,22 +8,8 @@ use hdi::hash_path::path::Path;
 use hdk::prelude::*;
 use relay_types::{DeliveryCapability, GeoPoint};
 
-/// How long a beacon is valid for after being published. Refresh cadence on
-/// the client should be well inside this window (45-60s), deliberately not
-/// faster -- see PRESENCE_GEOHASH_PRECISION doc comment in the integrity crate.
-pub const BEACON_TTL_MILLIS: i64 = 90_000;
-
-/// Time bucket folded into the anchor path (architecture plan §9.2) so each
-/// bucket is a distinct base hash with a naturally bounded link set -- a
-/// single active provider refreshing every 45-60s all day would otherwise
-/// accumulate one never-superseded, never-deleted link per refresh, forever,
-/// on one shared per-cell anchor. 2 minutes: comfortably above both the
-/// refresh cadence and Kitsune2's own ~1-minute gossip floor, so bucketing
-/// any finer than this buys nothing.
-pub const BEACON_BUCKET_MILLIS: i64 = 120_000;
-
 fn geohash_anchor_path(geohash: &str, bucket: i64) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("presence_geohash.{}.{}", geohash, bucket)).typed(LinkTypes::GeohashToBeacon)
+    Path::from(presence_anchor(geohash, bucket)).typed(LinkTypes::GeohashToBeacon)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -44,10 +30,12 @@ pub fn announce_online(input: AnnounceOnlineInput) -> ExternResult<Record> {
         expires_at: (now + std::time::Duration::from_millis(BEACON_TTL_MILLIS as u64))
             .map_err(|e| wasm_error!(WasmErrorInner::Guest(e.to_string())))?,
     };
+    // The same function validation uses to check the anchor, so the two
+    // can't disagree about which bucket this beacon belongs in.
+    let bucket = beacon_bucket(&beacon);
     let action_hash = create_entry(&EntryTypes::PresenceBeacon(beacon))?;
     create_link(provider, action_hash.clone(), LinkTypes::AgentToBeacon, ())?;
 
-    let bucket = relay_types::time_bucket(now.as_millis(), BEACON_BUCKET_MILLIS);
     let path = geohash_anchor_path(&geohash, bucket)?;
     path.ensure()?;
     create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::GeohashToBeacon, ())?;
@@ -125,4 +113,11 @@ pub fn get_nearby_providers(geohash: String) -> ExternResult<Vec<NearbyProvider>
         }
     }
     Ok(out)
+}
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use geo_presence_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(AgentToBeacon, GeohashToBeacon);
 }

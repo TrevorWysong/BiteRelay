@@ -11,7 +11,7 @@ use hdk::prelude::*;
 use relay_coordinator_support::{decode_or, next_page_cursor, resolve_latest, resolve_latest_decoded};
 
 fn open_dispute_anchor_path() -> ExternResult<TypedPath> {
-    Path::from("open_disputes").typed(LinkTypes::OpenDisputeAnchor)
+    Path::from(OPEN_DISPUTES_ANCHOR).typed(LinkTypes::OpenDisputeAnchor)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -69,7 +69,7 @@ pub struct SubmitResolutionInput {
 /// forfeiture, reputation) and flips the order's own status.
 #[hdk_extern]
 pub fn submit_resolution(input: SubmitResolutionInput) -> ExternResult<Record> {
-    let (record, mut dispute): (_, Dispute) = resolve_latest_decoded(input.dispute_original_action, "Dispute")?;
+    let (record, mut dispute): (_, Dispute) = resolve_latest_decoded(input.dispute_original_action.clone(), "Dispute")?;
     let arbitrator = agent_info()?.agent_initial_pubkey;
     dispute.status = DisputeStatus::Resolved;
     dispute.outcome = Some(input.outcome);
@@ -77,8 +77,22 @@ pub fn submit_resolution(input: SubmitResolutionInput) -> ExternResult<Record> {
     dispute.reasoning = Some(input.reasoning);
     dispute.resolved_at = Some(sys_time()?);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::Dispute(dispute))?;
+    close_out_of_open_queue(&input.dispute_original_action)?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back resolved dispute".into())))
+}
+
+/// Resolved disputes leave the arbitrators' open queue, so reading it costs
+/// the disputes still open, not every dispute ever raised. If the link
+/// hasn't reached this arbitrator yet it stays; `list_open_disputes` also
+/// filters by status, so a leftover never shows a resolved case.
+fn close_out_of_open_queue(dispute_original_action: &ActionHash) -> ExternResult<()> {
+    let target: AnyLinkableHash = dispute_original_action.clone().into();
+    let links = get_links(LinkQuery::try_new(open_dispute_anchor_path()?.path_entry_hash()?, LinkTypes::OpenDisputeAnchor)?, GetStrategy::default())?;
+    for link in links.into_iter().filter(|l| l.target == target) {
+        delete_link(link.create_link_hash, GetOptions::default())?;
+    }
+    Ok(())
 }
 
 #[hdk_extern]
@@ -142,4 +156,11 @@ pub fn list_open_disputes(input: ListOpenDisputesInput) -> ExternResult<OpenDisp
         }
     }
     Ok(OpenDisputesPage { disputes, next_after })
+}
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use dispute_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(OrderToDispute, OpenDisputeAnchor);
 }

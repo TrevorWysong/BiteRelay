@@ -33,7 +33,42 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::Dispute(dispute) => validate_resolution(&dispute, action.author(), &action.original_action_address),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { link_type, action, .. }) => validate_delete_link(link_type, action.author()),
         _ => Ok(ValidateCallbackResult::Valid),
+    }
+}
+
+/// The arbitrators' work queue: every dispute still open, and only those
+/// (see `validate_delete_link`).
+pub const OPEN_DISPUTES_ANCHOR: &str = "open_disputes";
+
+/// A dispute may only be linked by whoever raised it, under its own order
+/// or the open-disputes anchor -- otherwise anyone could attach a fake
+/// dispute to someone else's order, or flood the arbitrators' queue.
+fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    use relay_integrity_support::{decode, invalid, link_target, path_hash, require, LinkTarget};
+    let record = match link_target(target)? {
+        LinkTarget::Record(record) => record,
+        LinkTarget::PathNode => return require(link_type == LinkTypes::OpenDisputeAnchor, "OrderToDispute links must target a dispute"),
+    };
+    let Some(dispute) = decode::<Dispute>(&record) else { return invalid("target is not a Dispute") };
+    let expected_base: AnyLinkableHash = match link_type {
+        LinkTypes::OrderToDispute => dispute.order_ref.clone().into(),
+        LinkTypes::OpenDisputeAnchor => path_hash(OPEN_DISPUTES_ANCHOR)?,
+    };
+    require(
+        author == &dispute.raised_by && base == &expected_base,
+        "a dispute may only be linked by whoever raised it, under its own order or the open-disputes anchor",
+    )
+}
+
+/// An order's dispute history is permanent; a dispute leaves the open queue
+/// only when an arbitrator resolves it.
+fn validate_delete_link(link_type: LinkTypes, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    match link_type {
+        LinkTypes::OrderToDispute => relay_integrity_support::invalid("an order's dispute links can't be deleted"),
+        LinkTypes::OpenDisputeAnchor => relay_integrity_support::require(relay_governance::is_arbitrator(author)?, "only an arbitrator may close a dispute out of the open queue"),
     }
 }
 

@@ -2,13 +2,14 @@
 //! machine, and pickup disputes.
 
 use super::*;
+use crate::checks::{check_bag_claim, check_promo_code, ClaimedFor};
 use crate::disputes::*;
 
 /// `PickupOrder`'s sibling of `validate_new_order` -- same shape, minus
 /// every check that only makes sense once a driver is in the loop
 /// (dropoff/geohash, accepted_bid, delivery_receipts all simply don't
 /// exist on this entry type at all, so there's nothing to check there).
-pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKey, action_timestamp: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if &order.requester != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a pickup order can only be authored by its own requester".into(),
@@ -29,43 +30,14 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
-    // promo_code_ref check deliberately omitted from this first pass --
-    // see validate_new_order's own doc comment for the full reasoning on
-    // why this is coordinator-level/best-effort anyway; wiring promo
-    // support into pickup orders is a separate, later addition, not part
-    // of this entry type's initial shape.
-    //
-    // bag_claim_ref *is* checked here, symmetrically with validate_new_order's
-    // own check -- same reasoning, "claimed for pickup" instead of delivery,
-    // and the same "can't check `status` deterministically" exemption (see
-    // validate_new_order's own doc comment for why -- `must_get_valid_record`
-    // is literal, and `status` is exactly the field `confirm_claim` updates).
-    // Named gap shared by both order types, not solved here: nothing stops
-    // the same Confirmed claim from being spent on two separate orders (no
-    // claim -> order back-link exists to detect that). Same honestly-named
-    // trust tier as `confirm_claim`'s own re-derived quantity_total count --
-    // low-stakes (at most a merchant over-delivers one extra bag's worth of
-    // food, no money moves twice, since each resulting order still settles
-    // its own independently-authored order_total), not worth a new link
-    // type/redeemed-flag mechanism for this first pass.
-    if let Some(claim_ref) = &order.bag_claim_ref {
-        let claim_record = must_get_valid_record(claim_ref.clone())?;
-        let claim: BagClaim = claim_record
-            .entry()
-            .to_app_option()
-            .map_err(|e| wasm_error!(e))?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "bag_claim_ref does not point at a BagClaim entry".into()
-            )))?;
-        if claim.customer != order.requester {
-            return Ok(ValidateCallbackResult::Invalid(
-                "bag_claim_ref's own customer must match this order's requester".into(),
-            ));
+    if let Some(promo_ref) = &order.promo_code_ref {
+        if let Some(reason) = check_promo_code(promo_ref, &order.catalog_ref, action_timestamp)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
         }
-        if claim.fulfillment != BagClaimFulfillment::Pickup {
-            return Ok(ValidateCallbackResult::Invalid(
-                "bag_claim_ref was not claimed for pickup".into(),
-            ));
+    }
+    if let Some(claim_ref) = &order.bag_claim_ref {
+        if let Some(reason) = check_bag_claim(claim_ref, &order.requester, ClaimedFor::Pickup, prev_action)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
         }
     }
     Ok(ValidateCallbackResult::Valid)

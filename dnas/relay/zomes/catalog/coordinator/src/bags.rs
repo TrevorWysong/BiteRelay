@@ -19,7 +19,7 @@
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{resolve_latest, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{decode_or, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original};
 
 use crate::NearbyMerchantsInput;
 
@@ -28,11 +28,11 @@ use crate::NearbyMerchantsInput;
 /// expose that stable hash separately from its latest-resolved content
 /// (see `CatalogView`'s own doc comment).
 fn bag_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("catalog_bag.{}", catalog_ref)).typed(LinkTypes::CatalogToBag)
+    Path::from(bag_path(catalog_ref)).typed(LinkTypes::CatalogToBag)
 }
 
 fn claim_anchor_path(bag_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("bag_claim.{}", bag_ref)).typed(LinkTypes::BagToClaim)
+    Path::from(claim_path(bag_ref)).typed(LinkTypes::BagToClaim)
 }
 
 #[hdk_extern]
@@ -65,24 +65,42 @@ pub fn get_goodie_bag(bag_ref: ActionHash) -> ExternResult<Record> {
     resolve_latest(bag_ref)
 }
 
-#[hdk_extern]
-pub fn list_goodie_bags_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let path = bag_anchor_path(&catalog_ref)?;
-    let path_hash = match path.path_entry_hash() {
-        Ok(hash) => hash,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let links = get_links(LinkQuery::try_new(path_hash, LinkTypes::CatalogToBag)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
+/// A bag's stable identity (its original action -- what claims reference
+/// as `bag_ref`) alongside its latest content. Using the latest record's
+/// own action hash as the identity would orphan its claims as soon as the
+/// merchant edited it -- the same split `CatalogView` makes.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BagView {
+    pub original_action: ActionHash,
+    pub record: Record,
 }
 
-/// Joins through the *existing* `GeohashToCatalog` anchor rather than a
-/// parallel geohash anchor for bags (see `LinkTypes::CatalogToBag`'s own
-/// doc comment) -- a bag's location *is* its catalog's location, so this
-/// reuses `get_nearby_merchants`'s own cell-and-neighbors walk, then fans
-/// out to each returned catalog's own `CatalogToBag` anchor.
+/// Bags listed within the last `MAX_GOODIE_BAG_LIFETIME_MICROS` -- the only
+/// ones that can still be live (validation caps a bag's lifetime), so this
+/// reads a week of links at most, never a store's whole history.
+fn recent_bags(catalog_ref: &ActionHash) -> ExternResult<Vec<(BagView, GoodieBag)>> {
+    let path_hash = bag_anchor_path(catalog_ref)?.path_entry_hash()?;
+    let mut query = LinkQuery::try_new(path_hash, LinkTypes::CatalogToBag)?;
+    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - MAX_GOODIE_BAG_LIFETIME_MICROS));
+    let links = get_links(query, GetStrategy::default())?;
+    Ok(resolve_links_to_records_with_original(links)
+        .into_iter()
+        .filter_map(|(original_action, record)| {
+            let bag = decode_or::<GoodieBag>(&record)?;
+            (&bag.catalog_ref == catalog_ref).then_some((BagView { original_action, record }, bag))
+        })
+        .collect())
+}
+
+/// The store's bags that can still be claimed (pickup window not over).
 #[hdk_extern]
-pub fn get_nearby_goodie_bags(input: NearbyMerchantsInput) -> ExternResult<Vec<Record>> {
+pub fn list_goodie_bags_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec<BagView>> {
+    let now = sys_time()?;
+    Ok(recent_bags(&catalog_ref)?.into_iter().filter(|(_, bag)| bag.pickup_window_end > now).map(|(view, _)| view).collect())
+}
+
+#[hdk_extern]
+pub fn get_nearby_goodie_bags(input: NearbyMerchantsInput) -> ExternResult<Vec<BagView>> {
     let nearby = crate::get_nearby_merchants(input)?;
     let mut bags = Vec::new();
     for catalog_view in nearby.catalogs {
@@ -131,11 +149,17 @@ pub fn list_claims_for_bag(bag_ref: ActionHash) -> ExternResult<Vec<Record>> {
     Ok(resolve_links_to_records(links))
 }
 
+/// The caller's claims that can still matter -- made within the longest a
+/// bag can live, plus a day to finalize. Older claims are history; reading
+/// them on every poll (the claim finalizer runs every few seconds) would
+/// grow forever.
 #[hdk_extern]
 pub fn get_my_bag_claims(_: ()) -> ExternResult<Vec<Record>> {
+    const FINALIZE_GRACE_MICROS: i64 = 86_400 * 1_000_000;
     let owner = agent_info()?.agent_initial_pubkey;
-    let links = get_links(LinkQuery::try_new(owner, LinkTypes::CustomerToClaim)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
+    let mut query = LinkQuery::try_new(owner, LinkTypes::CustomerToClaim)?;
+    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - MAX_GOODIE_BAG_LIFETIME_MICROS - FINALIZE_GRACE_MICROS));
+    Ok(resolve_links_to_records(get_links(query, GetStrategy::default())?))
 }
 
 /// Pending claims across *every* bag this merchant owns -- walks this
@@ -147,11 +171,11 @@ pub fn get_my_bag_claims(_: ()) -> ExternResult<Vec<Record>> {
 /// scale).
 #[hdk_extern]
 pub fn list_pending_claims_for_merchant(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let bags = list_goodie_bags_for_catalog(catalog_ref)?;
+    // Includes bags whose window just closed: a claim made in time still
+    // deserves an answer.
     let mut pending = Vec::new();
-    for bag_record in bags {
-        let bag_ref = bag_record.action_address().clone();
-        for claim_record in list_claims_for_bag(bag_ref)? {
+    for (bag, _) in recent_bags(&catalog_ref)? {
+        for claim_record in list_claims_for_bag(bag.original_action)? {
             if let Ok(Some(claim)) = claim_record.entry().to_app_option::<BagClaim>() {
                 if claim.status == BagClaimStatus::Pending {
                     pending.push(claim_record);

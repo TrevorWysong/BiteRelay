@@ -72,7 +72,35 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::LedgerTransaction(txn) => validate_transaction(&txn, action.author()),
             EntryTypes::BalanceCheckpoint(checkpoint) => validate_checkpoint(&checkpoint, action.author()),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { .. }) => relay_integrity_support::invalid("ledger links can't be deleted"),
         _ => Ok(ValidateCallbackResult::Valid),
+    }
+}
+
+/// Balances are folded from these links, so each must sit under an agent
+/// the entry actually concerns -- otherwise anyone could attach a stranger's
+/// transactions to someone's balance. Linked by the entry's own author.
+fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    use relay_integrity_support::{decode, invalid, link_target, require, LinkTarget};
+    let LinkTarget::Record(record) = link_target(target)? else {
+        return invalid("ledger links must target a record");
+    };
+    if author != record.action().author() {
+        return invalid("a ledger link must be authored by the author of the entry it indexes");
+    }
+    match link_type {
+        LinkTypes::AgentToTransaction => {
+            let Some(txn) = decode::<LedgerTransaction>(&record) else { return invalid("target is not a LedgerTransaction") };
+            require(
+                base == &AnyLinkableHash::from(txn.from) || base == &AnyLinkableHash::from(txn.to),
+                "a transaction may only be linked under one of its own two parties",
+            )
+        }
+        LinkTypes::AgentToBalanceCheckpoint => {
+            let Some(checkpoint) = decode::<BalanceCheckpoint>(&record) else { return invalid("target is not a BalanceCheckpoint") };
+            require(base == &AnyLinkableHash::from(checkpoint.agent), "a balance checkpoint may only be linked under its own agent")
+        }
     }
 }
 
@@ -140,21 +168,12 @@ fn validate_transaction(txn: &LedgerTransaction, author: &AgentPubKey) -> Extern
     // against the referenced order actually existing -- a known, named gap,
     // not a hardened settlement path.
     //
-    // Beyond the transaction's own two sides and a listed arbitrator (a
-    // dispute ruling, architecture plan §8), the related order's own
-    // requester or merchant are also trusted authors -- see
-    // `is_authorized_party_or_order_principal`'s own doc comment for why:
-    // a real bug, found only by testing with three *genuinely distinct*
-    // customer/merchant/driver agents rather than the "customer doubles as
-    // merchant" convention most of this codebase's other tests happened to
-    // use. `dispatch::settle_delivery_fee` splits the delivery fee into up
-    // to two transactions (merchant -> driver for the subsidy share,
-    // customer -> driver for the rest + tip), but `complete_delivery` is
-    // called from exactly *one* conductor -- that caller can never be the
-    // `from` party on *both* transactions when all three are distinct
-    // agents and the subsidy is nonzero (the *default*, not a rare case).
-    // Exactly one of the two transactions would always fail this check
-    // before this exception existed.
+    // Beyond the transaction's two sides and a listed arbitrator (a dispute
+    // ruling), the related order's requester or merchant may also author it.
+    // `settle_delivery_fee` writes up to two transactions (merchant -> driver
+    // for the subsidy share, customer -> driver for the rest plus tip) from
+    // the one conductor that completes the delivery, which can't be the
+    // `from` side of both when customer, merchant and driver are distinct.
     if !is_authorized_party_or_order_principal(author, &txn.from, &txn.to, &txn.related_order)? {
         return Ok(ValidateCallbackResult::Invalid(
             "a transaction can only be authored by one of its two parties, a listed arbitrator, or the related order's own requester/merchant".into(),

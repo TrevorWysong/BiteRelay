@@ -2,9 +2,10 @@
 //! leg-attestation completion gate, and delivery disputes.
 
 use super::*;
+use crate::checks::{check_bag_claim, check_promo_code, ClaimedFor};
 use crate::disputes::*;
 
-pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timestamp: Timestamp) -> ExternResult<ValidateCallbackResult> {
+pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timestamp: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if &order.requester != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a delivery order can only be authored by its own requester".into(),
@@ -37,81 +38,14 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
-    // Only checks facts that are genuinely *immutable* once a PromoCode is
-    // created (which merchant it belongs to, its fixed expiry) -- NOT
-    // `active`, even though that field exists on the same entry.
-    // `must_get_valid_record` is deterministic but literal: it always
-    // returns the entry *as created*, and `active` always starts `true`
-    // (see `create_promo_code`), so checking it here would silently never
-    // catch a later deactivation -- the exact same "get() never resolves to
-    // latest" trap this codebase has already hit for dispute timing and
-    // warrants. There is no deterministic way to ask "what is this *other*
-    // entry's current state" inside validate() -- forward-chain walking is
-    // exactly the non-deterministic query it can't depend on. "Is this code
-    // still active" is therefore a coordinator-level, best-effort check
-    // only (`dispatch::request_delivery`'s own pre-check, same trust tier
-    // as `check_warrants`), not enforced here. The discount's arithmetic
-    // effect on `order_total` is also not independently re-derived here --
-    // there's no deterministic way to recompute "what the undiscounted
-    // total should have been" without passing full cart contents into
-    // validate(), and `order_total` itself already has no such check today
-    // (a known, pre-existing, separate trust gap).
     if let Some(promo_ref) = &order.promo_code_ref {
-        let promo_record = must_get_valid_record(promo_ref.clone())?;
-        let promo: PromoCode = promo_record
-            .entry()
-            .to_app_option()
-            .map_err(|e| wasm_error!(e))?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "promo_code_ref does not point at a PromoCode entry".into()
-            )))?;
-        if promo.catalog_ref != order.catalog_ref {
-            return Ok(ValidateCallbackResult::Invalid(
-                "promo_code_ref does not belong to this order's merchant".into(),
-            ));
-        }
-        if let Some(expires) = promo.expires_at {
-            if action_timestamp >= expires {
-                return Ok(ValidateCallbackResult::Invalid("promo code has expired".into()));
-            }
+        if let Some(reason) = check_promo_code(promo_ref, &order.catalog_ref, action_timestamp)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
         }
     }
-    // `must_get_valid_record` is literal, like `hdi`'s every other read --
-    // it returns exactly the record at `claim_ref`'s own action hash, never
-    // "whatever it was most recently updated to" (see `resolve_latest`'s
-    // own doc comment for the general shape of this gap). `BagClaim.status`
-    // is exactly the field `catalog::confirm_claim` updates, so checking
-    // "is it Confirmed" via this literal fetch would almost always see the
-    // original `Pending` content instead -- the exact same trap already
-    // named for `promo_code_ref.active` above, for the same reason (`active`
-    // is also mutated via a later `update_entry`, after the record's
-    // original creation). So, also like `active`, "is this claim actually
-    // Confirmed" is NOT checked here -- it's a coordinator-level,
-    // non-deterministic pre-check in `request_delivery` instead (cross-zome
-    // `catalog::get_bag_claim`, which calls `resolve_latest`). What *is*
-    // checkable here are `customer`/`fulfillment`, since those are set once
-    // at creation and never touched by `confirm_claim`'s own update (see
-    // `validate_claim_confirmation`'s own "every other field must stay the
-    // same" check) -- so whatever this literal fetch sees for them is
-    // already correct, confirmed or not.
     if let Some(claim_ref) = &order.bag_claim_ref {
-        let claim_record = must_get_valid_record(claim_ref.clone())?;
-        let claim: BagClaim = claim_record
-            .entry()
-            .to_app_option()
-            .map_err(|e| wasm_error!(e))?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "bag_claim_ref does not point at a BagClaim entry".into()
-            )))?;
-        if claim.customer != order.requester {
-            return Ok(ValidateCallbackResult::Invalid(
-                "bag_claim_ref's own customer must match this order's requester".into(),
-            ));
-        }
-        if !matches!(claim.fulfillment, BagClaimFulfillment::Delivery { .. }) {
-            return Ok(ValidateCallbackResult::Invalid(
-                "bag_claim_ref was not claimed for delivery".into(),
-            ));
+        if let Some(reason) = check_bag_claim(claim_ref, &order.requester, ClaimedFor::Delivery, prev_action)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
         }
     }
     Ok(ValidateCallbackResult::Valid)

@@ -11,11 +11,11 @@ pub use signals::*;
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original};
+use relay_coordinator_support::{decode_or, next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records_with_original};
 use relay_types::GeoPoint;
 
 fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("catalog_geohash.{}", geohash)).typed(LinkTypes::GeohashToCatalog)
+    Path::from(catalog_geohash_path(geohash)).typed(LinkTypes::GeohashToCatalog)
 }
 
 /// Unlike presence beacons and open orders (architecture plan §9.2), old
@@ -60,38 +60,17 @@ fn default_max_delivery_radius_km() -> f64 {
     8.0
 }
 
-/// Pairs a catalog's stable identity with its current content. `catalog_ref`
-/// everywhere else in this zome (`add_menu_item`, `create_promo_code`,
-/// `list_menu_items`, `list_promo_codes_for_catalog`, and this feature's own
-/// `CatalogToBag`) is keyed on the catalog's *original* creation action --
-/// see `validate_menu_item`'s own doc comment. Both `list_my_catalogs` and
-/// `get_nearby_merchants` are places content needs to reflect the *latest*
-/// state (is it open right now, current subsidy, ...), so neither can just
-/// hand back a single `Record`: a `Record`'s own action hash is whichever
-/// one it is, and collapsing those two needs into one value is exactly the
-/// bug this struct exists to avoid (see `original_action`'s own field doc
-/// for the bug it fixes, first found on `get_my_catalog` and then found
-/// *again*, independently, on `get_nearby_merchants` -- the fix is the
-/// same shape both times, which is why this one struct now covers both
-/// callers instead of two near-identical ones).
+/// A catalog's stable identity alongside its current content. Everything
+/// tied to a store (menu items, promo codes, goodie bags, order queues,
+/// reviews) is keyed on its *original* action, while screens need its
+/// *latest* state (open right now? current subsidy?) -- and a `Record`'s
+/// own hash is only ever one of the two.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CatalogView {
-    /// The `OwnerToCatalog` (from `list_my_catalogs`) or `GeohashToCatalog`
-    /// (from `get_nearby_merchants`) link's target -- fixed forever at
-    /// `publish_catalog` time, since neither link is ever recreated by a
-    /// later update. Found the hard way: `get_my_catalog` used to just
-    /// return `resolve_latest(...)` directly, so a client naively caching
-    /// that `Record`'s action hash as its `catalog_ref` would have it
-    /// silently drift to a new value on every catalog edit (toggling
-    /// open/closed, editing details, changing subsidy) -- orphaning every
-    /// menu item/promo code/goodie bag already linked under the previous
-    /// hash, since `list_menu_items`/`list_promo_codes_for_catalog`/
-    /// `list_goodie_bags_for_catalog` key their reads the same way. Fixed
-    /// there, then found *again* on `get_nearby_merchants` (which fed
-    /// Browse.tsx's own restaurant list and `get_nearby_goodie_bags`) --
-    /// same bug, different extern, because `resolve_links_to_records`
-    /// alone always discards exactly this hash. Use *this* field as
-    /// `catalog_ref`, never the record's own action hash.
+    /// The catalog's original action -- the `OwnerToCatalog`/
+    /// `GeohashToCatalog` link target, fixed at publish time. Use this as
+    /// `catalog_ref`, never the record's own hash, which changes on every
+    /// edit (and would orphan everything keyed on the store).
     pub original_action: ActionHash,
     pub record: Record,
 }
@@ -271,8 +250,8 @@ fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<()> {
     let mut after = None;
     loop {
         let page = list_menu_items(ListMenuItemsInput { catalog_ref: catalog_ref.clone(), after })?;
-        for record in &page.items {
-            if let Ok(Some(item)) = record.entry().to_app_option::<MenuItem>() {
+        for view in &page.items {
+            if let Ok(Some(item)) = view.record.entry().to_app_option::<MenuItem>() {
                 tags.extend(item.dietary_tags);
             }
         }
@@ -326,15 +305,25 @@ pub struct ListMenuItemsInput {
     pub after: Option<Timestamp>,
 }
 
+/// A menu item's stable identity (its original action -- what orders,
+/// carts, promos and item reviews reference) alongside its latest content.
+/// The latest record's own hash changes on every edit, even toggling it
+/// sold out, so it can't be the identity -- see `CatalogView`.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MenuItemView {
+    pub original_action: ActionHash,
+    pub record: Record,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MenuItemsPage {
-    pub items: Vec<Record>,
+    pub items: Vec<MenuItemView>,
     pub next_after: Option<Timestamp>,
 }
 
 #[hdk_extern]
 pub fn list_menu_items(input: ListMenuItemsInput) -> ExternResult<MenuItemsPage> {
-    let mut query = LinkQuery::try_new(input.catalog_ref, LinkTypes::CatalogToMenuItem)?;
+    let mut query = LinkQuery::try_new(input.catalog_ref.clone(), LinkTypes::CatalogToMenuItem)?;
     query.after = input.after;
     let mut links = get_links(query, GetStrategy::default())?;
     links.sort_by_key(|l| l.timestamp);
@@ -344,7 +333,14 @@ pub fn list_menu_items(input: ListMenuItemsInput) -> ExternResult<MenuItemsPage>
         None
     };
     links.truncate(MENU_ITEM_PAGE_SIZE);
-    Ok(MenuItemsPage { items: resolve_links_to_records(links), next_after })
+    // Link validation already guarantees this; checking again keeps a menu
+    // honest even if that guarantee ever regressed.
+    let items = resolve_links_to_records_with_original(links)
+        .into_iter()
+        .filter(|(_, record)| decode_or::<MenuItem>(record).is_some_and(|item| item.catalog_ref == input.catalog_ref))
+        .map(|(original_action, record)| MenuItemView { original_action, record })
+        .collect();
+    Ok(MenuItemsPage { items, next_after })
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -401,7 +397,7 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
 // 2026-10-02 alongside the delivery-fee-sharing work) ---
 
 fn promo_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("catalog_promo.{}", catalog_ref)).typed(LinkTypes::CatalogToPromoCode)
+    Path::from(promo_path(catalog_ref)).typed(LinkTypes::CatalogToPromoCode)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -443,6 +439,7 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
     let path = promo_anchor_path(&input.catalog_ref)?;
     path.ensure()?;
     create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
+    create_link(input.catalog_ref, action_hash.clone(), LinkTypes::CatalogToLivePromo, ())?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back promo code".into())))
 }
@@ -455,25 +452,89 @@ pub struct SetPromoCodeActiveInput {
 
 #[hdk_extern]
 pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Record> {
-    let (record, mut promo): (_, PromoCode) = resolve_latest_decoded(input.original_action, "PromoCode")?;
+    let (record, mut promo): (_, PromoCode) = resolve_latest_decoded(input.original_action.clone(), "PromoCode")?;
+    let catalog_ref = promo.catalog_ref.clone();
     promo.active = input.active;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PromoCode(promo))?;
+    let target: AnyLinkableHash = input.original_action.clone().into();
+    let live_links: Vec<Link> = get_links(LinkQuery::try_new(catalog_ref.clone(), LinkTypes::CatalogToLivePromo)?, GetStrategy::default())?
+        .into_iter()
+        .filter(|link| link.target == target)
+        .collect();
+    if input.active && live_links.is_empty() {
+        create_link(catalog_ref, input.original_action, LinkTypes::CatalogToLivePromo, ())?;
+    } else if !input.active {
+        for link in live_links {
+            delete_link(link.create_link_hash, GetOptions::default())?;
+        }
+    }
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated promo code".into())))
 }
 
-/// Small, bounded link set per merchant (a handful of codes at most), so no
-/// pagination -- reused for both the merchant's own management view and a
-/// customer's redemption lookup (match the typed code client-side against
-/// this list, same approach `list_menu_items` + client-side filtering
-/// already uses elsewhere rather than a dedicated per-code index).
+/// A promo code's stable identity (what orders and `set_promo_code_active`
+/// take) alongside its latest state -- see `CatalogView`.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PromoView {
+    pub original_action: ActionHash,
+    pub record: Record,
+}
+
+fn promo_views(catalog_ref: &ActionHash, links: Vec<Link>) -> Vec<PromoView> {
+    resolve_links_to_records_with_original(links)
+        .into_iter()
+        .filter(|(_, record)| decode_or::<PromoCode>(record).is_some_and(|promo| &promo.catalog_ref == catalog_ref))
+        .map(|(original_action, record)| PromoView { original_action, record })
+        .collect()
+}
+
+/// The codes a customer can use at this store right now (active, not
+/// expired) -- what checkout matches a typed code against and picks
+/// auto-apply deals from. Reads only the live index, so its cost is the
+/// store's current deals, not every code it ever ran.
 #[hdk_extern]
-pub fn list_promo_codes_for_catalog(catalog_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let path = promo_anchor_path(&catalog_ref)?;
-    let path_hash = match path.path_entry_hash() {
-        Ok(hash) => hash,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let links = get_links(LinkQuery::try_new(path_hash, LinkTypes::CatalogToPromoCode)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
+pub fn list_live_promo_codes(catalog_ref: ActionHash) -> ExternResult<Vec<PromoView>> {
+    let now = sys_time()?;
+    let links = get_links(LinkQuery::try_new(catalog_ref.clone(), LinkTypes::CatalogToLivePromo)?, GetStrategy::default())?;
+    Ok(promo_views(&catalog_ref, links)
+        .into_iter()
+        .filter(|view| decode_or::<PromoCode>(&view.record).is_some_and(|promo| promo.active && promo.expires_at.is_none_or(|expires| expires > now)))
+        .collect())
+}
+
+const PROMO_PAGE_SIZE: usize = 25;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ListPromoCodesInput {
+    pub catalog_ref: ActionHash,
+    /// Page cursor -- the previous page's `next_before`. `None` starts from
+    /// the newest code.
+    pub before: Option<Timestamp>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PromoCodesPage {
+    pub promo_codes: Vec<PromoView>,
+    pub next_before: Option<Timestamp>,
+}
+
+/// Every code the store has created, active or not, newest first -- the
+/// merchant's management list.
+#[hdk_extern]
+pub fn list_promo_codes_for_catalog(input: ListPromoCodesInput) -> ExternResult<PromoCodesPage> {
+    let mut query = LinkQuery::try_new(promo_anchor_path(&input.catalog_ref)?.path_entry_hash()?, LinkTypes::CatalogToPromoCode)?;
+    query.before = input.before;
+    let mut links = get_links(query, GetStrategy::default())?;
+    links.sort_by_key(|link| std::cmp::Reverse(link.timestamp));
+    // `before` is inclusive, so step one microsecond past the last code.
+    let next_before = (links.len() > PROMO_PAGE_SIZE).then(|| Timestamp::from_micros(links[PROMO_PAGE_SIZE - 1].timestamp.as_micros() - 1));
+    links.truncate(PROMO_PAGE_SIZE);
+    Ok(PromoCodesPage { promo_codes: promo_views(&input.catalog_ref, links), next_before })
+}
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use catalog_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo);
 }

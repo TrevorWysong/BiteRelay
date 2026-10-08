@@ -6,14 +6,14 @@
 //! backstop for a provider who missed that signal.
 
 use crate::signals::RemoteSignal;
-use dispatch_integrity::LinkTypes;
+use dispatch_integrity::{open_order_anchor, LinkTypes, OPEN_ORDER_BUCKET_MILLIS};
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
 use relay_coordinator_support::{decode_or, resolve_latest};
 use relay_types::DeliveryCapability;
 
 pub(crate) fn open_order_anchor_path(geohash: &str, bucket: i64) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(format!("open_order_geohash.{}.{}", geohash, bucket)).typed(LinkTypes::OpenOrderGeohashAnchor)
+    Path::from(open_order_anchor(geohash, bucket)).typed(LinkTypes::OpenOrderGeohashAnchor)
 }
 
 /// Matches `geo_presence_integrity::PRESENCE_GEOHASH_PRECISION` -- duplicated
@@ -24,14 +24,6 @@ pub(crate) fn geo_presence_precision() -> usize {
     6
 }
 
-/// Time bucket folded into the open-order anchor path (architecture plan
-/// §9.2) -- otherwise `open_order_geohash.{geohash}` accumulates one
-/// never-deleted link per order, forever, and every discovery read
-/// (fan-out *and* the polling backstop) walks the *entire* history of every
-/// order ever placed in that cell just to find the handful currently Open.
-/// 5 minutes: generous enough that a slow-to-match order doesn't fall out
-/// of the *current* bucket before resolving.
-pub(crate) const OPEN_ORDER_BUCKET_MILLIS: i64 = 300_000;
 
 /// Providers signaled per order, at most -- see architecture plan §9.2. Once
 /// beacons are bucketed the candidate pool is already bounded to real

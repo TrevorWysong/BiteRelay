@@ -4,13 +4,16 @@
 
 use hdi::prelude::*;
 
+mod links;
+pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
+
 // MerchantCatalog/MenuItem/PromoCode now live in catalog_types so
 // dispatch_integrity can decode a PromoCode too, for its own promo-code
 // validation in validate_new_order -- see that crate's doc comment for why
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, GoodieBag};
+pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching the presence-beacon precision in `geo_presence` so both
@@ -40,6 +43,12 @@ pub enum LinkTypes {
     CatalogToBag,
     BagToClaim,
     CustomerToClaim,
+    /// A store's currently active promo codes, base = the store. Linked
+    /// when a code is created or reactivated and unlinked when it's
+    /// deactivated, so checkout reads only the codes it could apply,
+    /// however many a store has retired. `CatalogToPromoCode` stays the
+    /// permanent, paginated list the merchant manages.
+    CatalogToLivePromo,
 }
 
 #[hdk_extern]
@@ -49,16 +58,18 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
             EntryTypes::PromoCode(promo) => validate_new_promo_code(&promo, action.author()),
-            EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author()),
-            EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author()),
+            EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author(), action.timestamp()),
+            EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp()),
         },
         FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
             EntryTypes::PromoCode(promo) => validate_promo_code_update(&promo, action.author(), &action.original_action_address),
-            EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author()),
+            EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author(), &action.original_action_address),
             EntryTypes::BagClaim(claim) => validate_claim_confirmation(&claim, action.author(), &action.original_action_address),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { original_action, action, .. }) => links::validate_delete_link(original_action.author(), action.author()),
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }
@@ -166,16 +177,8 @@ fn validate_reward(reward: &PromoReward) -> Option<&'static str> {
 /// reasoning as `validate_menu_item`'s own ownership check.
 fn item_belongs_to_catalog(item_ref: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<bool> {
     let record = must_get_valid_record(item_ref.clone())?;
-    // `to_app_option` *errors* (not `Ok(None)`) when the entry's own fields
-    // don't even deserialize as `MenuItem` -- e.g. a `PromoCode` entry has
-    // no `price_cents` field at all, so decoding it as `MenuItem` fails
-    // outright rather than cleanly reporting "wrong type." Both a decode
-    // error and a clean `Ok(None)` mean the same thing here ("not a
-    // MenuItem"), so both collapse to `false` via `matches!` rather than
-    // letting the decode error propagate as a generic, unfriendly
-    // validation failure -- the same real bug this fix caught in
-    // `profiles_integrity::validate_new_favorite`, caught first there by
-    // testing against a genuinely wrong-shaped entry.
+    // `to_app_option` errors (rather than returning `Ok(None)`) for an entry
+    // of another type; either way it isn't a menu item.
     let item: Option<MenuItem> = match record.entry().to_app_option() {
         Ok(item) => item,
         Err(_) => return Ok(false),
@@ -259,7 +262,18 @@ fn validate_promo_code_update(promo: &PromoCode, author: &AgentPubKey, original_
     Ok(ValidateCallbackResult::Valid)
 }
 
-fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey, created: Timestamp) -> ExternResult<ValidateCallbackResult> {
+    if (bag.created_at.as_micros() - created.as_micros()).abs() > CLOCK_SKEW_TOLERANCE_MICROS {
+        return Ok(ValidateCallbackResult::Invalid("created_at must match when the bag was actually published".into()));
+    }
+    if bag.pickup_window_end.as_micros() - bag.created_at.as_micros() > MAX_GOODIE_BAG_LIFETIME_MICROS {
+        return Ok(ValidateCallbackResult::Invalid("a goodie bag's pickup window must end within 7 days of listing it".into()));
+    }
+    validate_bag_fields(bag, author)
+}
+
+/// The rules a bag's content must always satisfy, on creation and update.
+fn validate_bag_fields(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if bag.title.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("title must not be empty".into()));
     }
@@ -293,18 +307,37 @@ fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey) -> ExternResul
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// Unlike `PromoCode` (only `active` may change, since an order may already
-/// reference it by content), a bag has no such outstanding reference to
-/// protect -- a claim only ever points at the bag's identity (`bag_ref`),
-/// never its price/quantity/window, so the merchant may freely edit any
-/// field up until it's claimed against. Same "owner-authored, no per-field
-/// lock" posture `validate_catalog`/`validate_menu_item` already take on
-/// their own updates.
-fn validate_goodie_bag_update(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    validate_new_goodie_bag(bag, author)
+/// Only the presentation may change after listing (title, description,
+/// photo). Claims are validated against the bag as created
+/// (`must_get_valid_record` is literal), so its window, price, quantity and
+/// fulfillment options have to stay what claimants saw -- a merchant who
+/// needs different terms lists a new bag.
+fn validate_goodie_bag_update(bag: &GoodieBag, author: &AgentPubKey, original_action_hash: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original_action_hash.clone())?;
+    let Ok(Some(prior)) = prior_record.entry().to_app_option::<GoodieBag>() else {
+        return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a GoodieBag entry".into()));
+    };
+    let terms_unchanged = prior.catalog_ref == bag.catalog_ref
+        && prior.original_value_cents == bag.original_value_cents
+        && prior.price_cents == bag.price_cents
+        && prior.quantity_total == bag.quantity_total
+        && prior.pickup_window_start == bag.pickup_window_start
+        && prior.pickup_window_end == bag.pickup_window_end
+        && prior.supports_pickup == bag.supports_pickup
+        && prior.supports_delivery == bag.supports_delivery
+        && prior.created_at == bag.created_at;
+    if !terms_unchanged {
+        return Ok(ValidateCallbackResult::Invalid(
+            "a goodie bag update may only change its title, description or photo".into(),
+        ));
+    }
+    validate_bag_fields(bag, author)
 }
 
-fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey, claimed: Timestamp) -> ExternResult<ValidateCallbackResult> {
+    if (claim.claimed_at.as_micros() - claimed.as_micros()).abs() > CLOCK_SKEW_TOLERANCE_MICROS {
+        return Ok(ValidateCallbackResult::Invalid("claimed_at must match when the claim was actually made".into()));
+    }
     if &claim.customer != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a bag claim can only be authored by its own customer".into(),
@@ -317,6 +350,11 @@ fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey) -> ExternResult<Va
     let Ok(Some(bag)) = bag_record.entry().to_app_option::<GoodieBag>() else {
         return Ok(ValidateCallbackResult::Invalid("bag_ref does not point at a GoodieBag entry".into()));
     };
+    // On-chain expiry: the window can't change after listing (see
+    // `validate_goodie_bag_update`), so the bag as created is authoritative.
+    if claimed >= bag.pickup_window_end {
+        return Ok(ValidateCallbackResult::Invalid("this goodie bag's pickup window has closed".into()));
+    }
     // Mirrors `validate_new_bid`'s self-dealing check: a merchant claiming
     // their own bag is a no-op the ledger would reject anyway (`from == to`),
     // same reasoning, caught here with a clearer reason instead.

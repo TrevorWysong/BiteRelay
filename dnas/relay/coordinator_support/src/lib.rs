@@ -4,20 +4,27 @@
 
 use hdk::prelude::*;
 
-/// Resolves an ActionHash to the record's *actual* current state, following
-/// the update chain. `get()` on an ActionHash is literal -- it returns
-/// exactly that action, never "whatever it was most recently updated to"
-/// (that auto-resolution only happens when you query by EntryHash, not
-/// ActionHash). Without this, every update-capable extern would need its
-/// caller to track and thread the ever-changing latest action hash
-/// themselves instead of being able to pass one stable reference (e.g. an
-/// entry's original creation hash) across repeated updates.
-///
-/// Found the hard way while wiring `dispatch`'s order lifecycle: a chain of
-/// `Open -> BidAccepted -> MerchantConfirmed -> ...` updates, each passing
-/// the same original hash, validated as `Open -> MerchantConfirmed` and
-/// failed, because every read was silently resolving back to the original
-/// Create instead of the latest Update.
+/// The original creation action behind `action_hash` -- itself, unless
+/// it's an update, in which case its chain of updates is walked back. The
+/// coordinator-side twin of `relay_integrity_support::original_creation`.
+pub fn original_action_of(action_hash: ActionHash) -> ExternResult<ActionHash> {
+    let mut current = action_hash;
+    loop {
+        let record = get(current.clone(), GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest(format!("record {current} not found"))))?;
+        match &record.action().data {
+            ActionData::Update(update) => current = update.original_action_address.clone(),
+            _ => return Ok(current),
+        }
+    }
+}
+
+/// Resolves an ActionHash to the record's current state, following its
+/// updates. `get()` on an ActionHash is literal -- it returns exactly that
+/// action, never its latest update -- so this is what lets every extern take
+/// one stable reference (the original action) across any number of edits.
+/// Each update must be applied to the *latest* record, too: updating the
+/// original again would branch the history instead of extending it.
 pub fn resolve_latest(action_hash: ActionHash) -> ExternResult<Record> {
     let details = get_details(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("record not found".into())))?;
@@ -32,32 +39,20 @@ pub fn resolve_latest(action_hash: ActionHash) -> ExternResult<Record> {
     }
 }
 
-/// The next page's `after` cursor, given the last link included in this
-/// page. `LinkQuery.after` is `>=`, not strictly-greater (confirmed against
-/// the actual holochain_state 0.6.3 SQL, not assumed) -- passing a page's
-/// last timestamp straight back as the next page's `after` would return
-/// that same boundary link again. Nudging by one microsecond fixes the
-/// overwhelmingly common case (distinct timestamps); two links sharing the
-/// exact same microsecond is an accepted, named imprecision this pagination
-/// doesn't try to solve -- low stakes for a "browse more" UI read, unlike
-/// `ledger`'s balance math, which handles its own analogous boundary by
-/// excluding a specific known hash instead (see `ledger`'s `get_balance`).
+/// The next page's `after` cursor, given the last link in this page.
+/// `LinkQuery.after` is inclusive (`>=`), so the cursor steps one
+/// microsecond past the last link. Two links in the same microsecond can
+/// straddle a page boundary -- acceptable for a browsing list; `ledger`'s
+/// balance math, which can't tolerate it, excludes by hash instead.
 pub fn next_page_cursor(last_included: Timestamp) -> Timestamp {
     Timestamp::from_micros(last_included.as_micros() + 1)
 }
 
-/// `record.entry().to_app_option::<T>()` does not cleanly return `Ok(None)`
-/// for a genuinely wrong-typed entry -- it returns `Err` (a
-/// deserialize-against-the-wrong-schema failure), which a bare
-/// `.map_err(...)?`  propagates as an opaque `SerializedBytesError` instead
-/// of a clear "not a T" rejection. Found and fixed once in `favorites`'/
-/// promo-code validation (a `Profile`/`PromoCode` used as a bogus
-/// reference, both structurally incompatible with the expected type);
-/// collapses both "wrong type" and "decode error" into the one `None` they
-/// both actually mean. Correct whenever the caller is checking "does this
-/// reference actually resolve to a T" for a caller-supplied reference that
-/// could legitimately be any type -- wrong (keep using `?` directly) when
-/// the reference is expected to always be a T by construction.
+/// The record's entry as a `T`, or `None` if it isn't one.
+/// `to_app_option::<T>()` returns `Err` (not `Ok(None)`) for an entry of a
+/// different type, so `?` on it turns "that reference isn't a T" into an
+/// opaque decode error. Use this for references a caller supplied, which
+/// could point at anything; keep `?` where the type is guaranteed.
 pub fn decode_or<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(record: &Record) -> Option<T> {
     match record.entry().to_app_option::<T>() {
         Ok(Some(v)) => Some(v),
@@ -65,12 +60,8 @@ pub fn decode_or<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(reco
     }
 }
 
-/// `resolve_latest` followed by "decode it as a T, or fail with a clear
-/// message naming what was expected" -- the single most duplicated idiom
-/// across every coordinator in this codebase (20+ near-identical call
-/// sites before this existed, one per entry type per zome). Returns the
-/// record alongside T, since most callers need the record's own action
-/// hash for a follow-up link/update, not just the decoded value.
+/// `resolve_latest`, decoded as a `T` -- or an error naming what was
+/// expected. Returns the record too, since most callers update it next.
 pub fn resolve_latest_decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
     action_hash: ActionHash,
     type_name: &str,
@@ -84,13 +75,8 @@ pub fn resolve_latest_decoded<T: TryFrom<SerializedBytes, Error = SerializedByte
     Ok((record, decoded))
 }
 
-/// Walks a set of links to their target records' *current* state (via
-/// `resolve_latest`, not a literal `get`), silently skipping any link
-/// whose target isn't an `ActionHash` or whose target record can no longer
-/// be resolved -- best-effort, don't fail an entire list read over one bad
-/// link. The same loop duplicated across every link-anchor-based list
-/// extern in this codebase (nearby merchants, menu items, bids, open
-/// orders, ...).
+/// Each link's target at its current state (via `resolve_latest`), skipping
+/// any that don't resolve -- one bad link shouldn't fail a whole list.
 pub fn resolve_links_to_records(links: Vec<Link>) -> Vec<Record> {
     let mut out = Vec::with_capacity(links.len());
     for link in links {
@@ -102,22 +88,10 @@ pub fn resolve_links_to_records(links: Vec<Link>) -> Vec<Record> {
     out
 }
 
-/// Like `resolve_links_to_records`, but also keeps each link's own target
-/// hash alongside its resolved-to-latest record, for callers where that
-/// target hash is itself a stable identity needed downstream -- not just
-/// a throwaway pointer to current content. Found necessary the hard way:
-/// `get_nearby_merchants` used to hand back only the resolved `Record`,
-/// and more than one caller (Browse.tsx's own restaurant list,
-/// `get_nearby_goodie_bags`) reasonably assumed that record's own action
-/// hash was the same stable `catalog_ref` every other catalog read in
-/// this app uses, keyed off `OwnerToCatalog`'s own link target -- instead
-/// it silently drifted to a different hash the moment that catalog had
-/// ever been updated (toggled open/closed, edited details, ...), making
-/// its menu items/promo codes/goodie bags undiscoverable from the
-/// customer-facing "nearby" read even though the merchant-facing
-/// `get_my_catalog` path (see that extern's own `original_action` doc
-/// comment, where this exact bug shape was first found and fixed) was
-/// already correct.
+/// Like `resolve_links_to_records`, keeping each link's target -- the
+/// entry's original action, its stable identity -- next to its latest
+/// record. The latest record's own hash changes on every update, so it
+/// can never stand in for the identity other entries reference.
 pub fn resolve_links_to_records_with_original(links: Vec<Link>) -> Vec<(ActionHash, Record)> {
     let mut out = Vec::with_capacity(links.len());
     for link in links {
@@ -129,12 +103,9 @@ pub fn resolve_links_to_records_with_original(links: Vec<Link>) -> Vec<(ActionHa
     out
 }
 
-/// A zome's own `EntryTypes` enum (generated by `hdk_entry_defs`) knows how
-/// to resolve itself to the `(ScopedEntryDefIndex, EntryVisibility)` pair a
-/// local chain `query()` filter needs -- this just does that resolution
-/// once, generically, instead of every `list_my_*` extern across every
-/// coordinator reimplementing the identical two-line dance against a
-/// throwaway dummy entry value.
+/// The `(ScopedEntryDefIndex, EntryVisibility)` a chain `query()` filter
+/// needs, from an `EntryTypes` value. (`EntryType::try_from(UnitEntryTypes::X)`
+/// does the same without needing a value, and is preferred.)
 pub fn entry_def_parts<'a, E>(entry: &'a E) -> ExternResult<(ScopedEntryDefIndex, EntryVisibility)>
 where
     &'a E: TryInto<ScopedEntryDefIndex, Error = WasmError>,
@@ -225,4 +196,62 @@ where
         fold(acc, decoded);
     }
     Ok(())
+}
+
+/// Test-only externs for proving link validation: raw `create_link` /
+/// `delete_link`, which an honest coordinator never exposes, so a test can
+/// attempt exactly the links a malicious peer would and assert they're
+/// rejected. Each coordinator invokes this behind its `test-utils` feature;
+/// that build is only ever hot-swapped into test conductors (coordinators
+/// aren't part of the DNA hash), never packed into the shipped hApp.
+///
+/// List every link type the zome defines; `link_type` is matched by name.
+#[macro_export]
+macro_rules! raw_link_test_externs {
+    ($($variant:ident),+ $(,)?) => {
+        fn parse_link_type(name: &str) -> ExternResult<LinkTypes> {
+            match name {
+                $(stringify!($variant) => Ok(LinkTypes::$variant),)+
+                other => Err(wasm_error!(WasmErrorInner::Guest(format!("unknown link type {other}")))),
+            }
+        }
+
+        #[derive(Serialize, Deserialize, Debug)]
+        pub struct RawLinkInput {
+            pub link_type: String,
+            pub base: AnyLinkableHash,
+            pub target: AnyLinkableHash,
+            #[serde(default)]
+            pub tag: Vec<u8>,
+        }
+
+        #[hdk_extern]
+        pub fn test_create_link(input: RawLinkInput) -> ExternResult<ActionHash> {
+            create_link(input.base, input.target, parse_link_type(&input.link_type)?, LinkTag::new(input.tag))
+        }
+
+        #[hdk_extern]
+        pub fn test_delete_link(create_link_hash: ActionHash) -> ExternResult<ActionHash> {
+            delete_link(create_link_hash, GetOptions::default())
+        }
+
+        #[derive(Serialize, Deserialize, Debug)]
+        pub struct RawLinkQuery {
+            pub link_type: String,
+            pub base: AnyLinkableHash,
+        }
+
+        /// An anchor path's hash, so a test can address a path-based base.
+        #[hdk_extern]
+        pub fn test_path_hash(path: String) -> ExternResult<AnyLinkableHash> {
+            Ok(hdi::hash_path::path::Path::from(path).path_entry_hash()?.into())
+        }
+
+        /// The create-link hashes under `base`, so a test can try deleting one.
+        #[hdk_extern]
+        pub fn test_get_link_hashes(input: RawLinkQuery) -> ExternResult<Vec<ActionHash>> {
+            let links = get_links(LinkQuery::try_new(input.base, parse_link_type(&input.link_type)?)?, GetStrategy::default())?;
+            Ok(links.into_iter().map(|link| link.create_link_hash).collect())
+        }
+    };
 }

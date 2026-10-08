@@ -51,7 +51,7 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customerA.cells[0].cell_id[0]);
   console.log("[PASS] create_goodie_bag lists a bag with price below original_value");
 
-  const listed = await catalogOf(customerA)<HcRecord[]>("list_goodie_bags_for_catalog", catalogRef);
+  const listed = await catalogOf(customerA)<{ original_action: Uint8Array; record: HcRecord }[]>("list_goodie_bags_for_catalog", catalogRef);
   assert.equal(listed.length, 1);
   console.log("[PASS] list_goodie_bags_for_catalog discovers the bag by catalog_ref");
 
@@ -59,7 +59,7 @@ await runScenario(async (scenario) => {
   // catalog's own stored geohash field instead, same convention as every
   // other geohash-anchor test in this suite (see e.g. scale-anchors.test.ts).
   const geohash = decodeEntry<{ geohash: string }>(catalogRecord).geohash;
-  const nearby = await catalogOf(customerA)<HcRecord[]>("get_nearby_goodie_bags", { geohash, after: null });
+  const nearby = await catalogOf(customerA)<{ original_action: Uint8Array; record: HcRecord }[]>("get_nearby_goodie_bags", { geohash, after: null });
   assert.equal(nearby.length, 1, "get_nearby_goodie_bags should join through GeohashToCatalog and find this bag");
   console.log("[PASS] get_nearby_goodie_bags discovers the bag via the catalog's own geohash anchor");
 

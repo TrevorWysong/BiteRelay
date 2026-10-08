@@ -201,9 +201,9 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] a zero-quantity item requirement is rejected");
 
-  const codes = await catalogOf(merchant)<HcRecord[]>("list_promo_codes_for_catalog", catalogRef);
+  const { promo_codes: codes } = await catalogOf(merchant)<{ promo_codes: { original_action: Uint8Array; record: HcRecord }[] }>("list_promo_codes_for_catalog", { catalog_ref: catalogRef, before: null });
   assert.equal(codes.length, 5, "the merchant should see all 5 codes they successfully created, active or not");
-  const decoded = codes.map((r) => decodeEntry<{ code: string; active: boolean; requirement: unknown; reward: unknown }>(r));
+  const decoded = codes.map((v) => decodeEntry<{ code: string; active: boolean; requirement: unknown; reward: unknown }>(v.record));
   assert.equal(decoded.find((d) => d.code === "WELCOME10")?.active, true, "WELCOME10 should still be active");
   assert.equal(decoded.find((d) => d.code === "GONE")?.active, false, "GONE should reflect its deactivation");
   const bogoDecoded = decoded.find((d) => d.code === "BOGOEMPANADA");
