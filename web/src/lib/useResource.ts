@@ -1,10 +1,8 @@
-// The app's two data-sync primitives. Every screen used to hand-roll its
-// own `useEffect` for these, each with its own (often missing) answer to
-// "what if a response arrives after the thing it was for has changed?" and
-// "what if the interval/signal subscription isn't torn down?". They're
-// effects on purpose -- reading from the conductor, polling it, and
-// listening for its signals is exactly the "sync with an external system"
-// effects exist for -- but they live here, once, and nowhere else.
+// The app's two data-sync primitives, so no screen hand-rolls an effect for
+// "a response arrived for something we've moved away from" or "tear down
+// the interval and signal subscription". They're effects on purpose --
+// reading, polling and listening to the conductor is syncing with an
+// external system -- but they live here, once.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { onLocalSignal } from "../holochain/client";
 import type { LocalSignal } from "../holochain/types";

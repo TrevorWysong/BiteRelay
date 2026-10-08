@@ -30,14 +30,10 @@ import { ArbitratorDashboard } from "./routes/arbitrator/Dashboard";
 /// of a repeated login prompt. A failed/absent reconnect still falls
 /// through to the normal onboarding flow, unchanged.
 ///
-/// Retries a couple of times with a short backoff before giving up --
-/// confirmed directly (not hypothetical) that a single reconnect attempt
-/// can transiently fail under real concurrent load against the conductor
-/// (the same "database is locked" contention already named elsewhere in
-/// this project's own test harness, self-resolving within a second or
-/// two). Without a retry here, a real user would hit that exact transient
-/// blip and get bounced all the way to the full onboarding screen --
-/// reading as "I lost my account" for what's actually a passing hiccup.
+/// Retries a few times with a short backoff: under load a reconnect can
+/// fail transiently (the conductor's "database is locked" contention clears
+/// within a second or two), and giving up at once would bounce a returning
+/// user to onboarding -- which reads as a lost account.
 const RECONNECT_RETRIES = 3;
 const RECONNECT_RETRY_DELAY_MS = 1200;
 

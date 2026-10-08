@@ -1,0 +1,139 @@
+import { useState } from "react";
+import { Pencil, Plus } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { addMenuItem, updateMenuItem } from "../../../holochain/zomes/catalog";
+import { bytesToHex } from "../../../holochain/decode";
+import { groupByCategory, type ItemRow } from "../../../lib/menu";
+import { formatCents } from "../../../lib/format";
+import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
+import { Button, Card, Input, StatNumber, Textarea } from "../../../components/ui";
+import { PhotoInput } from "../../../components/PhotoInput";
+
+/// What the editor is open for: a new item, an existing one, or nothing.
+type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
+
+/// The store's menu, grouped by category, with an add/edit form. Changes go
+/// through `onChanged`, which reloads the menu (the promo form reads it too).
+export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; onChanged: () => Promise<void> }) {
+  const [editing, setEditing] = useState<Editing>(null);
+  const grouped = groupByCategory(items);
+
+  async function toggleAvailable(row: ItemRow) {
+    await updateMenuItem(row.hash, { ...row.item, available: !row.item.available });
+    await onChanged();
+  }
+
+  return (
+    <>
+      <motion.div variants={fadeSlideUp} className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Menu</p>
+        <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setEditing(editing ? null : { kind: "new" })}>
+          <Plus size={14} /> {editing ? "Cancel" : "Add item"}
+        </Button>
+      </motion.div>
+
+      <AnimatePresence initial={false}>
+        {editing && (
+          // Keyed by what's being edited, so switching items mounts a fresh
+          // form seeded from that item instead of copying it into state.
+          <motion.div key={editing.kind === "edit" ? bytesToHex(editing.row.hash) : "new"} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+            <ItemForm
+              catalogRef={catalogRef}
+              row={editing.kind === "edit" ? editing.row : null}
+              onSaved={async () => {
+                setEditing(null);
+                await onChanged();
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {items.length === 0 && !editing && (
+        <p className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">No menu items yet.</p>
+      )}
+
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible">
+        {[...grouped.entries()].map(([category, rows]) => (
+          <motion.div variants={fadeSlideUp} key={category} className="mb-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{category}</p>
+            <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
+              {rows.map((row) => (
+                <div key={bytesToHex(row.hash)} className="flex items-center gap-3 p-4">
+                  {row.item.photo_data_uri && <img src={row.item.photo_data_uri} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.item.name}</p>
+                    {row.item.description && <p className="truncate text-xs text-ink-400">{row.item.description}</p>}
+                    <StatNumber className="text-sm">{formatCents(row.item.price_cents)}</StatNumber>
+                  </div>
+                  <motion.button
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => toggleAvailable(row)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${row.item.available ? "bg-presence-500/15 text-presence-600" : "bg-ink-100 text-ink-400"}`}
+                  >
+                    {row.item.available ? "Available" : "Sold out"}
+                  </motion.button>
+                  <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={`Edit ${row.item.name}`}>
+                    <Pencil size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        ))}
+      </motion.div>
+    </>
+  );
+}
+
+/// Add (`row` null) or edit an item. The draft is seeded once, on mount.
+function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; onSaved: () => Promise<void> }) {
+  const [form, setForm] = useState(() => ({
+    name: row?.item.name ?? "",
+    price: row ? row.item.price_cents / 100 : 10,
+    description: row?.item.description ?? "",
+    photo_data_uri: row?.item.photo_data_uri ?? "",
+    category: row?.item.category ?? "",
+    dietary_tags: (row?.item.dietary_tags ?? []).join(", "),
+  }));
+  const [saving, setSaving] = useState(false);
+  const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+
+  async function save() {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      const fields = {
+        name: form.name.trim(),
+        price_cents: Math.round(form.price * 100),
+        description: form.description,
+        photo_data_uri: form.photo_data_uri,
+        category: form.category,
+        dietary_tags: form.dietary_tags.split(",").map((t) => t.trim()).filter(Boolean),
+      };
+      if (row) await updateMenuItem(row.hash, { ...row.item, ...fields });
+      else await addMenuItem({ catalog_ref: catalogRef, available: true, ...fields });
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mb-4 flex flex-col gap-2 p-4">
+      <div className="flex gap-3">
+        <PhotoInput value={form.photo_data_uri} onChange={(v) => set({ photo_data_uri: v })} shape="circle" className="shrink-0" />
+        <div className="flex flex-1 flex-col gap-2">
+          <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Item name" />
+          <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} placeholder="0.00" prefix="$" />
+        </div>
+      </div>
+      <Textarea value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
+      <Input value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
+      <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder="Dietary tags, comma separated (Vegetarian, Spicy)" />
+      <Button loading={saving} disabled={!form.name.trim()} onClick={save} className="py-2 text-xs">
+        {row ? "Save changes" : "Add to menu"}
+      </Button>
+    </Card>
+  );
+}

@@ -1,12 +1,12 @@
-import { useCallback, useRef, useState } from "react";
-import { usePolling } from "../../lib/useResource";
+import { useState } from "react";
+import { useResource } from "../../lib/useResource";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
 import { getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
-import { listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
+import { fetchOrderItemNames } from "../../lib/menu";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
-import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
+import { decodeEntry, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
 import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
@@ -14,7 +14,7 @@ import { StarRatingInput } from "../../components/StarRating";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { BagClaim, MenuItem, PickupOrder, GoodieBag, Review } from "../../holochain/types";
+import type { PickupOrder, Review } from "../../holochain/types";
 
 const POLL_MS = 6000;
 
@@ -25,69 +25,29 @@ const POLL_MS = 6000;
 /// wholly separate entry type and screen rather than a conditional branch
 /// inside `OrderDetail`.
 export function PickupOrderDetail() {
-  const { hash } = useParams<{ hash: string }>();
-  const orderRef = hash ? hexToBytes(hash) : null;
-  const [order, setOrder] = useState<PickupOrder | null>(null);
+  const { hash = "" } = useParams<{ hash: string }>();
+  const orderRef = hexToBytes(hash);
   const [disputing, setDisputing] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [merchantRating, setMerchantRating] = useState(0);
   const [merchantComment, setMerchantComment] = useState("");
-  // Read back from the conductor so a reload doesn't re-offer the form --
-  // see OrderDetail.tsx's identical state. `null` until loaded.
-  const [storeRated, setStoreRated] = useState<boolean | null>(null);
   const [itemsRated, setItemsRated] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
-  const [itemNames, setItemNames] = useState<Record<string, string>>({});
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
-  // See OrderDetail.tsx's own identical comment -- `refresh` only closes
-  // over `hash`, so reading `itemNames` directly as the "already loaded?"
-  // guard would always see its initial `{}`, turning this into an
-  // unconditional refetch on every poll instead of once. A ref's
-  // `.current` always reads the latest write regardless of when this
-  // closure was created.
-  const loadedRef = useRef({ itemNames: false, rated: false });
 
-  const refresh = useCallback(async () => {
-    if (!orderRef) return;
-    const record = await getPickupOrder(orderRef);
-    const decoded = decodeEntry<PickupOrder>(record);
-    setOrder(decoded);
-    if (!loadedRef.current.rated && decoded.status === "PickedUp") {
-      loadedRef.current.rated = true;
-      getMyReviewsForOrder(orderRef)
-        .then((records) => setStoreRated(records.some((r) => "Store" in decodeEntry<Review>(r).target)))
-        .catch(() => {
-          loadedRef.current.rated = false;
-        });
-    }
-    if (!loadedRef.current.itemNames) {
-      loadedRef.current.itemNames = true;
-      listMenuItems(decoded.catalog_ref)
-        .then((page) => {
-          const names: Record<string, string> = {};
-          for (const r of page.items) names[bytesToHex(actionHash(r))] = decodeEntry<MenuItem>(r).name;
-          setItemNames(names);
-        })
-        .catch(() => {
-          loadedRef.current.itemNames = false;
-        });
-      // See OrderDetail.tsx's own identical comment -- a goodie-bag
-      // order's item_refs is `[bag_ref]`, not a real MenuItem.
-      if (decoded.bag_claim_ref && decoded.item_refs[0]) {
-        const key = bytesToHex(decoded.item_refs[0]);
-        getBagClaim(decoded.bag_claim_ref)
-          .then((claimRecord) => getGoodieBag(decodeEntry<BagClaim>(claimRecord).bag_ref))
-          .then((bagRecord) => setItemNames((prev) => ({ ...prev, [key]: `🎁 ${decodeEntry<GoodieBag>(bagRecord).title}` })))
-          .catch(() => {});
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash]);
+  const { data: order, reload: reloadOrder } = useResource(`pickup-order:${hash}`, async () => decodeEntry<PickupOrder>(await getPickupOrder(orderRef)), {
+    pollMs: POLL_MS,
+    refreshOn: (signal) => "PickupReady" in signal,
+  });
+  const { data: itemNames = {} } = useResource(order ? `pickup-order-items:${hash}` : null, () => fetchOrderItemNames(order!));
+  // Read back from the conductor so a reload doesn't re-offer the form (see
+  // OrderDetail). `undefined` until loaded.
+  const { data: storeRated, mutate: mutateStoreRated } = useResource(order?.status === "PickedUp" ? `pickup-order-rated:${hash}` : null, async () =>
+    (await getMyReviewsForOrder(orderRef)).some((r) => "Store" in decodeEntry<Review>(r).target),
+  );
 
-  usePolling(refresh, { pollMs: POLL_MS, refreshOn: (signal) => "PickupReady" in signal });
-
-  if (!order || !orderRef) {
+  if (!order) {
     return (
       <div className="flex flex-col gap-3 px-4 pt-4">
         <Skeleton className="h-7 w-2/5" />
@@ -104,8 +64,8 @@ export function PickupOrderDetail() {
     setDisputing(true);
     setError(null);
     try {
-      await raisePickupDispute({ order_original_action: orderRef!, reason: "NeverDelivered", description: "Order was never ready/handed over.", evidence_refs: [] });
-      await refresh();
+      await raisePickupDispute({ order_original_action: orderRef, reason: "NeverDelivered", description: "Order was never ready/handed over.", evidence_refs: [] });
+      await reloadOrder();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -117,8 +77,8 @@ export function PickupOrderDetail() {
     setCompleting(true);
     setError(null);
     try {
-      await completePickup(orderRef!);
-      await refresh();
+      await completePickup(orderRef);
+      await reloadOrder();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -127,13 +87,13 @@ export function PickupOrderDetail() {
   }
 
   async function submitReviews() {
-    if (!orderRef || !order) return;
+    if (!order) return;
     setSubmittingReview(true);
     setError(null);
     try {
       if (merchantRating > 0 && canRateStore) {
         await submitReview({ target: { Store: order.catalog_ref }, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
-        setStoreRated(true);
+        mutateStoreRated(() => true);
       }
       if (canRateItems) {
         for (const [itemHex, rating] of Object.entries(itemRatings)) {

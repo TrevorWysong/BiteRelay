@@ -64,39 +64,67 @@ export async function getOrder(orderOriginalAction: ActionHash): Promise<HcRecor
   return callZome("dispatch", "get_order", orderOriginalAction);
 }
 
-/// The requester's own `RequesterToOrder` links -- a real DHT read, not a
-/// client-side memory of what this browser tab happens to have placed.
-export async function getOrdersForRequester(requester: AgentPubKey): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_orders_for_requester", requester);
-}
-
-// --- store queues (see dispatch_integrity::store_queue) ---
+// --- order queues (see dispatch_integrity::order_queues) ---
+//
+// Active queues are bounded by current workload, so they're the ones to
+// poll; history is paginated and read on demand.
 
 /// One queue entry, either kind of order. `original_action` is the order's
 /// stable identity (pass it to every order call); `record` is its latest
 /// state, whose own action hash changes on every status update.
-export interface StoreOrder {
+export interface OrderEntry {
   kind: "Delivery" | "Pickup";
   original_action: ActionHash;
   record: HcRecord;
 }
 
-/// Every order the store is still working on, oldest first. Bounded by the
-/// store's current workload, so it's the one to poll.
-export async function getActiveOrdersForStore(catalogRef: ActionHash): Promise<StoreOrder[]> {
-  return callZome("dispatch", "get_active_orders_for_store", catalogRef);
-}
-
 export interface OrderHistoryPage {
-  orders: StoreOrder[];
+  orders: OrderEntry[];
   next_before: Timestamp | null;
 }
 
-/// Every order the store has received, newest first, a page at a time --
-/// pass the previous page's `next_before` to continue. Read on demand,
-/// never polled.
+/// Every order the store is still working on, oldest first.
+export async function getActiveOrdersForStore(catalogRef: ActionHash): Promise<OrderEntry[]> {
+  return callZome("dispatch", "get_active_orders_for_store", catalogRef);
+}
+
+/// Every order the store has received, newest first -- pass the previous
+/// page's `next_before` to continue.
 export async function getOrderHistoryForStore(catalogRef: ActionHash, before: Timestamp | null = null, limit: number | null = null): Promise<OrderHistoryPage> {
   return callZome("dispatch", "get_order_history_for_store", { catalog_ref: catalogRef, before, limit });
+}
+
+/// The caller's own orders still in progress, oldest first.
+export async function getMyActiveOrders(): Promise<OrderEntry[]> {
+  return callZome("dispatch", "get_my_active_orders", null);
+}
+
+/// The caller's own orders, newest first, a page at a time.
+export async function getMyOrderHistory(before: Timestamp | null = null, limit: number | null = null): Promise<OrderHistoryPage> {
+  return callZome("dispatch", "get_my_order_history", { before, limit });
+}
+
+/// How many of the caller's orders at this store they've completed --
+/// what loyalty promos count. A local read of their own chain.
+export async function countMyCompletedOrders(catalogRef: ActionHash): Promise<number> {
+  return callZome("dispatch", "count_my_completed_orders", catalogRef);
+}
+
+/// The order the caller already placed redeeming this goodie-bag claim, if
+/// any. A local read of their own chain.
+export async function getMyOrderForClaim(claimRef: ActionHash): Promise<ActionHash | null> {
+  return callZome("dispatch", "get_my_order_for_claim", claimRef);
+}
+
+/// An in-progress delivery and the accepted bid it's being delivered under.
+export interface ActiveDelivery {
+  order: OrderEntry;
+  bid: HcRecord;
+}
+
+/// The caller's in-progress deliveries as a driver, oldest first.
+export async function getMyActiveDeliveries(): Promise<ActiveDelivery[]> {
+  return callZome("dispatch", "get_my_active_deliveries", null);
 }
 
 // --- bids ---
@@ -133,14 +161,6 @@ export interface BidsPage {
 
 export async function listBidsForOrder(orderRef: ActionHash, after: Timestamp | null = null): Promise<BidsPage> {
   return callZome("dispatch", "list_bids_for_order", { order_ref: orderRef, after });
-}
-
-/// A driver's own authored Bid entries, queried straight off their own
-/// source chain -- no link/gossip needed, since they wrote every one of
-/// these themselves. The only way a driver's dashboard can answer "which
-/// orders am I bidding on/delivering" without client-side memory.
-export async function listMyBids(): Promise<HcRecord[]> {
-  return callZome("dispatch", "list_my_bids", null);
 }
 
 // --- disputes (raised/applied through dispatch, resolved through the
@@ -219,7 +239,14 @@ export async function advanceRecurringTemplate(originalAction: ActionHash, nextR
   return callZome("dispatch", "advance_recurring_template", { original_action: originalAction, next_run_at: nextRunAt });
 }
 
-export async function listMyRecurringTemplates(): Promise<HcRecord[]> {
+/// `original_action` is the template's identity (what the other recurring
+/// calls take); `record` is its latest state.
+export interface RecurringTemplateView {
+  original_action: ActionHash;
+  record: HcRecord;
+}
+
+export async function listMyRecurringTemplates(): Promise<RecurringTemplateView[]> {
   return callZome("dispatch", "list_my_recurring_templates", null);
 }
 
@@ -245,10 +272,6 @@ export async function requestPickupOrder(input: {
 
 export async function getPickupOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "get_pickup_order", orderOriginalAction);
-}
-
-export async function getMyPickupOrders(requester: AgentPubKey): Promise<HcRecord[]> {
-  return callZome("dispatch", "get_my_pickup_orders", requester);
 }
 
 export async function confirmPickupPrep(orderOriginalAction: ActionHash): Promise<HcRecord> {

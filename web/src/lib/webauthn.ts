@@ -21,15 +21,10 @@ export function isWebAuthnAvailable(): boolean {
   return typeof window !== "undefined" && !!window.PublicKeyCredential && !!navigator.credentials;
 }
 
-/// The `timeout` field inside `publicKey` options is only ever a *hint* --
-/// the spec explicitly does not require a user agent to honor it, and in
-/// practice some do not (confirmed directly: a real `navigator.credentials
-/// .create()` call in a browser with no platform authenticator backend
-/// available never rejected on its own, even well past its own stated
-/// 60s timeout -- it just hung). `AbortController`'s `signal`, by
-/// contrast, *is* spec-required to actually abort the ceremony, so it's
-/// the only reliable way to guarantee this resolves in bounded time
-/// regardless of what the browser/OS does on its end.
+/// The `publicKey.timeout` option is only a hint user agents may ignore
+/// (with no platform authenticator, `create()` can hang indefinitely). An
+/// abort `signal` is spec-required to end the ceremony, so it's what bounds
+/// the wait (with `withTimeout` as a backstop for browsers that ignore it).
 const CEREMONY_TIMEOUT_MS = 60000;
 function ceremonySignal(ms: number = CEREMONY_TIMEOUT_MS): AbortSignal {
   return AbortSignal.timeout(ms);

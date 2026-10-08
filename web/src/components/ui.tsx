@@ -78,6 +78,25 @@ export function Chip({ active, onClick, children, tone = "default" }: { active: 
 /// The one place "this is live, p2p, right now" gets a visual signature --
 /// see index.css's doc comment on why presence-green is reserved rather
 /// than used as a generic accent.
+/// A pill-shaped tab switcher -- "Active / Past" style.
+export function SegmentedTabs<T extends string>({ tabs, value, onChange }: { tabs: readonly { value: T; label: string }[]; value: T; onChange: (value: T) => void }) {
+  return (
+    <div role="tablist" className="flex rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
+      {tabs.map((tab) => (
+        <button
+          key={tab.value}
+          role="tab"
+          aria-selected={value === tab.value}
+          onClick={() => onChange(tab.value)}
+          className={clsx("rounded-full px-3 py-1 transition", value === tab.value ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400")}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function PresenceDot({ live = true }: { live?: boolean }) {
   return (
     <span className="relative inline-flex h-2.5 w-2.5">

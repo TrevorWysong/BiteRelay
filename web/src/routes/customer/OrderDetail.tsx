@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
-import { getCatalog, listMenuItems, getBagClaim, getGoodieBag } from "../../holochain/zomes/catalog";
+import { getCatalog } from "../../holochain/zomes/catalog";
+import { fetchOrderItemNames } from "../../lib/menu";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
 import { averageRating, getMyReviewsForOrder, getRatingSummary, getReputationSummary, submitItemReview, submitReview } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
@@ -17,8 +18,8 @@ import { LiveMap } from "../../components/LiveMap";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import { usePolling } from "../../lib/useResource";
-import type { BagClaim, Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, MenuItem, MerchantCatalog, Profile, Review, GoodieBag, WarrantSummary } from "../../holochain/types";
+import { useResource } from "../../lib/useResource";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -29,11 +30,6 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], stri
   HandToMe: "Hand to me",
   MeetOutside: "Meet outside",
 };
-
-interface BidRow {
-  hash: Uint8Array;
-  bid: Bid;
-}
 
 interface DriverStats {
   completedCount: number;
@@ -63,14 +59,19 @@ async function fetchDriverStats(agent: Uint8Array): Promise<DriverStats> {
   return { completedCount: summary.completed_count, avgRating: averageRating(rating) ?? 0, reviewCount: rating.count, displayName: displayName || null };
 }
 
+/// A bid's bidder, with their warrant count and driver track record.
+interface BidRow {
+  hash: Uint8Array;
+  bid: Bid;
+  warrants: WarrantSummary | null;
+  stats: DriverStats | null;
+}
+
+const BID_SIGNALS = (signal: LocalSignal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal;
+
 export function OrderDetail() {
-  const { hash } = useParams<{ hash: string }>();
-  const orderRef = hash ? hexToBytes(hash) : null;
-  const [order, setOrder] = useState<DeliveryOrder | null>(null);
-  const [bids, setBids] = useState<BidRow[] | null>(null);
-  const [driver, setDriver] = useState<Uint8Array | null>(null);
-  const [warrants, setWarrants] = useState<Record<string, WarrantSummary>>({});
-  const [driverStats, setDriverStats] = useState<Record<string, DriverStats>>({});
+  const { hash = "" } = useParams<{ hash: string }>();
+  const orderRef = hexToBytes(hash);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [disputing, setDisputing] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -79,146 +80,81 @@ export function OrderDetail() {
   const [merchantComment, setMerchantComment] = useState("");
   const [driverRating, setDriverRating] = useState(0);
   const [driverComment, setDriverComment] = useState("");
-  // What this customer has already rated on this order, read back from
-  // the conductor (`get_my_reviews_for_order`) rather than kept only in
-  // memory -- otherwise a reload brings the rating form straight back and
-  // invites a duplicate. `null` until loaded.
-  const [rated, setRated] = useState<{ store: boolean; driver: boolean } | null>(null);
   const [itemsRated, setItemsRated] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
-  const [pickup, setPickup] = useState<GeoPoint | null>(null);
   const [driverLocation, setDriverLocation] = useState<GeoPoint | null>(null);
-  const [dropoffPhoto, setDropoffPhoto] = useState<string | null>(null);
-  const [itemNames, setItemNames] = useState<Record<string, string>>({});
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
-  // `refresh` only closes over `hash` (see its own dep array below) --
-  // reading `pickup`/`itemNames`/`dropoffPhoto`/`warrants`/`driverStats`
-  // directly as "already loaded?" guards would always see each one's
-  // *initial* value, since the closure capturing them is never recreated
-  // on a normal poll tick. That silently turned every one of these into an
-  // unconditional refetch on every single poll, forever, instead of the
-  // intended "fetch once" -- refs aren't captured by value the way a
-  // closed-over state variable is, so reading `.current` here always sees
-  // the latest write regardless of when this closure was created.
-  const loadedRef = useRef({ pickup: false, itemNames: false, dropoffPhoto: false, rated: false, warrants: new Set<string>(), driverStats: new Set<string>() });
 
-  const refresh = useCallback(async () => {
-    if (!orderRef) return;
-    const record = await getOrder(orderRef);
-    const decoded = decodeEntry<DeliveryOrder>(record);
-    setOrder(decoded);
-    if (!loadedRef.current.pickup) {
-      loadedRef.current.pickup = true;
-      getCatalog(decoded.catalog_ref)
-        .then((r) => setPickup(decodeEntry<MerchantCatalog>(r).location))
-        .catch(() => {
-          loadedRef.current.pickup = false;
-        });
-    }
-    if (!loadedRef.current.itemNames) {
-      loadedRef.current.itemNames = true;
-      listMenuItems(decoded.catalog_ref)
-        .then((page) => {
-          const names: Record<string, string> = {};
-          for (const r of page.items) names[bytesToHex(actionHash(r))] = decodeEntry<MenuItem>(r).name;
-          setItemNames(names);
-        })
-        .catch(() => {
-          loadedRef.current.itemNames = false;
-        });
-      // A goodie-bag order's item_refs is `[bag_ref]`, not a real
-      // MenuItem -- the listMenuItems lookup above never finds it, so
-      // resolve its display name separately (see useClaimFinalization's
-      // own construction of this order).
-      if (decoded.bag_claim_ref && decoded.item_refs[0]) {
-        const key = bytesToHex(decoded.item_refs[0]);
-        getBagClaim(decoded.bag_claim_ref)
-          .then((claimRecord) => getGoodieBag(decodeEntry<BagClaim>(claimRecord).bag_ref))
-          .then((bagRecord) => setItemNames((prev) => ({ ...prev, [key]: `🎁 ${decodeEntry<GoodieBag>(bagRecord).title}` })))
-          .catch(() => {});
-      }
-    }
-    if (!loadedRef.current.dropoffPhoto && (decoded.status === "PickedUp" || decoded.status === "Delivered")) {
-      loadedRef.current.dropoffPhoto = true;
-      getLegsForOrder(orderRef)
-        .then((records) => {
-          const handoff = records.map((r) => decodeEntry<Leg>(r)).find((l) => l.kind === "CustomerHandoff");
-          if (handoff?.photo_data_uri) setDropoffPhoto(handoff.photo_data_uri);
-          else loadedRef.current.dropoffPhoto = false; // not attested yet -- retry next poll
-        })
-        .catch(() => {
-          loadedRef.current.dropoffPhoto = false;
-        });
-    }
-    if (!loadedRef.current.rated && decoded.status === "Delivered") {
-      loadedRef.current.rated = true;
-      getMyReviewsForOrder(orderRef)
-        .then((records) => {
-          const targets = records.map((r) => decodeEntry<Review>(r).target);
-          setRated({ store: targets.some((t) => "Store" in t), driver: targets.some((t) => "Driver" in t) });
-        })
-        .catch(() => {
-          loadedRef.current.rated = false;
-        });
-    }
-    if (decoded.status === "Open") {
+  // Each read below is keyed by exactly what it depends on, so it's fetched
+  // once per value and re-read only when that changes (or while polled).
+  const { data: order, reload: reloadOrder } = useResource(`order:${hash}`, async () => decodeEntry<DeliveryOrder>(await getOrder(orderRef)), {
+    pollMs: POLL_MS,
+    refreshOn: BID_SIGNALS,
+  });
+  const storeHex = order ? bytesToHex(order.catalog_ref) : null;
+  const { data: pickup = null } = useResource(storeHex && `order-pickup:${storeHex}`, async () => decodeEntry<MerchantCatalog>(await getCatalog(order!.catalog_ref)).location);
+  const { data: itemNames = {} } = useResource(order ? `order-items:${hash}` : null, () => fetchOrderItemNames(order!));
+  // The drop-off photo can only appear once the order's picked up; polled
+  // until the handoff leg is attested, then read once more on delivery.
+  const photoStatus = order && (order.status === "PickedUp" || order.status === "Delivered") ? order.status : null;
+  const { data: dropoffPhoto = null } = useResource(
+    photoStatus && `order-photo:${hash}:${photoStatus}`,
+    async () => {
+      const legs = (await getLegsForOrder(orderRef)).map((r) => decodeEntry<Leg>(r));
+      return legs.find((leg) => leg.kind === "CustomerHandoff")?.photo_data_uri || null;
+    },
+    { pollMs: photoStatus === "PickedUp" ? POLL_MS : undefined },
+  );
+  // What this customer already rated on this order, read back from the
+  // conductor rather than kept in memory -- otherwise a reload would offer
+  // the rating form again and invite a duplicate.
+  const { data: rated, mutate: mutateRated } = useResource(order?.status === "Delivered" ? `order-rated:${hash}` : null, async () => {
+    const targets = (await getMyReviewsForOrder(orderRef)).map((r) => decodeEntry<Review>(r).target);
+    return { store: targets.some((t) => "Store" in t), driver: targets.some((t) => "Driver" in t) };
+  });
+  // Bids, while the order is open -- each with its bidder's track record,
+  // so accepting one is an informed choice, not just price and ETA.
+  const { data: bids = null } = useResource(
+    order?.status === "Open" ? `order-bids:${hash}` : null,
+    async (): Promise<BidRow[]> => {
       const page = await listBidsForOrder(orderRef);
-      const rows = page.bids.map((r) => ({ hash: actionHash(r), bid: decodeEntry<Bid>(r) }));
-      setBids(rows);
-      for (const row of rows) {
-        const key = bytesToHex(row.bid.bidder);
-        if (!loadedRef.current.warrants.has(key)) {
-          loadedRef.current.warrants.add(key);
-          checkWarrants(row.bid.bidder)
-            .then((w) => setWarrants((prev) => ({ ...prev, [key]: w })))
-            .catch(() => {
-              loadedRef.current.warrants.delete(key);
-            });
-        }
-        if (!loadedRef.current.driverStats.has(key)) {
-          loadedRef.current.driverStats.add(key);
-          fetchDriverStats(row.bid.bidder)
-            .then((stats) => setDriverStats((prev) => ({ ...prev, [key]: stats })))
-            .catch(() => {
-              loadedRef.current.driverStats.delete(key);
-            });
-        }
-      }
-    } else if (decoded.accepted_bid) {
-      // list_bids_for_order works regardless of the order's current status
-      // (it's just a link query on the order) -- reused here to resolve
-      // which bid won, since there's no direct "get bid by ref" extern.
-      const page = await listBidsForOrder(orderRef);
-      const won = page.bids.map((r) => decodeEntry<Bid>(r)).find((_b, i) => bytesEqual(actionHash(page.bids[i]), decoded.accepted_bid!));
-      if (won) setDriver(won.bidder);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash]);
+      return Promise.all(
+        page.bids.map(async (record) => {
+          const bid = decodeEntry<Bid>(record);
+          const [warrants, stats] = await Promise.all([checkWarrants(bid.bidder).catch(() => null), fetchDriverStats(bid.bidder).catch(() => null)]);
+          return { hash: actionHash(record), bid, warrants, stats };
+        }),
+      );
+    },
+    { pollMs: POLL_MS, refreshOn: BID_SIGNALS },
+  );
+  // The accepted bid's driver -- found among the order's bids, since bids
+  // are only ever read through their order.
+  const acceptedHex = order?.accepted_bid ? bytesToHex(order.accepted_bid) : null;
+  const { data: driver = null } = useResource(acceptedHex && `order-driver:${acceptedHex}`, async () => {
+    const page = await listBidsForOrder(orderRef);
+    const won = page.bids.find((record) => bytesToHex(actionHash(record)) === acceptedHex);
+    return won ? decodeEntry<Bid>(won).bidder : null;
+  });
 
   async function submitReviews() {
-    if (!orderRef || !order || !rated) return;
+    if (!order || !rated) return;
     setSubmittingReview(true);
     setError(null);
-    // Each successful piece is recorded immediately, so a failure partway
-    // through never re-offers (and so never double-submits) what already
-    // landed.
-    let next = { ...rated };
+    // Each piece that lands is recorded straight away, so a failure partway
+    // through never re-offers (and so never double-submits) what landed.
     try {
       if (merchantRating > 0 && canRateStore) {
         await submitReview({ target: { Store: order.catalog_ref }, order_original_action: orderRef, rating: merchantRating, comment: merchantComment });
-        next = { ...next, store: true };
-        setRated(next);
+        mutateRated((prev) => ({ driver: prev?.driver ?? false, store: true }));
       }
-      if (driverRating > 0 && driver && !next.driver) {
+      if (driverRating > 0 && driver && canRateDriver) {
         await submitReview({ target: { Driver: driver }, order_original_action: orderRef, rating: driverRating, comment: driverComment });
-        next = { ...next, driver: true };
-        setRated(next);
+        mutateRated((prev) => ({ store: prev?.store ?? false, driver: true }));
       }
-      if (!itemsRated) {
+      if (canRateItems) {
         for (const [itemHex, rating] of Object.entries(itemRatings)) {
-          if (rating > 0) {
-            await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
-          }
+          if (rating > 0) await submitItemReview({ item_ref: hexToBytes(itemHex), order_original_action: orderRef, rating, comment: "" });
         }
         if (Object.values(itemRatings).some((r) => r > 0)) setItemsRated(true);
       }
@@ -228,8 +164,6 @@ export function OrderDetail() {
       setSubmittingReview(false);
     }
   }
-
-  usePolling(refresh, { pollMs: POLL_MS, refreshOn: (signal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal }, true, hash);
 
   // The driver's live position is pushed (signal-only, never stored), not
   // read -- a genuine subscription, so it stays an effect.
@@ -243,7 +177,7 @@ export function OrderDetail() {
     });
   }, [hash]);
 
-  if (!order || !orderRef) {
+  if (!order) {
     return (
       <div className="flex flex-col gap-3 px-4 pt-4">
         <Skeleton className="h-7 w-2/5" />
@@ -263,8 +197,8 @@ export function OrderDetail() {
     setAccepting(bytesToHex(bidHash));
     setError(null);
     try {
-      await acceptBid(orderRef!, bidHash);
-      await refresh();
+      await acceptBid(orderRef, bidHash);
+      await reloadOrder();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -277,11 +211,11 @@ export function OrderDetail() {
     setError(null);
     try {
       if (order!.status === "Cancelled") {
-        await raiseCancellationDispute({ order_original_action: orderRef!, description: "Requester believes this cancellation was unjust.", evidence_refs: [] });
+        await raiseCancellationDispute({ order_original_action: orderRef, description: "Requester believes this cancellation was unjust.", evidence_refs: [] });
       } else {
-        await raiseDispute({ order_original_action: orderRef!, reason: "NeverDelivered", description: "Order never arrived.", evidence_refs: [] });
+        await raiseDispute({ order_original_action: orderRef, reason: "NeverDelivered", description: "Order never arrived.", evidence_refs: [] });
       }
-      await refresh();
+      await reloadOrder();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -302,8 +236,8 @@ export function OrderDetail() {
     const RETRY_DELAYS_MS = [1500, 3000, 6000, 10000, 15000];
     for (let attempt = 0; ; attempt++) {
       try {
-        await completeDelivery(orderRef!);
-        await refresh();
+        await completeDelivery(orderRef);
+        await reloadOrder();
         break;
       } catch (err) {
         const message = describeError(err);
@@ -381,9 +315,7 @@ export function OrderDetail() {
           {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid. This updates live.</p>}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
-              {bids?.map(({ hash: bidHash, bid }) => {
-                const w = warrants[bytesToHex(bid.bidder)];
-                const stats = driverStats[bytesToHex(bid.bidder)];
+              {bids?.map(({ hash: bidHash, bid, warrants: w, stats }) => {
                 return (
                   <motion.div key={bytesToHex(bidHash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
                     <Card className="flex items-center justify-between p-3.5">

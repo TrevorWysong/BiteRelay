@@ -59,6 +59,8 @@ export async function getItemRatingSummary(itemRef: ActionHash): Promise<ItemRat
   return callZome("reputation", "get_item_rating_summary", itemRef);
 }
 
-export async function getItemReviews(itemRef: ActionHash): Promise<HcRecord[]> {
-  return callZome("reputation", "get_item_reviews", itemRef);
+/// A menu item's reviews, newest first -- pass the previous page's
+/// `next_before` to continue.
+export async function getItemReviews(itemRef: ActionHash, before: Timestamp | null = null): Promise<ReviewsPage> {
+  return callZome("reputation", "get_item_reviews", { item_ref: itemRef, before });
 }
