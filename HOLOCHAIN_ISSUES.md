@@ -179,6 +179,19 @@ zome-call independence) gives any reason to expect that finding stopped
 applying after the version bump; it's an execution-model property, not a
 patched code path.
 
+**Observed on 0.7.0 (2026-10):** the *other* direction propagates too. A
+same-cell nested `call()` whose own write failed validation (a reputation
+event with subject == counterparty, from a merchant ordering at their own
+store) failed the *outer* call's commit, with the nested write's validation
+error -- even though the outer function discarded the nested result with
+`let _ = call(...)`. So `let _` does not make a nested side effect
+best-effort: anything a nested call would write must be pre-checked the same
+way as the outer function's own writes (here: `record_reputation_event` now
+skips subject == caller before calling). Not re-verified on 0.7.0: whether a
+nested write that *passes* validation still lands when the outer commit is
+rejected (the 0.6.3 behavior described below) -- keep treating it as if it
+does, since the pre-check-everything fix covers both cases.
+
 **Description:** Calling `update_entry`/`create_entry` inside a coordinator
 extern does not synchronously validate. It stages the write; self-validation
 only runs when the *whole* extern function returns and the conductor commits
