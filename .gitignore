@@ -9,3 +9,11 @@ node_modules
 
 # Persistent local dev conductor data, logs and pid (web/scripts/dev-conductor.mjs)
 .dev/
+
+# Tryorama runner logs
+tests/tryorama/.logs/
+
+# Playwright output
+web/test-results/
+web/playwright-report/
+web/dev-conductor.log
