@@ -343,6 +343,7 @@ function StorePage({ hash }: { hash: string }) {
                   <motion.button
                     whileTap={{ scale: 0.85 }}
                     disabled={!item.available || !catalog.is_open}
+                    aria-label={`Add ${item.name}`}
                     onClick={() => cart.addItem(catalogHash, catalog.owner, catalog.business_name, itemHash, item.name, item.price_cents)}
                     className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"
                   >

@@ -105,6 +105,30 @@ export interface Bid {
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";
 
 /**
+ * Why an order was cancelled. Validation checks each reason against its
+ * author, so the customer's view of what happened can be trusted.
+ */
+export type Cancellation =
+  /**
+   * The customer withdrew it.
+   */
+  | "ByCustomer"
+  /**
+   * The store declined it, or called it off after accepting.
+   */
+  | { ByStore: DeclineReason }
+  /**
+   * The store didn't accept it within the DNA's response window
+   * (`relay_governance::store_response_window`). Written by the
+   * customer's conductor, and only once the window has passed.
+   */
+  | "StoreDidNotRespond"
+  /**
+   * An arbitrator ruled for the customer.
+   */
+  | "ByArbitrator";
+
+/**
  * Local UI-facing signal, emitted from `recv_remote_signal` once a remote
  * signal has been handled.
  */
@@ -113,6 +137,19 @@ export type CatalogLocalSignal =
    * See `bags::confirm_claim` -- merchant -> customer only.
    */
   | { ClaimConfirmed: ActionHash };
+
+/**
+ * What a store tells the customer when it turns an order down.
+ */
+export type DeclineReason =
+  /**
+   * Priced from an outdated menu -- see `dispatch::accept_delivery_order`.
+   */
+  | "OutdatedPrices"
+  | "ItemsUnavailable"
+  | "TooBusy"
+  | "Closed"
+  | "Other";
 
 /**
  * What a provider is willing to carry. Kept as an enum (not a single
@@ -237,6 +274,11 @@ export interface DeliveryOrder {
    * validation counts. Empty otherwise.
    */
   loyalty_proof: ActionHash[];
+  /**
+   * Why the order was cancelled -- set by the update that cancels it,
+   * and checked against who wrote it. `None` until then.
+   */
+  cancellation: Cancellation | null;
 }
 
 export type DeliveryStatus =
@@ -546,6 +588,12 @@ export interface MerchantCatalog {
    */
   delivery_subsidy_percent: number;
   /**
+   * Whether the store's conductor accepts new orders as they arrive
+   * (still declining any priced from an outdated menu), rather than
+   * waiting for someone to tap Accept.
+   */
+  auto_accept_orders: boolean;
+  /**
    * How far from `location` this merchant is willing to deliver, in
    * kilometers -- a per-merchant business rule, not a single app-wide
    * constant: a dense-downtown restaurant and a rural one have
@@ -690,6 +738,11 @@ export interface PickupOrder {
    * validation counts. Empty otherwise.
    */
   loyalty_proof: ActionHash[];
+  /**
+   * Why the order was cancelled -- set by the update that cancels it,
+   * and checked against who wrote it. `None` until then.
+   */
+  cancellation: Cancellation | null;
 }
 
 /**

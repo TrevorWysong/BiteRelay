@@ -37,9 +37,22 @@ pub struct RelayDnaProperties {
     /// set it low to exercise checkpoints.
     #[serde(default)]
     pub ledger_settle_secs: Option<u64>,
+    /// How long a store has to accept a new order -- see
+    /// `store_response_window`. Defaults to five minutes; tests set it low.
+    #[serde(default)]
+    pub store_response_secs: Option<u64>,
 }
 
 const DEFAULT_LEDGER_SETTLE_SECS: u64 = 3600;
+const DEFAULT_STORE_RESPONSE_SECS: u64 = 300;
+
+/// How long a store has to accept an order once it's placed with it. After
+/// that the store can't, and the customer's conductor cancels it -- so a
+/// customer never waits on a store that's offline.
+pub fn store_response_window() -> core::time::Duration {
+    let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.store_response_secs).unwrap_or(DEFAULT_STORE_RESPONSE_SECS);
+    core::time::Duration::from_secs(secs)
+}
 
 /// How long to wait before a balance checkpoint may cover a transaction:
 /// long enough for gossip to deliver anything paid to an agent up to then,

@@ -39,7 +39,9 @@ mod pricing;
 mod recurring;
 mod settlement;
 mod signals;
+mod stores;
 mod tracking;
+mod upkeep;
 
 pub use bids::*;
 pub use chat::*;
@@ -70,14 +72,18 @@ mod test_utils {
         DriverToActiveDelivery
     );
 
-    use dispatch_integrity::{DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder};
+    use dispatch_integrity::{Cancellation, DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder, PickupStatus};
 
     /// Writes a `PickupOrder` exactly as given, skipping the coordinator's
     /// pricing -- what a modified client could do -- so a test can prove
-    /// validation refuses a mispriced order on its own.
+    /// validation refuses a mispriced order on its own. Queued and signalled
+    /// like a real order, as such a client would, so the store sees it.
     #[hdk_extern]
     pub fn create_raw_pickup_order_for_testing(order: PickupOrder) -> ExternResult<Record> {
+        let (catalog_ref, requester, merchant) = (order.catalog_ref.clone(), order.requester.clone(), order.merchant.clone());
         let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
+        crate::order_queues::enqueue(&action_hash, &catalog_ref, &requester, sys_time()?)?;
+        let _ = send_remote_signal(crate::signals::RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
         get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back raw order".into())))
     }
     use relay_coordinator_support::resolve_latest_decoded;
@@ -89,6 +95,8 @@ mod test_utils {
         pub delivery_receipts: Vec<ActionHash>,
         #[serde(default)]
         pub dispute_ref: Option<ActionHash>,
+        #[serde(default)]
+        pub cancellation: Option<Cancellation>,
     }
 
     /// Updates a `DeliveryOrder` with caller-chosen `status`/`delivery_receipts`/
@@ -103,7 +111,27 @@ mod test_utils {
         order.status = input.next_status;
         order.delivery_receipts = input.delivery_receipts;
         order.dispute_ref = input.dispute_ref;
+        order.cancellation = input.cancellation;
         let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
         get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced order update".into())))
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct ForcePickupUpdateInput {
+        pub order_original_action: ActionHash,
+        pub next_status: PickupStatus,
+        #[serde(default)]
+        pub cancellation: Option<Cancellation>,
+    }
+
+    /// `force_order_update_for_testing` for a `PickupOrder`: any status and
+    /// cancellation, past every check the real externs make.
+    #[hdk_extern]
+    pub fn force_pickup_update_for_testing(input: ForcePickupUpdateInput) -> ExternResult<Record> {
+        let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action, "PickupOrder")?;
+        order.status = input.next_status;
+        order.cancellation = input.cancellation;
+        let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+        get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced pickup update".into())))
     }
 }

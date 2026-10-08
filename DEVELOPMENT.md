@@ -26,7 +26,16 @@ Validation decides who may author each status change (`transition_requirement` i
 - **The store** accepts or declines the order, confirms it's preparing it, and marks a pickup ready. A delivery reaches drivers only once the store accepts it (`Placed → Open`), so a declined order never costs a driver a trip.
 - **The driver** reports heading to the store and the pickup.
 
-Accepting is also the store's price check (`ensure_priced_from_current_menu`). Validation recomputes every total but sees records as they were, so it can't tell an item's old price from its current one. The store's conductor can: it wrote every version of its menu. It refuses a line priced from an outdated version, except an order placed in the 15 minutes before that item's price changed, which an honest customer could have raced. Since nothing completes or gets paid without the store's acceptance, an underpriced order can exist but never goes anywhere.
+A store has a **response window** to accept a new order: the DNA property `store_response_secs`, default 5 minutes. Validation refuses an acceptance after it. Every cancellation records why (`Cancellation`: by the customer, by the store with a `DeclineReason`, the store didn't respond, or an arbitrator's ruling), and validation checks the reason against its author. Only the customer can say the store didn't respond, and only once the window has passed.
+
+Some of this runs on people's own conductors through Holochain's scheduler, with no app open (`dispatch::upkeep`):
+
+- The **customer's** conductor places a scheduled order with its store when it's due, and cancels any order its store didn't answer in time.
+- A **store's** conductor, if the store has `auto_accept_orders` on, accepts new orders as they arrive and declines any priced from an outdated menu. Goodie-bag orders are always accepted, since the store already confirmed the claim.
+
+Each job runs right after the event that triggers it (placing an order, or the store's `OrderPlaced` signal), and from a once-a-minute sweep for anything a missed signal or a restart left behind.
+
+Accepting is also the store's price check (`ensure_priced_from_current_menu`). Validation recomputes every total but sees records as they were, so it can't tell an item's old price from its current one. The store's conductor can: it reads its menu's history from its own source chain, which holds every version it wrote and so can't lag behind (a DHT read can). It refuses a line priced from an outdated version, except an order placed in the 15 minutes before that item's price changed, which an honest customer could have raced. Since nothing completes or gets paid without the store's acceptance, an underpriced order can exist but never goes anywhere.
 
 ## Personal data
 

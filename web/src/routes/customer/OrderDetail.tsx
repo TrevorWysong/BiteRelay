@@ -2,19 +2,20 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
 import { averageRating, getMyReviewsForOrder, getRatingSummary, getReputationSummary, submitItemReview, submitReview } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
-import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
+import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
 import { myAgentPubKey, onLocalSignal } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
+import { WaitingForStore } from "../../components/WaitingForStore";
 import { formatCents, formatEta, shortAgentId } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
@@ -75,6 +76,7 @@ export function OrderDetail() {
   const [accepting, setAccepting] = useState<string | null>(null);
   const [disputing, setDisputing] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [merchantRating, setMerchantRating] = useState(0);
   const [merchantComment, setMerchantComment] = useState("");
@@ -87,10 +89,17 @@ export function OrderDetail() {
 
   // Each read below is keyed by exactly what it depends on, so it's fetched
   // once per value and re-read only when that changes (or while polled).
-  const { data: order, reload: reloadOrder } = useResource(`order:${hash}`, async () => decodeEntry<DeliveryOrder>(await getOrder(orderRef)), {
-    pollMs: POLL_MS,
-    refreshOn: BID_SIGNALS,
-  });
+  // `writtenAt` (when its current version was written) and `now` (when it
+  // was read) time the store's window to accept it.
+  const { data: snapshot, reload: reloadOrder } = useResource(
+    `order:${hash}`,
+    async () => {
+      const record = await getOrder(orderRef);
+      return { order: decodeEntry<DeliveryOrder>(record), writtenAt: timestampOf(record), now: Date.now() };
+    },
+    { pollMs: POLL_MS, refreshOn: BID_SIGNALS },
+  );
+  const order = snapshot?.order;
   const storeHex = order ? bytesToHex(order.catalog_ref) : null;
   const { data: pickup = null } = useResource(storeHex && `order-pickup:${storeHex}`, async () => decodeEntry<MerchantCatalog>(await getCatalog(order!.catalog_ref)).location);
   // The exact drop-off and notes are sealed; the zome opens them for us.
@@ -255,7 +264,23 @@ export function OrderDetail() {
     setCompleting(false);
   }
 
-  const canDispute = order.status === "Delivered" || order.status === "Cancelled";
+  // A cancellation is only worth disputing if a driver was involved and the
+  // customer didn't cancel it themselves.
+  const unfairCancellation = order.status === "Cancelled" && order.accepted_bid !== null && order.cancellation !== "ByCustomer" && order.cancellation !== "ByArbitrator";
+  const canDispute = order.status === "Delivered" || unfairCancellation;
+
+  async function cancel() {
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelOrder(orderRef);
+      await reloadOrder();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setCancelling(false);
+    }
+  }
   // DoorDash/Uber Eats-style: one rating per store and per driver per
   // order. A merchant who ordered from their own store isn't offered the
   // store rating at all (validate_review rejects it anyway).
@@ -276,9 +301,15 @@ export function OrderDetail() {
 
       <motion.div variants={fadeSlideUp}>
         <Card className="p-4">
-          <OrderStatusTimeline status={order.status} />
+          <OrderStatusTimeline status={order.status} cancellation={order.cancellation} />
         </Card>
       </motion.div>
+
+      {order.status === "Placed" && snapshot && (
+        <motion.div variants={fadeSlideUp}>
+          <WaitingForStore writtenAt={snapshot.writtenAt} now={snapshot.now} cancelling={cancelling} onCancel={cancel} />
+        </motion.div>
+      )}
 
       <motion.div variants={fadeSlideUp}>
         <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
@@ -403,6 +434,14 @@ export function OrderDetail() {
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Photo at drop-off</p>
             <img src={dropoffPhoto} alt="Delivery drop-off" className="w-full rounded-xl object-cover" />
           </Card>
+        </motion.div>
+      )}
+
+      {order.status === "Open" && (
+        <motion.div variants={fadeSlideUp} className="mt-6">
+          <Button variant="ghost" loading={cancelling} onClick={cancel} className="w-full">
+            Cancel order
+          </Button>
         </motion.div>
       )}
 

@@ -45,7 +45,7 @@ await runScenario(async (scenario) => {
   const live = await delivery();
   const pickupOrder = await pickup();
   assert.deepEqual(hexes(await myActive()), [cancelled, live, pickupOrder].map(hex).sort(), "every placed order starts in progress");
-  await call(customer, "dispatch")("set_order_status", { order_original_action: cancelled, next_status: "Cancelled" });
+  await call(customer, "dispatch")("cancel_order", cancelled);
   assert.deepEqual(hexes(await myActive()), [live, pickupOrder].map(hex).sort(), "a cancelled order leaves the in-progress list");
   console.log("[PASS] a customer's in-progress list holds exactly their unfinished orders, delivery and pickup");
 
@@ -91,7 +91,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] bids on a scheduled order reach the customer, and accepting one assigns the driver");
 
   // --- Finishing a delivery clears it from the driver's queue too. ---
-  await call(customer, "dispatch")("set_order_status", { order_original_action: scheduled, next_status: "Cancelled" });
+  await call(customer, "dispatch")("cancel_order", scheduled);
   await sync();
   const after = await retryUntil(
     () => call(driver, "dispatch")<unknown[]>("get_my_active_deliveries", null),

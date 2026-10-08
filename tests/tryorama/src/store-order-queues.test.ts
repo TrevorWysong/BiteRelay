@@ -53,7 +53,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] the active queue holds every in-progress order, oldest first, with stable ids");
 
   // The merchant cancels a delivery; the customer completes a pickup.
-  await call(merchant, "dispatch")("set_order_status", { order_original_action: placed[0].ref, next_status: "Cancelled" });
+  await call(merchant, "dispatch")("decline_order", { order_original_action: placed[0].ref, reason: "TooBusy" });
   await call(merchant, "dispatch")("confirm_pickup_prep", placed[1].ref);
   await call(merchant, "dispatch")("mark_ready_for_pickup", placed[1].ref);
   await sync();

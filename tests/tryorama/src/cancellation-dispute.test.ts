@@ -56,7 +56,7 @@ await runScenario(async (scenario) => {
     await dhtSync(all, customer.cells[0].cell_id[0]);
 
     await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: bidRef });
-    await dispatchOf(customer)("set_order_status", { order_original_action: orderRef, next_status: "Cancelled" });
+    await dispatchOf(customer)("cancel_order", orderRef);
     await dhtSync(all, customer.cells[0].cell_id[0]);
     return orderRef;
   }

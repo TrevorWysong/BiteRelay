@@ -137,6 +137,33 @@ impl DeliveryStatus {
     }
 }
 
+/// Why an order was cancelled. Validation checks each reason against its
+/// author, so the customer's view of what happened can be trusted.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum Cancellation {
+    /// The customer withdrew it.
+    ByCustomer,
+    /// The store declined it, or called it off after accepting.
+    ByStore(DeclineReason),
+    /// The store didn't accept it within the DNA's response window
+    /// (`relay_governance::store_response_window`). Written by the
+    /// customer's conductor, and only once the window has passed.
+    StoreDidNotRespond,
+    /// An arbitrator ruled for the customer.
+    ByArbitrator,
+}
+
+/// What a store tells the customer when it turns an order down.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum DeclineReason {
+    /// Priced from an outdated menu -- see `dispatch::accept_delivery_order`.
+    OutdatedPrices,
+    ItemsUnavailable,
+    TooBusy,
+    Closed,
+    Other,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum BidStatus {
     Open,
@@ -278,6 +305,10 @@ pub struct DeliveryOrder {
     /// validation counts. Empty otherwise.
     #[serde(default)]
     pub loyalty_proof: Vec<ActionHash>,
+    /// Why the order was cancelled -- set by the update that cancels it,
+    /// and checked against who wrote it. `None` until then.
+    #[serde(default)]
+    pub cancellation: Option<Cancellation>,
 }
 
 #[hdk_entry_helper]
@@ -410,4 +441,8 @@ pub struct PickupOrder {
     /// validation counts. Empty otherwise.
     #[serde(default)]
     pub loyalty_proof: Vec<ActionHash>,
+    /// Why the order was cancelled -- set by the update that cancels it,
+    /// and checked against who wrote it. `None` until then.
+    #[serde(default)]
+    pub cancellation: Option<Cancellation>,
 }

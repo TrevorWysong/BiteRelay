@@ -122,6 +122,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         delivery_subsidy_percent: 50,
         max_delivery_radius_km: input.max_delivery_radius_km,
         dietary_tags: Vec::new(),
+        auto_accept_orders: false,
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -149,6 +150,23 @@ pub struct SetCatalogOpenInput {
 pub fn set_catalog_open(input: SetCatalogOpenInput) -> ExternResult<Record> {
     let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.is_open = input.is_open;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetAutoAcceptOrdersInput {
+    pub original_action: ActionHash,
+    pub auto_accept_orders: bool,
+}
+
+/// Turns the store's conductor accepting new orders on its own on or off --
+/// see `MerchantCatalog::auto_accept_orders`.
+#[hdk_extern]
+pub fn set_auto_accept_orders(input: SetAutoAcceptOrdersInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.auto_accept_orders = input.auto_accept_orders;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
@@ -289,12 +307,70 @@ pub struct UpdateMenuItemInput {
 
 #[hdk_extern]
 pub fn update_menu_item(input: UpdateMenuItemInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
+    // Built on the latest version on the caller's own chain: a DHT read can
+    // lag the caller's own last edit and fork the item's history.
+    let record = match item_versions(&input.original_action, &my_menu_item_records()?).pop() {
+        Some(latest) => latest,
+        None => resolve_latest(input.original_action)?,
+    };
     let catalog_ref = input.item.catalog_ref.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MenuItem(input.item))?;
     recompute_dietary_tags(&catalog_ref)?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated menu item".into())))
+}
+
+/// One version of a menu item: the action that wrote it, and when.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ItemVersion {
+    pub action: ActionHash,
+    pub written_at: Timestamp,
+}
+
+/// A menu item's name now, and every version of it, oldest first.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ItemVersions {
+    pub item_ref: ActionHash,
+    pub name: String,
+    pub versions: Vec<ItemVersion>,
+}
+
+/// Every version of each of the caller's own menu items, from their source
+/// chain -- complete and current, unlike a DHT read, since the caller wrote
+/// each one. What a store checks an order's prices against (see
+/// `dispatch::pricing::outdated_item`). An item the caller didn't write
+/// comes back with no versions.
+#[hdk_extern]
+pub fn get_my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersions>> {
+    let records = my_menu_item_records()?;
+    Ok(item_refs
+        .into_iter()
+        .map(|item_ref| {
+            let versions = item_versions(&item_ref, &records);
+            let name = versions.last().and_then(|r| r.entry().to_app_option::<MenuItem>().ok().flatten()).map(|item| item.name).unwrap_or_default();
+            let versions = versions.iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect();
+            ItemVersions { item_ref, name, versions }
+        })
+        .collect())
+}
+
+/// Every menu item version on the caller's chain, in the order written.
+fn my_menu_item_records() -> ExternResult<Vec<Record>> {
+    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::MenuItem)?).include_entries(true))
+}
+
+/// `item_ref` and each update after it, oldest first, from `records` (the
+/// caller's chain). Each version updates the one before it; were the history
+/// ever to fork, the later branch wins.
+fn item_versions(item_ref: &ActionHash, records: &[Record]) -> Vec<Record> {
+    let Some(first) = records.iter().find(|r| r.action_address() == item_ref) else { return Vec::new() };
+    let mut versions = vec![first.clone()];
+    let mut latest = first.action_address();
+    while let Some(next) = records.iter().filter(|r| matches!(&r.action().data, ActionData::Update(update) if &update.original_action_address == latest)).last() {
+        versions.push(next.clone());
+        latest = next.action_address();
+    }
+    versions
 }
 
 #[derive(Serialize, Deserialize, Debug)]

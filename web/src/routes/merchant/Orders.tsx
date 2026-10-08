@@ -5,19 +5,22 @@ import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import {
   acceptDeliveryOrder,
-  cancelPickupOrder,
   confirmPickupPrep,
-  getActiveOrdersForStore,
+  declineOrder,
+  declinePickupOrder,
   getOrderHistoryForStore,
   getOrderPrivateDetails,
   markReadyForPickup,
   setOrderStatus,
-  type OrderEntry,
 } from "../../holochain/zomes/dispatch";
-import { itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
+import { itemCount, mergeNewestFirst } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
+import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/merchantQueue";
 import { useResource } from "../../lib/useResource";
 import { describeError } from "../../lib/errors";
+import { DECLINE_REASONS, responseDeadlineMs } from "../../lib/storeAnswers";
+import { useStoreResponseSecs } from "../../lib/useStoreResponseSecs";
+import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
@@ -33,15 +36,6 @@ const TABS = [
 
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
-
-/// An order, labelled with the store it came in at.
-type QueueRow = OrderRow & { storeHex: string };
-
-function toRow(entry: OrderEntry, storeHex: string): QueueRow {
-  return { ...toOrderRow(entry), storeHex };
-}
-
-const storesKey = (stores: StoreRow[]) => stores.map((s) => s.hex).join(",");
 
 /// A merchant's orders across every store they run, the way a DoorDash/
 /// Uber Eats store tablet splits them: the **active** queue (what the
@@ -129,15 +123,15 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   // Why an action on an order failed, by order -- e.g. an order the store
   // can't accept because it's priced from an outdated menu.
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const { data: rows, reload } = useResource(
-    `merchant-active:${storesKey(stores)}`,
-    async () => {
-      const perStore = await Promise.all(stores.map(async (store) => (await getActiveOrdersForStore(store.hash)).map((entry) => toRow(entry, store.hex))));
-      return perStore.flat().sort((a, b) => a.order.requested_at - b.order.requested_at);
-    },
-    { pollMs: POLL_MS, refreshOn: () => true },
-  );
-  async function advance(row: QueueRow, action: (ref: Uint8Array) => Promise<unknown>) {
+  const windowSecs = useStoreResponseSecs();
+  // `now` is when this snapshot was read -- what each order's window is
+  // judged against, refreshed with every poll.
+  const { data, reload } = useResource(`merchant-active:${storesKey(stores)}`, async () => ({ rows: await fetchActiveQueue(stores), now: Date.now() }), {
+    pollMs: POLL_MS,
+    refreshOn: () => true,
+  });
+  const rows = data?.rows;
+  async function advance(row: QueueRow, action: OrderAction) {
     setBusyHex(row.hex);
     setErrors((prev) => {
       const next = { ...prev };
@@ -167,7 +161,11 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
               {errors[row.hex] && (
                 <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">{errors[row.hex]}</p>
               )}
-              <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
+              {row.order.status === "Placed" && windowSecs !== undefined ? (
+                <AnswerOrder row={row} windowSecs={windowSecs} now={data!.now} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
+              ) : (
+                <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
+              )}
             </OrderCard>
           </motion.div>
         ))}
@@ -176,32 +174,64 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   );
 }
 
-/// What the merchant can do next for an in-progress order, or what they're
-/// waiting on.
-function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean; onAdvance: (action: (ref: Uint8Array) => Promise<unknown>) => void }) {
-  const button = (label: string, action: (ref: Uint8Array) => Promise<unknown>) => (
+type OrderAction = (ref: Uint8Array) => Promise<unknown>;
+
+/// A new order, waiting on the store: Accept -- the store's check that it's
+/// priced from the current menu (the zome refuses it otherwise) and, for a
+/// delivery, what puts it in front of drivers -- or Decline, with a reason
+/// the customer is told. Past the window it can't be accepted; the
+/// customer's conductor cancels it.
+function AnswerOrder({ row, windowSecs, now, busy, onAdvance }: { row: QueueRow; windowSecs: number; now: number; busy: boolean; onAdvance: (action: OrderAction) => void }) {
+  const [choosingReason, setChoosingReason] = useState(false);
+  const deadlineMs = responseDeadlineMs(row.writtenAt, windowSecs);
+  if (now >= deadlineMs) {
+    return <p className="mt-2 text-xs text-ink-400">Not accepted in time, so the customer's order is being cancelled.</p>;
+  }
+  const accept: OrderAction = row.kind === "Delivery" ? acceptDeliveryOrder : confirmPickupPrep;
+  const decline = (reason: (typeof DECLINE_REASONS)[number]["reason"]): OrderAction =>
+    row.kind === "Delivery" ? (ref) => declineOrder(ref, reason) : (ref) => declinePickupOrder(ref, reason);
+  return (
+    <>
+      <ResponseCountdown deadlineMs={deadlineMs} windowSecs={windowSecs} now={now} label="Accept by" />
+      {choosingReason ? (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs font-semibold text-ink-500">Why are you declining? The customer will see this.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {DECLINE_REASONS.map(({ reason, label }) => (
+              <Button key={reason} variant="ghost" className="px-3 py-1.5 text-xs" disabled={busy} onClick={() => onAdvance(decline(reason))}>
+                {label}
+              </Button>
+            ))}
+            <Button variant="ghost" className="px-3 py-1.5 text-xs text-ink-400" disabled={busy} onClick={() => setChoosingReason(false)}>
+              Back
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 flex gap-2">
+          <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => setChoosingReason(true)}>
+            Decline
+          </Button>
+          <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
+            Accept order
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/// What the merchant can do next for an order they've accepted, or what
+/// they're waiting on.
+function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean; onAdvance: (action: OrderAction) => void }) {
+  const button = (label: string, action: OrderAction) => (
     <Button className="mt-3 w-full py-2 text-xs" loading={busy} onClick={() => onAdvance(action)}>
       {label}
     </Button>
   );
   const note = (text: string) => <p className="mt-2 text-xs text-ink-400">{text}</p>;
-  // A new order: accepting it is the store's check that it's priced from
-  // the current menu (the zome refuses it otherwise) -- and, for a
-  // delivery, what puts it in front of drivers.
-  const acceptOrDecline = (accept: (ref: Uint8Array) => Promise<unknown>, decline: (ref: Uint8Array) => Promise<unknown>) => (
-    <div className="mt-3 flex gap-2">
-      <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => onAdvance(decline)}>
-        Decline
-      </Button>
-      <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
-        Accept order
-      </Button>
-    </div>
-  );
   if (row.kind === "Delivery") {
     switch (row.order.status) {
-      case "Placed":
-        return acceptOrDecline(acceptDeliveryOrder, (ref) => setOrderStatus(ref, "Cancelled"));
       case "BidAccepted":
         return button("Confirm prep started", (ref) => setOrderStatus(ref, "MerchantConfirmed"));
       case "Open":
@@ -218,8 +248,6 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
     }
   }
   switch (row.order.status) {
-    case "Placed":
-      return acceptOrDecline(confirmPickupPrep, cancelPickupOrder);
     case "MerchantConfirmed":
       return button("Mark ready for pickup", markReadyForPickup);
     case "ReadyForPickup":

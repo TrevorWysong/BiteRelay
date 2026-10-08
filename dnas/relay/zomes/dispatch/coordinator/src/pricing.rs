@@ -6,7 +6,7 @@
 
 use crate::order_queues::my_completions_at;
 use catalog_types::{order_total, BagClaim, GoodieBag, MenuItem, PricedLine, PromoCode};
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
+use relay_coordinator_support::original_action_of;
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
@@ -105,32 +105,66 @@ const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
 /// real item of this store, but it sees records as they were, so it can't
 /// tell an old price from the latest -- this is where an order pinned to an
 /// old price is stopped, and only the store can accept an order, so it
-/// can't be skipped. It runs on the store's own conductor, which authored
-/// every version of its menu, so its local view of when each price changed
-/// is authoritative. A goodie bag's line is the bag itself, never outdated.
+/// can't be skipped. It runs on the store's own conductor and reads its
+/// menu's history from its own source chain, which holds every version it
+/// wrote -- so, unlike a DHT read, it can't be behind. A goodie bag's line
+/// is the bag itself, never outdated.
 pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>) -> ExternResult<()> {
-    if bag_claim_ref.is_some() {
-        return Ok(());
+    match outdated_item(order_ref, lines, bag_claim_ref)? {
+        Some(name) => Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it"))),
+        None => Ok(()),
     }
+}
+
+/// The name of the first item `ensure_priced_from_current_menu` would
+/// refuse the order over, if any.
+pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>) -> ExternResult<Option<String>> {
+    if bag_claim_ref.is_some() {
+        return Ok(None);
+    }
+    let histories = my_item_versions(lines.iter().map(|line| line.item_ref.clone()).collect())?;
     // Read only if some line isn't at its current price.
     let mut placement = None;
-    for line in lines {
-        let current = resolve_latest(line.item_ref.clone())?;
-        if current.action_address() == &line.priced_version {
+    for (line, history) in lines.iter().zip(histories) {
+        let versions = &history.versions;
+        if versions.last().is_some_and(|current| current.action == line.priced_version) {
             continue;
         }
         let placed_at = match placement {
             Some(at) => at,
             None => *placement.insert(placement_time(order_ref)?),
         };
-        let raced = superseded_at(&line.priced_version)?.is_some_and(|changed| changed > placed_at);
+        // When the version the line names was replaced, if it's this item's.
+        let replaced_at = versions.iter().position(|v| v.action == line.priced_version).and_then(|i| versions.get(i + 1)).map(|next| next.written_at);
+        let raced = replaced_at.is_some_and(|changed| changed > placed_at);
         let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= PRICE_CHANGE_GRACE_SECS;
         if !(raced && recent) {
-            let name = decode_or::<MenuItem>(&current).map_or_else(|| "An item".to_string(), |item| item.name);
-            return Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it")));
+            let name = if history.name.is_empty() { "An item".to_string() } else { history.name };
+            return Ok(Some(name));
         }
     }
-    Ok(())
+    Ok(None)
+}
+
+/// Mirrors `catalog::ItemVersions`/`ItemVersion` over the zome-call boundary.
+#[derive(Deserialize, Debug)]
+struct ItemVersionsWire {
+    name: String,
+    versions: Vec<ItemVersionWire>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ItemVersionWire {
+    action: ActionHash,
+    written_at: Timestamp,
+}
+
+/// Each item's history from the caller's (the store's) own chain, in order.
+fn my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersionsWire>> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_item_versions".into(), None, item_refs)? else {
+        return Err(guest("reading your menu's history failed".into()));
+    };
+    io.decode().map_err(|e| wasm_error!(e))
 }
 
 /// When the order was placed: its creation action's own timestamp.
@@ -141,15 +175,6 @@ fn placement_time(order_ref: &ActionHash) -> ExternResult<Timestamp> {
         None => get(original, GetOptions::network())?.ok_or(guest("order not found".into()))?,
     };
     Ok(record.action().timestamp())
-}
-
-/// When a version of one of the store's own items was replaced -- the
-/// earliest update to it, from the store's local chain.
-fn superseded_at(version: &ActionHash) -> ExternResult<Option<Timestamp>> {
-    let Some(Details::Record(details)) = get_details(version.clone(), GetOptions::local())? else {
-        return Ok(None);
-    };
-    Ok(details.updates.iter().map(|update| update.action().timestamp()).min())
 }
 
 /// An entry at its current state, from the network.

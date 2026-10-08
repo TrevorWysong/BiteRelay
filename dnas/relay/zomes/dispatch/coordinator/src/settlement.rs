@@ -9,6 +9,7 @@
 
 use crate::order_queues::QueueOwnerExt;
 use dispatch_integrity::*;
+use crate::stores::my_stores;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
 
@@ -113,10 +114,7 @@ struct Sweep {
 /// Pays every store share the caller's stores still owe on orders from the
 /// last couple of days.
 fn sweep() -> ExternResult<Sweep> {
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "list_my_catalogs".into(), None, ())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("listing your stores failed".into())));
-    };
-    let stores: Vec<StoreView> = io.decode().map_err(|e| wasm_error!(e))?;
+    let stores = my_stores()?;
     if stores.is_empty() {
         return Ok(Sweep { paid: 0, pending: 0 });
     }
@@ -125,7 +123,7 @@ fn sweep() -> ExternResult<Sweep> {
     let today = history_day(sys_time()?);
     let mut result = Sweep { paid: 0, pending: 0 };
     for store in stores {
-        let owner = QueueOwner::Store(&store.original_action);
+        let owner = QueueOwner::Store(&store);
         for day in (today - SWEEP_DAYS + 1)..=today {
             for order_ref in owner.orders_on_day(day)? {
                 if paid_already.contains(&order_ref) {
@@ -183,12 +181,6 @@ pub fn settle_store_shares_periodically(_: Option<Schedule>) -> Option<Schedule>
 
 /// Seconds, minutes, hours, day, month, weekday, year.
 const SWEEP_CRON: &str = "0 */5 * * * * *";
-
-/// Just the identity of a store, from `catalog::list_my_catalogs`.
-#[derive(Deserialize, Debug)]
-struct StoreView {
-    original_action: ActionHash,
-}
 
 /// Orders the caller has already paid a store share on -- from their own
 /// chain, since they authored every such payment.

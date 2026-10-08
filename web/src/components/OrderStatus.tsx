@@ -1,7 +1,8 @@
 import { Check, ChefHat, CircleDot, PackageCheck, Bike, ShoppingBag, Store, XCircle, AlertTriangle, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import type { DeliveryStatus, PickupStatus } from "../holochain/types";
+import type { Cancellation, DeliveryStatus, PickupStatus } from "../holochain/types";
+import { cancellationText } from "../lib/storeAnswers";
 import { Badge } from "./ui";
 import { fadeSlideUp } from "../lib/motion";
 
@@ -56,7 +57,7 @@ function TerminalBanner({ icon, tone, children }: { icon: React.ReactNode; tone:
 /// "fills" with a quick top-down scale animation as it completes, instead
 /// of just snapping to its done state -- the one place in this app where
 /// *progress itself* (not just a list appearing) deserves motion.
-export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
+export function OrderStatusTimeline({ status, cancellation = null }: { status: DeliveryStatus; cancellation?: Cancellation | null }) {
   if (status === "Scheduled") {
     return (
       <TerminalBanner icon={<Clock size={20} />} tone="neutral">
@@ -67,7 +68,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
   if (status === "Cancelled") {
     return (
       <TerminalBanner icon={<XCircle size={20} />} tone="neutral">
-        This order was cancelled.
+        {cancellationText(cancellation)}
       </TerminalBanner>
     );
   }
@@ -156,11 +157,11 @@ export function PickupStatusBadge({ status }: { status: PickupStatus }) {
 /// happy paths don't share a step count or meaning (see `PickupOrder`'s own
 /// doc comment in `dispatch_integrity` for why this is a wholly separate
 /// vertical).
-export function PickupStatusTimeline({ status }: { status: PickupStatus }) {
+export function PickupStatusTimeline({ status, cancellation = null }: { status: PickupStatus; cancellation?: Cancellation | null }) {
   if (status === "Cancelled") {
     return (
       <TerminalBanner icon={<XCircle size={20} />} tone="neutral">
-        This order was cancelled.
+        {cancellationText(cancellation)}
       </TerminalBanner>
     );
   }

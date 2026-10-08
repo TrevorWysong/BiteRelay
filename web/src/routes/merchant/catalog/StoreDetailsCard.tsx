@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { setDeliverySubsidyPercent, updateCatalogDetails } from "../../../holochain/zomes/catalog";
+import { setAutoAcceptOrders, setDeliverySubsidyPercent, updateCatalogDetails } from "../../../holochain/zomes/catalog";
 import { formatCatalogAddress } from "../../../lib/format";
-import { Button, Card, Field, Input, Textarea } from "../../../components/ui";
+import { Button, Card, Field, Input, Switch, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import { SplitAddressFields } from "../../../components/SplitAddressFields";
 import type { MerchantCatalog } from "../../../holochain/types";
@@ -153,6 +153,32 @@ export function DeliverySubsidyCard({ catalog, catalogRef, onSaved }: { catalog:
           {catalog.delivery_subsidy_percent > 0 ? `You cover ${catalog.delivery_subsidy_percent}% of delivery` : "Customer covers the full delivery fee"}
         </p>
       )}
+    </Card>
+  );
+}
+
+/// Whether the store's conductor accepts new orders by itself. It still
+/// declines any priced from an outdated menu, and works with the app closed.
+export function AutoAcceptCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  async function toggle(autoAccept: boolean) {
+    setSaving(true);
+    try {
+      await setAutoAcceptOrders(catalogRef, autoAccept);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Card className="mb-4 flex items-start justify-between gap-4 p-4">
+      <div>
+        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Accept orders automatically</p>
+        <p className="text-xs text-ink-400">
+          New orders are accepted as they arrive, even with this app closed. Orders priced from an outdated menu are still declined. Leave it off to accept each order yourself.
+        </p>
+      </div>
+      <Switch checked={catalog.auto_accept_orders} onChange={toggle} disabled={saving} label="Accept orders automatically" />
     </Card>
   );
 }

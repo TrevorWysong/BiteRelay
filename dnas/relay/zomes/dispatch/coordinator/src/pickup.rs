@@ -6,7 +6,8 @@
 //! dispute path in one place, rather than splitting across files the way
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
-use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::upkeep;
+use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
@@ -65,9 +66,11 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
+        cancellation: None,
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
+    upkeep::tend_my_orders_soon()?;
     let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
 
     get(action_hash, GetOptions::local())?
@@ -87,6 +90,9 @@ pub fn confirm_pickup_prep(order_original_action: ActionHash) -> ExternResult<Re
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::Placed {
         return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
+    }
+    if order.merchant != agent_info()?.agent_initial_pubkey {
+        return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
     order.status = PickupStatus::MerchantConfirmed;
@@ -110,14 +116,24 @@ pub fn mark_ready_for_pickup(order_original_action: ActionHash) -> ExternResult<
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back ready pickup order".into())))
 }
 
-/// Any other forward/cancellation transition that doesn't need its own
-/// dedicated extern -- mirrors `orders::set_order_status`'s thin-wrapper
-/// role. `PickedUp` and the two dispute-raise/resolve transitions are
-/// deliberately excluded (gated, below).
+/// The customer withdrawing their pickup order -- see `orders::cancel_order`.
 #[hdk_extern]
 pub fn cancel_pickup_order(order_original_action: ActionHash) -> ExternResult<Record> {
+    cancel_pickup(order_original_action, Cancellation::ByCustomer)
+}
+
+/// The store turning a pickup order down, or calling it off, and why.
+#[hdk_extern]
+pub fn decline_pickup_order(input: DeclineOrderInput) -> ExternResult<Record> {
+    cancel_pickup(input.order_original_action, Cancellation::ByStore(input.reason))
+}
+
+/// Cancels a pickup order for `reason`, which validation checks against the
+/// caller, and takes it off every queue.
+pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellation) -> ExternResult<Record> {
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     order.status = PickupStatus::Cancelled;
+    order.cancellation = Some(reason);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order.clone()))?;
     order_queues::retire(&OrderParties::pickup(&order_original_action, &order))?;
     get(updated, GetOptions::local())?
@@ -297,6 +313,7 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
     };
     let mut updated_order = order;
     let parties = OrderParties::pickup(&input.order_original_action, &updated_order);
+    updated_order.cancellation = (target_status == PickupStatus::Cancelled).then_some(Cancellation::ByArbitrator);
     updated_order.status = target_status;
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     let owed = pickup_payments(&updated_order);

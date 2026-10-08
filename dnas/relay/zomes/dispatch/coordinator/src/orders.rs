@@ -8,6 +8,8 @@ use crate::matching::{geo_presence_precision, notify_nearby_providers, open_orde
 use crate::order_queues::{self, OrderParties};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement;
+use crate::stores::current_catalog;
+use crate::upkeep;
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -124,19 +126,6 @@ fn open_kitchen_note(me: &AgentPubKey, requester: &AgentPubKey, merchant: &Agent
     open(counterpart, sealed)
 }
 
-/// The store's catalog at its latest state.
-fn current_catalog(catalog_ref: &ActionHash) -> ExternResult<catalog_types::MerchantCatalog> {
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, catalog_ref.clone())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("couldn't read the store's details".into())));
-    };
-    io.decode::<Record>()
-        .map_err(|e| wasm_error!(e))?
-        .entry()
-        .to_app_option::<catalog_types::MerchantCatalog>()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref is not a store".into())))
-}
-
 /// Coordinator pre-checks for an order's optional references, shared by
 /// both order verticals. Validation can only see these entries as created
 /// (see `dispatch_integrity::checks`), so "still active" / "confirmed yet"
@@ -231,11 +220,15 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         dropoff_preference: input.dropoff_preference,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
+        cancellation: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The store finds it in its queue; drivers only once the store accepts
     // it (`accept_delivery_order`).
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, now)?;
+    // This conductor sends a scheduled order to the store when it's due,
+    // and cancels one the store never answers -- see `upkeep`.
+    upkeep::tend_my_orders_soon()?;
     if placed {
         let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
     }
@@ -244,14 +237,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back delivery order".into())))
 }
 
-/// The one narrow transition out of `Scheduled` -- fails fast, as a
-/// convenience, if it's clearly too early; `validate_order_transition`'s own
-/// check (against this *update action's* own recorded timestamp, not a
-/// fresh `sys_time()` call) is the real, deterministic enforcement. There's
-/// no server-side scheduler here: the requester's own client is expected to
-/// call this once the time arrives, the same client-driven-polling pattern
-/// this app already relies on everywhere else (presence beacons, the
-/// matching backstop).
+/// The one narrow transition out of `Scheduled`: placing the order with its
+/// store once its time arrives. The customer's conductor does this on its
+/// own (`upkeep`); fails fast, as a convenience, if it's clearly too early
+/// -- `validate_order_transition`'s check against this update's own
+/// recorded timestamp is the real, deterministic enforcement.
 #[hdk_extern]
 pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action, "DeliveryOrder")?;
@@ -269,6 +259,7 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
     order.status = DeliveryStatus::Placed;
     let merchant = order.merchant.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    upkeep::tend_my_orders_soon()?;
     let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: updated.clone() }, vec![merchant]);
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
@@ -279,7 +270,8 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
 /// signalled to drivers nearby. Only the store can (validation), and only
 /// once it's checked the order is priced from its current menu
 /// (`ensure_priced_from_current_menu`) -- a refused order never reaches a
-/// driver. The store declines with `set_order_status(Cancelled)`.
+/// driver. The store declines with `decline_order`; its conductor can do
+/// either on its own (`upkeep`, for a store set to auto-accept).
 #[hdk_extern]
 pub fn accept_delivery_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
@@ -330,6 +322,11 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
             "use accept_delivery_order to open an order to drivers -- it checks the order's prices first".into()
         )));
     }
+    if input.next_status == DeliveryStatus::Cancelled {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "use cancel_order or decline_order to cancel an order -- they record why".into()
+        )));
+    }
     if input.next_status == DeliveryStatus::Delivered {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
@@ -343,6 +340,46 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
     }
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated order".into())))
+}
+
+/// How long a store has to accept an order, in seconds -- the DNA's
+/// `store_response_secs` (see `relay_governance::store_response_window`),
+/// for the app's countdowns.
+#[hdk_extern]
+pub fn get_store_response_secs(_: ()) -> ExternResult<u64> {
+    Ok(relay_governance::store_response_window().as_secs())
+}
+
+/// The customer withdrawing their delivery. Validation allows it until the
+/// driver picks it up; the app offers it until the store starts preparing.
+#[hdk_extern]
+pub fn cancel_order(order_original_action: ActionHash) -> ExternResult<Record> {
+    cancel_delivery(order_original_action, Cancellation::ByCustomer)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeclineOrderInput {
+    pub order_original_action: ActionHash,
+    pub reason: DeclineReason,
+}
+
+/// The store turning a delivery down -- or calling it off after accepting
+/// it -- and telling the customer why.
+#[hdk_extern]
+pub fn decline_order(input: DeclineOrderInput) -> ExternResult<Record> {
+    cancel_delivery(input.order_original_action, Cancellation::ByStore(input.reason))
+}
+
+/// Cancels a delivery for `reason`, which validation checks against the
+/// caller, and takes it off every queue.
+pub(crate) fn cancel_delivery(order_original_action: ActionHash, reason: Cancellation) -> ExternResult<Record> {
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    order.status = DeliveryStatus::Cancelled;
+    order.cancellation = Some(reason);
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
+    order_queues::retire(&OrderParties::delivery(&order_original_action, &order)?)?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back cancelled order".into())))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

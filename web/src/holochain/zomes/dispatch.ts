@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -44,18 +44,25 @@ export async function requestDelivery(input: {
   });
 }
 
-/// The one narrow transition out of `Scheduled` -- see orders.rs's own doc
-/// comment: no server-side scheduler exists, the requester's own client is
-/// expected to call this once the requested time arrives.
-export async function openScheduledOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
-  return callZome("dispatch", "open_scheduled_order", orderOriginalAction);
-}
-
 /// The store accepting a delivery order, which opens it to drivers. Refused
-/// if the order is priced from an outdated menu -- decline it instead
-/// (`setOrderStatus(ref, "Cancelled")`).
+/// if the order is priced from an outdated menu -- decline it instead.
 export async function acceptDeliveryOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "accept_delivery_order", orderOriginalAction);
+}
+
+/// The store turning a delivery down (or calling it off), and why.
+export async function declineOrder(orderOriginalAction: ActionHash, reason: DeclineReason): Promise<HcRecord> {
+  return callZome("dispatch", "decline_order", { order_original_action: orderOriginalAction, reason });
+}
+
+/// The customer withdrawing their delivery.
+export async function cancelOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "cancel_order", orderOriginalAction);
+}
+
+/// How long a store has to accept an order, in seconds (the DNA's setting).
+export async function getStoreResponseSecs(): Promise<number> {
+  return callZome("dispatch", "get_store_response_secs", null);
 }
 
 /// Every forward transition *except* Delivered (that one's gated -- see
@@ -322,8 +329,14 @@ export async function markReadyForPickup(orderOriginalAction: ActionHash): Promi
   return callZome("dispatch", "mark_ready_for_pickup", orderOriginalAction);
 }
 
+/// The customer withdrawing their pickup order.
 export async function cancelPickupOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "cancel_pickup_order", orderOriginalAction);
+}
+
+/// The store turning a pickup order down (or calling it off), and why.
+export async function declinePickupOrder(orderOriginalAction: ActionHash, reason: DeclineReason): Promise<HcRecord> {
+  return callZome("dispatch", "decline_pickup_order", { order_original_action: orderOriginalAction, reason });
 }
 
 /// The gated completion path -- the requester confirming they received it.
