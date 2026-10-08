@@ -13,6 +13,8 @@
     "typegen:check": "cargo run --quiet --manifest-path ../tools/typegen/Cargo.toml -- --check",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:e2e": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -29,6 +31,7 @@
   },
   "devDependencies": {
     "@holochain-open-dev/tryorama": "^0.20.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/leaflet": "^1.9.22",
     "@types/node": "^24.13.3",
@@ -39,7 +42,7 @@
     "oxlint": "^1.81.0",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.23.15",
+    "tsx": "4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }

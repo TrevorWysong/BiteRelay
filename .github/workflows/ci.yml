@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in step with the hdk/hdi versions in Cargo.toml.
+  HOLOCHAIN_VERSION: 0.7.0
+  HC_VERSION: 0.7.0
+  LAIR_VERSION: 0.7.1
+  BOOTSTRAP_VERSION: 0.5.0
+
+jobs:
+  checks:
+    name: Build, types and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            tools/typegen
+      - name: Build zomes
+        run: cargo build --release --target wasm32-unknown-unknown
+      - name: Generated TS types are up to date
+        run: cargo run --quiet --manifest-path tools/typegen/Cargo.toml -- --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Web typecheck, lint and build
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc -b
+          npm run lint
+          npm test
+          npx vite build
+
+  rust-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --lib
+
+  holochain-tools:
+    name: Holochain binaries
+    runs-on: ubuntu-latest
+    steps:
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/holochain-bin
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install holochain, hc, lair-keystore and the bootstrap server
+        run: |
+          cargo install --locked --root ~/.cargo/holochain-bin holochain --version "$HOLOCHAIN_VERSION"
+          cargo install --locked --root ~/.cargo/holochain-bin holochain_cli --version "$HC_VERSION"
+          cargo install --locked --root ~/.cargo/holochain-bin lair_keystore --version "$LAIR_VERSION"
+          cargo install --locked --root ~/.cargo/holochain-bin kitsune2_bootstrap_srv --version "$BOOTSTRAP_VERSION"
+
+  tryorama:
+    name: Tryorama suite
+    needs: [checks, holochain-tools]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cargo/holochain-bin
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+          fail-on-cache-miss: true
+      - run: echo "$HOME/.cargo/holochain-bin/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/tryorama/package-lock.json
+      - name: Build and pack the hApp
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          hc dna pack dnas/relay/workdir
+          hc app pack workdir
+      - name: Run the suite
+        working-directory: tests/tryorama
+        run: |
+          npm ci
+          npm run build:test-coordinators
+          npm test
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tryorama-logs
+          path: tests/tryorama/.logs/
+
+  e2e:
+    name: Browser smoke tests
+    needs: [checks, holochain-tools]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cargo/holochain-bin
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+          fail-on-cache-miss: true
+      - run: echo "$HOME/.cargo/holochain-bin/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build, start and seed a dev conductor
+        working-directory: web
+        run: |
+          npm ci
+          npm run backend
+          # The conductor runs in the foreground; leave it running for the
+          # tests and wait for seeding to finish.
+          nohup npm run dev:reset > dev-conductor.log 2>&1 &
+          for _ in $(seq 1 150); do
+            grep -q "^Seeded\." dev-conductor.log && exit 0
+            grep -q "Seeding failed" dev-conductor.log && break
+            sleep 2
+          done
+          cat dev-conductor.log
+          exit 1
+      - name: Smoke tests
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            web/test-results/
+            web/dev-conductor.log
