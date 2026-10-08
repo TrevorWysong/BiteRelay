@@ -78,10 +78,17 @@ jobs:
           cargo install --locked --root ~/.cargo/holochain-bin kitsune2_bootstrap_srv --version "$BOOTSTRAP_VERSION"
 
   tryorama:
-    name: Tryorama suite
+    # Four jobs, each a share of the files balanced by recorded duration
+    # (tests/tryorama/durations.json) -- files within a job still run one at
+    # a time, since conductors sharing a machine contend.
+    name: Tryorama suite (${{ matrix.shard }}/4)
     needs: [checks, holochain-tools]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -109,11 +116,11 @@ jobs:
         run: |
           npm ci
           npm run build:test-coordinators
-          npm test
+          npm test -- --shard ${{ matrix.shard }}/4
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: tryorama-logs
+          name: tryorama-logs-${{ matrix.shard }}
           path: tests/tryorama/.logs/
 
   e2e:

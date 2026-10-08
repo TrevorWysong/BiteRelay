@@ -3,13 +3,18 @@
 // checkpoints have been written along the way. The settling window is set
 // to zero here so checkpoints fire within the test (one per 20 settled
 // transactions); each order is a real completed pickup, the only way a
-// payment validates.
+// payment validates. The payer's balance is checked after every payment;
+// the payee's, which waits on gossip, every few -- each step waits only for
+// what it needs rather than syncing the whole network.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appWithProperties, decodeEntry, ST_PETE } from "./helpers.js";
+import { actionHash, appWithProperties, decodeEntry, retryUntilOk, ST_PETE } from "./helpers.js";
 
+/// Enough for at least two checkpoints on each side (one per 20).
 const ORDERS = 45;
+/// How often the payee's balance is checked, in payments.
+const PAYEE_CHECK_EVERY = 5;
 
 interface Txn {
   from: Uint8Array;
@@ -59,16 +64,18 @@ await runScenario(async (scenario) => {
     // Varying amounts: i bowls of soup at $1.00.
     const total = 100 * i;
     const order = actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity: i }], order_total: total }));
-    await sync();
-    await call(merchant, "dispatch")("confirm_pickup_prep", order);
+    // Each side retries until the other's last step has reached it.
+    await retryUntilOk(() => call(merchant, "dispatch")("confirm_pickup_prep", order), 40);
     await call(merchant, "dispatch")("mark_ready_for_pickup", order);
-    await sync();
-    await call(customer, "dispatch")("complete_pickup", order);
+    await retryUntilOk(() => call(customer, "dispatch")("complete_pickup", order), 40);
     paid += total;
-    await sync();
     await checkBalance(customer, -paid, `customer after order ${i}`);
-    await checkBalance(merchant, paid, `store after order ${i}`);
+    if (i % PAYEE_CHECK_EVERY === 0) {
+      await sync();
+      await checkBalance(merchant, paid, `store after order ${i}`);
+    }
   }
+  await sync();
   const customerCheckpoints = await checkBalance(customer, -paid, "customer at the end");
   const merchantCheckpoints = await checkBalance(merchant, paid, "store at the end");
   assert.ok(customerCheckpoints >= 2 && merchantCheckpoints >= 2, "checkpoints should have fired for both the payer and the payee");
