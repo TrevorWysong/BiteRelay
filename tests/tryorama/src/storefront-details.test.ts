@@ -31,11 +31,13 @@ await runScenario(async (scenario) => {
     avatar_data_uri: "data:image/jpeg;base64,xyz",
     phone: "555-0100",
   });
-  const profile = decodeEntry<{ bio: string; avatar_data_uri: string; phone: string }>(profileRecord);
+  const profile = decodeEntry<{ bio: string; avatar_data_uri: string; phone?: string; sealed_phone: unknown }>(profileRecord);
   assert.equal(profile.bio, "I love empanadas");
   assert.equal(profile.avatar_data_uri, "data:image/jpeg;base64,xyz");
-  assert.equal(profile.phone, "555-0100");
-  console.log("[PASS] create_profile round-trips bio/avatar_data_uri/phone");
+  assert.equal(profile.phone, undefined, "the public profile carries no phone in the clear");
+  assert.ok(profile.sealed_phone, "the phone is stored sealed");
+  assert.equal(await profilesOf(customer)<string | null>("get_my_phone", null), "555-0100", "its owner reads it back");
+  console.log("[PASS] create_profile round-trips bio/avatar_data_uri, and the phone only for its owner");
 
   const driverProfileRecord = await profilesOf(driver)<HcRecord>("create_profile", {
     display_name: "Dana Driver",
@@ -148,7 +150,8 @@ await runScenario(async (scenario) => {
       order_total: 700,
       dropoff: ST_PETE,
       max_delivery_fee: null,
-      special_instructions: "Ring the bell",
+      kitchen_notes: "Extra salsa",
+      dropoff_notes: "Ring the bell",
       tip_cents: 150,
     });
   await assert.rejects(placeOrder(), /Empanada is sold out/, "a sold-out item can't be ordered");
@@ -156,10 +159,12 @@ await runScenario(async (scenario) => {
   console.log("[PASS] a sold-out item can't be ordered until it's back on the menu");
   const orderRecord = await placeOrder();
   const orderRef = actionHash(orderRecord);
-  const order = decodeEntry<{ special_instructions: string; tip_cents: number }>(orderRecord);
-  assert.equal(order.special_instructions, "Ring the bell");
+  const order = decodeEntry<{ tip_cents: number }>(orderRecord);
   assert.equal(order.tip_cents, 150);
-  console.log("[PASS] request_delivery round-trips special_instructions/tip_cents");
+  const details = await dispatchOf(customer)<{ dropoff: { notes: string } | null; kitchen_note: string | null }>("get_order_private_details", orderRef);
+  assert.equal(details.dropoff?.notes, "Ring the bell");
+  assert.equal(details.kitchen_note, "Extra salsa");
+  console.log("[PASS] request_delivery round-trips tip_cents, and its sealed notes for the customer");
 
   // --- Drive to Delivered, confirming the tip is actually paid to the driver ---
   await dhtSync(both, customer.cells[0].cell_id[0]);

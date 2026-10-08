@@ -61,3 +61,23 @@ export function encodeGeohash(lat: number, lon: number, precision = 6): string {
   }
   return hash;
 }
+
+/// The center of a geohash cell -- where an order "is" to anyone who only
+/// knows its area (a driver before their bid is accepted).
+export function geohashCenter(hash: string): { lat: number; lon: number } {
+  const lat = [-90, 90];
+  const lon = [-180, 180];
+  let evenBit = true;
+  for (const c of hash) {
+    const value = BASE32.indexOf(c);
+    if (value < 0) throw new Error(`not a geohash: ${hash}`);
+    for (let bit = 4; bit >= 0; bit--) {
+      const range = evenBit ? lon : lat;
+      const mid = (range[0] + range[1]) / 2;
+      if ((value >> bit) & 1) range[0] = mid;
+      else range[1] = mid;
+      evenBit = !evenBit;
+    }
+  }
+  return { lat: (lat[0] + lat[1]) / 2, lon: (lon[0] + lon[1]) / 2 };
+}

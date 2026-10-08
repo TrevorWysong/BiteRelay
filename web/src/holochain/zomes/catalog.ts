@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, BagClaimFulfillment, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -197,7 +197,11 @@ export async function getNearbyGoodieBags(geohash: string, after: Timestamp | nu
   return callZome("catalog", "get_nearby_goodie_bags", { geohash, after });
 }
 
-export async function claimGoodieBag(bagRef: ActionHash, fulfillment: BagClaimFulfillment): Promise<HcRecord> {
+/// How a customer wants a claimed bag, in the clear -- the zome seals a
+/// delivery drop-off before storing the claim.
+export type FulfillmentInput = "Pickup" | { Delivery: { dropoff: GeoPoint; max_delivery_fee: number | null } };
+
+export async function claimGoodieBag(bagRef: ActionHash, fulfillment: FulfillmentInput): Promise<HcRecord> {
   return callZome("catalog", "claim_goodie_bag", { bag_ref: bagRef, fulfillment });
 }
 
@@ -209,7 +213,13 @@ export async function listClaimsForBag(bagRef: ActionHash): Promise<HcRecord[]> 
   return callZome("catalog", "list_claims_for_bag", bagRef);
 }
 
-export async function getMyBagClaims(): Promise<HcRecord[]> {
+/// One of the caller's claims, with a delivery claim's drop-off opened.
+export interface MyClaim {
+  record: HcRecord;
+  dropoff: GeoPoint | null;
+}
+
+export async function getMyBagClaims(): Promise<MyClaim[]> {
   return callZome("catalog", "get_my_bag_claims", null);
 }
 

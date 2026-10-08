@@ -151,7 +151,10 @@ export function Cart() {
   const navigate = useNavigate();
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [instructions, setInstructions] = useState("");
+  // Two notes, each readable only by who it's for: the store (sealed to
+  // it) and, for a delivery, the driver (sealed with the address).
+  const [kitchenNotes, setKitchenNotes] = useState("");
+  const [dropoffNotes, setDropoffNotes] = useState("");
   // Pickup orders skip the whole driver/dropoff/fee/tip half of this screen
   // entirely -- there's no driver in that vertical at all, see
   // `PickupOrder`'s own doc comment (`dispatch_integrity`) for why that's a
@@ -268,7 +271,7 @@ export function Cart() {
           catalog_ref: cart.catalogRef,
           items: cartItems(cart.lines),
           order_total: discountedSubtotalCents,
-          special_instructions: instructions.trim(),
+          kitchen_notes: kitchenNotes.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
         });
         const orderRef = actionHash(record);
@@ -283,7 +286,8 @@ export function Cart() {
         order_total: discountedSubtotalCents,
         dropoff,
         max_delivery_fee: maxFeeCents,
-        special_instructions: instructions.trim(),
+        kitchen_notes: kitchenNotes.trim(),
+        dropoff_notes: dropoffNotes.trim(),
         tip_cents: tipCents,
         requested_delivery_time: requestedDeliveryTime,
         promo_code_ref: appliedPromo?.hash ?? null,
@@ -315,7 +319,8 @@ export function Cart() {
         item_refs: expandLineQuantities(cart.lines),
         dropoff,
         max_delivery_fee: maxFeeCents,
-        special_instructions: instructions.trim(),
+        kitchen_notes: kitchenNotes.trim(),
+        dropoff_notes: dropoffNotes.trim(),
         tip_cents: tipCents,
         dropoff_preference: dropoffPreference,
         promo_code_ref: appliedPromo?.hash ?? null,
@@ -468,9 +473,16 @@ export function Cart() {
         </Section>
       )}
 
-      <Section title={fulfillment === "Pickup" ? "Pickup notes" : "Delivery notes"}>
-        <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
+      <Section title="Note for the store">
+        <Textarea value={kitchenNotes} onChange={(e) => setKitchenNotes(e.target.value)} rows={2} placeholder="No onions, extra napkins…" />
       </Section>
+
+      {fulfillment === "Delivery" && (
+        <Section title="Drop-off instructions">
+          <Textarea value={dropoffNotes} onChange={(e) => setDropoffNotes(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
+          <p className="mt-1.5 text-[11px] text-ink-400">Only your driver sees your exact address and these instructions, once you've accepted their bid.</p>
+        </Section>
+      )}
 
       {fulfillment === "Delivery" && (
         <Section title="Delivery fee cap">

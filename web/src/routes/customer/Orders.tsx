@@ -209,7 +209,7 @@ function PendingClaims() {
   const { data: claims } = useResource(
     "customer-pending-claims",
     async () => {
-      const pending = (await getMyBagClaims()).map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })).filter((c) => c.claim.status === "Pending");
+      const pending = (await getMyBagClaims()).map((c) => ({ hash: actionHash(c.record), claim: decodeEntry<BagClaim>(c.record) })).filter((c) => c.claim.status === "Pending");
       return Promise.all(
         pending.map(async ({ hash, claim }) => ({
           hex: bytesToHex(hash),

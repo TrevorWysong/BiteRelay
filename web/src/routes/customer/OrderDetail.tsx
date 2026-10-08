@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrder, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
+import { getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
 import { getLegsForOrder } from "../../holochain/zomes/attestation";
@@ -93,6 +93,8 @@ export function OrderDetail() {
   });
   const storeHex = order ? bytesToHex(order.catalog_ref) : null;
   const { data: pickup = null } = useResource(storeHex && `order-pickup:${storeHex}`, async () => decodeEntry<MerchantCatalog>(await getCatalog(order!.catalog_ref)).location);
+  // The exact drop-off and notes are sealed; the zome opens them for us.
+  const { data: details } = useResource(`order-details:${hash}`, () => getOrderPrivateDetails(orderRef));
   const { data: itemNames = {} } = useResource(order ? `order-items:${hash}` : null, () => fetchOrderItemNames(order!));
   // The drop-off photo can only appear once the order's picked up; polled
   // until the handoff leg is attested, then read once more on delivery.
@@ -284,10 +286,16 @@ export function OrderDetail() {
             <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off: </span>
             {DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]}
           </p>
-          {order.special_instructions && (
+          {details?.dropoff?.notes && (
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-              {order.special_instructions}
+              <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off notes: </span>
+              {details.dropoff.notes}
+            </p>
+          )}
+          {details?.kitchen_note && (
+            <p className="text-ink-500">
+              <span className="font-semibold text-ink-900 dark:text-ink-50">Note for the store: </span>
+              {details.kitchen_note}
             </p>
           )}
           {order.tip_cents > 0 && (
@@ -376,9 +384,9 @@ export function OrderDetail() {
         </motion.div>
       )}
 
-      {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && (
+      {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && details?.dropoff && (
         <motion.div variants={fadeSlideUp} className="mt-4">
-          <LiveMap pickup={pickup} dropoff={order.dropoff} driver={driverLocation} />
+          <LiveMap pickup={pickup} dropoff={details.dropoff.point} driver={driverLocation} />
           {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location. Not every device shares this.</p>}
         </motion.div>
       )}

@@ -238,7 +238,9 @@ pub struct GoodieBag {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum BagClaimFulfillment {
     Pickup,
-    Delivery { dropoff: GeoPoint, max_delivery_fee: Option<u64> },
+    /// `sealed_dropoff` is the drop-off point, sealed to the customer: the
+    /// store only needs to know it's a delivery, never where to.
+    Delivery { sealed_dropoff: XSalsa20Poly1305EncryptedData, max_delivery_fee: Option<u64> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

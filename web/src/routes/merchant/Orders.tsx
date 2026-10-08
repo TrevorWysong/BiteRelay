@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Bike, ClipboardList, ShoppingBag, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { getActiveOrdersForStore, getOrderHistoryForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup, type OrderEntry } from "../../holochain/zomes/dispatch";
+import { getActiveOrdersForStore, getOrderHistoryForStore, getOrderPrivateDetails, setOrderStatus, confirmPickupPrep, markReadyForPickup, type OrderEntry } from "../../holochain/zomes/dispatch";
 import { itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { useResource } from "../../lib/useResource";
@@ -287,8 +287,15 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
       <p className="mt-1 text-xs text-ink-400">
         {count} item{count === 1 ? "" : "s"}
       </p>
-      {order.special_instructions && <p className="mt-1 text-xs italic text-ink-500">"{order.special_instructions}"</p>}
+      {order.kitchen_note && <KitchenNote orderHex={row.hex} orderRef={row.ref} />}
       {children}
     </Card>
   );
+}
+
+/// The customer's note for the kitchen -- sealed to the store, opened by
+/// the zome. Read once per order: it never changes.
+function KitchenNote({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+  const { data: note } = useResource(`kitchen-note:${orderHex}`, async () => (await getOrderPrivateDetails(orderRef)).kitchen_note);
+  return note ? <p className="mt-1 text-xs italic text-ink-500">"{note}"</p> : null;
 }

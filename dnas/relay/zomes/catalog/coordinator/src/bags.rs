@@ -19,7 +19,8 @@
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original};
+use relay_coordinator_support::{decode_or, open, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original, seal};
+use relay_types::GeoPoint;
 
 use crate::NearbyMerchantsInput;
 
@@ -112,15 +113,28 @@ pub fn get_nearby_goodie_bags(input: NearbyMerchantsInput) -> ExternResult<Vec<B
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ClaimGoodieBagInput {
     pub bag_ref: ActionHash,
-    pub fulfillment: BagClaimFulfillment,
+    pub fulfillment: FulfillmentInput,
+}
+
+/// How the customer wants the bag, in the clear -- the drop-off is sealed
+/// before it's stored (`BagClaimFulfillment::Delivery`).
+#[derive(Serialize, Deserialize, Debug)]
+pub enum FulfillmentInput {
+    Pickup,
+    Delivery { dropoff: GeoPoint, max_delivery_fee: Option<u64> },
 }
 
 #[hdk_extern]
 pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
+    let customer = agent_info()?.agent_initial_pubkey;
+    let fulfillment = match input.fulfillment {
+        FulfillmentInput::Pickup => BagClaimFulfillment::Pickup,
+        FulfillmentInput::Delivery { dropoff, max_delivery_fee } => BagClaimFulfillment::Delivery { sealed_dropoff: seal(&customer, &dropoff)?, max_delivery_fee },
+    };
     let claim = BagClaim {
         bag_ref: input.bag_ref.clone(),
-        customer: agent_info()?.agent_initial_pubkey,
-        fulfillment: input.fulfillment,
+        customer,
+        fulfillment,
         status: BagClaimStatus::Pending,
         claimed_at: sys_time()?,
     };
@@ -154,12 +168,27 @@ pub fn list_claims_for_bag(bag_ref: ActionHash) -> ExternResult<Vec<Record>> {
 /// them on every poll (the claim finalizer runs every few seconds) would
 /// grow forever.
 #[hdk_extern]
-pub fn get_my_bag_claims(_: ()) -> ExternResult<Vec<Record>> {
+pub fn get_my_bag_claims(_: ()) -> ExternResult<Vec<MyClaim>> {
     const FINALIZE_GRACE_MICROS: i64 = 86_400 * 1_000_000;
     let owner = agent_info()?.agent_initial_pubkey;
-    let mut query = LinkQuery::try_new(owner, LinkTypes::CustomerToClaim)?;
+    let mut query = LinkQuery::try_new(owner.clone(), LinkTypes::CustomerToClaim)?;
     query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - MAX_GOODIE_BAG_LIFETIME_MICROS - FINALIZE_GRACE_MICROS));
-    Ok(resolve_links_to_records(get_links(query, GetStrategy::default())?))
+    let mut claims = Vec::new();
+    for record in resolve_links_to_records(get_links(query, GetStrategy::default())?) {
+        let dropoff = match decode_or::<BagClaim>(&record).map(|c| c.fulfillment) {
+            Some(BagClaimFulfillment::Delivery { sealed_dropoff, .. }) => open(&owner, &sealed_dropoff)?,
+            _ => None,
+        };
+        claims.push(MyClaim { record, dropoff });
+    }
+    Ok(claims)
+}
+
+/// One of the caller's own claims, with a delivery claim's drop-off opened.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MyClaim {
+    pub record: Record,
+    pub dropoff: Option<GeoPoint>,
 }
 
 /// Pending claims across *every* bag this merchant owns -- walks this

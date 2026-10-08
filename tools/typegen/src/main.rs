@@ -49,9 +49,9 @@ const SOURCES: &[Source] = &[
     all("dnas/relay/zomes/dispatch/types/src/lib.rs"),
     all("dnas/relay/zomes/dispatch/types/src/settlement.rs"),
     all("dnas/relay/zomes/dispute/types/src/lib.rs"),
-    only("dnas/relay/zomes/profiles/integrity/src/lib.rs", &["RoleTag", "Profile", "ProviderCredential", "SavedAddress"]),
+    only("dnas/relay/zomes/profiles/integrity/src/lib.rs", &["RoleTag", "Profile", "ProviderCredential", "SavedAddress", "AddressDetails"]),
     only("dnas/relay/zomes/reputation/integrity/src/lib.rs", &["ReputationTarget", "ReviewTarget", "Review", "ItemReview", "ReputationEventKind"]),
-    only("dnas/relay/zomes/dispatch/integrity/src/recurring.rs", &["RecurrenceRule", "RecurringOrderTemplate"]),
+    only("dnas/relay/zomes/dispatch/integrity/src/recurring.rs", &["RecurrenceRule", "RecurringOrderTemplate", "TemplateDetails"]),
     only("dnas/relay/zomes/geo_presence/integrity/src/lib.rs", &["PresenceBeacon"]),
     only("dnas/relay/zomes/ledger/integrity/src/lib.rs", &["TxnReason", "LedgerTransaction"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
@@ -68,6 +68,11 @@ const ALIASES: &[(&str, &str, &str)] = &[
     ("AgentPubKey", "Uint8Array", "A 39-byte agent public key."),
     ("AnyLinkableHash", "Uint8Array", "Any hash a link can point at."),
     ("Timestamp", "number", "Microseconds since the Unix epoch."),
+    (
+        "XSalsa20Poly1305EncryptedData",
+        "{ nonce: Uint8Array; encrypted_data: Uint8Array }",
+        "Ciphertext sealed between two agents -- opened only through a zome call.",
+    ),
 ];
 
 fn main() {

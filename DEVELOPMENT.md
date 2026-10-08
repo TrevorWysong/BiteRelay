@@ -18,6 +18,18 @@ It compares the freshly packed DNA's hash with the DNA each installed identity r
 - **Same DNA** — only coordinator code changed. The new coordinators are hot-swapped into every identity: no restart, no data loss, no page reload.
 - **Different DNA** — an integrity zome (entry/link types, validation) or a DNA setting changed. Existing identities can't run the new build; it tells you so. Run `npm run dev:reset`.
 
+## Personal data
+
+Every entry on the DHT is readable by every peer, forever. So anything personal is stored **sealed**: encrypted with `relay_coordinator_support::seal` (libsodium box between two agents' own keys; no key exchange needed) and opened with `open`. Box is symmetric, so whoever seals can always re-open, and sealing to yourself keeps a value private to you.
+
+| Data | Readable by |
+| --- | --- |
+| A delivery's exact drop-off and drop-off notes | the customer; the driver, once their bid is accepted |
+| An order's note for the kitchen | the customer and the store |
+| Saved addresses, recurring orders, a delivery claim's drop-off, a profile's phone | their owner |
+
+Public on purpose: a delivery's drop-off *area* (a ~1.2 km geohash cell, for driver discovery), a store's own address and phone. Not hidden: who orders from which store, since an order names both. Validation can't read sealed fields, so rules that need them (the delivery radius) run in the coordinator. A new field holding personal data should be sealed the same way; `privacy.test.ts` checks the published bytes.
+
 ## Tests
 
 **Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/relay.happ` (which `npm run backend` keeps current), one file at a time. `node run.mjs reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.

@@ -142,6 +142,15 @@ pub enum DropoffPreference {
     MeetOutside,
 }
 
+/// Where a delivery goes, in full -- only ever stored sealed (see
+/// `DeliveryOrder::sealed_dropoff`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DropoffDetails {
+    pub point: GeoPoint,
+    /// Drop-off instructions for the driver ("gate code 1234").
+    pub notes: String,
+}
+
 /// One line of an order: an item, the exact version of it that was priced
 /// (the item as the customer saw it -- validation reads its price from
 /// there), and how many.
@@ -172,8 +181,20 @@ pub struct DeliveryOrder {
     /// -- validation recomputes `order_total` from these.
     pub lines: Vec<OrderLine>,
     pub order_total: u64,
-    pub dropoff: GeoPoint,
+    /// The drop-off's area (a geohash cell, about 1.2 x 0.6 km) -- all that's
+    /// public about where the order goes: enough for drivers nearby to find
+    /// it and judge the trip. The exact point is in `sealed_dropoff`.
     pub dropoff_geohash: String,
+    /// The exact drop-off and the customer's drop-off notes
+    /// (`DropoffDetails`), sealed to the customer themselves.
+    pub sealed_dropoff: XSalsa20Poly1305EncryptedData,
+    /// The same details sealed to the driver -- set when the customer accepts
+    /// their bid, so only the driver doing the delivery ever learns the exact
+    /// address.
+    pub driver_dropoff: Option<XSalsa20Poly1305EncryptedData>,
+    /// The customer's note for the kitchen, sealed to the store. `None` when
+    /// there isn't one.
+    pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,
     pub max_delivery_fee: Option<u64>,
     pub status: DeliveryStatus,
     pub accepted_bid: Option<ActionHash>,
@@ -191,11 +212,6 @@ pub struct DeliveryOrder {
     /// as `accepted_bid` and `delivery_receipts`. See architecture plan §8.
     pub dispute_ref: Option<ActionHash>,
     pub requested_at: Timestamp,
-    /// Set once at request_delivery time, immutable thereafter -- same
-    /// treatment as order_total/dropoff/etc below. `#[serde(default)]` so
-    /// existing orders (and any client that hasn't caught up) still decode.
-    #[serde(default)]
-    pub special_instructions: String,
     #[serde(default)]
     pub tip_cents: u64,
     /// The store's share of the delivery fee, in percent -- the split in
@@ -362,8 +378,8 @@ pub struct PickupOrder {
     pub status: PickupStatus,
     pub dispute_ref: Option<ActionHash>,
     pub requested_at: Timestamp,
-    #[serde(default)]
-    pub special_instructions: String,
+    /// The customer's note for the kitchen, sealed to the store.
+    pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,
     /// Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,

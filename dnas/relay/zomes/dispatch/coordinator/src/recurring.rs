@@ -5,7 +5,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{open, resolve_latest, resolve_latest_decoded, seal};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -16,7 +16,9 @@ pub struct CreateRecurringTemplateInput {
     pub dropoff: GeoPoint,
     pub max_delivery_fee: Option<u64>,
     #[serde(default)]
-    pub special_instructions: String,
+    pub kitchen_notes: String,
+    #[serde(default)]
+    pub dropoff_notes: String,
     #[serde(default)]
     pub tip_cents: u64,
     #[serde(default)]
@@ -31,13 +33,12 @@ pub struct CreateRecurringTemplateInput {
 pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     let template = RecurringOrderTemplate {
+        sealed_details: seal(&requester, &TemplateDetails { dropoff: input.dropoff, dropoff_notes: input.dropoff_notes, kitchen_notes: input.kitchen_notes })?,
         requester,
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
         item_refs: input.item_refs,
-        dropoff: input.dropoff,
         max_delivery_fee: input.max_delivery_fee,
-        special_instructions: input.special_instructions,
         tip_cents: input.tip_cents,
         dropoff_preference: input.dropoff_preference,
         promo_code_ref: input.promo_code_ref,
@@ -92,6 +93,8 @@ pub fn advance_recurring_template(input: AdvanceRecurringTemplateInput) -> Exter
 pub struct RecurringTemplateView {
     pub original_action: ActionHash,
     pub record: Record,
+    /// The template's sealed details, opened for its owner.
+    pub details: Option<TemplateDetails>,
 }
 
 /// Every template the caller has created, at its latest state -- a local
@@ -99,12 +102,17 @@ pub struct RecurringTemplateView {
 /// otherwise return every update as well), each resolved to its latest.
 #[hdk_extern]
 pub fn list_my_recurring_templates(_: ()) -> ExternResult<Vec<RecurringTemplateView>> {
+    let me = agent_info()?.agent_initial_pubkey;
     let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::RecurringOrderTemplate)?).action_type(ActionType::Create);
-    Ok(query(filter)?
-        .into_iter()
-        .filter_map(|creation| {
-            let original_action = creation.action_address().clone();
-            resolve_latest(original_action.clone()).ok().map(|record| RecurringTemplateView { original_action, record })
-        })
-        .collect())
+    let mut views = Vec::new();
+    for creation in query(filter)? {
+        let original_action = creation.action_address().clone();
+        let Ok(record) = resolve_latest(original_action.clone()) else { continue };
+        let details = match record.entry().to_app_option::<RecurringOrderTemplate>().ok().flatten() {
+            Some(template) => open(&me, &template.sealed_details)?,
+            None => None,
+        };
+        views.push(RecurringTemplateView { original_action, record, details });
+    }
+    Ok(views)
 }

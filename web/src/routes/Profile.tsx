@@ -8,7 +8,7 @@ import { useMerchantStores, useMyStores } from "../store/merchantStores";
 import { useResource } from "../lib/useResource";
 import { getBalance } from "../holochain/zomes/ledger";
 import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
-import { updateProfile, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
+import { updateProfile, getMyPhone, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
 import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
@@ -30,6 +30,8 @@ export function ProfilePage() {
   const stores = useMyStores(isMerchant);
   const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!));
+  // The phone is sealed to its owner, so it's read through the zome.
+  const { data: phone = null, reload: reloadPhone } = useResource(agentHex && `phone:${agentHex}`, getMyPhone);
   // Driver-scoped stats -- `null` key (no read at all) unless this
   // identity actually drives.
   const driverKey = agentHex && isDriver ? `driver:${agentHex}` : null;
@@ -65,7 +67,7 @@ export function ProfilePage() {
   // -- not kept in sync by an effect, which would let a background profile
   // refresh overwrite whatever's mid-edit.
   function toggleEditing() {
-    if (!editing && profile) setDraft({ bio: profile.bio, phone: profile.phone, avatar_data_uri: profile.avatar_data_uri });
+    if (!editing && profile) setDraft({ bio: profile.bio, phone: phone ?? "", avatar_data_uri: profile.avatar_data_uri });
     setEditing((v) => !v);
   }
 
@@ -85,8 +87,9 @@ export function ProfilePage() {
     setSaving(true);
     setSaveError(null);
     try {
-      await updateProfile(profileActionHash, { ...profile, ...draft });
-      await refreshProfile();
+      const { display_name, roles, created_at } = profile;
+      await updateProfile(profileActionHash, { display_name, roles, created_at, ...draft });
+      await Promise.all([refreshProfile(), reloadPhone()]);
       setEditing(false);
     } catch (err) {
       setSaveError(describeError(err));
@@ -169,7 +172,7 @@ export function ProfilePage() {
         ) : (
           <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <p className="text-sm text-ink-600 dark:text-ink-300">{profile?.bio || "No bio yet."}</p>
-            {profile?.phone && <p className="mt-1 text-xs text-ink-400">{profile.phone}</p>}
+            {phone && <p className="mt-1 text-xs text-ink-400">{phone}</p>}
           </motion.div>
         )}
         </AnimatePresence>

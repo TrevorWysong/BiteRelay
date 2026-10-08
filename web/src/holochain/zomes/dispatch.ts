@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -19,7 +19,10 @@ export async function requestDelivery(input: {
   order_total: number;
   dropoff: GeoPoint;
   max_delivery_fee: number | null;
-  special_instructions?: string;
+  /// A note for the kitchen -- sealed to the store.
+  kitchen_notes?: string;
+  /// Drop-off instructions -- sealed with the address, for the driver.
+  dropoff_notes?: string;
   tip_cents?: number;
   requested_delivery_time?: Timestamp | null;
   promo_code_ref?: ActionHash | null;
@@ -30,7 +33,8 @@ export async function requestDelivery(input: {
   bag_claim_ref?: ActionHash | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_delivery", {
-    special_instructions: "",
+    kitchen_notes: "",
+    dropoff_notes: "",
     tip_cents: 0,
     requested_delivery_time: null,
     promo_code_ref: null,
@@ -224,7 +228,10 @@ export async function createRecurringTemplate(input: {
   item_refs: ActionHash[];
   dropoff: GeoPoint;
   max_delivery_fee: number | null;
-  special_instructions?: string;
+  /// A note for the kitchen -- sealed to the store.
+  kitchen_notes?: string;
+  /// Drop-off instructions -- sealed with the address, for the driver.
+  dropoff_notes?: string;
   tip_cents?: number;
   dropoff_preference?: DropoffPreference;
   promo_code_ref?: ActionHash | null;
@@ -232,7 +239,8 @@ export async function createRecurringTemplate(input: {
   next_run_at: number;
 }): Promise<HcRecord> {
   return callZome("dispatch", "create_recurring_template", {
-    special_instructions: "",
+    kitchen_notes: "",
+    dropoff_notes: "",
     tip_cents: 0,
     dropoff_preference: "LeaveAtDoor",
     promo_code_ref: null,
@@ -253,6 +261,20 @@ export async function advanceRecurringTemplate(originalAction: ActionHash, nextR
 export interface RecurringTemplateView {
   original_action: ActionHash;
   record: HcRecord;
+  /// The template's sealed details, opened for its owner.
+  details: TemplateDetails | null;
+}
+
+/// What the caller may read of an order's sealed details: the drop-off
+/// (the customer, and the driver once their bid is accepted) and the
+/// kitchen note (the customer and the store).
+export interface OrderPrivateDetails {
+  dropoff: DropoffDetails | null;
+  kitchen_note: string | null;
+}
+
+export async function getOrderPrivateDetails(orderOriginalAction: ActionHash): Promise<OrderPrivateDetails> {
+  return callZome("dispatch", "get_order_private_details", orderOriginalAction);
 }
 
 export async function listMyRecurringTemplates(): Promise<RecurringTemplateView[]> {
@@ -268,12 +290,13 @@ export async function requestPickupOrder(input: {
   catalog_ref: ActionHash;
   items: OrderItemInput[];
   order_total: number;
-  special_instructions?: string;
+  /// A note for the kitchen -- sealed to the store.
+  kitchen_notes?: string;
   promo_code_ref?: ActionHash | null;
   bag_claim_ref?: ActionHash | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_pickup_order", {
-    special_instructions: "",
+    kitchen_notes: "",
     promo_code_ref: null,
     bag_claim_ref: null,
     ...input,

@@ -32,6 +32,14 @@ pub enum RecurrenceRule {
 /// `dispatch::request_delivery` + `advance_recurring_template` itself --
 /// this entry is just the durable recipe plus bookkeeping, never an active
 /// process.
+/// A recurring order's private parts -- only ever stored sealed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TemplateDetails {
+    pub dropoff: GeoPoint,
+    pub dropoff_notes: String,
+    pub kitchen_notes: String,
+}
+
 #[hdk_entry_helper]
 #[derive(Clone)]
 pub struct RecurringOrderTemplate {
@@ -39,10 +47,10 @@ pub struct RecurringOrderTemplate {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
     pub item_refs: Vec<ActionHash>,
-    pub dropoff: GeoPoint,
+    /// Where it goes and the notes for it (`TemplateDetails`), sealed to the
+    /// requester -- a standing order shouldn't publish a home address.
+    pub sealed_details: XSalsa20Poly1305EncryptedData,
     pub max_delivery_fee: Option<u64>,
-    #[serde(default)]
-    pub special_instructions: String,
     #[serde(default)]
     pub tip_cents: u64,
     #[serde(default)]
@@ -116,9 +124,8 @@ pub(crate) fn validate_recurring_template_update(
         && prior.merchant == template.merchant
         && prior.catalog_ref == template.catalog_ref
         && prior.item_refs == template.item_refs
-        && prior.dropoff == template.dropoff
+        && prior.sealed_details == template.sealed_details
         && prior.max_delivery_fee == template.max_delivery_fee
-        && prior.special_instructions == template.special_instructions
         && prior.tip_cents == template.tip_cents
         && prior.dropoff_preference == template.dropoff_preference
         && prior.promo_code_ref == template.promo_code_ref

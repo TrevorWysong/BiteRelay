@@ -3,7 +3,7 @@ import { useResource } from "../../lib/useResource";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
-import { getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
+import { getOrderPrivateDetails, getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
 import { fetchOrderItemNames } from "../../lib/menu";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
 import { decodeEntry, bytesEqual, bytesToHex, hexToBytes } from "../../holochain/decode";
@@ -40,6 +40,8 @@ export function PickupOrderDetail() {
     pollMs: POLL_MS,
     refreshOn: (signal) => "PickupReady" in signal,
   });
+  // The kitchen note is sealed to the store; the zome opens it for us.
+  const { data: details } = useResource(`pickup-order-details:${hash}`, () => getOrderPrivateDetails(orderRef));
   const { data: itemNames = {} } = useResource(order ? `pickup-order-items:${hash}` : null, () => fetchOrderItemNames(order!));
   // Read back from the conductor so a reload doesn't re-offer the form (see
   // OrderDetail). `undefined` until loaded.
@@ -132,12 +134,12 @@ export function PickupOrderDetail() {
         </Card>
       </motion.div>
 
-      {order.special_instructions && (
+      {details?.kitchen_note && (
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-              {order.special_instructions}
+              <span className="font-semibold text-ink-900 dark:text-ink-50">Note for the store: </span>
+              {details.kitchen_note}
             </p>
           </Card>
         </motion.div>

@@ -33,8 +33,10 @@ pub struct Profile {
     /// gap rather than silently unbounded.
     #[serde(default)]
     pub avatar_data_uri: String,
+    /// The person's phone number, sealed to themselves -- a profile is
+    /// public, a phone number isn't.
     #[serde(default)]
-    pub phone: String,
+    pub sealed_phone: Option<XSalsa20Poly1305EncryptedData>,
 }
 
 /// Kept separate from `Profile` because verification status churns independently
@@ -68,9 +70,10 @@ pub struct ProviderCredential {
 /// of this feature that's appropriately client-local (see session.ts's
 /// own `loadStoredLocation` doc comment for why that part is fine to be
 /// device-only).
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct SavedAddress {
+/// One saved address, in full -- only ever stored sealed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct AddressDetails {
+    /// "Home", "Work", "Mom's".
     pub label: String,
     pub location: GeoPoint,
     #[serde(default)]
@@ -81,6 +84,14 @@ pub struct SavedAddress {
     pub state: String,
     #[serde(default)]
     pub zip: String,
+}
+
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct SavedAddress {
+    /// The address (`AddressDetails`), sealed to its owner -- nobody else
+    /// learns where they live or what they call it.
+    pub sealed: XSalsa20Poly1305EncryptedData,
     pub created_at: Timestamp,
 }
 
@@ -256,10 +267,9 @@ fn validate_provider_credential(credential: &ProviderCredential) -> ExternResult
     Ok(ValidateCallbackResult::Valid)
 }
 
-fn validate_saved_address(address: &SavedAddress, _author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    if address.label.trim().is_empty() {
-        return Ok(ValidateCallbackResult::Invalid("a saved address needs a label (e.g. \"Home\")".into()));
-    }
+/// The content is sealed, so there's nothing validation can read; the
+/// coordinator checks the label before sealing.
+fn validate_saved_address(_address: &SavedAddress, _author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     Ok(ValidateCallbackResult::Valid)
 }
 

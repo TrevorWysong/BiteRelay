@@ -12,7 +12,7 @@ import { decodeEntry, bytesEqual, bytesToHex } from "../holochain/decode";
 import { nextOccurrence, toMicros } from "../lib/recurrence";
 import { fetchMenu } from "../lib/menu";
 import { usePolling } from "../lib/useResource";
-import type { PromoCode, RecurringOrderTemplate } from "../holochain/types";
+import type { PromoCode, RecurringOrderTemplate, TemplateDetails } from "../holochain/types";
 
 const CHECK_INTERVAL_MS = 60_000;
 
@@ -41,7 +41,8 @@ async function fireDueTemplates() {
     const template = decodeEntry<RecurringOrderTemplate>(view.record);
     if (!template.active || template.next_run_at > now) continue;
     try {
-      await fire(template);
+      // Details are stored sealed; the view carries them opened for us.
+      if (view.details) await fire(template, view.details);
     } catch {
       // Best-effort -- see the module doc comment. Advance regardless, so a
       // failing template isn't retried every tick forever.
@@ -57,7 +58,7 @@ async function fireDueTemplates() {
 /// check it -- current prices, less the template's promo if it still
 /// applies (it's left off if it was deactivated, expired, or the cart no
 /// longer earns it).
-async function fire(template: RecurringOrderTemplate) {
+async function fire(template: RecurringOrderTemplate, details: TemplateDetails) {
   const available = (await fetchMenu(template.catalog_ref)).filter((row) => row.item.available);
   // A template repeats an item once per unit; count them back up.
   const lines = template.item_refs.flatMap((ref) => available.filter((row) => bytesEqual(row.hash, ref)).slice(0, 1));
@@ -80,9 +81,10 @@ async function fire(template: RecurringOrderTemplate) {
     catalog_ref: template.catalog_ref,
     items: [...items.values()],
     order_total: subtotal - (promo?.discount ?? 0),
-    dropoff: template.dropoff,
+    dropoff: details.dropoff,
     max_delivery_fee: template.max_delivery_fee,
-    special_instructions: template.special_instructions,
+    kitchen_notes: details.kitchen_notes,
+    dropoff_notes: details.dropoff_notes,
     tip_cents: template.tip_cents,
     dropoff_preference: template.dropoff_preference,
     promo_code_ref: promo ? template.promo_code_ref : null,
