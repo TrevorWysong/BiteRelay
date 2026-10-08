@@ -8,6 +8,9 @@
 use hdi::prelude::*;
 use relay_types::{GeoPoint, LedgerCommitmentRef};
 
+mod settlement;
+pub use settlement::*;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryStatus {
     /// A future-dated order that hasn't started matching yet -- see
@@ -139,6 +142,19 @@ pub enum DropoffPreference {
     MeetOutside,
 }
 
+/// One line of an order: an item, the exact version of it that was priced
+/// (the item as the customer saw it -- validation reads its price from
+/// there), and how many.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OrderLine {
+    /// The item's identity (its original action). For a goodie-bag order,
+    /// the bag.
+    pub item_ref: ActionHash,
+    /// The version priced: `item_ref` itself or one of its updates.
+    pub priced_version: ActionHash,
+    pub quantity: u32,
+}
+
 /// One concrete entry type per vertical (this one, plus a future
 /// `RideRequest` if rides are ever added) rather than one generalized "Job"
 /// with a cargo-type enum: cramming both into one entry would force a
@@ -152,7 +168,9 @@ pub struct DeliveryOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What was ordered, each line priced at a specific version of its item
+    /// -- validation recomputes `order_total` from these.
+    pub lines: Vec<OrderLine>,
     pub order_total: u64,
     pub dropoff: GeoPoint,
     pub dropoff_geohash: String,
@@ -180,6 +198,11 @@ pub struct DeliveryOrder {
     pub special_instructions: String,
     #[serde(default)]
     pub tip_cents: u64,
+    /// The store's share of the delivery fee, in percent -- the split in
+    /// force when the order was placed (the store's `delivery_subsidy_percent`
+    /// then), fixed for this order. The store accepts it by confirming the
+    /// order; settlement and ledger validation both read it from here.
+    pub delivery_subsidy_percent: u8,
     /// `None` means "order now," the original and still-default behavior.
     /// `Some(t)` means this order was created in `Scheduled` status instead
     /// of `Open` -- matching never begins until the requester's own client
@@ -216,6 +239,11 @@ pub struct DeliveryOrder {
     /// used for `promo_code_ref`/`PromoCode` above.
     #[serde(default)]
     pub bag_claim_ref: Option<ActionHash>,
+    /// For a loyalty promo ("your 6th order here is 15% off"): the
+    /// customer's own completions of earlier orders at this store, which
+    /// validation counts. Empty otherwise.
+    #[serde(default)]
+    pub loyalty_proof: Vec<ActionHash>,
 }
 
 #[hdk_entry_helper]
@@ -327,7 +355,9 @@ pub struct PickupOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What was ordered, each line priced at a specific version of its item
+    /// -- validation recomputes `order_total` from these.
+    pub lines: Vec<OrderLine>,
     pub order_total: u64,
     pub status: PickupStatus,
     pub dispute_ref: Option<ActionHash>,
@@ -342,4 +372,9 @@ pub struct PickupOrder {
     /// claim rather than an ordinary menu order.
     #[serde(default)]
     pub bag_claim_ref: Option<ActionHash>,
+    /// For a loyalty promo ("your 6th order here is 15% off"): the
+    /// customer's own completions of earlier orders at this store, which
+    /// validation counts. Empty otherwise.
+    #[serde(default)]
+    pub loyalty_proof: Vec<ActionHash>,
 }

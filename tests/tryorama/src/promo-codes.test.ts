@@ -42,11 +42,15 @@ await runScenario(async (scenario) => {
   const otherMenuItemRecord = await catalogOf(otherMerchant)<HcRecord>("add_menu_item", { catalog_ref: otherCatalogRef, name: "Taco", price_cents: 500, available: true });
   const otherMenuItemRef = actionHash(otherMenuItemRecord);
 
-  async function placeOrder(promoRef: Uint8Array | null, orderTotal = 1000) {
+  // Pricing reads the store's menu and codes; a real customer has always
+  // loaded the menu before ordering.
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+
+  async function placeOrder(promoRef: Uint8Array | null, orderTotal = 1000, items: { item_ref: Uint8Array; quantity: number }[] = [{ item_ref: menuItemRef, quantity: 1 }]) {
     return dispatchOf(customer)<HcRecord>("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [menuItemRef],
+      items,
       order_total: orderTotal,
       dropoff: ST_PETE,
       max_delivery_fee: null,
@@ -127,8 +131,11 @@ await runScenario(async (scenario) => {
   });
   const bogoRef = actionHash(bogoRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await placeOrder(bogoRef, 2000); // the arithmetic isn't re-derived server-side; this just proves the code itself is accepted end to end
-  console.log("[PASS] a buy-X-get-Y-free (BOGO) requirement+reward pair is created and accepted on an order");
+  const twoEmpanadas = [{ item_ref: menuItemRef, quantity: 2 }];
+  await placeOrder(bogoRef, 1000, twoEmpanadas); // two at $10.00, one free
+  await assert.rejects(placeOrder(bogoRef, 2000, twoEmpanadas), /the total is now 1000 cents/, "an order that skips the earned discount must be refused with the real total");
+  await assert.rejects(placeOrder(bogoRef, 1000), /doesn't meet the promo code's requirement/, "one empanada doesn't earn a second free");
+  console.log("[PASS] a buy-X-get-Y-free (BOGO) deal is priced exactly, and only when earned");
 
   // "Spend $X, get item Y free" -- MinimumSpend paired with FreeItem, where
   // the reward item differs from whatever triggered the requirement.
@@ -140,8 +147,8 @@ await runScenario(async (scenario) => {
   });
   const spendGetRef = actionHash(spendGetRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await placeOrder(spendGetRef, 1600);
-  console.log("[PASS] a spend-$X-get-item-Y-free requirement+reward pair is created and accepted on an order");
+  await placeOrder(spendGetRef, 2000, [{ item_ref: menuItemRef, quantity: 2 }, { item_ref: drinkRef, quantity: 1 }]); // $20.00 + a free drink
+  console.log("[PASS] a spend-$X-get-item-Y-free deal takes the free item off the total");
 
   // An item-scoped requirement or reward can't reference another
   // merchant's menu item -- `item_belongs_to_catalog` must catch this even

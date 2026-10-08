@@ -7,7 +7,7 @@ import { Card, Skeleton, StatNumber } from "../components/ui";
 import { formatCents, timeAgo } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { useResource } from "../lib/useResource";
-import type { LedgerTransaction } from "../holochain/types";
+import type { LedgerTransaction, PaymentLeg, TxnReason } from "../holochain/types";
 
 interface Row {
   hash: Uint8Array;
@@ -26,6 +26,17 @@ interface Row {
 /// aggregation of. There is no operator account anywhere in this
 /// system's data model for a platform cut to land in -- not hidden, not
 /// omitted from this view, structurally absent from the ledger itself.
+const LEG_LABEL: Record<PaymentLeg, string> = {
+  OrderTotal: "Order payment",
+  DeliveryFeeCustomerShare: "Delivery fee (customer's share)",
+  DeliveryFeeStoreShare: "Delivery fee (store's share)",
+  Tip: "Tip",
+};
+
+function describeReason(reason: TxnReason): string {
+  return reason === "CollateralForfeit" ? "Collateral forfeiture" : LEG_LABEL[reason.Payment];
+}
+
 export function Transparency() {
   const agentPubKey = useSession((s) => s.agentPubKey);
   const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
@@ -150,7 +161,7 @@ export function Transparency() {
                           {received ? "Received" : "Paid"} <StatNumber tone={received ? "success" : "default"} className="text-sm">{formatCents(row.txn.amount)}</StatNumber>
                         </p>
                         <p className="text-xs text-ink-400">
-                          {row.txn.reason === "CollateralForfeit" ? "Collateral forfeiture" : "Order payment"} · {timeAgo(row.txn.created_at)}
+                          {describeReason(row.txn.reason)} · {timeAgo(row.txn.created_at)}
                         </p>
                       </div>
                     </div>

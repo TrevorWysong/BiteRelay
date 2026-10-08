@@ -84,6 +84,21 @@ export async function retryUntil<T>(fn: () => Promise<T>, done: (value: T) => bo
   return value;
 }
 
+/// An app to install with custom DNA properties (see `RelayDnaProperties`),
+/// for `scenario.addPlayersWithApps`. Properties are part of the DNA hash,
+/// so every player that should share a network needs the same ones. The
+/// `RoleSettings` shape is explained on `setupArbitratedPlayers` below.
+export function appWithProperties(properties: Record<string, unknown>) {
+  return {
+    appBundleSource: appSource,
+    options: {
+      rolesSettings: {
+        relay: { type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties } } },
+      },
+    },
+  };
+}
+
 /// The dispute/arbitration subsystem (plan §8) needs an arbitrator roster
 /// baked into DNA properties -- a value every player must install with
 /// *identically*, since `properties` is part of the DNA hash. That pubkey

@@ -51,7 +51,7 @@ await runScenario(async (scenario) => {
 
   // --- An order must name the store's real owner as its merchant. ---
   await assert.rejects(
-    dispatchOf(customer)("request_pickup_order", { merchant: customer.agentPubKey, catalog_ref: storeA, item_refs: [itemA], order_total: 1250 }),
+    dispatchOf(customer)("request_pickup_order", { merchant: customer.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1250 }),
     /owner of catalog_ref/,
     "a pickup order naming someone other than the store's owner must be rejected",
   );
@@ -59,7 +59,7 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_delivery", {
       merchant: customer.agentPubKey,
       catalog_ref: storeA,
-      item_refs: [itemA],
+      items: [{ item_ref: itemA, quantity: 1 }],
       order_total: 1250,
       dropoff: ST_PETE,
       max_delivery_fee: null,
@@ -74,14 +74,14 @@ await runScenario(async (scenario) => {
     await dispatchOf(customer)<HcRecord>("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: storeA,
-      item_refs: [itemA],
+      items: [{ item_ref: itemA, quantity: 1 }],
       order_total: 1250,
       dropoff: ST_PETE,
       max_delivery_fee: null,
     }),
   );
   const pickupB = actionHash(
-    await dispatchOf(customer)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeB, item_refs: [itemB], order_total: 900 }),
+    await dispatchOf(customer)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeB, items: [{ item_ref: itemB, quantity: 1 }], order_total: 900 }),
   );
   await sync();
 

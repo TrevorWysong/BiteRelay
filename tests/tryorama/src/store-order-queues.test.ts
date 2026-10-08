@@ -26,16 +26,17 @@ await runScenario(async (scenario) => {
   const item = actionHash(await call(merchant, "catalog")<HcRecord>("add_menu_item", { catalog_ref: store, name: "Burger", price_cents: 1000, available: true }));
   await sync();
 
-  // Five orders, alternating kinds, each with a distinct total so they're
-  // identifiable in any read.
+  // Five orders, alternating kinds, each for a different quantity (so a
+  // distinct total) so they're identifiable in any read.
   const placed: { kind: "Delivery" | "Pickup"; ref: Uint8Array; total: number }[] = [];
   for (let i = 0; i < 5; i++) {
-    const total = 1000 + i;
+    const quantity = i + 1;
+    const total = 1000 * quantity;
     const kind = i % 2 === 0 ? "Delivery" : "Pickup";
     const record =
       kind === "Delivery"
-        ? await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: store, item_refs: [item], order_total: total, dropoff: ST_PETE, max_delivery_fee: null })
-        : await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, item_refs: [item], order_total: total });
+        ? await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity }], order_total: total, dropoff: ST_PETE, max_delivery_fee: null })
+        : await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity }], order_total: total });
     placed.push({ kind, ref: actionHash(record), total });
   }
   await sync();
@@ -46,7 +47,7 @@ await runScenario(async (scenario) => {
     assert.equal(rows.length, 5);
     return rows;
   });
-  assert.deepEqual(totals(active), [1000, 1001, 1002, 1003, 1004], "active queue must be oldest first");
+  assert.deepEqual(totals(active), [1000, 2000, 3000, 4000, 5000], "active queue must be oldest first");
   assert.deepEqual(active.map((o) => o.kind), ["Delivery", "Pickup", "Delivery", "Pickup", "Delivery"]);
   assert.ok(active.every((o, i) => bytesEqual(o.original_action, placed[i].ref)), "entries must carry each order's original action, not its latest");
   console.log("[PASS] the active queue holds every in-progress order, oldest first, with stable ids");
@@ -61,7 +62,7 @@ await runScenario(async (scenario) => {
 
   await retryUntilOk(async () => {
     const rows = await call(merchant, "dispatch")<StoreOrder[]>("get_active_orders_for_store", store);
-    assert.deepEqual(totals(rows), [1002, 1003, 1004]);
+    assert.deepEqual(totals(rows), [3000, 4000, 5000]);
   });
   console.log("[PASS] a cancelled (by the merchant) and a completed (by the customer) order both leave the active queue");
 
@@ -76,10 +77,10 @@ await runScenario(async (scenario) => {
     before = page.next_before;
   } while (before !== null);
   assert.deepEqual(pageSizes, [2, 2, 1], "five orders in pages of two");
-  assert.deepEqual(totals(seen), [1004, 1003, 1002, 1001, 1000], "history must be newest first with no gaps or repeats");
+  assert.deepEqual(totals(seen), [5000, 4000, 3000, 2000, 1000], "history must be newest first with no gaps or repeats");
   const statusOf = (total: number) => decodeEntry<{ status: string }>(seen.find((o) => totals([o])[0] === total)!.record).status;
   assert.equal(statusOf(1000), "Cancelled");
-  assert.equal(statusOf(1001), "PickedUp");
+  assert.equal(statusOf(2000), "PickedUp");
   console.log("[PASS] history pages through every order newest first, finished ones included, and the cursor ends on the last page");
 
   const fullPage = await call(merchant, "dispatch")<HistoryPage>("get_order_history_for_store", { catalog_ref: store, before: null, limit: null });

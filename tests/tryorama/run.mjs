@@ -43,8 +43,11 @@ if (!existsSync(join(repo, "workdir/relay.happ"))) {
   console.error("workdir/relay.happ is missing -- run `npm run backend` in web/ (or hc dna pack / hc app pack) first.");
   process.exit(2);
 }
-if (files.includes("link-validation") && !existsSync(join(repo, "target/test-utils/wasm32-unknown-unknown/release"))) {
-  console.error("link-validation needs the test-utils coordinators -- run `npm run build:test-coordinators` first.");
+// Files that hot-swap in the test-only coordinator build (useTestCoordinators).
+const NEEDS_TEST_COORDINATORS = ["link-validation", "completion-gate", "dispute-bypass", "order-pricing"];
+const needing = files.filter((name) => NEEDS_TEST_COORDINATORS.includes(name));
+if (needing.length && !existsSync(join(repo, "target/test-utils/wasm32-unknown-unknown/release"))) {
+  console.error(`${needing.join(", ")} need the test-utils coordinators -- run \`npm run build:test-coordinators\` first.`);
   process.exit(2);
 }
 mkdirSync(logDir, { recursive: true });

@@ -48,7 +48,7 @@ await runScenario(async (scenario) => {
   await call(merchant, "catalog")("confirm_claim", claim);
   await sync();
   const redeem = () =>
-    call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, item_refs: [bag], order_total: 500, bag_claim_ref: claim });
+    call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: bag, quantity: 1 }], order_total: 500, bag_claim_ref: claim });
   const firstRedemption = actionHash(await redeem());
   assert.ok(firstRedemption);
   const found = await call(customer, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim);
@@ -65,7 +65,7 @@ await runScenario(async (scenario) => {
   await call(merchant, "catalog")("set_promo_code_active", { original_action: retiredPromo, active: false });
   await sync();
   const pickupWithPromo = (promo: Uint8Array) =>
-    call(customer, "dispatch")("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, item_refs: [item], order_total: 900, promo_code_ref: promo });
+    call(customer, "dispatch")("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: item, quantity: 1 }], order_total: 900, promo_code_ref: promo });
   await assert.rejects(pickupWithPromo(otherStorePromo), /does not belong to this order's store/, "another store's code must be rejected");
   await assert.rejects(pickupWithPromo(retiredPromo), /not active/, "a deactivated code must be refused");
   await sleep(3500);

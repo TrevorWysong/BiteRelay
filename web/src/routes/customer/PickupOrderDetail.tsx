@@ -115,7 +115,7 @@ export function PickupOrderDetail() {
   // validate_review/validate_item_review reject self-ratings anyway.
   const selfOrder = bytesEqual(order.merchant, myAgentPubKey());
   const canRateStore = storeRated === false && !selfOrder;
-  const canRateItems = !itemsRated && !selfOrder && !order.bag_claim_ref && order.item_refs.length > 0;
+  const canRateItems = !itemsRated && !selfOrder && !order.bag_claim_ref && order.lines.length > 0;
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
@@ -190,7 +190,7 @@ export function PickupOrderDetail() {
               <div>
                 <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
                 <div className="flex flex-col gap-2">
-                  {[...new Set(order.item_refs.map(bytesToHex))].map((hex) => (
+                  {order.lines.map((line) => bytesToHex(line.item_ref)).map((hex) => (
                     <div key={hex} className="flex items-center justify-between">
                       <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
                       <StarRatingInput value={itemRatings[hex] ?? 0} onChange={(v) => setItemRatings((prev) => ({ ...prev, [hex]: v }))} size={16} />

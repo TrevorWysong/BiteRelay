@@ -59,7 +59,7 @@ await runScenario(async (scenario) => {
   const orderRecord = await dispatchOf(requester)<HcRecord>("request_delivery", {
     merchant: requester.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
+    items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 1250,
     dropoff: ST_PETE,
     max_delivery_fee: 500,

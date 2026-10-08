@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { distanceKm } from "../../lib/geohash";
-import { useCart, expandLineQuantities, type CartLine } from "../../store/cart";
+import { useCart, cartItems, expandLineQuantities, type CartLine } from "../../store/cart";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
@@ -266,7 +266,7 @@ export function Cart() {
         const record = await requestPickupOrder({
           merchant: cart.merchant,
           catalog_ref: cart.catalogRef,
-          item_refs: expandLineQuantities(cart.lines),
+          items: cartItems(cart.lines),
           order_total: discountedSubtotalCents,
           special_instructions: instructions.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
@@ -279,7 +279,7 @@ export function Cart() {
       const record = await requestDelivery({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
-        item_refs: expandLineQuantities(cart.lines),
+        items: cartItems(cart.lines),
         order_total: discountedSubtotalCents,
         dropoff,
         max_delivery_fee: maxFeeCents,

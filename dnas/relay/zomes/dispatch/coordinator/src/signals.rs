@@ -18,6 +18,9 @@ pub fn init() -> ExternResult<InitCallbackResult> {
         CapAccess::Unrestricted,
         GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "recv_remote_signal".into())])),
     ))?;
+    // A store pays its delivery-fee shares from its conductor -- see
+    // `settlement::settle_store_shares_periodically`.
+    schedule("settle_store_shares_periodically")?;
     Ok(InitCallbackResult::Pass)
 }
 
@@ -58,6 +61,9 @@ pub enum RemoteSignal {
     /// `pickup::mark_ready_for_pickup`) -- same already-known-AgentPubKey
     /// requirement as every signal here.
     PickupReady { order_hash: ActionHash },
+    /// Sent by the customer completing a delivery, to its store: the store
+    /// owes its share of the delivery fee, which only it can pay.
+    StoreShareDue { order_hash: ActionHash },
 }
 
 #[hdk_extern]
@@ -74,5 +80,13 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at })
         }
         RemoteSignal::PickupReady { order_hash } => emit_signal(LocalSignal::PickupReady(order_hash)),
+        // Paid right here by the store's own conductor -- no UI involved.
+        // `pay_store_share` only pays for an order that really was
+        // delivered from this agent's store, and only once, so a stray or
+        // repeated signal costs a read, nothing more.
+        // The store's conductor settles it on its own schedule (see
+        // `settlement::settle_store_shares_soon`). Scheduling is idempotent,
+        // so a stray or repeated signal just triggers a sweep.
+        RemoteSignal::StoreShareDue { .. } => schedule("settle_store_shares_soon"),
     }
 }

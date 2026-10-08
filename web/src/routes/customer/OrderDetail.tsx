@@ -260,7 +260,7 @@ export function OrderDetail() {
   const selfOrder = bytesEqual(order.merchant, myAgentPubKey());
   const canRateStore = !!rated && !rated.store && !selfOrder;
   const canRateDriver = !!rated && !rated.driver && !!driver;
-  const canRateItems = !itemsRated && !order.bag_claim_ref && order.item_refs.length > 0;
+  const canRateItems = !itemsRated && !order.bag_claim_ref && order.lines.length > 0;
   const ratingDone = !!rated && !canRateStore && !canRateDriver;
 
   return (
@@ -431,12 +431,12 @@ export function OrderDetail() {
               {driverRating > 0 && <Textarea value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
             </div>
           )}
-          {/* A goodie bag isn't itemized -- item_refs is just [bag_ref], not real MenuItems -- so there's nothing per-item to rate. */}
+          {/* A goodie bag isn't itemized -- its one line is the bag, not a menu item -- so there's nothing per-item to rate. */}
           {canRateItems && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
               <div className="flex flex-col gap-2">
-                {[...new Set(order.item_refs.map(bytesToHex))].map((hex) => (
+                {order.lines.map((line) => bytesToHex(line.item_ref)).map((hex) => (
                   <div key={hex} className="flex items-center justify-between">
                     <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
                     <StarRatingInput

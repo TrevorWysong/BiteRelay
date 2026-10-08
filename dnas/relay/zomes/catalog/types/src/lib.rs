@@ -12,6 +12,9 @@
 use hdi::prelude::*;
 use relay_types::GeoPoint;
 
+mod pricing;
+pub use pricing::*;
+
 #[hdk_entry_helper]
 #[derive(Clone)]
 pub struct MerchantCatalog {

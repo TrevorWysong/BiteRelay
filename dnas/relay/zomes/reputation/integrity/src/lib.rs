@@ -253,6 +253,7 @@ struct ReviewableOrder {
     requester: AgentPubKey,
     merchant: AgentPubKey,
     catalog_ref: ActionHash,
+    /// The items ordered (each line's item identity).
     item_refs: Vec<ActionHash>,
     /// The accepted driver, for a delivery -- pickup has no driver at all.
     driver: Option<AgentPubKey>,
@@ -286,7 +287,7 @@ fn resolve_reviewable_order(
             requester: order.requester,
             merchant: order.merchant,
             catalog_ref: order.catalog_ref,
-            item_refs: order.item_refs,
+            item_refs: order.lines.into_iter().map(|line| line.item_ref).collect(),
             driver,
         }));
     }
@@ -298,7 +299,7 @@ fn resolve_reviewable_order(
             requester: order.requester,
             merchant: order.merchant,
             catalog_ref: order.catalog_ref,
-            item_refs: order.item_refs,
+            item_refs: order.lines.into_iter().map(|line| line.item_ref).collect(),
             driver: None,
         }));
     }

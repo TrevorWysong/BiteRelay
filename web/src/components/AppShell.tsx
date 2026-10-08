@@ -57,8 +57,8 @@ export function AppShell() {
   const navigate = useNavigate();
   useRecurringOrderFiring();
   useClaimFinalization();
-
   const roles = profile?.roles ?? [];
+
   const availableModes = [
     roles.includes("Requester") && ("customer" as const),
     roles.includes("Provider") && ("driver" as const),

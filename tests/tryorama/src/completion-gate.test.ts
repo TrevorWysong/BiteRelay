@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -20,6 +20,8 @@ await runScenario(async (scenario) => {
     { appBundleSource: appSource },
   ]);
   const both = [customer, driver];
+  // force_order_update_for_testing only exists in the test-utils build.
+  for (const player of both) await useTestCoordinators(player, ["dispatch"]);
 
   const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
   const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
@@ -43,7 +45,7 @@ await runScenario(async (scenario) => {
   const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
     merchant: customer.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
+    items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600,
     dropoff: ST_PETE,
     max_delivery_fee: null,

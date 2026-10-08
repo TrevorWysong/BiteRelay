@@ -47,7 +47,7 @@ await runScenario(async (scenario) => {
     await dispatchOf(customer)<HcRecord>("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: storeA,
-      item_refs: [itemA],
+      items: [{ item_ref: itemA, quantity: 1 }],
       order_total: 1250,
       dropoff: ST_PETE,
       max_delivery_fee: null,
@@ -172,7 +172,7 @@ await runScenario(async (scenario) => {
 
   // --- Negative: a merchant can't rate their own store, even via a real self-order. ---
   const selfOrder = actionHash(
-    await dispatchOf(merchant)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeB, item_refs: [itemB], order_total: 900 }),
+    await dispatchOf(merchant)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeB, items: [{ item_ref: itemB, quantity: 1 }], order_total: 900 }),
   );
   await dispatchOf(merchant)("confirm_pickup_prep", selfOrder);
   await dispatchOf(merchant)("mark_ready_for_pickup", selfOrder);

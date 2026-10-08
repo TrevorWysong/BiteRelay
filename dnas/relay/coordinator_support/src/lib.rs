@@ -25,16 +25,29 @@ pub fn original_action_of(action_hash: ActionHash) -> ExternResult<ActionHash> {
 /// one stable reference (the original action) across any number of edits.
 /// Each update must be applied to the *latest* record, too: updating the
 /// original again would branch the history instead of extending it.
+///
+/// Reads locally first (the common case: the caller's own data, or data
+/// it already holds) and falls back to the network for a record it doesn't.
 pub fn resolve_latest(action_hash: ActionHash) -> ExternResult<Record> {
-    let details = get_details(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record not found".into())))?;
+    match resolve_latest_with(action_hash.clone(), GetOptions::local()) {
+        Ok(record) => Ok(record),
+        Err(_) => resolve_latest_with(action_hash, GetOptions::network()),
+    }
+}
+
+/// `resolve_latest`, always asking the network -- for when a stale local
+/// copy would be wrong, like pricing an order at an item's current price.
+pub fn resolve_latest_fresh(action_hash: ActionHash) -> ExternResult<Record> {
+    resolve_latest_with(action_hash, GetOptions::network())
+}
+
+fn resolve_latest_with(action_hash: ActionHash, options: GetOptions) -> ExternResult<Record> {
+    let details = get_details(action_hash, options.clone())?.ok_or(wasm_error!(WasmErrorInner::Guest("record not found".into())))?;
     let Details::Record(record_details) = details else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "expected Details::Record for an ActionHash query".into()
-        )));
+        return Err(wasm_error!(WasmErrorInner::Guest("expected Details::Record for an ActionHash query".into())));
     };
     match record_details.updates.iter().max_by_key(|u| u.action().timestamp()) {
-        Some(latest) => resolve_latest(latest.action_address().clone()),
+        Some(latest) => resolve_latest_with(latest.action_address().clone(), options),
         None => Ok(record_details.record),
     }
 }

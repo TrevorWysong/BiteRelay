@@ -65,7 +65,7 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [bagRefA],
+      items: [{ item_ref: bagRefA, quantity: 1 }],
       order_total: 500,
       dropoff: ST_PETE,
       max_delivery_fee: 300,
@@ -81,7 +81,7 @@ await runScenario(async (scenario) => {
   const orderA = await dispatchOf(customer)<HcRecord>("request_delivery", {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [bagRefA],
+    items: [{ item_ref: bagRefA, quantity: 1 }],
     order_total: 500,
     dropoff: ST_PETE,
     max_delivery_fee: 300,
@@ -108,7 +108,7 @@ await runScenario(async (scenario) => {
     dispatchOf(otherCustomer)("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [bagRefB],
+      items: [{ item_ref: bagRefB, quantity: 1 }],
       order_total: 500,
       dropoff: ST_PETE,
       max_delivery_fee: 300,
@@ -130,7 +130,7 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [bagRefC],
+      items: [{ item_ref: bagRefC, quantity: 1 }],
       order_total: 500,
       dropoff: ST_PETE,
       max_delivery_fee: 300,
@@ -153,7 +153,7 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_pickup_order", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [bagRefC],
+      items: [{ item_ref: bagRefC, quantity: 1 }],
       order_total: 500,
       bag_claim_ref: deliveryClaimRef,
     }),
@@ -165,7 +165,7 @@ await runScenario(async (scenario) => {
   const pickupOrder = await dispatchOf(customer)<HcRecord>("request_pickup_order", {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [bagRefC],
+    items: [{ item_ref: bagRefC, quantity: 1 }],
     order_total: 500,
     bag_claim_ref: pickupClaimRef,
   });

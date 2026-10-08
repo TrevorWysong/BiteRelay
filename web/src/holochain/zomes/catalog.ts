@@ -125,6 +125,11 @@ export async function createPromoCode(input: {
   return callZome("catalog", "create_promo_code", { expires_at: null, auto_apply: false, ...input });
 }
 
+/// A promo code at its latest state (is it still active?).
+export async function getPromoCode(promoRef: ActionHash): Promise<HcRecord> {
+  return callZome("catalog", "get_promo_code", promoRef);
+}
+
 export async function setPromoCodeActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {
   return callZome("catalog", "set_promo_code_active", { original_action: originalAction, active });
 }

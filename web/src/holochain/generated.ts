@@ -98,7 +98,11 @@ export interface DeliveryOrder {
   requester: AgentPubKey;
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  /**
+   * What was ordered, each line priced at a specific version of its item
+   * -- validation recomputes `order_total` from these.
+   */
+  lines: OrderLine[];
   order_total: number;
   dropoff: GeoPoint;
   dropoff_geohash: string;
@@ -130,6 +134,13 @@ export interface DeliveryOrder {
    */
   special_instructions: string;
   tip_cents: number;
+  /**
+   * The store's share of the delivery fee, in percent -- the split in
+   * force when the order was placed (the store's `delivery_subsidy_percent`
+   * then), fixed for this order. The store accepts it by confirming the
+   * order; settlement and ledger validation both read it from here.
+   */
+  delivery_subsidy_percent: number;
   /**
    * `None` means "order now," the original and still-default behavior.
    * `Some(t)` means this order was created in `Scheduled` status instead
@@ -170,6 +181,12 @@ export interface DeliveryOrder {
    * used for `promo_code_ref`/`PromoCode` above.
    */
   bag_claim_ref: ActionHash | null;
+  /**
+   * For a loyalty promo ("your 6th order here is 15% off"): the
+   * customer's own completions of earlier orders at this store, which
+   * validation counts. Empty otherwise.
+   */
+  loyalty_proof: ActionHash[];
 }
 
 export type DeliveryStatus =
@@ -365,7 +382,16 @@ export interface LedgerTransaction {
   to: AgentPubKey;
   amount: number;
   reason: TxnReason;
+  /**
+   * The order this settles (its original action).
+   */
   related_order: ActionHash;
+  /**
+   * The record that justifies it: for a payment, the version of the
+   * order that completed it (`Delivered`/`PickedUp`); for a forfeit, the
+   * resolved `Dispute`.
+   */
+  basis: ActionHash;
   created_at: Timestamp;
 }
 
@@ -481,6 +507,47 @@ export interface NearbyProvider {
 }
 
 /**
+ * One line of an order: an item, the exact version of it that was priced
+ * (the item as the customer saw it -- validation reads its price from
+ * there), and how many.
+ */
+export interface OrderLine {
+  /**
+   * The item's identity (its original action). For a goodie-bag order,
+   * the bag.
+   */
+  item_ref: ActionHash;
+  /**
+   * The version priced: `item_ref` itself or one of its updates.
+   */
+  priced_version: ActionHash;
+  quantity: number;
+}
+
+/**
+ * One part of settling a completed order. Each is paid by its own payer
+ * (see `ledger_integrity`), so each is a separate transaction.
+ */
+export type PaymentLeg =
+  /**
+   * The customer pays the store for the food.
+   */
+  | "OrderTotal"
+  /**
+   * The customer's share of the driver's delivery fee.
+   */
+  | "DeliveryFeeCustomerShare"
+  /**
+   * The store's share of the driver's delivery fee
+   * (`DeliveryOrder::delivery_subsidy_percent`).
+   */
+  | "DeliveryFeeStoreShare"
+  /**
+   * The customer's tip, all of it to the driver.
+   */
+  | "Tip";
+
+/**
  * The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
  * comment for why this is concrete and separate rather than a flag on
  * `DeliveryOrder`. Deliberately missing everything that only makes sense
@@ -519,7 +586,11 @@ export interface PickupOrder {
   requester: AgentPubKey;
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  /**
+   * What was ordered, each line priced at a specific version of its item
+   * -- validation recomputes `order_total` from these.
+   */
+  lines: OrderLine[];
   order_total: number;
   status: PickupStatus;
   dispute_ref: ActionHash | null;
@@ -535,6 +606,12 @@ export interface PickupOrder {
    * claim rather than an ordinary menu order.
    */
   bag_claim_ref: ActionHash | null;
+  /**
+   * For a loyalty promo ("your 6th order here is 15% off"): the
+   * customer's own completions of earlier orders at this store, which
+   * validation counts. Empty otherwise.
+   */
+  loyalty_proof: ActionHash[];
 }
 
 /**
@@ -909,16 +986,15 @@ export interface SavedAddress {
   created_at: Timestamp;
 }
 
-/**
- * A stub mutual-credit ledger, internal to `relay`, standing in for
- * HoloFuel until it's live (see architecture plan §4). Every transaction
- * has a `from` and `to`, so summing all transactions across the whole
- * system always nets to zero -- the same property HoloFuel itself is built
- * on -- rather than modeling a fixed-escrow-contract balance. Swapping the
- * real HoloFuel hApp in later means changing only this zome's coordinator
- * internals, not the `Bid`/`LedgerCommitmentRef` shape other zomes depend on.
- */
-export type TxnReason = "Payment" | "CollateralForfeit";
+export type TxnReason =
+  /**
+   * One leg of settling a completed order.
+   */
+  | { Payment: PaymentLeg }
+  /**
+   * Collateral moved by an arbitrator's dispute ruling.
+   */
+  | "CollateralForfeit";
 
 /**
  * Contested warrants (architecture plan §11.2). Warrant-checking cannot be

@@ -40,14 +40,24 @@ export function isConnected(): boolean {
   return appWs !== null;
 }
 
+/// Holochain's message when a commit's validation needed a record that
+/// hasn't reached this node yet (`DepMissingFromDht`) -- nothing was
+/// committed, so the call is safe to repeat. Typical right after someone
+/// else's write, e.g. ordering from a menu edited a moment ago.
+const RETRYABLE = /could not be completed but may be retried/;
+const RETRY_DELAYS_MS = [500, 1500, 3000];
+
 export async function callZome<T>(zomeName: string, fnName: string, payload?: unknown): Promise<T> {
   const ws = getAppWs();
-  return ws.callZome<T>({
-    role_name: ROLE_NAME,
-    zome_name: zomeName,
-    fn_name: fnName,
-    payload,
-  });
+  const request = { role_name: ROLE_NAME, zome_name: zomeName, fn_name: fnName, payload };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ws.callZome<T>(request);
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length || !RETRYABLE.test(String((err as Error)?.message ?? err))) throw err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
 }
 
 export function myAgentPubKey(): Uint8Array {

@@ -59,7 +59,7 @@ async function placeOrderForClaim(claimRef: Uint8Array, claim: BagClaim) {
   const common = {
     merchant: catalog.owner,
     catalog_ref: bag.catalog_ref,
-    item_refs: [claim.bag_ref],
+    items: [{ item_ref: claim.bag_ref, quantity: 1 }],
     order_total: bag.price_cents,
     special_instructions: `Goodie bag: ${bag.title}`,
     bag_claim_ref: claimRef,
