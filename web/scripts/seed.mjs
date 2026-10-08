@@ -129,7 +129,7 @@ async function attestLeg(driver, orderRef, sequence, kind, to, location) {
   await eventually(`link ${kind}`, () => driver.call("attestation", "link_leg_to_receipt", { leg, receipt }));
 }
 
-const DELIVERY_STEPS = ["Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];
+const DELIVERY_STEPS = ["Placed", "Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];
 const PICKUP_STEPS = ["Placed", "MerchantConfirmed", "ReadyForPickup", "PickedUp"];
 const reached = (steps, until, step) => steps.indexOf(until) >= steps.indexOf(step);
 
@@ -150,6 +150,8 @@ async function seedDelivery(order, customer, store, driver) {
       }),
     ),
   );
+  if (!reached(DELIVERY_STEPS, order.until, "Open")) return orderRef;
+  await eventually("store accepts", () => store.owner.call("dispatch", "accept_delivery_order", orderRef));
   if (!reached(DELIVERY_STEPS, order.until, "BidPlaced")) return orderRef;
   const bidRef = hash(
     await eventually("submit bid", () =>

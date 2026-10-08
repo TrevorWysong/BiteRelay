@@ -1,4 +1,4 @@
-import { Check, ChefHat, CircleDot, PackageCheck, Bike, ShoppingBag, XCircle, AlertTriangle, Clock } from "lucide-react";
+import { Check, ChefHat, CircleDot, PackageCheck, Bike, ShoppingBag, Store, XCircle, AlertTriangle, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import type { DeliveryStatus, PickupStatus } from "../holochain/types";
@@ -6,7 +6,8 @@ import { Badge } from "./ui";
 import { fadeSlideUp } from "../lib/motion";
 
 const STEPS: { status: DeliveryStatus; label: string }[] = [
-  { status: "Open", label: "Order placed" },
+  { status: "Placed", label: "Order placed" },
+  { status: "Open", label: "Store accepted · finding a driver" },
   { status: "BidAccepted", label: "Driver assigned" },
   { status: "MerchantConfirmed", label: "Prep confirmed" },
   { status: "DriverEnRouteToMerchant", label: "Driver en route to pickup" },
@@ -22,6 +23,7 @@ export function statusTone(status: DeliveryStatus): "neutral" | "brand" | "succe
       return "neutral";
     case "Disputed":
       return "danger";
+    case "Placed":
     case "Open":
       return "brand";
     case "Scheduled":
@@ -58,7 +60,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
   if (status === "Scheduled") {
     return (
       <TerminalBanner icon={<Clock size={20} />} tone="neutral">
-        Scheduled for later. We'll start looking for a driver closer to the time.
+        Scheduled for later. We'll send it to the store closer to the time.
       </TerminalBanner>
     );
   }
@@ -78,7 +80,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
   }
 
   const currentIndex = STEPS.findIndex((s) => s.status === status);
-  const icons = [CircleDot, Check, ChefHat, Bike, PackageCheck, Check];
+  const icons = [CircleDot, Store, Check, ChefHat, Bike, PackageCheck, Check];
 
   return (
     <ol className="relative flex flex-col gap-0">
@@ -124,7 +126,7 @@ export function OrderStatusTimeline({ status }: { status: DeliveryStatus }) {
 
 const PICKUP_STEPS: { status: PickupStatus; label: string }[] = [
   { status: "Placed", label: "Order placed" },
-  { status: "MerchantConfirmed", label: "Prep confirmed" },
+  { status: "MerchantConfirmed", label: "Store accepted · preparing" },
   { status: "ReadyForPickup", label: "Ready for pickup" },
   { status: "PickedUp", label: "Picked up" },
 ];

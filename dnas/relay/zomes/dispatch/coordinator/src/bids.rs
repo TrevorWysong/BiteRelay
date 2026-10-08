@@ -20,10 +20,16 @@ pub struct SubmitBidInput {
 #[hdk_extern]
 pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     let bidder = agent_info()?.agent_initial_pubkey;
-    let (_, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_ref.clone(), "DeliveryOrder")?;
+    // `order_ref` may name the order's identity or any version of it; the
+    // bid names the current one, which validation requires to be Open (the
+    // store's acceptance, the version drivers discover).
+    let (current, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_ref.clone(), "DeliveryOrder")?;
+    if order.status != DeliveryStatus::Open {
+        return Err(wasm_error!(WasmErrorInner::Guest("this order isn't open for bids".into())));
+    }
 
     let bid = Bid {
-        order_ref: input.order_ref.clone(),
+        order_ref: current.action_address().clone(),
         bidder,
         eta_seconds: input.eta_seconds,
         price_offer: input.price_offer,

@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -54,6 +54,7 @@ await runScenario(async (scenario) => {
     }),
   );
   await sync();
+  await acceptOrder(merchant, orderRef, all);
   const bidRef = actionHash(
     await dispatchOf(driver)<HcRecord>("submit_bid", {
       order_ref: orderRef,

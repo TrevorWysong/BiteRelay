@@ -204,16 +204,21 @@ await runScenario(async (scenario) => {
   );
   const driverIndexOf = new Map(drivers.map((d, i) => [d.agentPubKey.toString(), i]));
 
-  const measuredOrder = await timed("phase2: request_delivery (triggers capped fan-out)", undefined, () =>
-    dispatchOf(customer)<HcRecord>("request_delivery", {
+  // The customer is the store here, so it accepts its own order -- the
+  // acceptance is what fans the order out to drivers.
+  const placeAndAccept = async () => {
+    const placed = await dispatchOf(customer)<HcRecord>("request_delivery", {
       merchant: customer.agentPubKey,
       catalog_ref: catalogRef,
       items: [{ item_ref: menuItemRef, quantity: 1 }],
       order_total: 600,
       dropoff: ST_PETE,
       max_delivery_fee: null,
-    }),
-  );
+    });
+    await dispatchOf(customer)("accept_delivery_order", actionHash(placed));
+    return placed;
+  };
+  const measuredOrder = await timed("phase2: request_delivery + store acceptance (triggers capped fan-out)", undefined, placeAndAccept);
   const measuredOrderRef = actionHash(measuredOrder);
 
   await new Promise((resolve) => setTimeout(resolve, SIGNAL_WAIT_MS));
@@ -285,14 +290,7 @@ await runScenario(async (scenario) => {
       }
     }),
   );
-  await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: customer.agentPubKey,
-    catalog_ref: catalogRef,
-    items: [{ item_ref: menuItemRef, quantity: 1 }],
-    order_total: 600,
-    dropoff: ST_PETE,
-    max_delivery_fee: null,
-  });
+  await placeAndAccept();
   await new Promise((resolve) => setTimeout(resolve, SIGNAL_WAIT_MS));
   warmUnsubscribes.forEach((unsub) => unsub());
 

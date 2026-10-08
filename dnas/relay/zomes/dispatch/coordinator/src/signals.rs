@@ -28,6 +28,8 @@ pub fn init() -> ExternResult<InitCallbackResult> {
 /// signal has been handled.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum LocalSignal {
+    /// A new order for one of this agent's stores to accept.
+    OrderPlaced(ActionHash),
     NewOrderNearby(ActionHash),
     BidPlaced(ActionHash),
     BidAccepted(ActionHash),
@@ -46,6 +48,9 @@ pub enum LocalSignal {
 /// requirement of already-known AgentPubKeys.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RemoteSignal {
+    /// Sent to a store when an order arrives for it to accept -- its queue
+    /// polls too, so this only makes a new order show up at once.
+    OrderPlaced { order_hash: ActionHash },
     NewOrderPosted { order_hash: ActionHash },
     BidPlaced { order_hash: ActionHash, bid_hash: ActionHash },
     BidAccepted { bid_hash: ActionHash },
@@ -69,6 +74,7 @@ pub enum RemoteSignal {
 #[hdk_extern]
 pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
     match payload {
+        RemoteSignal::OrderPlaced { order_hash } => emit_signal(LocalSignal::OrderPlaced(order_hash)),
         RemoteSignal::NewOrderPosted { order_hash } => emit_signal(LocalSignal::NewOrderNearby(order_hash)),
         RemoteSignal::BidPlaced { bid_hash, .. } => emit_signal(LocalSignal::BidPlaced(bid_hash)),
         RemoteSignal::BidAccepted { bid_hash } => emit_signal(LocalSignal::BidAccepted(bid_hash)),
@@ -80,10 +86,6 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at })
         }
         RemoteSignal::PickupReady { order_hash } => emit_signal(LocalSignal::PickupReady(order_hash)),
-        // Paid right here by the store's own conductor -- no UI involved.
-        // `pay_store_share` only pays for an order that really was
-        // delivered from this agent's store, and only once, so a stray or
-        // repeated signal costs a read, nothing more.
         // The store's conductor settles it on its own schedule (see
         // `settlement::settle_store_shares_soon`). Scheduling is idempotent,
         // so a stray or repeated signal just triggers a sweep.

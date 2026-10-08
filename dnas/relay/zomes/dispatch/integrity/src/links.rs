@@ -52,19 +52,19 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
     }
 }
 
-/// Only the order's requester publishes it for discovery, only in its Open
-/// form, and only under its own dropoff cell's anchor for when it was
-/// published. That time isn't recorded on the entry (a scheduled order is
-/// published when it opens), but it's never after this link and at most
-/// moments before it, so it falls in this link's bucket or the one before.
+/// Only the order's store publishes it for discovery -- in the same step that
+/// accepts it -- only in its Open form, and only under its own dropoff
+/// cell's anchor for when it was published. That time isn't recorded on the
+/// entry, but it's never after this link and at most moments before it, so
+/// it falls in this link's bucket or the one before.
 fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     let record = match link_target(link.target)? {
         LinkTarget::Record(record) => record,
         LinkTarget::PathNode => return Ok(ValidateCallbackResult::Valid),
     };
     let Some(order) = decode::<DeliveryOrder>(&record) else { return invalid("target is not a DeliveryOrder") };
-    if link.author != &order.requester || order.status != DeliveryStatus::Open {
-        return invalid("only an order's requester may publish it for discovery, and only while it's Open");
+    if link.author != &order.merchant || order.status != DeliveryStatus::Open {
+        return invalid("only an order's store may publish it for discovery, once it has accepted it");
     }
     let bucket = relay_types::time_bucket(link.timestamp.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     let allowed = [bucket, bucket - 1].map(|b| path_hash(open_order_anchor(&order.dropoff_geohash, b)));

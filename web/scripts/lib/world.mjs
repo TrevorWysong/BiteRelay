@@ -60,13 +60,14 @@ export const WORLD = {
   // completed ones. Items are menu item names from the order's store;
   // `note` only documents why the order is in the world.
   orders: [
+    { kind: "delivery", customer: "lee", store: "tacos", items: ["Mushroom Taco", "Elote"], until: "Placed", note: "Store needs to accept it" },
     { kind: "delivery", customer: "sam", store: "kitchen", items: ["Smash Burger", "Hand-cut Fries"], until: "Open", instructions: "No pickles please", note: "Waiting for a driver to bid" },
     { kind: "delivery", customer: "lee", store: "cafe", items: ["Flat White", "Almond Croissant"], until: "BidPlaced", driver: "dana", note: "Has a bid for the customer to accept" },
     { kind: "delivery", customer: "sam", store: "tacos", items: ["Al Pastor Taco", "Al Pastor Taco", "Elote"], until: "BidAccepted", driver: "dana", note: "Merchant needs to confirm prep" },
     { kind: "delivery", customer: "lee", store: "kitchen", items: ["Harvest Bowl"], until: "PickedUp", driver: "dana", note: "Driver en route to the customer" },
     { kind: "delivery", customer: "sam", store: "cafe", items: ["Chicken Pesto Panini", "Lentil Soup"], until: "Delivered", driver: "dana", review: { store: 5, driver: 5, comment: "Still hot when it arrived." } },
     { kind: "delivery", customer: "lee", store: "tacos", items: ["Mushroom Taco", "Horchata"], until: "Delivered", driver: "dana", review: { store: 4, driver: 5, comment: "Great tacos, quick handoff." } },
-    { kind: "pickup", customer: "sam", store: "kitchen", items: ["Pancake Stack"], until: "Placed", note: "Merchant needs to confirm prep" },
+    { kind: "pickup", customer: "sam", store: "kitchen", items: ["Pancake Stack"], until: "Placed", note: "Store needs to accept it" },
     { kind: "pickup", customer: "lee", store: "cafe", items: ["Flat White"], until: "ReadyForPickup", note: "Customer needs to collect it" },
     { kind: "pickup", customer: "sam", store: "tacos", items: ["Al Pastor Taco"], until: "PickedUp", review: { store: 5, comment: "Ready right on time." } },
   ],

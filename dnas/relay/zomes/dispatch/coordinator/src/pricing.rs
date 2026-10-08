@@ -6,6 +6,7 @@
 
 use crate::order_queues::my_completions_at;
 use catalog_types::{order_total, BagClaim, GoodieBag, MenuItem, PricedLine, PromoCode};
+use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
@@ -90,6 +91,65 @@ fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput], promo_re
     let total = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
         .ok_or(guest("this order doesn't meet the promo code's requirement".into()))?;
     Ok(PricedOrder { lines, order_total: total, loyalty_proof })
+}
+
+/// How long the store still honours an order priced just before one of its
+/// items changed -- an honest order that raced the update. Bounded, because
+/// when an order was placed is the customer's own claim (its action's
+/// timestamp), which a modified client could backdate a little.
+const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
+
+/// The store's check before it accepts an order: every line is priced from
+/// the version of its item that was current when the order was placed, and
+/// that was recently. Validation proves each line is a real version of a
+/// real item of this store, but it sees records as they were, so it can't
+/// tell an old price from the latest -- this is where an order pinned to an
+/// old price is stopped, and only the store can accept an order, so it
+/// can't be skipped. It runs on the store's own conductor, which authored
+/// every version of its menu, so its local view of when each price changed
+/// is authoritative. A goodie bag's line is the bag itself, never outdated.
+pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>) -> ExternResult<()> {
+    if bag_claim_ref.is_some() {
+        return Ok(());
+    }
+    // Read only if some line isn't at its current price.
+    let mut placement = None;
+    for line in lines {
+        let current = resolve_latest(line.item_ref.clone())?;
+        if current.action_address() == &line.priced_version {
+            continue;
+        }
+        let placed_at = match placement {
+            Some(at) => at,
+            None => *placement.insert(placement_time(order_ref)?),
+        };
+        let raced = superseded_at(&line.priced_version)?.is_some_and(|changed| changed > placed_at);
+        let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= PRICE_CHANGE_GRACE_SECS;
+        if !(raced && recent) {
+            let name = decode_or::<MenuItem>(&current).map_or_else(|| "An item".to_string(), |item| item.name);
+            return Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it")));
+        }
+    }
+    Ok(())
+}
+
+/// When the order was placed: its creation action's own timestamp.
+fn placement_time(order_ref: &ActionHash) -> ExternResult<Timestamp> {
+    let original = original_action_of(order_ref.clone())?;
+    let record = match get(original.clone(), GetOptions::local())? {
+        Some(record) => record,
+        None => get(original, GetOptions::network())?.ok_or(guest("order not found".into()))?,
+    };
+    Ok(record.action().timestamp())
+}
+
+/// When a version of one of the store's own items was replaced -- the
+/// earliest update to it, from the store's local chain.
+fn superseded_at(version: &ActionHash) -> ExternResult<Option<Timestamp>> {
+    let Some(Details::Record(details)) = get_details(version.clone(), GetOptions::local())? else {
+        return Ok(None);
+    };
+    Ok(details.updates.iter().map(|update| update.action().timestamp()).min())
 }
 
 /// An entry at its current state, from the network.

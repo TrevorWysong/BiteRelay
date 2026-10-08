@@ -122,6 +122,8 @@ pub(crate) fn validate_pickup_order_transition(
 
     let is_requester_or_merchant = &prior.requester == author || &prior.merchant == author;
     let authorized = match required_author {
+        RequiredAuthor::Requester => &prior.requester == author,
+        RequiredAuthor::Merchant => &prior.merchant == author,
         RequiredAuthor::RequesterOrMerchant => is_requester_or_merchant,
         RequiredAuthor::Any => is_requester_or_merchant,
         RequiredAuthor::Arbitrator => relay_governance::is_arbitrator(author)?,

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, waitForSignal, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, waitForSignal, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver, stranger] = await scenario.addPlayersWithApps([
@@ -40,6 +40,7 @@ await runScenario(async (scenario) => {
   });
   const orderRef = actionHash(orderRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
+  await acceptOrder(customer, orderRef, all);
 
   // Before any bid is accepted, there's no assigned driver to resolve.
   await assert.rejects(

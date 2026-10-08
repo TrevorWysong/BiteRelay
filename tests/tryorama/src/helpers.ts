@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { decode } from "@msgpack/msgpack";
 import type { Conductor, PlayerApp, Scenario } from "@holochain-open-dev/tryorama";
-import { enableAndGetAgentApp } from "@holochain-open-dev/tryorama";
+import { dhtSync, enableAndGetAgentApp } from "@holochain-open-dev/tryorama";
 import { encodeHashToBase64 } from "@holochain/client";
 import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/client";
 
@@ -226,4 +226,12 @@ export function agentAsLinkBase(agentPubKey: Uint8Array): Uint8Array {
   const retyped = new Uint8Array(agentPubKey);
   retyped[1] = 0x21;
   return retyped;
+}
+
+/// The store accepting a delivery order -- what opens it to drivers -- then
+/// a sync, so drivers see it open. Retried until the store has the order.
+export async function acceptOrder(store: PlayerApp, orderRef: Uint8Array, players: PlayerApp[]): Promise<HcRecord> {
+  const accepted = await retryUntilOk(() => store.cells[0].callZome<HcRecord>({ zome_name: "dispatch", fn_name: "accept_delivery_order", payload: orderRef }));
+  await dhtSync(players, store.cells[0].cell_id[0]);
+  return accepted;
 }

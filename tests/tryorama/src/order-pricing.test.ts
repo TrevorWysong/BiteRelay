@@ -60,10 +60,11 @@ await runScenario(async (scenario) => {
   await assert.rejects(raw({ lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 0 }], order_total: 0 }), /quantity of at least one/, "a line orders at least one");
   console.log("[PASS] every line must be a real item from this store, priced from its own versions");
 
-  // The documented limit: validation sees records as they were, so it can't
-  // tell an older version from the latest -- the store's queue flags it.
+  // Validation sees records as they were, so it can't tell an older version
+  // from the latest -- the store's acceptance refuses it instead (see
+  // store-acceptance.test.ts), and nothing proceeds without that.
   await raw({ lines: [{ item_ref: burgerRef, priced_version: burgerRef, quantity: 2 }], order_total: 2000 });
-  console.log("[PASS] (known limit) a line priced at an older version is accepted by validation -- the store's queue flags it before confirming");
+  console.log("[PASS] a line priced at an older version passes validation -- it's the store's acceptance that refuses it");
 
   // A loyalty promo needs proof of earlier completed orders here.
   const loyalty = actionHash(
