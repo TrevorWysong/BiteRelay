@@ -19,6 +19,11 @@ pub enum DeliveryStatus {
     /// and `open_scheduled_order` (the one narrow transition out of it)
     /// touch this status.
     Scheduled,
+    /// Placed and waiting for the store to accept it. Drivers never see an
+    /// order until the store has -- so a store's refusal (sold out, busy,
+    /// priced from an old menu) never costs a driver a trip.
+    Placed,
+    /// Accepted by the store and open to drivers' bids.
     Open,
     BidAccepted,
     MerchantConfirmed,
@@ -40,6 +45,11 @@ pub enum DeliveryStatus {
 /// closing properly rather than leaving it broad.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredAuthor {
+    /// The order's requester (the customer).
+    Requester,
+    /// The order's merchant (the store) -- the steps only the store can
+    /// vouch for: accepting the order, preparing it, having it ready.
+    Merchant,
     /// The requester or the order's merchant (may be the same agent).
     RequesterOrMerchant,
     /// Specifically the agent behind `accepted_bid`, once one exists.
@@ -76,12 +86,20 @@ impl DeliveryStatus {
             // `sys_time() >= requested_delivery_time` (a time constraint,
             // not an authorship one, so it lives in `validate_order_transition`
             // alongside the other per-transition field checks, not here).
-            (Scheduled, Open) => Some(RequesterOrMerchant),
+            (Scheduled, Placed) => Some(Requester),
             (Scheduled, Cancelled) => Some(RequesterOrMerchant),
-            // accept_bid and cancellation before pickup: the customer/merchant side.
-            (Open, BidAccepted) => Some(RequesterOrMerchant),
+            // The store accepts (or declines) an order before any driver
+            // sees it -- and only the store: its acceptance is the check that
+            // the order is priced from its current menu
+            // (`dispatch::accept_delivery_order`).
+            (Placed, Open) => Some(Merchant),
+            (Placed, Cancelled) => Some(RequesterOrMerchant),
+            // Accepting a bid seals the address to that driver, which only the
+            // customer can do.
+            (Open, BidAccepted) => Some(Requester),
             (Open, Cancelled) => Some(RequesterOrMerchant),
-            (BidAccepted, MerchantConfirmed) => Some(RequesterOrMerchant),
+            // The store starting to prepare it.
+            (BidAccepted, MerchantConfirmed) => Some(Merchant),
             (BidAccepted, Cancelled) => Some(RequesterOrMerchant),
             (MerchantConfirmed, Cancelled) => Some(RequesterOrMerchant),
             (DriverEnRouteToMerchant, Cancelled) => Some(RequesterOrMerchant),
@@ -93,7 +111,7 @@ impl DeliveryStatus {
             // generic set_order_status path at all (that's blocked at the
             // coordinator), but still validated here since validation must
             // hold regardless of which coordinator function got here.
-            (PickedUp, Delivered) => Some(RequesterOrMerchant),
+            (PickedUp, Delivered) => Some(Requester),
             // Disputes: whoever notices the problem should be able to raise one.
             (PickedUp, Disputed) => Some(Any),
             (Delivered, Disputed) => Some(Any),
@@ -302,22 +320,21 @@ impl PickupStatus {
         use PickupStatus::*;
         use RequiredAuthor::*;
         match (self, next) {
-            // The merchant acknowledging + prepping the order -- the only
-            // two parties here are the requester and the merchant, so both
-            // are trusted for the customer-side cancellation path, same as
-            // DeliveryOrder's pre-pickup cancellation arms.
-            (Placed, MerchantConfirmed) => Some(RequesterOrMerchant),
+            // The store accepting the order and starting on it -- only the
+            // store, after checking it's priced from its current menu
+            // (`dispatch::confirm_pickup_prep`). Either side may cancel.
+            (Placed, MerchantConfirmed) => Some(Merchant),
             (Placed, Cancelled) => Some(RequesterOrMerchant),
             (MerchantConfirmed, Cancelled) => Some(RequesterOrMerchant),
             // Only the merchant knows when it's actually ready.
-            (MerchantConfirmed, ReadyForPickup) => Some(RequesterOrMerchant),
+            (MerchantConfirmed, ReadyForPickup) => Some(Merchant),
             (ReadyForPickup, Cancelled) => Some(RequesterOrMerchant),
             // complete_pickup (dispatch coordinator) is always called by the
             // requester confirming they received it -- not reachable via a
             // generic status-set path, but still validated here regardless
             // of which coordinator function got here, same posture as
             // DeliveryOrder's (PickedUp, Delivered) arm.
-            (ReadyForPickup, PickedUp) => Some(RequesterOrMerchant),
+            (ReadyForPickup, PickedUp) => Some(Requester),
             // Disputes: whoever notices the problem should be able to raise
             // one -- same as DeliveryOrder's dispute-raising arms.
             (ReadyForPickup, Disputed) => Some(Any),

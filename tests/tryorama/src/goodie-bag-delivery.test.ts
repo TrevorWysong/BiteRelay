@@ -89,7 +89,7 @@ await runScenario(async (scenario) => {
   });
   await dhtSync(all, merchant.cells[0].cell_id[0]);
   const decodedA = decodeEntry<{ status: string; bag_claim_ref: Uint8Array }>(orderA);
-  assert.equal(decodedA.status, "Open");
+  assert.equal(decodedA.status, "Placed");
   assert.deepEqual([...decodedA.bag_claim_ref], [...claimARef]);
   console.log("[PASS] request_delivery finalizes a Confirmed delivery claim into a real, bag-linked DeliveryOrder");
 

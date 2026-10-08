@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, ST_PETE } from "./helpers.js";
+import { actionHash, appSource, decodeEntry, ST_PETE, acceptOrder } from "./helpers.js";
 
 /// The entry's serialized bytes, as any peer holding the record sees them.
 function publishedBytes(record: HcRecord): Buffer {
@@ -71,6 +71,7 @@ await runScenario(async (scenario) => {
   assert.deepEqual(await detailsFor(stranger), { dropoff: null, kitchen_note: null }, "a stranger reads nothing");
   console.log("[PASS] the customer reads everything, the store only its note, a stranger nothing");
 
+  await acceptOrder(merchant, order, all);
   const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }));
   await sync();
   assert.equal((await detailsFor(driver)).dropoff, null, "a bidding driver doesn't get the address");

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -168,6 +168,7 @@ await runScenario(async (scenario) => {
 
   // --- Drive to Delivered, confirming the tip is actually paid to the driver ---
   await dhtSync(both, customer.cells[0].cell_id[0]);
+  await acceptOrder(customer, orderRef, both);
   const bidRecord = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRef,
     eta_seconds: 900,

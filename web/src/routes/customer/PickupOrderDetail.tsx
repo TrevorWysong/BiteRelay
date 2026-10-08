@@ -148,7 +148,9 @@ export function PickupOrderDetail() {
       {(order.status === "Placed" || order.status === "MerchantConfirmed") && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <ChefHat size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">The merchant is preparing your order. This screen updates automatically.</p>
+          <p className="text-sm text-relay-700 dark:text-relay-300">
+            {order.status === "Placed" ? "Waiting for the store to accept your order." : "The store is preparing your order."} This screen updates automatically.
+          </p>
         </motion.div>
       )}
 

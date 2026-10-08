@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder } from "./helpers.js";
 
 const ALL_ZOMES = ["attestation", "catalog", "dispatch", "dispute", "geo_presence", "ledger", "profiles", "reputation"];
 
@@ -58,6 +58,7 @@ await runScenario(async (scenario) => {
     await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1000, dropoff: ST_PETE, max_delivery_fee: null }),
   );
   await sync();
+  await acceptOrder(merchant, deliveryOrder, all);
   const attackerBid = actionHash(
     await call(attacker, "dispatch")<HcRecord>("submit_bid", { order_ref: deliveryOrder, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }),
   );

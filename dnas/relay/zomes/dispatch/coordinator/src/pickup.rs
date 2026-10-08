@@ -7,7 +7,7 @@
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
 use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
-use crate::pricing::{price_order, OrderItemInput};
+use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
@@ -51,6 +51,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
 
     let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
+    let merchant = input.merchant.clone();
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -67,6 +68,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
+    let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back pickup order".into())))
@@ -77,11 +79,16 @@ pub fn get_pickup_order(order_original_action: ActionHash) -> ExternResult<Recor
     relay_coordinator_support::resolve_latest(order_original_action)
 }
 
-/// `Placed -> MerchantConfirmed` -- the merchant acknowledging the order,
-/// same role `set_order_status`'s first step plays for deliveries.
+/// `Placed -> MerchantConfirmed` -- the store accepting the order and
+/// starting on it, once it's checked the order is priced from its current
+/// menu (see `ensure_priced_from_current_menu`). Only the store can.
 #[hdk_extern]
 pub fn confirm_pickup_prep(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action, "PickupOrder")?;
+    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    if order.status != PickupStatus::Placed {
+        return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
+    }
+    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
     order.status = PickupStatus::MerchantConfirmed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     get(updated, GetOptions::local())?

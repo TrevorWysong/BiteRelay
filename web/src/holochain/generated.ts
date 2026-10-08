@@ -248,6 +248,15 @@ export type DeliveryStatus =
    * touch this status.
    */
   | "Scheduled"
+  /**
+   * Placed and waiting for the store to accept it. Drivers never see an
+   * order until the store has -- so a store's refusal (sold out, busy,
+   * priced from an old menu) never costs a driver a trip.
+   */
+  | "Placed"
+  /**
+   * Accepted by the store and open to drivers' bids.
+   */
   | "Open"
   | "BidAccepted"
   | "MerchantConfirmed"
@@ -262,6 +271,10 @@ export type DeliveryStatus =
  * signal has been handled.
  */
 export type DispatchLocalSignal =
+  /**
+   * A new order for one of this agent's stores to accept.
+   */
+  | { OrderPlaced: ActionHash }
   | { NewOrderNearby: ActionHash }
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }

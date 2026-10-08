@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -60,8 +60,9 @@ await runScenario(async (scenario) => {
   assert.equal(nearbyProviders.length, 1, "a beacon published now should be visible via the current-bucket anchor");
   console.log("[PASS] Current-bucket presence discovery still works after time-bucketing the anchor");
 
+  const accepted = await acceptOrder(customer, orderRef, both);
   const openOrders = await dispatchOf(driver)<HcRecord[]>("get_open_orders_near", order.dropoff_geohash);
-  assert.equal(openOrders.length, 1, "an order created now should be visible via the current-bucket anchor");
-  assert.deepEqual(actionHash(openOrders[0]), orderRef);
+  assert.equal(openOrders.length, 1, "an order accepted now should be visible via the current-bucket anchor");
+  assert.deepEqual(actionHash(openOrders[0]), actionHash(accepted));
   console.log("[PASS] Current-bucket open-order polling backstop still works after time-bucketing the anchor");
 });

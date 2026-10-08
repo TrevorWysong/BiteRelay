@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -73,10 +73,12 @@ await runScenario(async (scenario) => {
 
   const openedRecord = await dispatchOf(customer)<HcRecord>("open_scheduled_order", pastOrderRef);
   const openedOrder = decodeEntry<{ status: string }>(openedRecord);
-  assert.equal(openedOrder.status, "Open", "opening a due scheduled order should flip it to Open");
+  assert.equal(openedOrder.status, "Placed", "opening a due scheduled order places it with the store");
   await dhtSync(both, customer.cells[0].cell_id[0]);
+  assert.equal((await dispatchOf(driver)<HcRecord[]>("get_open_orders_near", geohash)).length, 0, "drivers don't see it until the store accepts it");
 
+  await acceptOrder(customer, pastOrderRef, both);
   const nearbyAfterOpen = await dispatchOf(driver)<HcRecord[]>("get_open_orders_near", geohash);
-  assert.equal(nearbyAfterOpen.length, 1, "the now-Open order should be discoverable via get_open_orders_near");
-  console.log("[PASS] opening a due scheduled order succeeds and makes it discoverable, just like a normal order");
+  assert.equal(nearbyAfterOpen.length, 1, "the accepted order should be discoverable via get_open_orders_near");
+  console.log("[PASS] a due scheduled order is placed with the store, and discoverable once accepted, just like a normal order");
 });

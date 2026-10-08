@@ -18,6 +18,16 @@ It compares the freshly packed DNA's hash with the DNA each installed identity r
 - **Same DNA** — only coordinator code changed. The new coordinators are hot-swapped into every identity: no restart, no data loss, no page reload.
 - **Different DNA** — an integrity zome (entry/link types, validation) or a DNA setting changed. Existing identities can't run the new build; it tells you so. Run `npm run dev:reset`.
 
+## Who signs each step of an order
+
+Validation decides who may author each status change (`transition_requirement` in `dispatch_types`), so a modified client can't skip a step that isn't its own:
+
+- **The customer** places the order, accepts a driver's bid, and confirms it arrived.
+- **The store** accepts or declines the order, confirms it's preparing it, and marks a pickup ready. A delivery reaches drivers only once the store accepts it (`Placed → Open`), so a declined order never costs a driver a trip.
+- **The driver** reports heading to the store and the pickup.
+
+Accepting is also the store's price check (`ensure_priced_from_current_menu`). Validation recomputes every total but sees records as they were, so it can't tell an item's old price from its current one. The store's conductor can: it wrote every version of its menu. It refuses a line priced from an outdated version, except an order placed in the 15 minutes before that item's price changed, which an honest customer could have raced. Since nothing completes or gets paid without the store's acceptance, an underpriced order can exist but never goes anywhere.
+
 ## Personal data
 
 Every entry on the DHT is readable by every peer, forever. So anything personal is stored **sealed**: encrypted with `relay_coordinator_support::seal` (libsodium box between two agents' own keys; no key exchange needed) and opened with `open`. Box is symmetric, so whoever seals can always re-open, and sealing to yourself keeps a value private to you.

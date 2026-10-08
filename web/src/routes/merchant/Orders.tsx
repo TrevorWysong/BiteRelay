@@ -3,12 +3,21 @@ import { useNavigate } from "react-router-dom";
 import { Bike, ClipboardList, ShoppingBag, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { getActiveOrdersForStore, getOrderHistoryForStore, getOrderPrivateDetails, setOrderStatus, confirmPickupPrep, markReadyForPickup, type OrderEntry } from "../../holochain/zomes/dispatch";
+import {
+  acceptDeliveryOrder,
+  cancelPickupOrder,
+  confirmPickupPrep,
+  getActiveOrdersForStore,
+  getOrderHistoryForStore,
+  getOrderPrivateDetails,
+  markReadyForPickup,
+  setOrderStatus,
+  type OrderEntry,
+} from "../../holochain/zomes/dispatch";
 import { itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { useResource } from "../../lib/useResource";
-import { fetchMenu } from "../../lib/menu";
-import { bytesToHex } from "../../holochain/decode";
+import { describeError } from "../../lib/errors";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
@@ -117,6 +126,9 @@ interface ListProps {
 /// orders. Oldest first: the order a kitchen works through them.
 function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   const [busyHex, setBusyHex] = useState<string | null>(null);
+  // Why an action on an order failed, by order -- e.g. an order the store
+  // can't accept because it's priced from an outdated menu.
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const { data: rows, reload } = useResource(
     `merchant-active:${storesKey(stores)}`,
     async () => {
@@ -125,19 +137,18 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
     },
     { pollMs: POLL_MS, refreshOn: () => true },
   );
-  // Each item's latest version, to spot a line priced from an older one --
-  // validation can't tell (it only sees records as they were), so the store
-  // checks before confirming.
-  const { data: latestVersions } = useResource(`merchant-menu-versions:${storesKey(stores)}`, async () => {
-    const menus = await Promise.all(stores.map((store) => fetchMenu(store.hash)));
-    return new Set(menus.flat().map((row) => bytesToHex(row.version)));
-  });
-
   async function advance(row: QueueRow, action: (ref: Uint8Array) => Promise<unknown>) {
     setBusyHex(row.hex);
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[row.hex];
+      return next;
+    });
     try {
       await action(row.ref);
       await reload();
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [row.hex]: describeError(err) }));
     } finally {
       setBusyHex(null);
     }
@@ -153,10 +164,8 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
         {rows.map((row) => (
           <motion.div key={row.hex} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <OrderCard row={row} storeLabel={storeLabel(row.storeHex)}>
-              {latestVersions && hasStalePrice(row, latestVersions) && (
-                <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">
-                  Priced from an older menu -- check the total before confirming.
-                </p>
+              {errors[row.hex] && (
+                <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">{errors[row.hex]}</p>
               )}
               <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
             </OrderCard>
@@ -165,12 +174,6 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
       </AnimatePresence>
     </div>
   );
-}
-
-/// Whether any of the order's lines was priced from a version of its item
-/// that's since been replaced (a goodie bag's line is the bag, never stale).
-function hasStalePrice(row: QueueRow, latestVersions: Set<string>): boolean {
-  return !row.order.bag_claim_ref && row.order.lines.some((line) => !latestVersions.has(bytesToHex(line.priced_version)));
 }
 
 /// What the merchant can do next for an in-progress order, or what they're
@@ -182,14 +185,29 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
     </Button>
   );
   const note = (text: string) => <p className="mt-2 text-xs text-ink-400">{text}</p>;
+  // A new order: accepting it is the store's check that it's priced from
+  // the current menu (the zome refuses it otherwise) -- and, for a
+  // delivery, what puts it in front of drivers.
+  const acceptOrDecline = (accept: (ref: Uint8Array) => Promise<unknown>, decline: (ref: Uint8Array) => Promise<unknown>) => (
+    <div className="mt-3 flex gap-2">
+      <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => onAdvance(decline)}>
+        Decline
+      </Button>
+      <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
+        Accept order
+      </Button>
+    </div>
+  );
   if (row.kind === "Delivery") {
     switch (row.order.status) {
+      case "Placed":
+        return acceptOrDecline(acceptDeliveryOrder, (ref) => setOrderStatus(ref, "Cancelled"));
       case "BidAccepted":
         return button("Confirm prep started", (ref) => setOrderStatus(ref, "MerchantConfirmed"));
       case "Open":
         return note("Waiting for a driver to be assigned.");
       case "Scheduled":
-        return note("Scheduled for later -- it opens to drivers at its requested time.");
+        return note("Scheduled for later -- it comes to you to accept at its requested time.");
       case "MerchantConfirmed":
       case "DriverEnRouteToMerchant":
         return note("Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.");
@@ -201,7 +219,7 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
   }
   switch (row.order.status) {
     case "Placed":
-      return button("Confirm prep started", confirmPickupPrep);
+      return acceptOrDecline(confirmPickupPrep, cancelPickupOrder);
     case "MerchantConfirmed":
       return button("Mark ready for pickup", markReadyForPickup);
     case "ReadyForPickup":

@@ -117,5 +117,5 @@ await runScenario(async (scenario) => {
   console.log("[PASS] a completed pickup counts toward its own store only");
 
   // The delivery order is untouched by all of the above.
-  assert.equal(decodeEntry<{ status: string }>(await dispatchOf(customer)<HcRecord>("get_order", deliveryA)).status, "Open");
+  assert.equal(decodeEntry<{ status: string }>(await dispatchOf(customer)<HcRecord>("get_order", deliveryA)).status, "Placed");
 });

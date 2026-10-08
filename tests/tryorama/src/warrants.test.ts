@@ -22,7 +22,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, setupArbitratedPlayers, ST_PETE } from "./helpers.js";
+import { actionHash, setupArbitratedPlayers, ST_PETE, acceptOrder } from "./helpers.js";
 
 type WarrantSummary = { count: number; has_chain_fork: boolean; has_invalid_chain_op: boolean };
 
@@ -57,6 +57,7 @@ await runScenario(async (scenario) => {
   });
   const orderRef = actionHash(orderRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
+  await acceptOrder(customer, orderRef, all);
 
   const bidRecord = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRef, eta_seconds: 900, price_offer: 400,
@@ -79,6 +80,7 @@ await runScenario(async (scenario) => {
   });
   const orderRef2 = actionHash(orderRecord2);
   await dhtSync(all, customer.cells[0].cell_id[0]);
+  await acceptOrder(customer, orderRef2, all);
   const bidRecord2 = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRef2, eta_seconds: 900, price_offer: 400,
     collateral_commitment: { account: "stub", amount: 100, ledger_txn_ref: "pending" },

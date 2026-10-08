@@ -51,6 +51,13 @@ export async function openScheduledOrder(orderOriginalAction: ActionHash): Promi
   return callZome("dispatch", "open_scheduled_order", orderOriginalAction);
 }
 
+/// The store accepting a delivery order, which opens it to drivers. Refused
+/// if the order is priced from an outdated menu -- decline it instead
+/// (`setOrderStatus(ref, "Cancelled")`).
+export async function acceptDeliveryOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "accept_delivery_order", orderOriginalAction);
+}
+
 /// Every forward transition *except* Delivered (that one's gated -- see
 /// `completeDelivery`) and Disputed-resolution (see `dispute.ts`'s
 /// apply-resolution calls).

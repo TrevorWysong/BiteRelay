@@ -105,9 +105,10 @@ pub fn get_open_orders_near(geohash: String) -> ExternResult<Vec<Record>> {
             )?;
             for link in links {
                 let Some(action_hash) = link.target.into_action_hash() else { continue };
-                // Anchor links always point at the order's *original* creation
-                // hash -- resolve_latest is what makes this reflect the order's
-                // real current status rather than showing it as forever Open.
+                // Anchor links point at the store's acceptance (the version
+                // that opened the order) -- resolve_latest is what makes this
+                // reflect the order's real current status rather than
+                // showing it as forever Open. Bids name that same version.
                 let Ok(record) = resolve_latest(action_hash) else { continue };
                 let Some(order) = decode_or::<DeliveryOrder>(&record) else { continue };
                 if order.status == DeliveryStatus::Open {

@@ -15,11 +15,11 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
     }
     match (&order.status, order.requested_delivery_time) {
-        (DeliveryStatus::Open, None) => {}
+        (DeliveryStatus::Placed, None) => {}
         (DeliveryStatus::Scheduled, Some(_)) => {}
         _ => {
             return Ok(ValidateCallbackResult::Invalid(
-                "a new order must start Open with no requested_delivery_time, or Scheduled with one set".into(),
+                "a new order must start Placed (for the store to accept) with no requested_delivery_time, or Scheduled with one set".into(),
             ))
         }
     }
@@ -237,6 +237,8 @@ pub(crate) fn validate_order_transition(
         prior.status == DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled && prior.dispute_ref.is_some();
 
     let authorized = match required_author {
+        RequiredAuthor::Requester => &prior.requester == author,
+        RequiredAuthor::Merchant => &prior.merchant == author,
         RequiredAuthor::RequesterOrMerchant => is_requester_or_merchant,
         RequiredAuthor::AcceptedProvider => is_accepted_provider,
         RequiredAuthor::Any if resolving_cancellation_dispute => relay_governance::is_arbitrator(author)?,
@@ -285,7 +287,7 @@ pub(crate) fn validate_order_transition(
     // same action), not a fresh `sys_time()` call inside validate() -- the
     // latter would be non-deterministic, since different peers validating
     // the same action at different real-world moments could disagree.
-    if prior.status == DeliveryStatus::Scheduled && order.status == DeliveryStatus::Open {
+    if prior.status == DeliveryStatus::Scheduled && order.status == DeliveryStatus::Placed {
         let due = prior.requested_delivery_time.unwrap_or(Timestamp(0));
         if action_timestamp < due {
             return Ok(ValidateCallbackResult::Invalid(

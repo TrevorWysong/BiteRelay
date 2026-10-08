@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customerA, customerB, driver] = await scenario.addPlayersWithApps([
@@ -47,6 +47,8 @@ await runScenario(async (scenario) => {
   const orderRefA = await placeOrderFor(customerA);
   const orderRefB = await placeOrderFor(customerB);
   await dhtSync(all, driver.cells[0].cell_id[0]);
+  await acceptOrder(customerA, orderRefA, all);
+  await acceptOrder(customerB, orderRefB, all);
 
   // The same driver bids on, and wins, both orders -- from two entirely
   // separate requester/merchant identities, so this isn't the self-dealing

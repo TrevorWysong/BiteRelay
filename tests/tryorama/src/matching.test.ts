@@ -65,6 +65,8 @@ await runScenario(async (scenario) => {
     max_delivery_fee: 500,
   });
   const orderRef = actionHash(orderRecord);
+  // Drivers hear of it once the store accepts it -- here the requester is the store.
+  await dispatchOf(requester)("accept_delivery_order", orderRef);
 
   const [gotA, gotB, gotC] = await Promise.all([signalA, signalB, signalC]);
 

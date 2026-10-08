@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder } from "./helpers.js";
 
 interface OrderEntry {
   kind: "Delivery" | "Pickup";
@@ -62,19 +62,21 @@ await runScenario(async (scenario) => {
   assert.deepEqual(placedAt, [...placedAt].sort((a, b) => b - a), "history comes newest first");
   console.log("[PASS] a customer's history keeps every order, paginated newest first");
 
-  // --- A scheduled order: drivers bid on the update that opened it. ---
+  // --- A scheduled order: once due and accepted by the store, drivers bid
+  // on the version the store's acceptance opened. ---
   const scheduled = await delivery({ requested_delivery_time: now - 1_000_000 });
-  const opened = actionHash(await call(customer, "dispatch")<HcRecord>("open_scheduled_order", scheduled));
+  await call(customer, "dispatch")<HcRecord>("open_scheduled_order", scheduled);
   await sync();
+  await acceptOrder(merchant, scheduled, all);
   const bid = actionHash(
-    await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: opened, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }),
+    await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: scheduled, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }),
   );
   await sync();
   const bids = await retryUntil(
     () => call(customer, "dispatch")<{ bids: HcRecord[] }>("list_bids_for_order", { order_ref: scheduled, after: null }),
     (page) => page.bids.length === 1,
   );
-  assert.equal(bids.bids.length, 1, "a bid on the opened version is found under the order's identity");
+  assert.equal(bids.bids.length, 1, "a bid on the accepted version is found under the order's identity");
   await call(customer, "dispatch")("accept_bid", { order_original_action: scheduled, bid_action: bid });
   await sync();
   const deliveries = await retryUntil(

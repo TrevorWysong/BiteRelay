@@ -6,12 +6,12 @@
 
 use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path};
 use crate::order_queues::{self, OrderParties};
-use crate::pricing::{price_order, OrderItemInput};
+use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement;
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open, resolve_latest, resolve_latest_decoded, seal};
+use relay_coordinator_support::{decode_or, open, original_action_of, resolve_latest, resolve_latest_decoded, seal};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -59,20 +59,20 @@ pub struct RequestDeliveryInput {
     pub bag_claim_ref: Option<ActionHash>,
 }
 
-/// Publishes an already-Open order to the discovery anchor and fires the
-/// best-effort signal fan-out -- shared by `request_delivery` (immediate
-/// orders) and `open_scheduled_order` (a scheduled order finally becoming
-/// live), since a `Scheduled` order must not be discoverable or signaled
-/// until it's genuinely Open.
-fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
+/// Publishes an order the store just accepted (`accept_delivery_order`) to
+/// the discovery anchor and fires the best-effort signal fan-out to drivers
+/// nearby -- nothing before the store's acceptance is ever discoverable.
+/// The anchor links the accepting version (validation checks it's Open);
+/// the signal names the order itself, as every other signal does.
+fn publish_to_open_anchor_and_notify(order_ref: &ActionHash, opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
     let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     let path = open_order_anchor_path(dropoff_geohash, bucket)?;
     path.ensure()?;
-    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
+    create_link(path.path_entry_hash()?, opened.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
 
     // Best-effort fast path. A driver who missed this falls back to polling
     // get_open_orders_near -- see plan §3's named "signals can silently drop" risk.
-    let _ = notify_nearby_providers(action_hash, dropoff_geohash);
+    let _ = notify_nearby_providers(order_ref, dropoff_geohash);
     Ok(())
 }
 
@@ -183,8 +183,8 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
     let dropoff_geohash = relay_types::encode(input.dropoff, geo_presence_precision());
-    let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Open };
-    let is_open = status == DeliveryStatus::Open;
+    let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Placed };
+    let placed = status == DeliveryStatus::Placed;
 
     if let Some(promo_ref) = &input.promo_code_ref {
         ensure_promo_usable(promo_ref, &input.catalog_ref)?;
@@ -233,13 +233,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         loyalty_proof: priced.loyalty_proof,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
-    // The merchant is never in `notify_nearby_providers`'s signal audience
-    // below (that's providers only) -- the store's queues are how they find
-    // the order at all.
+    // The store finds it in its queue; drivers only once the store accepts
+    // it (`accept_delivery_order`).
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, now)?;
-
-    if is_open {
-        publish_to_open_anchor_and_notify(&action_hash, &dropoff_geohash, now)?;
+    if placed {
+        let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
     }
 
     get(action_hash, GetOptions::local())?
@@ -268,12 +266,36 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
             )));
         }
     }
+    order.status = DeliveryStatus::Placed;
+    let merchant = order.merchant.clone();
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: updated.clone() }, vec![merchant]);
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
+}
+
+/// `Placed -> Open` -- the store accepting a delivery order, which is what
+/// puts it in front of drivers: published under its drop-off area and
+/// signalled to drivers nearby. Only the store can (validation), and only
+/// once it's checked the order is priced from its current menu
+/// (`ensure_priced_from_current_menu`) -- a refused order never reaches a
+/// driver. The store declines with `set_order_status(Cancelled)`.
+#[hdk_extern]
+pub fn accept_delivery_order(order_original_action: ActionHash) -> ExternResult<Record> {
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    if order.status != DeliveryStatus::Placed {
+        return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
+    }
+    if order.merchant != agent_info()?.agent_initial_pubkey {
+        return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
+    }
+    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    publish_to_open_anchor_and_notify(&updated, &dropoff_geohash, now)?;
+    publish_to_open_anchor_and_notify(&original_action_of(order_original_action)?, &updated, &dropoff_geohash, sys_time()?)?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted order".into())))
 }
 
 /// Reads a specific, already-known order's current state -- every other
@@ -303,6 +325,11 @@ pub struct SetOrderStatusInput {
 /// specific transition and additionally requires proof of both handoffs.
 #[hdk_extern]
 pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
+    if input.next_status == DeliveryStatus::Open {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "use accept_delivery_order to open an order to drivers -- it checks the order's prices first".into()
+        )));
+    }
     if input.next_status == DeliveryStatus::Delivered {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
