@@ -32,6 +32,7 @@ function sameBytes(a, b) {
 
 async function main() {
   step("Building zomes", "cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"]);
+  step("Generating TS types", "cargo", ["run", "--quiet", "--manifest-path", "tools/typegen/Cargo.toml"]);
   step("Packing DNA", "hc", ["dna", "pack", "dnas/relay/workdir"]);
   step("Packing hApp", "hc", ["app", "pack", "workdir"]);
 
