@@ -45,17 +45,9 @@ const LOCATION_STORAGE_KEY = "relay.location.v1";
 
 /// `location` drives every geohash-anchored discovery read in the app
 /// (Browse's "restaurants near me", goodie bags, driver/order matching).
-/// Found live: with no persistence here, every page reload/reconnect
-/// silently reset it back to the hardcoded Florida default below,
-/// regardless of whatever real address a merchant/customer had actually
-/// picked earlier in the same session -- reading as "0 restaurants
-/// nearby" for a real test location hundreds of miles from that default,
-/// with nothing about the discovery mechanism itself actually wrong
-/// (confirmed directly: `get_nearby_merchants`' own geohash walk finds a
-/// merchant from a customer location genuinely one house-lot away, see
-/// nearby-precision.test.ts). Same localStorage-backed persistence
-/// `StoredIdentity` already uses, so a returning user keeps browsing from
-/// wherever they actually are instead of resetting on every reload.
+/// Persisted (like `StoredIdentity`) so a reload keeps the address the user
+/// picked instead of resetting to the default below -- which, far from them,
+/// would show no restaurants nearby.
 function loadStoredLocation(): GeoPoint | null {
   const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
   if (!raw) return null;
@@ -157,12 +149,8 @@ export const useSession = create<SessionState>((set, get) => ({
       // not as a helpful retry.
       if (stored.credentialId) {
         try {
-          // Independent of webauthn.ts's own AbortSignal.timeout() --
-          // confirmed directly that Safari can leave a
-          // navigator.credentials.get() ceremony hanging well past that
-          // signal's deadline with no rejection ever arriving, which is
-          // what "the page is frozen, I had to force-quit the browser" was.
-          // This backstop doesn't depend on Safari cooperating at all.
+          // A backstop to webauthn.ts's abort signal, which Safari can
+          // ignore -- leaving the page frozen on the prompt.
           await withTimeout(verifyPasskey(stored.credentialId), 30000, "Sign-in prompt timed out");
         } catch (err) {
           const tagged = new Error(describeError(err));
@@ -188,13 +176,9 @@ export const useSession = create<SessionState>((set, get) => ({
         agentPubKey: myAgentPubKey(),
         profile,
         profileActionHash: profileRecord ? actionHash(profileRecord) : null,
-        // Every fresh page load starts a brand new store with `mode`
-        // defaulted to "customer" -- without restoring it here too, a
-        // driver or merchant reconnecting after any reload (a browser
-        // refresh, reopening a PWA, the auto-reconnect bootstrap itself)
-        // would land back on the right *route* but with the bottom nav
-        // and mode pill still showing customer-mode links, a real and
-        // confusing mismatch confirmed directly against a live reconnect.
+        // A fresh store defaults `mode` to "customer"; restore it from the
+        // profile, or a driver or merchant reloading lands on their route
+        // with the customer nav.
         mode: profile ? primaryModeForRoles(profile.roles) : "customer",
         isArbitrator: arbitrator,
         hasDeviceLock: !!stored.credentialId,

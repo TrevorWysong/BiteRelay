@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 import { getNearbyMerchants, getNearbyGoodieBags } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
-import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
+import { decodeEntry, bytesToHex } from "../../holochain/decode";
 import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useFavorites } from "../../lib/useFavorites";
@@ -86,15 +86,16 @@ export function Browse() {
     },
     { pollMs: BROWSE_POLL_MS },
   );
-  // No on-chain "expire" transition for a bag past its own window (see
-  // `GoodieBag`'s own named gap) -- filtered client-side here, same posture
-  // as every other scheduled-time check in this app.
+  // Expired bags are already filtered out server-side (and claims after the
+  // window are rejected on-chain); filtering again here drops one that
+  // closed since the last poll. `original_action` is the bag's identity --
+  // what a claim references.
   const { data: bags = [] } = useResource<BagRow[]>(
     `browse-bags:${geohash}`,
     async () => {
-      const records = await getNearbyGoodieBags(geohash);
+      const views = await getNearbyGoodieBags(geohash);
       const now = Date.now() * 1000;
-      return records.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })).filter((r) => r.bag.pickup_window_end > now);
+      return views.map((v) => ({ hash: v.original_action, bag: decodeEntry<GoodieBag>(v.record) })).filter((r) => r.bag.pickup_window_end > now);
     },
     { pollMs: BROWSE_POLL_MS },
   );

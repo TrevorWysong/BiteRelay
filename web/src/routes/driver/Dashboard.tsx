@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
-import { getOpenOrdersNear, submitBid, getOrder, setOrderStatus, listMyBids, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
-import { onLocalSignal, myAgentPubKey } from "../../holochain/client";
+import { myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { Button, Card, EmptyState, Input, PresenceDot, Skeleton, StatNumber } from "../../components/ui";
@@ -82,99 +82,68 @@ function useLocationBroadcast(orderRef: Uint8Array, active: boolean) {
 }
 
 interface OrderRow {
+  /// The order's identity (its original action) -- what every order call takes.
   hash: Uint8Array;
   order: DeliveryOrder;
   bid?: Bid;
 }
 
 const POLL_MS = 8000;
-// Nothing in the backend caps concurrent deliveries per driver -- checked
-// directly: `accept_bid`/`validate_new_bid` never require the bidder be
-// otherwise free, and `get_nearby_providers`/`get_open_orders_near` never
-// exclude an already-busy driver. The gap named in the architecture plan's
-// §7 ("offer an active driver a 3rd delivery on their route") was entirely
-// client-side: this dashboard used to track and render only the *first*
-// active order it found. This constant is a deliberate, modest, named cap
-// -- not real route optimization (still a genuine v2 gap, unaddressed) --
-// just enough to let a driver already on one or two deliveries pick up
-// another that's genuinely on their way, without overcommitting past what
-// one person can reasonably carry at once.
+// Nothing in the backend caps concurrent deliveries per driver -- this is a
+// deliberate, modest client-side cap: enough to let a driver already on one
+// or two deliveries pick up another that's on their way, without
+// overcommitting past what one person can carry at once.
 const MAX_CONCURRENT_DELIVERIES = 3;
 
 export function DriverDashboard() {
   const location = useSession((s) => s.location);
   const driverKey = myAgentPubKey();
+  const driverHex = bytesToHex(driverKey);
   const [online, setOnline] = useState(false);
-  const [nearby, setNearby] = useState<OrderRow[] | null>(null);
-  const [activeOrders, setActiveOrders] = useState<OrderRow[]>([]);
   const [bidding, setBidding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Driver ratings only -- if this agent also runs a store, that store's
   // reviews live on the store, never here.
-  const { data: rating } = useResource(`driver-rating:${bytesToHex(driverKey)}`, () => getRatingSummary({ Driver: driverKey }));
+  const { data: rating } = useResource(`driver-rating:${driverHex}`, () => getRatingSummary({ Driver: driverKey }));
   const avgRating = rating ? averageRating(rating) : null;
 
   const geohash = encodeGeohash(location.lat, location.lon);
 
-  const refreshNearby = useCallback(async () => {
-    const records = await getOpenOrdersNear(geohash);
-    const rows = records.map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) }));
-    // A requester/merchant can't legally deliver their own order (enforced
-    // network-wide in dispatch_integrity's validate_new_bid) -- filtered
-    // here too so this agent never sees a "Bid" button on it in the first
-    // place, rather than discovering the rejection only after tapping Bid.
-    setNearby(rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey)));
-  }, [geohash, driverKey]);
+  // This driver's in-progress deliveries, from their own active-delivery
+  // queue -- bounded by what they're carrying right now, never by every
+  // bid they've ever placed.
+  const { data: activeOrders = [], reload: reloadActive } = useResource(
+    `driver-active:${driverHex}`,
+    async (): Promise<OrderRow[]> =>
+      (await getMyActiveDeliveries()).map(({ order, bid }) => ({ hash: order.original_action, order: decodeEntry<DeliveryOrder>(order.record), bid: decodeEntry<Bid>(bid) })),
+    { pollMs: POLL_MS, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s },
+  );
 
-  // "Which orders am I currently delivering" has no dedicated backend read --
-  // it's derived from two real ones: `list_my_bids` (this driver's own
-  // authored Bid entries, a purely local source-chain query, no gossip
-  // needed) crossed against each referenced order's current `accepted_bid`,
-  // collecting *every* bid of theirs that won and hasn't finished yet (not
-  // just the first) -- a driver can legitimately be delivering more than
-  // one order at once, see `MAX_CONCURRENT_DELIVERIES` above.
-  const refreshActiveOrders = useCallback(async () => {
-    const bidRecords = await listMyBids();
-    const rows: OrderRow[] = [];
-    for (const bidRecord of bidRecords) {
-      const bid = decodeEntry<Bid>(bidRecord);
-      try {
-        const orderRecord = await getOrder(bid.order_ref);
-        const order = decodeEntry<DeliveryOrder>(orderRecord);
-        const isMine = order.accepted_bid && bytesEqual(order.accepted_bid, actionHash(bidRecord));
-        if (isMine && !["Delivered", "Cancelled"].includes(order.status)) {
-          rows.push({ hash: actionHash(orderRecord), order, bid });
-        }
-      } catch {
-        // order not found / not readable yet -- skip
-      }
-    }
-    setActiveOrders(rows);
-  }, []);
+  // Open orders near the driver -- only read while online.
+  const { data: nearby } = useResource(
+    online ? `driver-nearby:${geohash}` : null,
+    async (): Promise<OrderRow[]> => {
+      const rows = (await getOpenOrdersNear(geohash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) }));
+      // A requester/merchant can't deliver their own order (validate_new_bid
+      // rejects it) -- hidden here so they never see a Bid button for one.
+      return rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey));
+    },
+    { pollMs: POLL_MS, refreshOn: (s) => "NewOrderNearby" in s },
+  );
 
-  usePolling(refreshActiveOrders, { pollMs: POLL_MS, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s });
-
-  useEffect(() => {
-    if (!online) return;
-    announceOnline(location, ["Food"]).catch((err) => setError(describeError(err)));
-    refreshNearby();
-    const presenceInterval = setInterval(() => announceOnline(location, ["Food"]).catch(() => {}), PRESENCE_REFRESH_MS);
-    const pollInterval = setInterval(refreshNearby, POLL_MS);
-    const unsub = onLocalSignal((s) => {
-      if ("NewOrderNearby" in s) refreshNearby();
-    });
-    return () => {
-      clearInterval(presenceInterval);
-      clearInterval(pollInterval);
-      unsub();
-    };
-  }, [online, location, refreshNearby]);
+  // Presence: re-announced on a cadence while online (beacons expire), and
+  // straight away when the driver moves to a new cell.
+  usePolling(
+    () => announceOnline(location, ["Food"]).catch((err) => setError(describeError(err))),
+    { pollMs: PRESENCE_REFRESH_MS },
+    online,
+    geohash,
+  );
 
   async function toggleOnline() {
     if (online) {
       await announceOffline().catch(() => {});
       setOnline(false);
-      setNearby(null);
     } else {
       setOnline(true);
     }
@@ -212,7 +181,7 @@ export function DriverDashboard() {
     if (activeOrders.length === 0) return null;
     return Math.min(...activeOrders.map((a) => distanceKm(order.dropoff, a.order.dropoff)));
   }
-  const sortedNearby = nearby
+  const sortedNearby = online && nearby
     ? [...nearby].sort((a, b) => {
         const aSame = sameMerchantHexes.has(bytesToHex(a.order.catalog_ref));
         const bSame = sameMerchantHexes.has(bytesToHex(b.order.catalog_ref));
@@ -236,6 +205,7 @@ export function DriverDashboard() {
         </div>
         <motion.button
           onClick={toggleOnline}
+          aria-label={online ? "Go offline" : "Go online"}
           whileTap={{ scale: 0.92 }}
           animate={{ backgroundColor: online ? "#22c55e" : "#ece9e6" }}
           transition={{ duration: 0.25 }}
@@ -254,7 +224,7 @@ export function DriverDashboard() {
             </p>
             {activeOrders.map((row) => (
               <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
-                <ActiveDeliveryCard row={row} location={location} onAdvanced={refreshActiveOrders} />
+                <ActiveDeliveryCard row={row} location={location} onAdvanced={reloadActive} />
               </motion.div>
             ))}
           </motion.div>

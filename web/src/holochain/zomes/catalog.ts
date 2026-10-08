@@ -1,15 +1,19 @@
 import { callZome } from "../client";
 import type { ActionHash, BagClaimFulfillment, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
-// Pairs a catalog's stable identity with its current content -- see the
-// Rust `CatalogView`'s own doc comment for the bug this exists to avoid.
-// Always use `original_action` as `catalog_ref` downstream
-// (listMenuItems, listPromoCodesForCatalog, listGoodieBagsForCatalog,
-// ...), never `actionHash(record)`.
+// An entry's stable identity (its original action) alongside its latest
+// content -- see the Rust `CatalogView`. Always pass `original_action` on
+// (as `catalog_ref`, an item or promo ref, ...), never `actionHash(record)`,
+// which changes on every edit. Menu items, promo codes and goodie bags come
+// back the same way.
 export interface CatalogView {
   original_action: ActionHash;
   record: HcRecord;
 }
+
+export type PromoView = CatalogView;
+export type MenuItemView = CatalogView;
+export type BagView = CatalogView;
 
 export interface NearbyMerchantsPage {
   catalogs: CatalogView[];
@@ -17,7 +21,7 @@ export interface NearbyMerchantsPage {
 }
 
 export interface MenuItemsPage {
-  items: HcRecord[];
+  items: MenuItemView[];
   next_after: Timestamp | null;
 }
 
@@ -125,8 +129,20 @@ export async function setPromoCodeActive(originalAction: ActionHash, active: boo
   return callZome("catalog", "set_promo_code_active", { original_action: originalAction, active });
 }
 
-export async function listPromoCodesForCatalog(catalogRef: ActionHash): Promise<HcRecord[]> {
-  return callZome("catalog", "list_promo_codes_for_catalog", catalogRef);
+/// The codes a customer can use at this store right now (active, not
+/// expired) -- checkout's list.
+export async function listLivePromoCodes(catalogRef: ActionHash): Promise<PromoView[]> {
+  return callZome("catalog", "list_live_promo_codes", catalogRef);
+}
+
+export interface PromoCodesPage {
+  promo_codes: PromoView[];
+  next_before: Timestamp | null;
+}
+
+/// Every code the store has created, newest first -- the merchant's list.
+export async function listPromoCodesForCatalog(catalogRef: ActionHash, before: Timestamp | null = null): Promise<PromoCodesPage> {
+  return callZome("catalog", "list_promo_codes_for_catalog", { catalog_ref: catalogRef, before });
 }
 
 // --- goodie bags (limited-quantity, time-windowed, discounted mystery bags of surplus food) ---
@@ -166,11 +182,13 @@ export async function getGoodieBag(bagRef: ActionHash): Promise<HcRecord> {
   return callZome("catalog", "get_goodie_bag", bagRef);
 }
 
-export async function listGoodieBagsForCatalog(catalogRef: ActionHash): Promise<HcRecord[]> {
+/// The store's bags that can still be claimed. Bags live at most a week
+/// (validation caps it), so this never reads a store's whole bag history.
+export async function listGoodieBagsForCatalog(catalogRef: ActionHash): Promise<BagView[]> {
   return callZome("catalog", "list_goodie_bags_for_catalog", catalogRef);
 }
 
-export async function getNearbyGoodieBags(geohash: string, after: Timestamp | null = null): Promise<HcRecord[]> {
+export async function getNearbyGoodieBags(geohash: string, after: Timestamp | null = null): Promise<BagView[]> {
   return callZome("catalog", "get_nearby_goodie_bags", { geohash, after });
 }
 

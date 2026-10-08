@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getCatalog, listMenuItems, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
+import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { useResource } from "../../lib/useResource";
-import { decodeEntry, actionHash, hexToBytes, bytesToHex } from "../../holochain/decode";
+import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
 import { formatCatalogAddress, formatCents } from "../../lib/format";
@@ -14,10 +14,10 @@ import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../compon
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import { groupByCategory } from "../../lib/menu";
+import { fetchMenu, groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaimFulfillment, GeoPoint, MenuItem, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import type { BagClaimFulfillment, GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface BagRow {
   hash: Uint8Array;
@@ -37,14 +37,13 @@ interface StoreMenu {
 }
 
 async function fetchStoreMenu(catalogHash: Uint8Array): Promise<StoreMenu> {
-  const [record, page, bagRecords] = await Promise.all([getCatalog(catalogHash), listMenuItems(catalogHash), listGoodieBagsForCatalog(catalogHash)]);
-  // Same client-side expiry filtering as Browse.tsx's own strip -- see
-  // `GoodieBag`'s named gap for why there's no on-chain expire.
+  const [record, items, bagViews] = await Promise.all([getCatalog(catalogHash), fetchMenu(catalogHash), listGoodieBagsForCatalog(catalogHash)]);
+  // Same as Browse.tsx's strip: drops a bag that closed since the last poll.
   const now = Date.now() * 1000;
   return {
     catalog: decodeEntry<MerchantCatalog>(record),
-    items: page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })),
-    bags: bagRecords.map((r) => ({ hash: actionHash(r), bag: decodeEntry<GoodieBag>(r) })).filter((r) => r.bag.pickup_window_end > now),
+    items,
+    bags: bagViews.map((v) => ({ hash: v.original_action, bag: decodeEntry<GoodieBag>(v.record) })).filter((r) => r.bag.pickup_window_end > now),
   };
 }
 

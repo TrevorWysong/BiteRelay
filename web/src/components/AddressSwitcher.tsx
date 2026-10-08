@@ -30,14 +30,9 @@ function cityStateZip(a: { city: string; state: string; zip: string }): string {
 /// order for someone else at a completely different address without
 /// touching your account's real home address at all.
 ///
-/// The sheet is rendered through a portal straight onto `document.body`,
-/// not inline in this component's own render tree -- confirmed directly
-/// that `position: fixed` breaks (gets clipped to some inner box instead
-/// of the real viewport) when a descendant of AppShell's own animated
-/// route wrapper (`AnimatedOutlet`, which applies a CSS `transform` for
-/// its page-transition `y` animation -- any transformed ancestor becomes
-/// the containing block for `fixed` children, per the CSS spec). A portal
-/// escapes that ancestor entirely.
+/// The sheet renders through a portal onto `document.body`: inside
+/// AppShell's animated route wrapper, a CSS `transform` makes that wrapper
+/// the containing block for `position: fixed`, clipping the sheet to it.
 ///
 /// `value`/`onChange` make this controllable -- omit both (Browse.tsx's
 /// usage) and it drives the global browsing location in `session.ts`

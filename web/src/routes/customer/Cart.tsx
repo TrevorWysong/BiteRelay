@@ -8,17 +8,17 @@ import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { distanceKm } from "../../lib/geohash";
 import { useCart, expandLineQuantities, type CartLine } from "../../store/cart";
 import { useSession } from "../../store/session";
-import { requestDelivery, requestPickupOrder, createRecurringTemplate, getOrdersForRequester } from "../../holochain/zomes/dispatch";
-import { getCatalog, listMenuItems, listPromoCodesForCatalog } from "../../holochain/zomes/catalog";
-import { actionHash, bytesEqual, bytesToHex, decodeEntry } from "../../holochain/decode";
-import { myAgentPubKey } from "../../holochain/client";
+import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
+import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
+import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
+import { fetchMenu } from "../../lib/menu";
 import { nextOccurrence, toMicros, WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
-import type { ActionHash, DeliveryOrder, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
+import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] = [
@@ -104,26 +104,19 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
     getCatalog(catalogRef)
       .then((record) => decodeEntry<MerchantCatalog>(record))
       .catch(() => null),
-    listPromoCodesForCatalog(catalogRef)
-      .then((records) => records.map((r) => ({ hash: actionHash(r), promo: decodeEntry<PromoCode>(r) })))
+    // Only codes usable right now -- the store's live index, not every
+    // code it ever ran.
+    listLivePromoCodes(catalogRef)
+      .then((views) => views.map((v) => ({ hash: v.original_action, promo: decodeEntry<PromoCode>(v.record) })))
       .catch(() => []),
     // Needed to describe/evaluate item-scoped requirements and rewards
     // (BOGO, "spend $X get item Y free") even when the item they name isn't
     // already sitting in the cart.
-    listMenuItems(catalogRef)
-      .then((page) => page.items.map((r) => ({ hash: actionHash(r), item: decodeEntry<MenuItem>(r) })))
+    fetchMenu(catalogRef)
       .catch(() => []),
-    // Loyalty rewards ("order 5 times, your 6th is discounted") need this
-    // customer's own completed-order count at *this* store -- their own
-    // RequesterToOrder links, a purely local, agent-centric read.
-    getOrdersForRequester(myAgentPubKey())
-      .then((records) =>
-        records.filter((r) => {
-          const o = decodeEntry<DeliveryOrder>(r);
-          return o.status === "Delivered" && bytesEqual(o.catalog_ref, catalogRef);
-        }).length,
-      )
-      .catch(() => 0),
+    // Loyalty rewards ("order 5 times, your 6th is discounted") count this
+    // customer's completed orders at *this* store, delivery and pickup.
+    countMyCompletedOrders(catalogRef).catch(() => 0),
   ]);
   return {
     subsidyPercent: catalog?.delivery_subsidy_percent ?? 0,

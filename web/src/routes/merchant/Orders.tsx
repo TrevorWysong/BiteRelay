@@ -3,30 +3,31 @@ import { useNavigate } from "react-router-dom";
 import { Bike, ClipboardList, ShoppingBag, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import { getActiveOrdersForStore, getOrderHistoryForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup, type StoreOrder } from "../../holochain/zomes/dispatch";
-import { decodeEntry, bytesToHex } from "../../holochain/decode";
+import { getActiveOrdersForStore, getOrderHistoryForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup, type OrderEntry } from "../../holochain/zomes/dispatch";
+import { mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { useResource } from "../../lib/useResource";
-import { Button, Card, Chip, ChipRow, EmptyState, Skeleton, StatNumber } from "../../components/ui";
+import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { DeliveryOrder, PickupOrder, Timestamp } from "../../holochain/types";
+import type { Timestamp } from "../../holochain/types";
 
 const POLL_MS = 8000;
+
+const TABS = [
+  { value: "active", label: "Active" },
+  { value: "history", label: "History" },
+] as const;
 
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
 
-type QueueRow =
-  | { kind: "Delivery"; ref: Uint8Array; hex: string; order: DeliveryOrder; storeHex: string }
-  | { kind: "Pickup"; ref: Uint8Array; hex: string; order: PickupOrder; storeHex: string };
+/// An order, labelled with the store it came in at.
+type QueueRow = OrderRow & { storeHex: string };
 
-function toRow(entry: StoreOrder, storeHex: string): QueueRow {
-  const base = { ref: entry.original_action, hex: bytesToHex(entry.original_action), storeHex };
-  return entry.kind === "Delivery"
-    ? { ...base, kind: "Delivery", order: decodeEntry<DeliveryOrder>(entry.record) }
-    : { ...base, kind: "Pickup", order: decodeEntry<PickupOrder>(entry.record) };
+function toRow(entry: OrderEntry, storeHex: string): QueueRow {
+  return { ...toOrderRow(entry), storeHex };
 }
 
 const storesKey = (stores: StoreRow[]) => stores.map((s) => s.hex).join(",");
@@ -35,7 +36,7 @@ const storesKey = (stores: StoreRow[]) => stores.map((s) => s.hex).join(",");
 /// Uber Eats store tablet splits them: the **active** queue (what the
 /// kitchen is working on, oldest first, polled) and **history** (every
 /// order, newest first, paginated, read on demand). Each store's queues are
-/// its own on the DHT (see `dispatch_integrity::store_queue`); with several
+/// its own on the DHT (see `dispatch_integrity::order_queues`); with several
 /// stores, every order is labelled with its store, since "which kitchen
 /// makes this" is the first thing a multi-store owner needs to know.
 export function MerchantOrders() {
@@ -68,17 +69,7 @@ export function MerchantOrders() {
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4 pb-8">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Orders</h1>
-        <div className="flex rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
-          {(["active", "history"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={clsx("rounded-full px-3 py-1 capitalize transition", tab === t ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400")}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
       </motion.div>
       {multiStore && (
         <ChipRow>
@@ -250,11 +241,6 @@ async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Tim
     rows: mergeNewestFirst([], pages.flatMap(({ store, page }) => page.orders.map((entry) => toRow(entry, store.hex)))),
     cursors: Object.fromEntries(pages.map(({ store, page }) => [store.hex, page.next_before])),
   };
-}
-
-function mergeNewestFirst(existing: QueueRow[], incoming: QueueRow[]): QueueRow[] {
-  const seen = new Set(existing.map((row) => row.hex));
-  return [...existing, ...incoming.filter((row) => !seen.has(row.hex))].sort((a, b) => b.order.requested_at - a.order.requested_at);
 }
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {

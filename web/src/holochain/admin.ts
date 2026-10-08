@@ -89,15 +89,9 @@ async function attachInterfaceAndIssueToken(adminWs: AdminWebsocket, adminUrl: s
 /// caller persists it in localStorage to reconnect the *same* identity on
 /// reload, rather than accidentally provisioning a new one every time).
 ///
-/// `wsClientOptions` is never needed from a real browser -- browsers set
-/// their own Origin header on every WebSocket connection and forbid JS from
-/// overriding it, so this is silently inapplicable there. It exists purely
-/// so this exact function can be verified from Node (which sends no Origin
-/// header at all unless told to, unlike a browser) -- confirmed directly
-/// while upgrading to Holochain 0.7.0: the admin interface's default
-/// `AllowedOrigins::Any` still requires *an* Origin header to be present,
-/// just not any specific value, which a bare Node `ws` connection doesn't
-/// send on its own.
+/// `wsClientOptions` is for Node callers (scripts, tests) only. The admin
+/// interface's `AllowedOrigins::Any` still requires *an* Origin header,
+/// which browsers always send and Node's `ws` doesn't unless told to.
 export async function provisionNewIdentity(adminUrl: string, installedAppId: InstalledAppId, wsClientOptions?: WsClientOptions): Promise<ProvisionedIdentity> {
   const adminWs = await AdminWebsocket.connect({ url: new URL(adminUrl), wsClientOptions });
   try {
