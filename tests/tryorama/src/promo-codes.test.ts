@@ -105,7 +105,7 @@ await runScenario(async (scenario) => {
   });
   const wrongMerchantCodeRef = actionHash(wrongMerchantCodeRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await assert.rejects(placeOrder(wrongMerchantCodeRef, 800), /promo_code_ref does not belong to this order's merchant/, "a code from a different merchant must be rejected");
+  await assert.rejects(placeOrder(wrongMerchantCodeRef, 800), /promo_code_ref does not belong to this order's store/, "a code from a different store must be rejected");
   console.log("[PASS] a promo code belonging to a different merchant is rejected");
 
   // Only the catalog's own owner may create or deactivate its promo codes.
