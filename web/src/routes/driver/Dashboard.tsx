@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Bike, Link2, MapPin, Power } from "lucide-react";
+import { Bike, Link2, MapPin, Power, Route } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
 import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
-import { decodeEntry, actionHash, bytesToHex, bytesEqual } from "../../holochain/decode";
+import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
+import { getCatalog } from "../../holochain/zomes/catalog";
+import { planRoute } from "../../lib/route";
 import { myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
@@ -18,7 +20,7 @@ import { formatCents, formatEta } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { usePolling, useResource } from "../../lib/useResource";
-import type { Bid, DeliveryOrder, DeliveryStatus } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, MerchantCatalog } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -222,6 +224,7 @@ export function DriverDashboard() {
             <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
               Active {activeOrders.length === 1 ? "delivery" : `deliveries (${activeOrders.length})`}
             </p>
+            {activeOrders.length > 1 && <SuggestedRoute orders={activeOrders} location={location} />}
             {activeOrders.map((row) => (
               <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
                 <ActiveDeliveryCard row={row} location={location} onAdvanced={reloadActive} />
@@ -273,6 +276,53 @@ export function DriverDashboard() {
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
     </div>
+  );
+}
+
+/// The order to make this driver's stops in -- see `planRoute`. Stores'
+/// locations are read once per set of stores being served.
+function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: GeoPoint }) {
+  const storeHexes = [...new Set(orders.map((row) => bytesToHex(row.order.catalog_ref)))].sort();
+  const { data: stores } = useResource(`route-stores:${storeHexes.join(",")}`, async () => {
+    const entries = await Promise.all(
+      storeHexes.map(async (hex) => {
+        const catalog = decodeEntry<MerchantCatalog>(await getCatalog(hexToBytes(hex)));
+        return [hex, { name: catalog.business_name, at: catalog.location }] as const;
+      }),
+    );
+    return Object.fromEntries(entries);
+  });
+  if (!stores) return null;
+
+  const byHex = new Map(orders.map((row) => [bytesToHex(row.hash), row]));
+  const stops = planRoute(
+    location,
+    orders.map((row) => ({
+      id: bytesToHex(row.hash),
+      pickup: row.order.status === "PickedUp" ? null : (stores[bytesToHex(row.order.catalog_ref)]?.at ?? null),
+      dropoff: row.order.dropoff,
+    })),
+  );
+  return (
+    <Card className="p-4">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
+        <Route size={13} /> Suggested route
+      </p>
+      <ol className="flex flex-col gap-1.5">
+        {stops.map((stop, i) => {
+          const order = byHex.get(stop.id)!.order;
+          const label = stop.kind === "pickup" ? `Pick up at ${stores[bytesToHex(order.catalog_ref)]?.name ?? "the store"}` : `Drop off (${DROPOFF_PREFERENCE_LABEL[order.dropoff_preference].toLowerCase()})`;
+          return (
+            <li key={`${stop.id}-${stop.kind}`} className="flex items-center gap-2 text-sm">
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-relay-500/15 text-[11px] font-bold text-relay-600">{i + 1}</span>
+              <span className="flex-1 text-ink-800 dark:text-ink-100">{label}</span>
+              <span className="text-xs text-ink-400">{stop.legKm.toFixed(1)} km</span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-2 text-[11px] text-ink-400">Straight-line distances, nearest stop first; every pickup comes before its drop-off.</p>
+    </Card>
   );
 }
 
