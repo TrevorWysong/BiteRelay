@@ -6,6 +6,9 @@
 
 use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path};
 use crate::order_queues::{self, OrderParties};
+use crate::pricing::{price_order, OrderItemInput};
+use crate::settlement;
+use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{resolve_latest, resolve_latest_decoded};
@@ -15,7 +18,10 @@ use relay_types::GeoPoint;
 pub struct RequestDeliveryInput {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What to order. Priced here at each item's latest version.
+    pub items: Vec<OrderItemInput>,
+    /// The total the customer was shown -- the order is refused if pricing
+    /// now comes to anything else.
     pub order_total: u64,
     pub dropoff: GeoPoint,
     pub max_delivery_fee: Option<u64>,
@@ -64,17 +70,42 @@ fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: 
     Ok(())
 }
 
+/// The store's catalog at its latest state.
+fn current_catalog(catalog_ref: &ActionHash) -> ExternResult<catalog_types::MerchantCatalog> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, catalog_ref.clone())? else {
+        return Err(wasm_error!(WasmErrorInner::Guest("couldn't read the store's details".into())));
+    };
+    io.decode::<Record>()
+        .map_err(|e| wasm_error!(e))?
+        .entry()
+        .to_app_option::<catalog_types::MerchantCatalog>()
+        .map_err(|e| wasm_error!(e))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref is not a store".into())))
+}
+
 /// Coordinator pre-checks for an order's optional references, shared by
 /// both order verticals. Validation can only see these entries as created
 /// (see `dispatch_integrity::checks`), so "still active" / "confirmed yet"
 /// can only be answered here, against their latest state. A failed lookup
 /// lets the order through to validation rather than blocking it over a
 /// convenience check that couldn't resolve.
-pub(crate) fn ensure_promo_active(promo_ref: &ActionHash) -> ExternResult<()> {
+///
+/// The promo check also names the plain reasons a code can't be used here
+/// (another store's, expired) up front -- validation would refuse those
+/// too, but pricing runs first and would otherwise report them as a price
+/// mismatch.
+pub(crate) fn ensure_promo_usable(promo_ref: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<()> {
     if let Ok(ZomeCallResponse::Ok(io)) = call(CallTargetCell::Local, "catalog", "get_promo_code".into(), None, promo_ref.clone()) {
         if let Ok(Some(promo)) = io.decode::<Record>().map(|r| r.entry().to_app_option::<catalog_types::PromoCode>().ok().flatten()) {
+            let refuse = |reason: &str| Err(wasm_error!(WasmErrorInner::Guest(reason.into())));
+            if &promo.catalog_ref != catalog_ref {
+                return refuse("promo_code_ref does not belong to this order's store");
+            }
             if !promo.active {
-                return Err(wasm_error!(WasmErrorInner::Guest("promo code is not active".into())));
+                return refuse("promo code is not active");
+            }
+            if promo.expires_at.is_some_and(|expires| sys_time().is_ok_and(|now| now >= expires)) {
+                return refuse("promo code has expired");
             }
         }
     }
@@ -102,45 +133,32 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let is_open = status == DeliveryStatus::Open;
 
     if let Some(promo_ref) = &input.promo_code_ref {
-        ensure_promo_active(promo_ref)?;
+        ensure_promo_usable(promo_ref, &input.catalog_ref)?;
     }
     if let Some(claim_ref) = &input.bag_claim_ref {
         ensure_claim_confirmed(claim_ref)?;
     }
+    let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
 
-    // Best-effort, same shape and trust tier as the promo-code/bag-claim
-    // checks just above: `max_delivery_radius_km` is a merchant-editable
-    // setting (`catalog::update_catalog_details`), so it has exactly the
-    // same "can't be the deterministic source of truth" problem `active`
-    // already has in `validate_new_order`'s own doc comment -- a literal
-    // fetch of `catalog_ref` would only ever see the radius *as published*,
-    // not whatever the merchant has since changed it to, and checking a
-    // stale radius could just as easily wrongly reject a legitimately-
-    // widened order as wrongly admit one past a since-narrowed one. This
-    // cross-zome call resolves to latest, so it's the one place the
-    // question can genuinely be answered against the merchant's *current*
-    // setting. A failed lookup degrades to admitting the order rather than
-    // blocking it over a convenience pre-check that couldn't resolve.
-    if let Ok(ZomeCallResponse::Ok(extern_io)) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, input.catalog_ref.clone()) {
-        if let Ok(record) = extern_io.decode::<Record>() {
-            if let Ok(Some(catalog)) = record.entry().to_app_option::<catalog_types::MerchantCatalog>() {
-                let distance = relay_types::distance_km(catalog.location, input.dropoff);
-                if distance > catalog.max_delivery_radius_km {
-                    return Err(wasm_error!(WasmErrorInner::Guest(format!(
-                        "dropoff is {:.1}km away, past this merchant's {:.1}km delivery radius",
-                        distance, catalog.max_delivery_radius_km
-                    ))));
-                }
-            }
-        }
+    // The store as it is now: its delivery radius (a pre-check -- see
+    // `ensure_promo_active` for why current settings can't be validated)
+    // and its share of the delivery fee, which this order records as the
+    // split it was placed under.
+    let catalog = current_catalog(&input.catalog_ref)?;
+    let distance = relay_types::distance_km(catalog.location, input.dropoff);
+    if distance > catalog.max_delivery_radius_km {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "dropoff is {:.1}km away, past this store's {:.1}km delivery radius",
+            distance, catalog.max_delivery_radius_km
+        ))));
     }
 
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
-        item_refs: input.item_refs,
-        order_total: input.order_total,
+        lines: priced.lines,
+        order_total: priced.order_total,
         dropoff: input.dropoff,
         dropoff_geohash: dropoff_geohash.clone(),
         max_delivery_fee: input.max_delivery_fee,
@@ -151,10 +169,12 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         requested_at: now,
         special_instructions: input.special_instructions,
         tip_cents: input.tip_cents,
+        delivery_subsidy_percent: catalog.delivery_subsidy_percent,
         requested_delivery_time: input.requested_delivery_time,
         promo_code_ref: input.promo_code_ref,
         dropoff_preference: input.dropoff_preference,
         bag_claim_ref: input.bag_claim_ref,
+        loyalty_proof: priced.loyalty_proof,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The merchant is never in `notify_nearby_providers`'s signal audience
@@ -254,14 +274,6 @@ pub struct CompleteDeliveryInput {
 // `pub(crate)` so `disputes.rs` can reuse them rather than redefining its
 // own copies of the same ledger/reputation wire shapes.
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct SettleInputWire {
-    pub(crate) order_ref: ActionHash,
-    pub(crate) from: AgentPubKey,
-    pub(crate) to: AgentPubKey,
-    pub(crate) amount: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RecordEventInputWire {
     pub(crate) target: ReputationTargetWire,
     pub(crate) order_ref: ActionHash,
@@ -303,90 +315,6 @@ pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationT
 }
 
 const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
-
-/// Cross-zome-fetches the order's merchant catalog for its currently-set
-/// `delivery_subsidy_percent` (architecture plan §12, 2026-10-01 revision:
-/// the standard delivery-cost-sharing model, defaulting to an even 50/50
-/// split with the customer -- not a rare promotion) and splits
-/// `price_offer` between merchant and customer proportionally:
-/// `merchant_share = price_offer * percent / 100`, floor-rounded, with any
-/// rounding remainder landing on the customer's side. The driver is always
-/// paid `price_offer` in full regardless of the split -- this only changes
-/// *where* the money comes from, never the amount owed. Any tip is always
-/// the customer's alone, never subject to the split. A failed/missing
-/// subsidy lookup degrades to 0% (fully customer-paid) rather than blocking
-/// settlement over a bonus lookup -- but once a nonzero merchant share is
-/// actually owed, both settle calls must succeed, or the driver would be
-/// paid less than the `price_offer` they were promised.
-/// Pays the merchant for the food itself -- a completely separate flow from
-/// `settle_delivery_fee` below, which only ever moves the delivery fee/tip
-/// to the driver. `amount` is the order's `order_total`, already net of
-/// any applied promo-code discount by the time this is called.
-pub(crate) fn settle_order_total(order_ref: ActionHash, customer: AgentPubKey, merchant: AgentPubKey, amount: u64) -> ExternResult<()> {
-    // A customer ordering from their own restaurant is legitimate (unlike a
-    // driver bidding on their own order, see validate_new_bid) -- but it's
-    // economically a no-op, and `ledger_integrity::validate_transaction`
-    // correctly rejects any from == to transaction as meaningless
-    // bookkeeping. Skip rather than attempt one.
-    if amount == 0 || customer == merchant {
-        return Ok(());
-    }
-    let response = call(
-        CallTargetCell::Local,
-        "ledger",
-        "release_on_completion".into(),
-        None,
-        SettleInputWire { order_ref, from: customer, to: merchant, amount },
-    )?;
-    if !matches!(response, ZomeCallResponse::Ok(_)) {
-        return Err(wasm_error!(WasmErrorInner::Guest("order-total settlement failed".into())));
-    }
-    Ok(())
-}
-
-pub(crate) fn settle_delivery_fee(
-    order_ref: ActionHash,
-    catalog_ref: ActionHash,
-    customer: AgentPubKey,
-    merchant: AgentPubKey,
-    driver: AgentPubKey,
-    price_offer: u64,
-    tip_cents: u64,
-) -> ExternResult<()> {
-    let subsidy_response = call(CallTargetCell::Local, "catalog", "get_delivery_subsidy".into(), None, catalog_ref.clone());
-    let subsidy_percent: u8 = match subsidy_response {
-        Ok(ZomeCallResponse::Ok(extern_io)) => extern_io.decode().unwrap_or(0),
-        _ => 0,
-    }
-    .min(100);
-    let merchant_share = price_offer * subsidy_percent as u64 / 100;
-    let customer_share = price_offer - merchant_share;
-
-    if merchant_share > 0 {
-        let response = call(
-            CallTargetCell::Local,
-            "ledger",
-            "release_on_completion".into(),
-            None,
-            SettleInputWire { order_ref: order_ref.clone(), from: merchant, to: driver.clone(), amount: merchant_share },
-        )?;
-        if !matches!(response, ZomeCallResponse::Ok(_)) {
-            return Err(wasm_error!(WasmErrorInner::Guest("merchant delivery-subsidy settlement failed".into())));
-        }
-    }
-
-    let response = call(
-        CallTargetCell::Local,
-        "ledger",
-        "release_on_completion".into(),
-        None,
-        SettleInputWire { order_ref, from: customer, to: driver, amount: customer_share + tip_cents },
-    )?;
-    if !matches!(response, ZomeCallResponse::Ok(_)) {
-        return Err(wasm_error!(WasmErrorInner::Guest("payment settlement failed".into())));
-    }
-    Ok(())
-}
 
 /// The gated path to marking a delivery Delivered. Unlike `set_order_status`,
 /// which trusts the integrity zome's state-machine table alone, this
@@ -437,29 +365,22 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     }
 
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
-    let requester = order.requester.clone();
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
-    let tip_cents = order.tip_cents;
-    let order_total = order.order_total;
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
+    let owed = delivery_payments(&order, &bid);
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     order_queues::retire(&parties)?;
 
-    // The food: customer pays the merchant the order total, separately from
-    // however the delivery fee is split below.
-    settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
-
-    settle_delivery_fee(
-        input.order_original_action.clone(),
-        catalog_ref.clone(),
-        requester,
-        merchant.clone(),
-        bid.bidder.clone(),
-        bid.price_offer,
-        tip_cents,
-    )?;
+    // The customer pays what they owe now; the store pays its fee share
+    // from its own conductor, told here that it's due (the sweep in
+    // `settlement` catches a missed signal).
+    let me = agent_info()?.agent_initial_pubkey;
+    settlement::pay_legs(&input.order_original_action, &updated, &owed, settlement::Payer::Me(&me))?;
+    if owed.iter().any(|p| p.leg == PaymentLeg::DeliveryFeeStoreShare && p.from != me) {
+        let _ = send_remote_signal(RemoteSignal::StoreShareDue { order_hash: input.order_original_action.clone() }, vec![merchant.clone()]);
+    }
 
     // Best-effort: reputation bumps are valuable but shouldn't block
     // payment or delivery completion if they fail. One per role this order
@@ -472,34 +393,3 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed order".into())))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForceOrderUpdateInput {
-    pub order_original_action: ActionHash,
-    pub next_status: DeliveryStatus,
-    pub delivery_receipts: Vec<ActionHash>,
-    #[serde(default)]
-    pub dispute_ref: Option<ActionHash>,
-}
-
-/// TEST-SUPPORT ONLY -- calls `update_entry` on a `DeliveryOrder` directly
-/// with caller-chosen `status`/`delivery_receipts`/`dispute_ref`, skipping
-/// every coordinator-level check `set_order_status`, `complete_delivery`,
-/// `raise_dispute`, and `apply_dispute_resolution` normally apply first.
-/// This isn't a hypothetical attack surface: unlike integrity zomes,
-/// coordinator zomes are *not* part of a DNA's hash, so nothing stops a
-/// peer from writing their own coordinator wasm that calls `update_entry`
-/// this directly against the same integrity zome. Exists so a test can
-/// prove `dispatch_integrity::validate()` -- not this app's own honest
-/// coordinator logic -- is what actually enforces the completion gate,
-/// dispute-resolution gate, and field-immutability rules. No legitimate
-/// client should call this.
-#[hdk_extern]
-pub fn force_order_update_for_testing(input: ForceOrderUpdateInput) -> ExternResult<Record> {
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
-    order.status = input.next_status;
-    order.delivery_receipts = input.delivery_receipts;
-    order.dispute_ref = input.dispute_ref;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced order update".into())))
-}

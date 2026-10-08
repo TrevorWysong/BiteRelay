@@ -6,7 +6,9 @@
 //! dispute path in one place, rather than splitting across files the way
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
-use crate::orders::{ensure_claim_confirmed, ensure_promo_active, record_reputation_event, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
+use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::pricing::{price_order, OrderItemInput};
+use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
 use dispatch_integrity::*;
@@ -17,7 +19,9 @@ use relay_coordinator_support::resolve_latest_decoded;
 pub struct RequestPickupOrderInput {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What to order -- see `RequestDeliveryInput::items`.
+    pub items: Vec<OrderItemInput>,
+    /// The total the customer was shown -- see `RequestDeliveryInput::order_total`.
     pub order_total: u64,
     #[serde(default)]
     pub special_instructions: String,
@@ -38,24 +42,26 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let requested_at = sys_time()?;
 
     if let Some(promo_ref) = &input.promo_code_ref {
-        ensure_promo_active(promo_ref)?;
+        ensure_promo_usable(promo_ref, &input.catalog_ref)?;
     }
     if let Some(claim_ref) = &input.bag_claim_ref {
         ensure_claim_confirmed(claim_ref)?;
     }
+    let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
 
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
-        item_refs: input.item_refs,
-        order_total: input.order_total,
+        lines: priced.lines,
+        order_total: priced.order_total,
         status: PickupStatus::Placed,
         dispute_ref: None,
         requested_at,
         special_instructions: input.special_instructions,
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
+        loyalty_proof: priced.loyalty_proof,
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
@@ -113,8 +119,8 @@ pub fn cancel_pickup_order(order_original_action: ActionHash) -> ExternResult<Re
 /// requester confirming they actually received it. Unlike
 /// `complete_delivery`, there's no leg-attestation gate to check first: the
 /// merchant and requester transact directly, with no intermediary to prove
-/// anything about. Settles via `settle_order_total` only -- there is no
-/// delivery fee here at all, so `settle_delivery_fee` doesn't apply.
+/// anything about. The customer pays the order total; there's no delivery
+/// fee or tip.
 #[hdk_extern]
 pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
@@ -123,16 +129,16 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
             "a pickup order can only be completed from the ReadyForPickup status".into()
         )));
     }
-    let requester = order.requester.clone();
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
-    let order_total = order.order_total;
     order.status = PickupStatus::PickedUp;
     let parties = OrderParties::pickup(&order_original_action, &order);
+    let owed = pickup_payments(&order);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     order_queues::retire(&parties)?;
 
-    settle_order_total(order_original_action.clone(), requester, merchant.clone(), order_total)?;
+    let me = agent_info()?.agent_initial_pubkey;
+    settlement::pay_legs(&order_original_action, &updated, &owed, Payer::Me(&me))?;
 
     // Best-effort: a reputation bump for the store is valuable but
     // shouldn't block payment or completion if it fails -- same posture as
@@ -240,9 +246,8 @@ pub struct ApplyPickupDisputeResolutionInput {
 
 /// `apply_dispute_resolution`'s pickup sibling -- `FavorProvider` resolves
 /// to `PickedUp` (the merchant's side wins, order completes and settles),
-/// `FavorRequester` resolves to `Cancelled`. No delivery-fee-split, so
-/// there's only ever `settle_order_total` + an optional `ledger::forfeit`
-/// to apply here, not `settle_delivery_fee`'s own branch.
+/// `FavorRequester` resolves to `Cancelled`. A ruling for the store settles
+/// the order total; either side may also owe collateral.
 #[hdk_extern]
 pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput) -> ExternResult<Record> {
     // Synchronous gate before anything side-effecting -- see
@@ -277,7 +282,6 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
     let requester = order.requester.clone();
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
-    let order_total = order.order_total;
     let target_status = match &outcome {
         DisputeOutcome::FavorProvider { .. } => PickupStatus::PickedUp,
         DisputeOutcome::FavorRequester { .. } => PickupStatus::Cancelled,
@@ -286,47 +290,20 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
     let parties = OrderParties::pickup(&input.order_original_action, &updated_order);
     updated_order.status = target_status;
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
+    let owed = pickup_payments(&updated_order);
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::PickupOrder(updated_order))?;
     // Both outcomes (PickedUp / Cancelled) are terminal.
     order_queues::retire(&parties)?;
+    let dispute_basis = dispute_record.action_address();
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {
-            settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
-            if forfeit_amount > 0 {
-                let _ = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: requester.clone(),
-                        to: merchant,
-                        amount: forfeit_amount,
-                    },
-                );
-            }
+            settlement::pay_legs(&input.order_original_action, &updated, &owed, Payer::Arbitrator)?;
+            settlement::forfeit(&input.order_original_action, dispute_basis, &requester, &merchant, forfeit_amount)?;
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
         DisputeOutcome::FavorRequester { forfeit_amount } => {
-            if forfeit_amount > 0 {
-                let forfeit_response = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: merchant.clone(),
-                        to: requester,
-                        amount: forfeit_amount,
-                    },
-                )?;
-                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
-                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
-                }
-            }
+            settlement::forfeit(&input.order_original_action, dispute_basis, &merchant, &requester, forfeit_amount)?;
             record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if forfeit_amount > 0 {
                 record_reputation_event(

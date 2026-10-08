@@ -37,7 +37,7 @@ await runScenario(async (scenario) => {
   await sync();
 
   const placePickup = async () =>
-    actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, item_refs: [itemA], order_total: 1000 }));
+    actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1000 }));
   const completePickup = async (order: Uint8Array) => {
     await call(merchant, "dispatch")("confirm_pickup_prep", order);
     await call(merchant, "dispatch")("mark_ready_for_pickup", order);
@@ -55,7 +55,7 @@ await runScenario(async (scenario) => {
   await call(customer, "dispatch")("raise_pickup_dispute", { order_original_action: disputedOrder, reason: "WrongOrIncompleteItems", description: "missing fries", evidence_refs: [] });
   const activeOrder = await placePickup();
   const deliveryOrder = actionHash(
-    await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: storeA, item_refs: [itemA], order_total: 1000, dropoff: ST_PETE, max_delivery_fee: null }),
+    await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1000, dropoff: ST_PETE, max_delivery_fee: null }),
   );
   await sync();
   const attackerBid = actionHash(

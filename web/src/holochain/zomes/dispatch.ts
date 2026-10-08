@@ -3,10 +3,19 @@ import type { ActionHash, AgentPubKey, DeliveryStatus, DropoffPreference, GeoPoi
 
 // --- orders ---
 
+/// One thing to order, and how many. The zome prices it at the item's
+/// latest version.
+export interface OrderItemInput {
+  item_ref: ActionHash;
+  quantity: number;
+}
+
+/// `order_total` is the total the customer was shown: the order is refused
+/// (with the new total) if the menu's prices no longer add up to it.
 export async function requestDelivery(input: {
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  items: OrderItemInput[];
   order_total: number;
   dropoff: GeoPoint;
   max_delivery_fee: number | null;
@@ -253,10 +262,11 @@ export async function listMyRecurringTemplates(): Promise<RecurringTemplateView[
 // --- pickup orders -- no driver, no bid, no dropoff at all. See
 // dispatch_integrity::PickupOrder's own doc comment. ---
 
+/// See `requestDelivery` for `items` and `order_total`.
 export async function requestPickupOrder(input: {
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  items: OrderItemInput[];
   order_total: number;
   special_instructions?: string;
   promo_code_ref?: ActionHash | null;

@@ -7,6 +7,7 @@ import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holoc
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { planRoute } from "../../lib/route";
+import { itemCount } from "../../lib/orderEntries";
 import { myAgentPubKey } from "../../holochain/client";
 import { encodeGeohash, distanceKm } from "../../lib/geohash";
 import { useSession } from "../../store/session";
@@ -451,7 +452,7 @@ function BidCard({
         )
       )}
       <p className="mt-1 text-xs text-ink-400">
-        {order.item_refs.length} item{order.item_refs.length === 1 ? "" : "s"}
+        {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
       {order.special_instructions && <p className="mt-1 truncate text-xs text-ink-400">"{order.special_instructions}"</p>}

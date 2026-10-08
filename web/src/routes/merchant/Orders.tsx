@@ -4,9 +4,11 @@ import { Bike, ClipboardList, ShoppingBag, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { getActiveOrdersForStore, getOrderHistoryForStore, setOrderStatus, confirmPickupPrep, markReadyForPickup, type OrderEntry } from "../../holochain/zomes/dispatch";
-import { mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
+import { itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { useResource } from "../../lib/useResource";
+import { fetchMenu } from "../../lib/menu";
+import { bytesToHex } from "../../holochain/decode";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
@@ -123,6 +125,13 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
     },
     { pollMs: POLL_MS, refreshOn: () => true },
   );
+  // Each item's latest version, to spot a line priced from an older one --
+  // validation can't tell (it only sees records as they were), so the store
+  // checks before confirming.
+  const { data: latestVersions } = useResource(`merchant-menu-versions:${storesKey(stores)}`, async () => {
+    const menus = await Promise.all(stores.map((store) => fetchMenu(store.hash)));
+    return new Set(menus.flat().map((row) => bytesToHex(row.version)));
+  });
 
   async function advance(row: QueueRow, action: (ref: Uint8Array) => Promise<unknown>) {
     setBusyHex(row.hex);
@@ -144,6 +153,11 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
         {rows.map((row) => (
           <motion.div key={row.hex} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <OrderCard row={row} storeLabel={storeLabel(row.storeHex)}>
+              {latestVersions && hasStalePrice(row, latestVersions) && (
+                <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+                  Priced from an older menu -- check the total before confirming.
+                </p>
+              )}
               <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
             </OrderCard>
           </motion.div>
@@ -151,6 +165,12 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
       </AnimatePresence>
     </div>
   );
+}
+
+/// Whether any of the order's lines was priced from a version of its item
+/// that's since been replaced (a goodie bag's line is the bag, never stale).
+function hasStalePrice(row: QueueRow, latestVersions: Set<string>): boolean {
+  return !row.order.bag_claim_ref && row.order.lines.some((line) => !latestVersions.has(bytesToHex(line.priced_version)));
 }
 
 /// What the merchant can do next for an in-progress order, or what they're
@@ -245,7 +265,7 @@ async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Tim
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {
   const { order } = row;
-  const itemCount = order.item_refs.length;
+  const count = itemCount(order);
   return (
     <Card className="p-4">
       <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
@@ -265,7 +285,7 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
         {row.kind === "Delivery" ? <StatusBadge status={row.order.status} /> : <PickupStatusBadge status={row.order.status} />}
       </div>
       <p className="mt-1 text-xs text-ink-400">
-        {itemCount} item{itemCount === 1 ? "" : "s"}
+        {count} item{count === 1 ? "" : "s"}
       </p>
       {order.special_instructions && <p className="mt-1 text-xs italic text-ink-500">"{order.special_instructions}"</p>}
       {children}

@@ -9,7 +9,7 @@ import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain
 import { useCart } from "../../store/cart";
 import { useResource } from "../../lib/useResource";
 import { fetchMenu } from "../../lib/menu";
-import { customerOrderPath, isFinished, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
+import { customerOrderPath, isFinished, itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { Button, Card, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
@@ -148,7 +148,7 @@ async function fetchPast(before: Timestamp | null): Promise<PastState> {
 }
 
 function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: boolean; children?: React.ReactNode }) {
-  const itemCount = row.order.item_refs.length;
+  const count = itemCount(row.order);
   return (
     <Card className="flex items-center gap-2 p-4">
       <Link to={customerOrderPath(row)} className="min-w-0 flex-1">
@@ -161,7 +161,7 @@ function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: bool
         </div>
         <StatNumber className="text-sm">{formatCents(row.order.order_total)}</StatNumber>
         <p className="text-xs text-ink-400">
-          {itemCount} item{itemCount === 1 ? "" : "s"}
+          {count} item{count === 1 ? "" : "s"}
         </p>
       </Link>
       {row.kind === "Delivery" ? <StatusBadge status={row.order.status} /> : <PickupStatusBadge status={row.order.status} />}
@@ -184,14 +184,7 @@ function ReorderButton({ row }: { row: OrderRow }) {
     try {
       const [catalogRecord, menuItems] = await Promise.all([getCatalog(order.catalog_ref), fetchMenu(order.catalog_ref)]);
       const catalog = decodeEntry<MerchantCatalog>(catalogRecord);
-      // item_refs repeats an item once per unit (see Cart.tsx).
-      const counts = new Map<string, { itemRef: Uint8Array; quantity: number }>();
-      for (const ref of order.item_refs) {
-        const line = counts.get(bytesToHex(ref));
-        if (line) line.quantity += 1;
-        else counts.set(bytesToHex(ref), { itemRef: ref, quantity: 1 });
-      }
-      const lines = Array.from(counts.values()).flatMap(({ itemRef, quantity }) => {
+      const lines = order.lines.map((line) => ({ itemRef: line.item_ref, quantity: line.quantity })).flatMap(({ itemRef, quantity }) => {
         const menuItem = menuItems.find((m) => bytesEqual(m.hash, itemRef));
         return menuItem ? [{ itemRef, name: menuItem.item.name, priceCents: menuItem.item.price_cents, quantity }] : [];
       });

@@ -53,7 +53,7 @@ await runScenario(async (scenario) => {
   const orderInRange = await dispatchOf(customer)<HcRecord>("request_delivery", {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
+    items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 1250,
     dropoff: ST_PETE,
     max_delivery_fee: 500,
@@ -66,11 +66,12 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [menuItemRef],
+      items: [{ item_ref: menuItemRef, quantity: 1 }],
       order_total: 1250,
       dropoff: NYC,
       max_delivery_fee: 500,
     }),
+    /past this store's .*delivery radius/,
     "a dropoff far past the merchant's own delivery radius must be rejected",
   );
   console.log("[PASS] request_delivery rejects a dropoff outside the merchant's delivery radius");
@@ -108,12 +109,13 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_delivery", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [bagRef],
+      items: [{ item_ref: bagRef, quantity: 1 }],
       order_total: 500,
       dropoff: NYC,
       max_delivery_fee: 300,
       bag_claim_ref: claimRef,
     }),
+    /past this store's .*delivery radius/,
     "a confirmed goodie-bag claim must still respect the merchant's delivery radius when finalized",
   );
   console.log("[PASS] request_delivery rejects a confirmed goodie-bag claim's out-of-radius dropoff too");

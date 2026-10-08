@@ -2,7 +2,7 @@
 // shared by every screen that lists orders -- customer, merchant, driver.
 import { decodeEntry, bytesToHex } from "../holochain/decode";
 import type { OrderEntry } from "../holochain/zomes/dispatch";
-import type { DeliveryOrder, PickupOrder } from "../holochain/types";
+import type { DeliveryOrder, OrderLine, PickupOrder } from "../holochain/types";
 
 /// `ref` is the order's stable identity (its original action) -- what every
 /// order call and detail route takes; `hex` is the same, as a React key.
@@ -22,6 +22,11 @@ export function toOrderRow(entry: OrderEntry): OrderRow {
 export function mergeNewestFirst<R extends OrderRow>(existing: R[], incoming: R[]): R[] {
   const seen = new Set(existing.map((row) => row.hex));
   return [...existing, ...incoming.filter((row) => !seen.has(row.hex))].sort((a, b) => b.order.requested_at - a.order.requested_at);
+}
+
+/// How many units an order is for, across its lines.
+export function itemCount(order: { lines: OrderLine[] }): number {
+  return order.lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 
 const TERMINAL = new Set(["Delivered", "PickedUp", "Cancelled"]);

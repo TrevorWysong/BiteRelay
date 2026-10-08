@@ -26,6 +26,8 @@ await runScenario(async (scenario) => {
   const catalogRef = actionHash(catalogRecord);
   const itemRecord = await catalogOf(merchant)<HcRecord>("add_menu_item", { catalog_ref: catalogRef, name: "Empanada", price_cents: 1000, available: true });
   const itemRef = actionHash(itemRecord);
+  // The template references the store; a customer has always seen it first.
+  await dhtSync([customer, merchant], customer.cells[0].cell_id[0]);
 
   const baseInput = {
     merchant: merchant.agentPubKey,

@@ -1,12 +1,8 @@
-// Proves the loyalty-reward backend surface: LoyaltyOrderCount is bounds-
-// checked like every other requirement, auto_apply round-trips and
-// defaults to false (preserving every existing promo code's behavior),
-// and an order referencing a LoyaltyOrderCount+auto_apply code is still
-// accepted by dispatch_integrity exactly like any other promo (it only
-// ever checks catalog_ref/expires_at/active, never the requirement/reward
-// content -- counting "how many times has this customer ordered here" is
-// evaluated client-side, same trust tier as every other promo's
-// arithmetic -- see PromoRequirement::LoyaltyOrderCount's own doc comment).
+// Proves the loyalty-reward surface: LoyaltyOrderCount is bounds-checked
+// like every other requirement, auto_apply round-trips and defaults to
+// false, and a loyalty discount is applied only when earned -- the order
+// carries the customer's own completions here as proof, which validation
+// counts (see dispatch_integrity::checks).
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
@@ -67,15 +63,31 @@ await runScenario(async (scenario) => {
   console.log("[PASS] a LoyaltyOrderCount + auto_apply promo code round-trips exactly");
 
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: merchant.agentPubKey,
-    catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
-    order_total: 850,
-    dropoff: ST_PETE,
-    max_delivery_fee: null,
-    promo_code_ref: loyaltyCodeRef,
-  });
-  assert.ok(orderRecord, "an order referencing a LoyaltyOrderCount+auto_apply promo code must still be accepted by dispatch_integrity");
-  console.log("[PASS] an order referencing a loyalty-shaped promo code is accepted, same as any other promo code");
+  const deliver = (promo: Uint8Array, total: number) =>
+    dispatchOf(customer)<HcRecord>("request_delivery", {
+      merchant: merchant.agentPubKey,
+      catalog_ref: catalogRef,
+      items: [{ item_ref: menuItemRef, quantity: 1 }],
+      order_total: total,
+      dropoff: ST_PETE,
+      max_delivery_fee: null,
+      promo_code_ref: promo,
+    });
+  await assert.rejects(deliver(loyaltyCodeRef, 850), /doesn't meet the promo code's requirement/, "a first-time customer hasn't earned a 5th-order discount");
+  console.log("[PASS] a loyalty discount is refused to a customer who hasn't earned it");
+
+  // Earn it: complete one pickup here, then a 2nd-order discount applies.
+  const secondOrder = actionHash(
+    await catalogOf(merchant)<HcRecord>("create_promo_code", { catalog_ref: catalogRef, code: "SECOND10", requirement: { LoyaltyOrderCount: 1 }, reward: { PercentOffSubtotal: 10 }, auto_apply: true }),
+  );
+  const first = actionHash(await dispatchOf(customer)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: catalogRef, items: [{ item_ref: menuItemRef, quantity: 1 }], order_total: 1000 }));
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+  await dispatchOf(merchant)("confirm_pickup_prep", first);
+  await dispatchOf(merchant)("mark_ready_for_pickup", first);
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+  await dispatchOf(customer)("complete_pickup", first);
+  const discounted = decodeEntry<{ order_total: number; loyalty_proof: Uint8Array[] }>(await deliver(secondOrder, 900));
+  assert.equal(discounted.order_total, 900, "10% off the second order");
+  assert.equal(discounted.loyalty_proof.length, 1, "the order carries its one completion as proof");
+  console.log("[PASS] once earned, a loyalty discount is applied -- with the completion that earned it as proof");
 });

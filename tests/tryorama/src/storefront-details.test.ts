@@ -140,16 +140,21 @@ await runScenario(async (scenario) => {
   console.log("[PASS] update_menu_item updates fields correctly");
 
   // --- Order with special_instructions/tip ---
-  const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: customer.agentPubKey,
-    catalog_ref: catalogRef,
-    item_refs: [itemRef],
-    order_total: 700,
-    dropoff: ST_PETE,
-    max_delivery_fee: null,
-    special_instructions: "Ring the bell",
-    tip_cents: 150,
-  });
+  const placeOrder = () =>
+    dispatchOf(customer)<HcRecord>("request_delivery", {
+      merchant: customer.agentPubKey,
+      catalog_ref: catalogRef,
+      items: [{ item_ref: itemRef, quantity: 1 }],
+      order_total: 700,
+      dropoff: ST_PETE,
+      max_delivery_fee: null,
+      special_instructions: "Ring the bell",
+      tip_cents: 150,
+    });
+  await assert.rejects(placeOrder(), /Empanada is sold out/, "a sold-out item can't be ordered");
+  await catalogOf(customer)("update_menu_item", { original_action: itemRef, item: { ...item, available: true } });
+  console.log("[PASS] a sold-out item can't be ordered until it's back on the menu");
+  const orderRecord = await placeOrder();
   const orderRef = actionHash(orderRecord);
   const order = decodeEntry<{ special_instructions: string; tip_cents: number }>(orderRecord);
   assert.equal(order.special_instructions, "Ring the bell");

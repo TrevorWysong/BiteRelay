@@ -12,7 +12,8 @@
 //! never wired up until now).
 
 use crate::order_queues::{self, OrderParties};
-use crate::orders::{record_reputation_event, settle_delivery_fee, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
+use crate::orders::{record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::settlement::{self, Payer};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_decoded;
@@ -186,9 +187,6 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
         .ok_or(wasm_error!(WasmErrorInner::Guest("dispute has no outcome yet -- call dispute::submit_resolution first".into())))?;
 
     let requester = order.requester.clone();
-    let merchant = order.merchant.clone();
-    let catalog_ref = order.catalog_ref.clone();
-    let order_total = order.order_total;
     let target_status = match &outcome {
         DisputeOutcome::FavorProvider { .. } => DeliveryStatus::Delivered,
         DisputeOutcome::FavorRequester { .. } => DeliveryStatus::Cancelled,
@@ -196,72 +194,26 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let mut updated_order = order;
     updated_order.status = target_status;
-    // Advance dispute_ref from the dispute's original creation hash to its
-    // resolved-update hash: `must_get_valid_record` in `dispatch_integrity`'s
-    // validate() is literal, not latest-resolving, so it needs a reference
-    // that already points directly at the Resolved content, not the
-    // Open-status creation record `dispute_record.action_address()` here is
-    // exactly that -- `dispute::get_dispute` already resolved it to latest.
+    // Advance dispute_ref to the dispute's resolved version: validation reads
+    // it literally (`must_get_valid_record`), so it must point straight at
+    // the Resolved content -- which `dispute::get_dispute` returned.
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
+    let owed = delivery_payments(&updated_order, &bid);
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
     // Both outcomes (Delivered / Cancelled) are terminal.
     order_queues::retire(&parties)?;
+    let dispute_basis = dispute_record.action_address();
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {
-            // Arbitration confirms the delivery genuinely happened, so the
-            // merchant is owed for the food here too -- same settlement
-            // `complete_delivery` already does on the honest path.
-            settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
-
-            // Preserves this path's existing amount semantics exactly (no
-            // tip -- unlike `complete_delivery`'s normal path, this one
-            // never has, and that's an existing, separate question from
-            // the merchant-subsidy split added here, not something to
-            // silently change while wiring the split in).
-            settle_delivery_fee(
-                input.order_original_action.clone(),
-                catalog_ref.clone(),
-                requester.clone(),
-                merchant.clone(),
-                bid.bidder.clone(),
-                bid.price_offer,
-                0,
-            )?;
-            if forfeit_amount > 0 {
-                let _ = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: requester.clone(),
-                        to: bid.bidder.clone(),
-                        amount: forfeit_amount,
-                    },
-                );
-            }
+            // The ruling confirms the delivery happened, so the order is
+            // settled in full -- every leg, by the arbitrator.
+            settlement::pay_legs(&input.order_original_action, &updated, &owed, Payer::Arbitrator)?;
+            settlement::forfeit(&input.order_original_action, dispute_basis, &requester, &bid.bidder, forfeit_amount)?;
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
         DisputeOutcome::FavorRequester { forfeit_amount } => {
-            if forfeit_amount > 0 {
-                let forfeit_response = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: bid.bidder.clone(),
-                        to: requester,
-                        amount: forfeit_amount,
-                    },
-                )?;
-                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
-                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
-                }
-            }
+            settlement::forfeit(&input.order_original_action, dispute_basis, &bid.bidder, &requester, forfeit_amount)?;
             record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if forfeit_amount > 0 {
                 record_reputation_event(
@@ -362,10 +314,9 @@ pub struct ApplyCancellationDisputeResolutionInput {
 /// `ledger_integrity`'s own check alone wouldn't catch it -- could call
 /// this repeatedly to multiply the forfeiture. `update_entry` is
 /// deliberately attempted *before* the ledger calls: if validation rejects
-/// the advance for any reason, nothing gets paid out. There's no
-/// `release_on_completion` call either way: a cancelled order was never
-/// delivered, so there's no underlying payment to release, only
-/// compensation for the unfairness itself.
+/// the advance for any reason, nothing gets paid out. Nothing is paid for
+/// the order itself either way -- a cancelled order was never delivered --
+/// only collateral moves, as compensation for the unfairness.
 #[hdk_extern]
 pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeResolutionInput) -> ExternResult<()> {
     // See the identical comment in apply_dispute_resolution above: update_entry's
@@ -428,23 +379,7 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
         // compensates them, same forfeit-only shape as the FavorRequester
         // branch below just with from/to swapped.
         DisputeOutcome::FavorProvider { forfeit_amount } => {
-            if forfeit_amount > 0 {
-                let forfeit_response = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: requester.clone(),
-                        to: bid.bidder.clone(),
-                        amount: forfeit_amount,
-                    },
-                )?;
-                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
-                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
-                }
-            }
+            settlement::forfeit(&input.order_original_action, dispute_record.action_address(), &requester, &bid.bidder, forfeit_amount)?;
             // The requester lost this ruling (the cancellation was found
             // unfair to the provider) -- DisputeResolvedAgainst belongs on
             // them, not on the provider who just won. Mirrors
@@ -455,23 +390,7 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
         // The cancellation was fine (or the provider themselves caused it):
         // the provider compensates the requester, if anything is owed.
         DisputeOutcome::FavorRequester { forfeit_amount } => {
-            if forfeit_amount > 0 {
-                let forfeit_response = call(
-                    CallTargetCell::Local,
-                    "ledger",
-                    "forfeit".into(),
-                    None,
-                    SettleInputWire {
-                        order_ref: input.order_original_action.clone(),
-                        from: bid.bidder.clone(),
-                        to: requester,
-                        amount: forfeit_amount,
-                    },
-                )?;
-                if !matches!(forfeit_response, ZomeCallResponse::Ok(_)) {
-                    return Err(wasm_error!(WasmErrorInner::Guest("collateral forfeiture failed".into())));
-                }
-            }
+            settlement::forfeit(&input.order_original_action, dispute_record.action_address(), &bid.bidder, &requester, forfeit_amount)?;
             // Unconditional -- the provider lost this ruling regardless of
             // whether any amount was actually forfeited (mirrors
             // apply_dispute_resolution's identical FavorRequester shape).

@@ -2,7 +2,7 @@
 //! machine, and pickup disputes.
 
 use super::*;
-use crate::checks::{check_bag_claim, check_promo_code, ClaimedFor};
+use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
 
 /// `PickupOrder`'s sibling of `validate_new_order` -- same shape, minus
@@ -15,12 +15,6 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
             "a pickup order can only be authored by its own requester".into(),
         ));
     }
-    if order.item_refs.is_empty() {
-        return Ok(ValidateCallbackResult::Invalid("an order must reference at least one item".into()));
-    }
-    if order.order_total == 0 {
-        return Ok(ValidateCallbackResult::Invalid("order_total must be greater than zero".into()));
-    }
     if order.status != PickupStatus::Placed {
         return Ok(ValidateCallbackResult::Invalid("a new pickup order must start Placed".into()));
     }
@@ -30,10 +24,18 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
-    if let Some(promo_ref) = &order.promo_code_ref {
-        if let Some(reason) = check_promo_code(promo_ref, &order.catalog_ref, action_timestamp)? {
-            return Ok(ValidateCallbackResult::Invalid(reason));
-        }
+    let pricing = OrderPricing {
+        requester: &order.requester,
+        catalog_ref: &order.catalog_ref,
+        lines: &order.lines,
+        order_total: order.order_total,
+        promo_code_ref: order.promo_code_ref.as_ref(),
+        bag_claim_ref: order.bag_claim_ref.as_ref(),
+        loyalty_proof: &order.loyalty_proof,
+        placed_at: action_timestamp,
+    };
+    if let Some(reason) = check_pricing(pricing)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
     if let Some(claim_ref) = &order.bag_claim_ref {
         if let Some(reason) = check_bag_claim(claim_ref, &order.requester, ClaimedFor::Pickup, prev_action)? {
@@ -153,7 +155,8 @@ pub(crate) fn validate_pickup_order_transition(
     let unchanged = prior.requester == order.requester
         && prior.merchant == order.merchant
         && prior.catalog_ref == order.catalog_ref
-        && prior.item_refs == order.item_refs
+        && prior.lines == order.lines
+        && prior.loyalty_proof == order.loyalty_proof
         && prior.order_total == order.order_total
         && prior.requested_at == order.requested_at
         && prior.special_instructions == order.special_instructions

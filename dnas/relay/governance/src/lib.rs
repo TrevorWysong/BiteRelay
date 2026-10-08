@@ -30,7 +30,23 @@ use hdi::prelude::*;
 /// `YamlProperties` channel this rides on is actually meant to carry.
 #[dna_properties]
 pub struct RelayDnaProperties {
+    #[serde(default)]
     pub arbitrators: Vec<String>,
+    /// How old a ledger transaction must be before a balance checkpoint may
+    /// cover it -- see `balance_settle_window`. Defaults to an hour; tests
+    /// set it low to exercise checkpoints.
+    #[serde(default)]
+    pub ledger_settle_secs: Option<u64>,
+}
+
+const DEFAULT_LEDGER_SETTLE_SECS: u64 = 3600;
+
+/// How long to wait before a balance checkpoint may cover a transaction:
+/// long enough for gossip to deliver anything paid to an agent up to then,
+/// so no payment can arrive *behind* a checkpoint and be missed.
+pub fn balance_settle_window() -> core::time::Duration {
+    let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.ledger_settle_secs).unwrap_or(DEFAULT_LEDGER_SETTLE_SECS);
+    core::time::Duration::from_secs(secs)
 }
 
 /// Whether `agent` is on the DNA's arbitrator roster. A DNA built without a

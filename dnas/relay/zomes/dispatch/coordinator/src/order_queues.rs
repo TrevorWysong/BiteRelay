@@ -28,6 +28,20 @@ pub struct OrderEntry {
     pub record: Record,
 }
 
+/// Reads over an owner's history the integrity crate's `QueueOwner` doesn't
+/// need for validation.
+pub(crate) trait QueueOwnerExt {
+    /// Every order placed on `day` (a `history_day`).
+    fn orders_on_day(&self, day: i64) -> ExternResult<Vec<ActionHash>>;
+}
+
+impl QueueOwnerExt for QueueOwner<'_> {
+    fn orders_on_day(&self, day: i64) -> ExternResult<Vec<ActionHash>> {
+        let links = get_links(LinkQuery::try_new(self.history_day(day)?.path_entry_hash()?, self.history_link_type())?, GetStrategy::default())?;
+        Ok(links.into_iter().filter_map(|l| l.target.into_action_hash()).collect())
+    }
+}
+
 /// Whose active queues an order sits in.
 pub(crate) struct OrderParties {
     pub order_ref: ActionHash,
@@ -257,20 +271,24 @@ fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
 /// store's favor isn't counted -- a disputed order shouldn't earn rewards.)
 #[hdk_extern]
 pub fn count_my_completed_orders(catalog_ref: ActionHash) -> ExternResult<u32> {
-    let mut count = 0;
-    for (kind, record) in my_order_actions()? {
-        if !matches!(record.action().data, ActionData::Update(_)) {
-            continue;
-        }
-        let completed_here = match kind {
-            OrderKind::Delivery => record.entry().to_app_option::<DeliveryOrder>().ok().flatten().is_some_and(|o| o.status == DeliveryStatus::Delivered && o.catalog_ref == catalog_ref),
-            OrderKind::Pickup => record.entry().to_app_option::<PickupOrder>().ok().flatten().is_some_and(|o| o.status == PickupStatus::PickedUp && o.catalog_ref == catalog_ref),
-        };
-        if completed_here {
-            count += 1;
-        }
-    }
-    Ok(count)
+    Ok(my_completions_at(&catalog_ref)?.len() as u32)
+}
+
+/// The caller's own completions (`Delivered`/`PickedUp` updates) of orders
+/// at `catalog_ref`, oldest first -- exactly what a loyalty promo's
+/// `loyalty_proof` lists.
+pub(crate) fn my_completions_at(catalog_ref: &ActionHash) -> ExternResult<Vec<ActionHash>> {
+    let mut completions: Vec<(Timestamp, ActionHash)> = my_order_actions()?
+        .into_iter()
+        .filter(|(_, record)| matches!(record.action().data, ActionData::Update(_)))
+        .filter(|(kind, record)| match kind {
+            OrderKind::Delivery => record.entry().to_app_option::<DeliveryOrder>().ok().flatten().is_some_and(|o| o.status == DeliveryStatus::Delivered && &o.catalog_ref == catalog_ref),
+            OrderKind::Pickup => record.entry().to_app_option::<PickupOrder>().ok().flatten().is_some_and(|o| o.status == PickupStatus::PickedUp && &o.catalog_ref == catalog_ref),
+        })
+        .map(|(_, record)| (record.action().timestamp(), record.action_address().clone()))
+        .collect();
+    completions.sort();
+    Ok(completions.into_iter().map(|(_, hash)| hash).collect())
 }
 
 /// The order (if any) the caller already placed redeeming `claim_ref` --

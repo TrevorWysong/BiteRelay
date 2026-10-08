@@ -52,7 +52,7 @@ await runScenario(async (scenario) => {
   const menuItemRef = actionHash(menuItemRecord);
 
   const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: customer.agentPubKey, catalog_ref: catalogRef, item_refs: [menuItemRef],
+    merchant: customer.agentPubKey, catalog_ref: catalogRef, items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600, dropoff: ST_PETE, max_delivery_fee: null,
   });
   const orderRef = actionHash(orderRecord);
@@ -74,7 +74,7 @@ await runScenario(async (scenario) => {
   // here since there's nothing to override, but proves the field wires
   // through end to end without breaking the accept path).
   const orderRecord2 = await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: customer.agentPubKey, catalog_ref: catalogRef, item_refs: [menuItemRef],
+    merchant: customer.agentPubKey, catalog_ref: catalogRef, items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600, dropoff: ST_PETE, max_delivery_fee: null,
   });
   const orderRef2 = actionHash(orderRecord2);

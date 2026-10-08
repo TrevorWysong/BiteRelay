@@ -1,18 +1,16 @@
-//! Coordinator zome for the stub mutual-credit ledger (plan §4): no real
-//! escrow/locking, just append-only `LedgerTransaction`s recorded at
-//! settlement time and a derived balance read. Swapping in real HoloFuel
-//! later means changing this crate's internals only -- see the integrity
-//! crate's doc comment.
+//! Coordinator zome for the stub mutual-credit ledger: append-only
+//! `LedgerTransaction`s recorded by whoever pays, and a derived balance
+//! read. See the integrity crate for what validation guarantees.
 
 use hdk::prelude::*;
 use ledger_integrity::*;
-use relay_coordinator_support::{fold_since_checkpoint, latest_checkpoint, next_page_cursor, should_checkpoint};
+use relay_coordinator_support::next_page_cursor;
 use relay_types::LedgerCommitmentRef;
 
 /// No entry is created here -- there is nothing to "lock" in a mutual-credit
 /// model without a settled transaction (see the integrity crate's doc
 /// comment). This just produces the reference embedded in a `Bid`; the real
-/// transaction is created later by `release_on_completion` or `forfeit`.
+/// transaction is created later by `pay` or `forfeit`.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LockCollateralInput {
     pub bidder: AgentPubKey,
@@ -28,129 +26,186 @@ pub fn lock_collateral(input: LockCollateralInput) -> ExternResult<LedgerCommitm
     })
 }
 
-/// Roughly every this-many transactions per agent, a `BalanceCheckpoint` is
-/// also written -- see architecture plan §9.4 and `BalanceCheckpoint`'s doc
-/// comment for why this is O(n/K), not O(1), and why that's an honest,
-/// meaningful improvement rather than a complete fix.
-const CHECKPOINT_INTERVAL: u64 = 20;
-
-/// Best-effort: a checkpoint is purely a read-side optimization
-/// (`get_balance` falls back to summing more transactions if the latest one
-/// it finds is older, it never *requires* a checkpoint to exist), so a
-/// failure here should never fail the settlement it's piggybacking on.
-/// `recorded_at` is deliberately the *transaction's own* `created_at`, not a
-/// fresh `sys_time()` call -- keeping them identical is what lets
-/// `get_balance`'s `after: recorded_at` filter exclude exactly this
-/// transaction (already baked into `balance`) with no clock-ordering
-/// assumption needed.
-fn maybe_write_checkpoint(agent: AgentPubKey, txn_hash: ActionHash, txn_created_at: Timestamp) {
-    if !should_checkpoint(&txn_hash, CHECKPOINT_INTERVAL) {
-        return;
-    }
-    let Ok(balance) = get_balance(agent.clone()) else { return };
-    let checkpoint = BalanceCheckpoint { agent: agent.clone(), balance, related_txn: txn_hash, recorded_at: txn_created_at };
-    if let Ok(action_hash) = create_entry(&EntryTypes::BalanceCheckpoint(checkpoint)) {
-        let _ = create_link(agent, action_hash, LinkTypes::AgentToBalanceCheckpoint, ());
-    }
+/// The payment or forfeit already on the caller's chain for this order and
+/// reason, if any -- what makes `pay`/`forfeit` safe to retry. Payments are
+/// authored by their payer, so the caller's own chain is the whole answer.
+fn already_recorded(related_order: &ActionHash, reason: &TxnReason, from: &AgentPubKey) -> ExternResult<Option<Record>> {
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
+    Ok(query(filter)?.into_iter().find(|record| {
+        record
+            .entry()
+            .to_app_option::<LedgerTransaction>()
+            .ok()
+            .flatten()
+            .is_some_and(|txn| &txn.related_order == related_order && &txn.reason == reason && &txn.from == from)
+    }))
 }
 
-fn record_transaction(
-    from: AgentPubKey,
-    to: AgentPubKey,
-    amount: u64,
-    reason: TxnReason,
-    related_order: ActionHash,
-) -> ExternResult<Record> {
-    let created_at = sys_time()?;
-    let txn = LedgerTransaction { from: from.clone(), to: to.clone(), amount, reason, related_order, created_at };
+fn record_transaction(txn: LedgerTransaction) -> ExternResult<Record> {
+    if let Some(existing) = already_recorded(&txn.related_order, &txn.reason, &txn.from)? {
+        return Ok(existing);
+    }
+    let (from, to) = (txn.from.clone(), txn.to.clone());
     let action_hash = create_entry(&EntryTypes::LedgerTransaction(txn))?;
-    create_link(from.clone(), action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
-    create_link(to.clone(), action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
-    // get_balance (inside maybe_write_checkpoint) reads via GetStrategy::Local,
-    // so it needs this transaction to already be visible locally -- true here
-    // since we just authored it ourselves, on our own chain, in this same call.
-    maybe_write_checkpoint(from, action_hash.clone(), created_at);
-    maybe_write_checkpoint(to, action_hash.clone(), created_at);
-    get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back ledger transaction".into())))
+    create_link(from, action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
+    create_link(to, action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
+    get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back ledger transaction".into())))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SettleInput {
-    pub order_ref: ActionHash,
+pub struct PayInput {
+    pub leg: PaymentLeg,
+    /// The order being settled (its original action).
+    pub related_order: ActionHash,
+    /// The order version that completed it -- see `LedgerTransaction::basis`.
+    pub basis: ActionHash,
+    /// The payer: the caller, unless an arbitrator is settling a ruling.
     pub from: AgentPubKey,
     pub to: AgentPubKey,
     pub amount: u64,
 }
 
+/// Records one leg of settling a completed order. Validation accepts it
+/// only for exactly what that leg owes, paid by its payer. Safe to retry:
+/// a leg already paid returns the existing transaction.
 #[hdk_extern]
-pub fn release_on_completion(input: SettleInput) -> ExternResult<Record> {
-    record_transaction(input.from, input.to, input.amount, TxnReason::Payment, input.order_ref)
+pub fn pay(input: PayInput) -> ExternResult<Record> {
+    record_transaction(LedgerTransaction {
+        from: input.from,
+        to: input.to,
+        amount: input.amount,
+        reason: TxnReason::Payment(input.leg),
+        related_order: input.related_order,
+        basis: input.basis,
+        created_at: sys_time()?,
+    })
 }
 
-#[hdk_extern]
-pub fn forfeit(input: SettleInput) -> ExternResult<Record> {
-    record_transaction(input.from, input.to, input.amount, TxnReason::CollateralForfeit, input.order_ref)
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ForfeitInput {
+    pub related_order: ActionHash,
+    /// The resolved `Dispute` whose ruling this carries out.
+    pub dispute: ActionHash,
+    pub from: AgentPubKey,
+    pub to: AgentPubKey,
+    pub amount: u64,
 }
 
-/// Net balance for `agent`: positive means net-received, negative means
-/// net-paid. Every transaction has a from and a to, so summing this across
-/// every agent in the system always nets to zero.
+/// An arbitrator moving collateral per their ruling. Safe to retry.
+#[hdk_extern]
+pub fn forfeit(input: ForfeitInput) -> ExternResult<Record> {
+    record_transaction(LedgerTransaction {
+        from: input.from,
+        to: input.to,
+        amount: input.amount,
+        reason: TxnReason::CollateralForfeit,
+        related_order: input.related_order,
+        basis: input.dispute,
+        created_at: sys_time()?,
+    })
+}
+
+/// The orders the caller has already paid `leg` on -- from their own chain,
+/// since a payer authors every payment they make.
+#[hdk_extern]
+pub fn my_paid_orders(leg: PaymentLeg) -> ExternResult<Vec<ActionHash>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
+    Ok(query(filter)?
+        .into_iter()
+        .filter_map(|record| record.entry().to_app_option::<LedgerTransaction>().ok().flatten())
+        .filter(|txn| txn.from == me && txn.reason == TxnReason::Payment(leg))
+        .map(|txn| txn.related_order)
+        .collect())
+}
+
+/// A checkpoint is written once this many settled transactions have built
+/// up since the last one, so a read sums at most about this many plus
+/// whatever arrived inside the settling window.
+const CHECKPOINT_EVERY: usize = 20;
+
+/// The agent's latest checkpoint -- only their own count (validation).
+fn latest_checkpoint(agent: &AgentPubKey) -> ExternResult<Option<BalanceCheckpoint>> {
+    let links = get_links(LinkQuery::try_new(agent.clone(), LinkTypes::AgentToBalanceCheckpoint)?, GetStrategy::default())?;
+    let mut latest: Option<BalanceCheckpoint> = None;
+    for link in links {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        let Some(record) = get(hash, GetOptions::default())? else { continue };
+        let Ok(Some(checkpoint)) = record.entry().to_app_option::<BalanceCheckpoint>() else { continue };
+        if &checkpoint.agent != agent || record.action().author() != agent {
+            continue;
+        }
+        if latest.as_ref().is_none_or(|l| checkpoint.covers_until > l.covers_until) {
+            latest = Some(checkpoint);
+        }
+    }
+    Ok(latest)
+}
+
+/// Net balance for `agent`: positive means net-received, negative net-paid.
 ///
-/// Uses `GetStrategy::Local`, not the `Network` default -- the attestation
-/// zome's isolated spike found that on a small/fresh network, a live
-/// network round-trip for `get_links` can come back empty even after
-/// gossip has already delivered the data locally, since the querying peer
-/// may not yet be a confirmed DHT-basis authority for the hash.
-///
-/// Finds the most recent `BalanceCheckpoint` (architecture plan §9.4) and
-/// sums only the transactions since it, instead of this agent's *entire*
-/// transaction history -- O(n/K), not O(1) (the checkpoint set itself still
-/// grows, just `CHECKPOINT_INTERVAL` times slower), and a checkpoint is
-/// never required to exist: an agent with no checkpoint yet (or none at
-/// all) just falls back to summing everything, which is exactly today's
-/// behavior and still fully correct, just not fast.
+/// Sums the transactions since the agent's latest checkpoint. When the
+/// agent reads their *own* balance and enough transactions older than the
+/// settling window (`relay_governance::balance_settle_window`) have built
+/// up, it writes a new checkpoint over exactly those -- never over recent
+/// ones, which gossip may still be delivering out of order.
 #[hdk_extern]
 pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
-    let checkpoint = latest_checkpoint(agent.clone(), LinkTypes::AgentToBalanceCheckpoint, |c: &BalanceCheckpoint| c.recorded_at)?;
-    let (mut balance, since, already_counted) = match &checkpoint {
-        Some(checkpoint) => (checkpoint.balance, Some(checkpoint.recorded_at), Some(checkpoint.related_txn.clone())),
-        None => (0_i64, None, None),
-    };
+    let checkpoint = latest_checkpoint(&agent)?;
+    let base = checkpoint.as_ref().map_or(0, |c| c.balance);
+    let mut query = LinkQuery::try_new(agent.clone(), LinkTypes::AgentToTransaction)?;
+    query.after = checkpoint.as_ref().map(|c| c.covers_until);
+    let boundary = checkpoint.as_ref().map(|c| c.boundary.clone()).unwrap_or_default();
 
-    // `LinkQuery.after` is `>=`, not strictly-greater (confirmed against the
-    // actual holochain_state 0.6.3 SQL, not assumed) -- since
-    // `checkpoint.recorded_at` is deliberately identical to its own
-    // `related_txn`'s timestamp (see `maybe_write_checkpoint`), that one
-    // transaction would otherwise come back in this query too and get
-    // double-counted (once via `checkpoint.balance`, once summed again).
-    // Skip it explicitly by hash rather than relying on timestamp precision.
-    fold_since_checkpoint::<LedgerTransaction, _, _>(
-        agent.clone(),
-        LinkTypes::AgentToTransaction,
-        since,
-        already_counted,
-        &mut balance,
-        |balance, txn| {
-            if txn.to == agent {
-                *balance += txn.amount as i64;
-            } else if txn.from == agent {
-                *balance -= txn.amount as i64;
-            }
-        },
-    )?;
+    let now = sys_time()?;
+    let settled_before = Timestamp::from_micros(now.as_micros() - relay_governance::balance_settle_window().as_micros() as i64);
+    let mut balance = base;
+    let mut settled: Vec<(Timestamp, ActionHash, i64)> = Vec::new();
+    for link in get_links(query, GetStrategy::default())? {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        if boundary.contains(&hash) {
+            continue;
+        }
+        let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
+        let Ok(Some(txn)) = record.entry().to_app_option::<LedgerTransaction>() else { continue };
+        let delta = if txn.to == agent { txn.amount as i64 } else if txn.from == agent { -(txn.amount as i64) } else { 0 };
+        balance += delta;
+        if link.timestamp <= settled_before {
+            settled.push((link.timestamp, hash, delta));
+        }
+    }
+
+    if settled.len() >= CHECKPOINT_EVERY && agent == agent_info()?.agent_initial_pubkey {
+        write_checkpoint(&agent, checkpoint.as_ref(), &settled)?;
+    }
     Ok(balance)
 }
 
-/// How many `BalanceCheckpoint`s exist for `agent` -- genuinely useful for
-/// debugging/monitoring the checkpoint mechanism itself (architecture plan
-/// §9.4: is it actually engaging, roughly how often), not just a test hook.
+/// Rolls `settled` into a new checkpoint on top of `previous`.
+fn write_checkpoint(agent: &AgentPubKey, previous: Option<&BalanceCheckpoint>, settled: &[(Timestamp, ActionHash, i64)]) -> ExternResult<()> {
+    let covers_until = settled.iter().map(|(ts, _, _)| *ts).max().expect("checked non-empty");
+    let mut boundary: Vec<ActionHash> = settled.iter().filter(|(ts, _, _)| *ts == covers_until).map(|(_, hash, _)| hash.clone()).collect();
+    // Still at the previous checkpoint's boundary time: keep what it already
+    // counted there, or the next read would count it again.
+    if let Some(previous) = previous.filter(|p| p.covers_until == covers_until) {
+        boundary.extend(previous.boundary.iter().cloned());
+    }
+    let checkpoint = BalanceCheckpoint {
+        agent: agent.clone(),
+        balance: previous.map_or(0, |p| p.balance) + settled.iter().map(|(_, _, delta)| delta).sum::<i64>(),
+        covers_until,
+        boundary,
+    };
+    let action_hash = create_entry(&EntryTypes::BalanceCheckpoint(checkpoint))?;
+    create_link(agent.clone(), action_hash, LinkTypes::AgentToBalanceCheckpoint, ())?;
+    Ok(())
+}
+
+/// How many checkpoints `agent` has written -- for monitoring that they're
+/// engaging.
 #[hdk_extern]
 pub fn count_balance_checkpoints(agent: AgentPubKey) -> ExternResult<u32> {
-    let links = get_links(
-        LinkQuery::try_new(agent, LinkTypes::AgentToBalanceCheckpoint)?,
-        GetStrategy::Local,
-    )?;
+    let links = get_links(LinkQuery::try_new(agent, LinkTypes::AgentToBalanceCheckpoint)?, GetStrategy::default())?;
     Ok(links.len() as u32)
 }
 

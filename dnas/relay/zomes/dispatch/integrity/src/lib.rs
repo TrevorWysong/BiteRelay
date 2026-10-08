@@ -32,7 +32,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, PickupOrder, PickupStatus, RequiredAuthor};
+pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]

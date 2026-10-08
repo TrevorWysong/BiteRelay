@@ -25,7 +25,7 @@ await runScenario(async (scenario) => {
     await dispatch<HcRecord>("request_pickup_order", {
       merchant: owner.agentPubKey,
       catalog_ref: catalogRef,
-      item_refs: [itemRef],
+      items: [{ item_ref: itemRef, quantity: 1 }],
       order_total: 900,
     }),
   );

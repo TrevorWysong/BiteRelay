@@ -141,7 +141,7 @@ async function seedDelivery(order, customer, store, driver) {
       customer.call("dispatch", "request_delivery", {
         merchant: store.owner.key,
         catalog_ref: store.ref,
-        item_refs: items.map((i) => i.ref),
+        items: items.map((i) => ({ item_ref: i.ref, quantity: 1 })),
         order_total: items.reduce((sum, i) => sum + i.price, 0),
         dropoff,
         max_delivery_fee: 800,
@@ -181,7 +181,7 @@ async function seedPickup(order, customer, store) {
       customer.call("dispatch", "request_pickup_order", {
         merchant: store.owner.key,
         catalog_ref: store.ref,
-        item_refs: items.map((i) => i.ref),
+        items: items.map((i) => ({ item_ref: i.ref, quantity: 1 })),
         order_total: items.reduce((sum, i) => sum + i.price, 0),
       }),
     ),

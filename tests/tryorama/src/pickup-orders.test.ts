@@ -31,7 +31,7 @@ await runScenario(async (scenario) => {
   const orderRecord = await dispatchOf(customer)<HcRecord>("request_pickup_order", {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
+    items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600,
     special_instructions: "No onions please",
   });
@@ -90,7 +90,7 @@ await runScenario(async (scenario) => {
   const order2Record = await dispatchOf(customer)<HcRecord>("request_pickup_order", {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [menuItemRef],
+    items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600,
   });
   const order2Ref = actionHash(order2Record);
