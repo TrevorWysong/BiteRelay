@@ -40,8 +40,9 @@ export function store(key: string) {
 /// identity picker -- the same path a developer clicks through.
 export async function signInAs(page: Page, slug: string) {
   const { name } = person(slug);
-  await page.goto("/onboarding");
+  // The app routes by hash (`/#/onboarding`).
+  await page.goto("/#/onboarding");
   await page.getByRole("button", { name: /Use an existing identity on this node/ }).click();
   await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
-  await expect(page).not.toHaveURL(/onboarding/);
+  await expect(page).not.toHaveURL(/#\/onboarding/);
 }
