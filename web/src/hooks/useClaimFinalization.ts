@@ -17,7 +17,7 @@ import { getMyBagClaims, getGoodieBag, getCatalog } from "../holochain/zomes/cat
 import { getMyOrderForClaim, requestPickupOrder, requestDelivery } from "../holochain/zomes/dispatch";
 import { decodeEntry, actionHash } from "../holochain/decode";
 import { usePolling } from "../lib/useResource";
-import type { BagClaim, MerchantCatalog, GoodieBag } from "../holochain/types";
+import type { BagClaim, GeoPoint, MerchantCatalog, GoodieBag } from "../holochain/types";
 
 const POLL_MS = 5000;
 
@@ -41,11 +41,11 @@ export function useClaimFinalization() {
 
 async function finalizeConfirmedClaims() {
   const claims = await getMyBagClaims().catch(() => []);
-  const confirmed = claims.map((r) => ({ hash: actionHash(r), claim: decodeEntry<BagClaim>(r) })).filter((c) => c.claim.status === "Confirmed");
-  for (const { hash, claim } of confirmed) {
+  const confirmed = claims.map((c) => ({ hash: actionHash(c.record), claim: decodeEntry<BagClaim>(c.record), dropoff: c.dropoff })).filter((c) => c.claim.status === "Confirmed");
+  for (const { hash, claim, dropoff } of confirmed) {
     try {
       if (await getMyOrderForClaim(hash)) continue;
-      await placeOrderForClaim(hash, claim);
+      await placeOrderForClaim(hash, claim, dropoff);
     } catch {
       // Best-effort, same posture as useRecurringOrderFiring -- a transient
       // failure is retried on the next tick.
@@ -53,7 +53,9 @@ async function finalizeConfirmedClaims() {
   }
 }
 
-async function placeOrderForClaim(claimRef: Uint8Array, claim: BagClaim) {
+/// `dropoff` is the claim's opened drop-off (it's stored sealed); `null` for
+/// a pickup claim.
+async function placeOrderForClaim(claimRef: Uint8Array, claim: BagClaim, dropoff: GeoPoint | null) {
   const bag = decodeEntry<GoodieBag>(await getGoodieBag(claim.bag_ref));
   const catalog = decodeEntry<MerchantCatalog>(await getCatalog(bag.catalog_ref));
   const common = {
@@ -61,12 +63,12 @@ async function placeOrderForClaim(claimRef: Uint8Array, claim: BagClaim) {
     catalog_ref: bag.catalog_ref,
     items: [{ item_ref: claim.bag_ref, quantity: 1 }],
     order_total: bag.price_cents,
-    special_instructions: `Goodie bag: ${bag.title}`,
+    kitchen_notes: `Goodie bag: ${bag.title}`,
     bag_claim_ref: claimRef,
   };
   if (claim.fulfillment === "Pickup") {
     await requestPickupOrder(common);
-  } else {
-    await requestDelivery({ ...common, dropoff: claim.fulfillment.Delivery.dropoff, max_delivery_fee: claim.fulfillment.Delivery.max_delivery_fee });
+  } else if (dropoff) {
+    await requestDelivery({ ...common, dropoff, max_delivery_fee: claim.fulfillment.Delivery.max_delivery_fee });
   }
 }

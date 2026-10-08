@@ -23,7 +23,7 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
             ))
         }
     }
-    if order.accepted_bid.is_some() {
+    if order.accepted_bid.is_some() || order.driver_dropoff.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have an accepted bid".into()));
     }
     if !order.delivery_receipts.is_empty() {
@@ -253,9 +253,10 @@ pub(crate) fn validate_order_transition(
     // Every field except status (and accepted_bid, only for the one
     // transition that's allowed to set it) must be unchanged. Without this,
     // an otherwise-authorized author could smuggle changes to order_total,
-    // item_refs, dropoff, or swap accepted_bid to a different bid entirely
+    // lines, the drop-off, or swap accepted_bid to a different bid entirely
     // while making an unrelated, legitimately-authorized status update.
-    let accepted_bid_ok = if prior.status == DeliveryStatus::Open && order.status == DeliveryStatus::BidAccepted {
+    let accepting = prior.status == DeliveryStatus::Open && order.status == DeliveryStatus::BidAccepted;
+    let accepted_bid_ok = if accepting {
         prior.accepted_bid.is_none() && order.accepted_bid.is_some()
     } else {
         prior.accepted_bid == order.accepted_bid
@@ -263,6 +264,19 @@ pub(crate) fn validate_order_transition(
     if !accepted_bid_ok {
         return Ok(ValidateCallbackResult::Invalid(
             "accepted_bid may only be set, once, during the Open -> BidAccepted transition".into(),
+        ));
+    }
+    // The driver's sealed copy of the drop-off arrives with the acceptance
+    // (only the requester can author it -- see the transition table) and
+    // never changes after. What it contains can't be checked: it's sealed.
+    let driver_dropoff_ok = if accepting {
+        prior.driver_dropoff.is_none() && order.driver_dropoff.is_some()
+    } else {
+        prior.driver_dropoff == order.driver_dropoff
+    };
+    if !driver_dropoff_ok {
+        return Ok(ValidateCallbackResult::Invalid(
+            "driver_dropoff must be set when a bid is accepted, and never changed".into(),
         ));
     }
     // A scheduled order can only actually open once its requested time has
@@ -357,11 +371,11 @@ pub(crate) fn validate_order_transition(
         && prior.lines == order.lines
         && prior.loyalty_proof == order.loyalty_proof
         && prior.order_total == order.order_total
-        && prior.dropoff == order.dropoff
+        && prior.sealed_dropoff == order.sealed_dropoff
+        && prior.kitchen_note == order.kitchen_note
         && prior.dropoff_geohash == order.dropoff_geohash
         && prior.max_delivery_fee == order.max_delivery_fee
         && prior.requested_at == order.requested_at
-        && prior.special_instructions == order.special_instructions
         && prior.tip_cents == order.tip_cents
         && prior.delivery_subsidy_percent == order.delivery_subsidy_percent
         && prior.requested_delivery_time == order.requested_delivery_time

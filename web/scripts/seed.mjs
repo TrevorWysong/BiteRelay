@@ -145,7 +145,7 @@ async function seedDelivery(order, customer, store, driver) {
         order_total: items.reduce((sum, i) => sum + i.price, 0),
         dropoff,
         max_delivery_fee: 800,
-        special_instructions: order.instructions ?? "",
+        kitchen_notes: order.instructions ?? "",
         tip_cents: 300,
       }),
     ),
@@ -219,7 +219,7 @@ async function main() {
       await agent.call("profiles", "create_profile", { display_name: person.name, roles: person.roles, created_at: now(), bio: person.bio ?? "", phone: "", avatar_data_uri: "" });
       const addresses = (person.addresses ?? []).map((a) => ({ ...a, point: near(center, a.at) }));
       for (const address of addresses) {
-        await agent.call("profiles", "save_address", { label: address.label, location: address.point, street: "", city: "", state: "", zip: "", created_at: now() });
+        await agent.call("profiles", "save_address", { label: address.label, location: address.point, street: "", city: "", state: "", zip: "" });
       }
       agent.home = addresses[0]?.point ?? center;
       people.set(person.slug, agent);

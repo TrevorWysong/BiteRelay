@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag } from "../../holochain/zomes/catalog";
+import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag, type FulfillmentInput } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { useResource } from "../../lib/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
@@ -17,7 +17,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { fetchMenu, groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { BagClaimFulfillment, GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import type { GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
 
 interface BagRow {
   hash: Uint8Array;
@@ -124,7 +124,7 @@ function StorePage({ hash }: { hash: string }) {
     setSubmittingClaim(true);
     setClaimError(null);
     try {
-      const fulfillment: BagClaimFulfillment =
+      const fulfillment: FulfillmentInput =
         claimFulfillment === "Pickup" ? "Pickup" : { Delivery: { dropoff: claimDropoff, max_delivery_fee: Math.round(claimFee * 100) } };
       await claimGoodieBag(row.hash, fulfillment);
       setClaimedBagHexes((prev) => new Set(prev).add(bytesToHex(row.hash)));

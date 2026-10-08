@@ -4,11 +4,41 @@
 
 use hdk::prelude::*;
 use profiles_integrity::*;
-use relay_coordinator_support::{resolve_latest, resolve_links_to_records_with_original};
+use relay_coordinator_support::{open, resolve_latest, resolve_links_to_records_with_original, seal};
+
+/// A profile as the person's own client sends it: the phone in the clear,
+/// sealed before it's stored (`Profile::sealed_phone`).
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ProfileInput {
+    pub display_name: String,
+    pub roles: Vec<RoleTag>,
+    pub created_at: Timestamp,
+    #[serde(default)]
+    pub bio: String,
+    #[serde(default)]
+    pub avatar_data_uri: String,
+    #[serde(default)]
+    pub phone: String,
+}
+
+impl ProfileInput {
+    fn into_profile(self) -> ExternResult<Profile> {
+        let me = agent_info()?.agent_initial_pubkey;
+        let phone = self.phone.trim();
+        Ok(Profile {
+            sealed_phone: if phone.is_empty() { None } else { Some(seal(&me, &phone.to_string())?) },
+            display_name: self.display_name,
+            roles: self.roles,
+            created_at: self.created_at,
+            bio: self.bio,
+            avatar_data_uri: self.avatar_data_uri,
+        })
+    }
+}
 
 #[hdk_extern]
-pub fn create_profile(profile: Profile) -> ExternResult<Record> {
-    let action_hash = create_entry(&EntryTypes::Profile(profile))?;
+pub fn create_profile(input: ProfileInput) -> ExternResult<Record> {
+    let action_hash = create_entry(&EntryTypes::Profile(input.into_profile()?))?;
     let agent = agent_info()?.agent_initial_pubkey;
     create_link(agent, action_hash.clone(), LinkTypes::AgentToProfile, ())?;
     let record = get(action_hash, GetOptions::local())?
@@ -35,7 +65,7 @@ pub fn get_profile_for_agent(agent: AgentPubKey) -> ExternResult<Option<Record>>
 #[hdk_extern]
 pub fn update_profile(input: UpdateProfileInput) -> ExternResult<Record> {
     let current = resolve_latest(input.original_action)?;
-    let updated_hash = update_entry(current.action_address().clone(), &EntryTypes::Profile(input.updated_profile))?;
+    let updated_hash = update_entry(current.action_address().clone(), &EntryTypes::Profile(input.updated_profile.into_profile()?))?;
     let record = get(updated_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated profile".into())))?;
     Ok(record)
@@ -44,7 +74,18 @@ pub fn update_profile(input: UpdateProfileInput) -> ExternResult<Record> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateProfileInput {
     pub original_action: ActionHash,
-    pub updated_profile: Profile,
+    pub updated_profile: ProfileInput,
+}
+
+/// The caller's own phone number, opened from their profile.
+#[hdk_extern]
+pub fn get_my_phone(_: ()) -> ExternResult<Option<String>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let Some(record) = get_profile_for_agent(me.clone())? else { return Ok(None) };
+    match record.entry().to_app_option::<Profile>().map_err(|e| wasm_error!(e))?.and_then(|p| p.sealed_phone) {
+        Some(sealed) => open(&me, &sealed),
+        None => Ok(None),
+    }
 }
 
 #[hdk_extern]
@@ -127,10 +168,20 @@ pub fn list_favorites(_: ()) -> ExternResult<Vec<ActionHash>> {
 // than in `localStorage` the way `location`'s own ephemeral "which one am
 // I using right now" pointer does.
 
-#[hdk_extern]
-pub fn save_address(address: SavedAddress) -> ExternResult<Record> {
+/// Seals an address for its owner, after checking what validation can't
+/// (the content is sealed by the time it gets there).
+fn sealed_address(details: &AddressDetails) -> ExternResult<SavedAddress> {
+    if details.label.trim().is_empty() {
+        return Err(wasm_error!(WasmErrorInner::Guest("a saved address needs a label (e.g. \"Home\")".into())));
+    }
     let me = agent_info()?.agent_initial_pubkey;
-    let action_hash = create_entry(&EntryTypes::SavedAddress(address))?;
+    Ok(SavedAddress { sealed: seal(&me, details)?, created_at: sys_time()? })
+}
+
+#[hdk_extern]
+pub fn save_address(address: AddressDetails) -> ExternResult<Record> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let action_hash = create_entry(&EntryTypes::SavedAddress(sealed_address(&address)?))?;
     create_link(me, action_hash.clone(), LinkTypes::OwnerToSavedAddress, ())?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back saved address".into())))
@@ -139,13 +190,13 @@ pub fn save_address(address: SavedAddress) -> ExternResult<Record> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateSavedAddressInput {
     pub original_action: ActionHash,
-    pub address: SavedAddress,
+    pub address: AddressDetails,
 }
 
 #[hdk_extern]
 pub fn update_saved_address(input: UpdateSavedAddressInput) -> ExternResult<Record> {
     let record = resolve_latest(input.original_action)?;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::SavedAddress(input.address))?;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::SavedAddress(sealed_address(&input.address)?))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated saved address".into())))
 }
@@ -177,17 +228,22 @@ pub fn delete_saved_address(original_action: ActionHash) -> ExternResult<()> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SavedAddressView {
     pub original_action: ActionHash,
-    pub record: Record,
+    /// The address, opened for its owner.
+    pub address: AddressDetails,
 }
 
 #[hdk_extern]
 pub fn list_my_addresses(_: ()) -> ExternResult<Vec<SavedAddressView>> {
     let me = agent_info()?.agent_initial_pubkey;
-    let links = get_links(LinkQuery::try_new(me, LinkTypes::OwnerToSavedAddress)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records_with_original(links)
-        .into_iter()
-        .map(|(original_action, record)| SavedAddressView { original_action, record })
-        .collect())
+    let links = get_links(LinkQuery::try_new(me.clone(), LinkTypes::OwnerToSavedAddress)?, GetStrategy::default())?;
+    let mut views = Vec::new();
+    for (original_action, record) in resolve_links_to_records_with_original(links) {
+        let Some(saved) = record.entry().to_app_option::<SavedAddress>().ok().flatten() else { continue };
+        if let Some(address) = open(&me, &saved.sealed)? {
+            views.push(SavedAddressView { original_action, address });
+        }
+    }
+    Ok(views)
 }
 
 #[cfg(feature = "test-utils")]

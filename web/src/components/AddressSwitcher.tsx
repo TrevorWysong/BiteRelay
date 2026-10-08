@@ -4,16 +4,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, MapPin, Plus, Trash2, X } from "lucide-react";
 import { useSession } from "../store/session";
 import { saveAddress, deleteSavedAddress, listMyAddresses } from "../holochain/zomes/profiles";
-import { decodeEntry, bytesToHex } from "../holochain/decode";
+import { bytesToHex } from "../holochain/decode";
 import { reverseGeocode } from "../lib/geocoding";
 import { AddressSearch } from "./AddressSearch";
 import { Button, Input } from "./ui";
 import type { AddressComponents } from "../lib/geocoding";
-import type { GeoPoint, SavedAddress } from "../holochain/types";
+import type { GeoPoint, AddressDetails } from "../holochain/types";
 
 interface AddressRow {
   hash: Uint8Array;
-  address: SavedAddress;
+  address: AddressDetails;
 }
 
 function cityStateZip(a: { city: string; state: string; zip: string }): string {
@@ -83,7 +83,7 @@ export function AddressSwitcher({
 
   function loadAddresses() {
     listMyAddresses()
-      .then((views) => setAddresses(views.map((v) => ({ hash: v.original_action, address: decodeEntry<SavedAddress>(v.record) }))))
+      .then((views) => setAddresses(views.map((v) => ({ hash: v.original_action, address: v.address }))))
       .catch(() => setAddresses([]));
   }
 
@@ -123,7 +123,6 @@ export function AddressSwitcher({
         city: picked.components.city,
         state: picked.components.state,
         zip: picked.components.zip,
-        created_at: Date.now() * 1000,
       });
       loadAddresses();
       pickAddress(picked.point);

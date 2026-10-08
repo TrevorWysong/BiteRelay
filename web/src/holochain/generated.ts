@@ -11,6 +11,38 @@ export type AgentPubKey = Uint8Array;
 export type AnyLinkableHash = Uint8Array;
 /** Microseconds since the Unix epoch. */
 export type Timestamp = number;
+/** Ciphertext sealed between two agents -- opened only through a zome call. */
+export type XSalsa20Poly1305EncryptedData = { nonce: Uint8Array; encrypted_data: Uint8Array };
+
+/**
+ * A customer's own named address book -- "Home," "Work," "Mom's house" --
+ * decoupled from `location` (the client-only, device-local "where am I
+ * browsing from right now" pointer in `session.ts`). DoorDash/UberEats'
+ * own "deliver to" switcher is the direct model: pick a saved address (or
+ * search a brand new one) to browse/order from, independent of wherever
+ * you're physically standing right now -- ordering for someone else at a
+ * different address is the whole point, not an edge case.
+ *
+ * Lives on-chain (this zome), not `localStorage`, deliberately: this is
+ * real, durable personal data a user would be rightly annoyed to lose,
+ * the same tier as their `Profile` itself -- `location`'s own
+ * *ephemeral* "which one am I using right now" pointer is the only part
+ * of this feature that's appropriately client-local (see session.ts's
+ * own `loadStoredLocation` doc comment for why that part is fine to be
+ * device-only).
+ * One saved address, in full -- only ever stored sealed.
+ */
+export interface AddressDetails {
+  /**
+   * "Home", "Work", "Mom's".
+   */
+  label: string;
+  location: GeoPoint;
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+}
 
 /**
  * A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
@@ -47,9 +79,13 @@ export interface BagClaim {
  */
 export type BagClaimFulfillment =
   | "Pickup"
+  /**
+   * `sealed_dropoff` is the drop-off point, sealed to the customer: the
+   * store only needs to know it's a delivery, never where to.
+   */
   | {
       Delivery: {
-        dropoff: GeoPoint;
+        sealed_dropoff: XSalsa20Poly1305EncryptedData;
         max_delivery_fee: number | null;
       };
     };
@@ -104,8 +140,28 @@ export interface DeliveryOrder {
    */
   lines: OrderLine[];
   order_total: number;
-  dropoff: GeoPoint;
+  /**
+   * The drop-off's area (a geohash cell, about 1.2 x 0.6 km) -- all that's
+   * public about where the order goes: enough for drivers nearby to find
+   * it and judge the trip. The exact point is in `sealed_dropoff`.
+   */
   dropoff_geohash: string;
+  /**
+   * The exact drop-off and the customer's drop-off notes
+   * (`DropoffDetails`), sealed to the customer themselves.
+   */
+  sealed_dropoff: XSalsa20Poly1305EncryptedData;
+  /**
+   * The same details sealed to the driver -- set when the customer accepts
+   * their bid, so only the driver doing the delivery ever learns the exact
+   * address.
+   */
+  driver_dropoff: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * The customer's note for the kitchen, sealed to the store. `None` when
+   * there isn't one.
+   */
+  kitchen_note: XSalsa20Poly1305EncryptedData | null;
   max_delivery_fee: number | null;
   status: DeliveryStatus;
   accepted_bid: ActionHash | null;
@@ -127,12 +183,6 @@ export interface DeliveryOrder {
    */
   dispute_ref: ActionHash | null;
   requested_at: Timestamp;
-  /**
-   * Set once at request_delivery time, immutable thereafter -- same
-   * treatment as order_total/dropoff/etc below. `#[serde(default)]` so
-   * existing orders (and any client that hasn't caught up) still decode.
-   */
-  special_instructions: string;
   tip_cents: number;
   /**
    * The store's share of the delivery fee, in percent -- the split in
@@ -303,6 +353,18 @@ export type DisputeReason =
   | "Other";
 
 export type DisputeStatus = "Open" | "Resolved";
+
+/**
+ * Where a delivery goes, in full -- only ever stored sealed (see
+ * `DeliveryOrder::sealed_dropoff`).
+ */
+export interface DropoffDetails {
+  point: GeoPoint;
+  /**
+   * Drop-off instructions for the driver ("gate code 1234").
+   */
+  notes: string;
+}
 
 /**
  * How the customer wants the driver to handle the actual drop-off --
@@ -595,7 +657,10 @@ export interface PickupOrder {
   status: PickupStatus;
   dispute_ref: ActionHash | null;
   requested_at: Timestamp;
-  special_instructions: string;
+  /**
+   * The customer's note for the kitchen, sealed to the store.
+   */
+  kitchen_note: XSalsa20Poly1305EncryptedData | null;
   /**
    * Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
    */
@@ -656,7 +721,11 @@ export interface Profile {
    * gap rather than silently unbounded.
    */
   avatar_data_uri: string;
-  phone: string;
+  /**
+   * The person's phone number, sealed to themselves -- a profile is
+   * public, a phone number isn't.
+   */
+  sealed_phone: XSalsa20Poly1305EncryptedData | null;
 }
 
 /**
@@ -844,30 +913,17 @@ export type RecurrenceRule =
       };
     };
 
-/**
- * A customer's own saved "repeat this order" recipe. Deliberately a plain
- * entry with **no DHT link at all** -- nobody but the owner ever needs to
- * discover these, so `list_my_recurring_templates` is a local chain
- * `query()`, the same zero-anchor-growth shape as
- * `attestation::list_my_receipts`, not a `get_links` anchor like
- * `DeliveryOrder` itself needs for matching. There is no p2p cron here
- * (and couldn't be, deterministically) -- see
- * `DeliveryOrder.requested_delivery_time`'s own doc comment for the
- * identical reasoning already applied to one-shot scheduled orders.
- * Firing is entirely client-driven: the requester's own client checks
- * `next_run_at` on a timer while the app is open and calls
- * `dispatch::request_delivery` + `advance_recurring_template` itself --
- * this entry is just the durable recipe plus bookkeeping, never an active
- * process.
- */
 export interface RecurringOrderTemplate {
   requester: AgentPubKey;
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
   item_refs: ActionHash[];
-  dropoff: GeoPoint;
+  /**
+   * Where it goes and the notes for it (`TemplateDetails`), sealed to the
+   * requester -- a standing order shouldn't publish a home address.
+   */
+  sealed_details: XSalsa20Poly1305EncryptedData;
   max_delivery_fee: number | null;
-  special_instructions: string;
   tip_cents: number;
   dropoff_preference: DropoffPreference;
   promo_code_ref: ActionHash | null;
@@ -959,31 +1015,36 @@ export type ReviewTarget =
 
 export type RoleTag = "Requester" | "Provider" | "Merchant";
 
-/**
- * A customer's own named address book -- "Home," "Work," "Mom's house" --
- * decoupled from `location` (the client-only, device-local "where am I
- * browsing from right now" pointer in `session.ts`). DoorDash/UberEats'
- * own "deliver to" switcher is the direct model: pick a saved address (or
- * search a brand new one) to browse/order from, independent of wherever
- * you're physically standing right now -- ordering for someone else at a
- * different address is the whole point, not an edge case.
- *
- * Lives on-chain (this zome), not `localStorage`, deliberately: this is
- * real, durable personal data a user would be rightly annoyed to lose,
- * the same tier as their `Profile` itself -- `location`'s own
- * *ephemeral* "which one am I using right now" pointer is the only part
- * of this feature that's appropriately client-local (see session.ts's
- * own `loadStoredLocation` doc comment for why that part is fine to be
- * device-only).
- */
 export interface SavedAddress {
-  label: string;
-  location: GeoPoint;
-  street: string;
-  city: string;
-  state: string;
-  zip: string;
+  /**
+   * The address (`AddressDetails`), sealed to its owner -- nobody else
+   * learns where they live or what they call it.
+   */
+  sealed: XSalsa20Poly1305EncryptedData;
   created_at: Timestamp;
+}
+
+/**
+ * A customer's own saved "repeat this order" recipe. Deliberately a plain
+ * entry with **no DHT link at all** -- nobody but the owner ever needs to
+ * discover these, so `list_my_recurring_templates` is a local chain
+ * `query()`, the same zero-anchor-growth shape as
+ * `attestation::list_my_receipts`, not a `get_links` anchor like
+ * `DeliveryOrder` itself needs for matching. There is no p2p cron here
+ * (and couldn't be, deterministically) -- see
+ * `DeliveryOrder.requested_delivery_time`'s own doc comment for the
+ * identical reasoning already applied to one-shot scheduled orders.
+ * Firing is entirely client-driven: the requester's own client checks
+ * `next_run_at` on a timer while the app is open and calls
+ * `dispatch::request_delivery` + `advance_recurring_template` itself --
+ * this entry is just the durable recipe plus bookkeeping, never an active
+ * process.
+ * A recurring order's private parts -- only ever stored sealed.
+ */
+export interface TemplateDetails {
+  dropoff: GeoPoint;
+  dropoff_notes: string;
+  kitchen_notes: string;
 }
 
 export type TxnReason =

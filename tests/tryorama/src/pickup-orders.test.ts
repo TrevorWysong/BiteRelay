@@ -33,16 +33,18 @@ await runScenario(async (scenario) => {
     catalog_ref: catalogRef,
     items: [{ item_ref: menuItemRef, quantity: 1 }],
     order_total: 600,
-    special_instructions: "No onions please",
+    kitchen_notes: "No onions please",
   });
   const orderRef = actionHash(orderRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   const placedRecord = await dispatchOf(customer)<HcRecord>("get_pickup_order", orderRef);
-  const placed = decodeEntry<{ status: string; special_instructions: string }>(placedRecord);
+  const placed = decodeEntry<{ status: string }>(placedRecord);
   assert.equal(placed.status, "Placed");
-  assert.equal(placed.special_instructions, "No onions please");
-  console.log("[PASS] request_pickup_order creates a Placed order, no driver/dropoff fields involved");
+  const noteFor = async (p: typeof customer) => (await dispatchOf(p)<{ kitchen_note: string | null }>("get_order_private_details", orderRef)).kitchen_note;
+  assert.equal(await noteFor(merchant), "No onions please", "the store reads the kitchen note");
+  assert.equal(await noteFor(customer), "No onions please", "and so does the customer who wrote it");
+  console.log("[PASS] request_pickup_order creates a Placed order whose kitchen note only the store and customer can read");
 
   // Discovery: the merchant can find it without already knowing the hash.
   const merchantSide = await dispatchOf(merchant)<{ kind: string }[]>("get_active_orders_for_store", catalogRef);

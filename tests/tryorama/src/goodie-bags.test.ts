@@ -114,9 +114,9 @@ await runScenario(async (scenario) => {
   // `resolve_latest` convention as everywhere else) -- its action hash is
   // now the post-confirm Update, not the original `claimARef` creation
   // hash, so compare decoded content instead of the action hash itself.
-  const myClaimsA = await catalogOf(customerA)<HcRecord[]>("get_my_bag_claims");
+  const myClaimsA = await catalogOf(customerA)<{ record: HcRecord; dropoff: unknown }[]>("get_my_bag_claims");
   assert.equal(myClaimsA.length, 1);
-  const myClaimA = decodeEntry<{ bag_ref: Uint8Array; status: string }>(myClaimsA[0]);
+  const myClaimA = decodeEntry<{ bag_ref: Uint8Array; status: string }>(myClaimsA[0].record);
   assert.ok(bytesEqual(myClaimA.bag_ref, bagRef));
   assert.equal(myClaimA.status, "Confirmed");
   console.log("[PASS] get_my_bag_claims discovers the customer's own claim");

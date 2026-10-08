@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
-import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { planRoute } from "../../lib/route";
 import { itemCount } from "../../lib/orderEntries";
 import { myAgentPubKey } from "../../holochain/client";
-import { encodeGeohash, distanceKm } from "../../lib/geohash";
+import { encodeGeohash, distanceKm, geohashCenter } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { Button, Card, EmptyState, Input, PresenceDot, Skeleton, StatNumber } from "../../components/ui";
 import { OrderStatusTimeline } from "../../components/OrderStatus";
@@ -21,7 +21,7 @@ import { formatCents, formatEta } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { usePolling, useResource } from "../../lib/useResource";
-import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, MerchantCatalog } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -89,6 +89,14 @@ interface OrderRow {
   hash: Uint8Array;
   order: DeliveryOrder;
   bid?: Bid;
+  /// The exact drop-off -- opened only for the driver whose bid was
+  /// accepted; an open order has just its area (`dropoff_geohash`).
+  dropoff?: DropoffDetails | null;
+}
+
+/// Where an order's drop-off is, as precisely as this driver may know it.
+function dropoffPoint(row: OrderRow): GeoPoint {
+  return row.dropoff?.point ?? geohashCenter(row.order.dropoff_geohash);
 }
 
 const POLL_MS = 8000;
@@ -118,7 +126,14 @@ export function DriverDashboard() {
   const { data: activeOrders = [], reload: reloadActive } = useResource(
     `driver-active:${driverHex}`,
     async (): Promise<OrderRow[]> =>
-      (await getMyActiveDeliveries()).map(({ order, bid }) => ({ hash: order.original_action, order: decodeEntry<DeliveryOrder>(order.record), bid: decodeEntry<Bid>(bid) })),
+      Promise.all(
+        (await getMyActiveDeliveries()).map(async ({ order, bid }) => ({
+          hash: order.original_action,
+          order: decodeEntry<DeliveryOrder>(order.record),
+          bid: decodeEntry<Bid>(bid),
+          dropoff: (await getOrderPrivateDetails(order.original_action).catch(() => null))?.dropoff ?? null,
+        })),
+      ),
     { pollMs: POLL_MS, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s },
   );
 
@@ -180,9 +195,12 @@ export function DriverDashboard() {
   // the genuinely convenient next pickup first, without this app ever
   // claiming to have computed an optimal route.
   const sameMerchantHexes = new Set(activeOrders.map((r) => bytesToHex(r.order.catalog_ref)));
+  // An open order is known only by its area; the deliveries already
+  // accepted, exactly.
   function nearestActiveDropoffKm(order: DeliveryOrder): number | null {
     if (activeOrders.length === 0) return null;
-    return Math.min(...activeOrders.map((a) => distanceKm(order.dropoff, a.order.dropoff)));
+    const area = geohashCenter(order.dropoff_geohash);
+    return Math.min(...activeOrders.map((a) => distanceKm(area, dropoffPoint(a))));
   }
   const sortedNearby = online && nearby
     ? [...nearby].sort((a, b) => {
@@ -301,7 +319,7 @@ function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: Ge
     orders.map((row) => ({
       id: bytesToHex(row.hash),
       pickup: row.order.status === "PickedUp" ? null : (stores[bytesToHex(row.order.catalog_ref)]?.at ?? null),
-      dropoff: row.order.dropoff,
+      dropoff: dropoffPoint(row),
     })),
   );
   return (
@@ -365,10 +383,10 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
     <Card className="border-2 border-relay-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
       <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
-      {row.order.special_instructions && (
+      {row.dropoff?.notes && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
-          <span className="font-semibold text-ink-900 dark:text-ink-50">Notes: </span>
-          {row.order.special_instructions}
+          <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off notes: </span>
+          {row.dropoff.notes}
         </p>
       )}
       <div className="mt-4 flex flex-col gap-1 text-sm">
@@ -455,7 +473,6 @@ function BidCard({
         {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
-      {order.special_instructions && <p className="mt-1 truncate text-xs text-ink-400">"{order.special_instructions}"</p>}
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">
           ETA (min)

@@ -36,7 +36,7 @@ await runScenario(async (scenario) => {
       status: "Placed",
       dispute_ref: null,
       requested_at: Date.now() * 1000,
-      special_instructions: "",
+      kitchen_note: null,
       promo_code_ref: null,
       bag_claim_ref: null,
       loyalty_proof: [],

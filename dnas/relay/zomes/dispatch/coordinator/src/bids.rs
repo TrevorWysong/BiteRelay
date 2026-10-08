@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{next_page_cursor, open, original_action_of, resolve_latest_decoded, resolve_links_to_records, seal};
 use relay_types::LedgerCommitmentRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -125,6 +125,11 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         }
     }
 
+    // The driver learns the exact drop-off only now: the customer opens
+    // their own sealed copy and seals it again for this driver alone.
+    let me = agent_info()?.agent_initial_pubkey;
+    let dropoff: DropoffDetails = open(&me, &order.sealed_dropoff)?.ok_or(wasm_error!(WasmErrorInner::Guest("only the customer can accept a bid on their order".into())))?;
+    order.driver_dropoff = Some(seal(&winning_bid.bidder, &dropoff)?);
     order.status = DeliveryStatus::BidAccepted;
     order.accepted_bid = Some(input.bid_action.clone());
     // order_record came from resolve_latest, so its action_address() is the

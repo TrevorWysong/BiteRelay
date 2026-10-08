@@ -34,37 +34,40 @@ await runScenario(async (scenario) => {
     city: "Taunton",
     state: "MA",
     zip: "02780",
-    created_at: now,
   });
   const homeRef = actionHash(homeRecord);
-  await profilesOf(customer)("save_address", { label: "Work", location: WORK, street: "1 Main St", city: "Boston", state: "MA", zip: "02108", created_at: now });
+  const stored = decodeEntry<{ label?: string; sealed?: unknown }>(homeRecord);
+  assert.equal(stored.label, undefined, "the stored entry carries no label or address in the clear");
+  assert.ok(stored.sealed, "it's sealed to its owner");
+  await profilesOf(customer)("save_address", { label: "Work", location: WORK, street: "1 Main St", city: "Boston", state: "MA", zip: "02108" });
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
-  let mine = await profilesOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_addresses", null);
+  let mine = await profilesOf(customer)<{ original_action: Uint8Array; address: { label: string; street: string } }[]>("list_my_addresses", null);
   assert.equal(mine.length, 2);
-  console.log("[PASS] save_address + list_my_addresses round-trip both saved addresses");
+  assert.deepEqual(mine.map((v) => v.address.label).sort(), ["Home", "Work"]);
+  console.log("[PASS] save_address + list_my_addresses round-trip both saved addresses, opened for their owner");
 
-  const updated = await profilesOf(customer)<HcRecord>("update_saved_address", {
+  await profilesOf(customer)<HcRecord>("update_saved_address", {
     original_action: homeRef,
-    address: { label: "Home (updated)", location: HOME, street: "32 Anawan St Apt 2", city: "Taunton", state: "MA", zip: "02780", created_at: now },
+    address: { label: "Home (updated)", location: HOME, street: "32 Anawan St Apt 2", city: "Taunton", state: "MA", zip: "02780" },
   });
-  assert.equal(decodeEntry<{ label: string }>(updated).label, "Home (updated)");
-  console.log("[PASS] update_saved_address updates fields correctly");
+  console.log("[PASS] update_saved_address accepts the owner's update");
 
   // original_action must stay stable across the update (same CatalogView-
   // shaped discipline applied here) -- re-list and confirm it's still
   // keyed the same way.
-  mine = await profilesOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_addresses", null);
+  mine = await profilesOf(customer)<{ original_action: Uint8Array; address: { label: string; street: string } }[]>("list_my_addresses", null);
   const homeView = mine.find((v) => bytesEqual(v.original_action, homeRef));
   assert.ok(homeView, "the updated address must still be discoverable under its original_action");
-  assert.equal(decodeEntry<{ label: string }>(homeView!.record).label, "Home (updated)");
-  console.log("[PASS] list_my_addresses' original_action stays stable after an update");
+  assert.equal(homeView!.address.label, "Home (updated)");
+  assert.equal(homeView!.address.street, "32 Anawan St Apt 2");
+  console.log("[PASS] list_my_addresses opens the updated address under its stable original_action");
 
   // --- authorization: a non-owner cannot update or delete someone else's saved address ---
   await assert.rejects(
     profilesOf(other)("update_saved_address", {
       original_action: homeRef,
-      address: { label: "Hijacked", location: HOME, street: "", city: "", state: "", zip: "", created_at: now },
+      address: { label: "Hijacked", location: HOME, street: "", city: "", state: "", zip: "" },
     }),
     "a non-owner must not be able to update someone else's saved address",
   );
@@ -72,14 +75,14 @@ await runScenario(async (scenario) => {
 
   await profilesOf(other)("delete_saved_address", homeRef);
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  mine = await profilesOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_addresses", null);
+  mine = await profilesOf(customer)<{ original_action: Uint8Array; address: { label: string; street: string } }[]>("list_my_addresses", null);
   assert.equal(mine.length, 2, "a non-owner's delete_saved_address call must not actually remove the real owner's link");
   console.log("[PASS] a non-owner's delete_saved_address call is a harmless no-op against someone else's address book");
 
   // --- delete_saved_address (as the real owner) actually removes it ---
   await profilesOf(customer)("delete_saved_address", homeRef);
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  mine = await profilesOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_addresses", null);
+  mine = await profilesOf(customer)<{ original_action: Uint8Array; address: { label: string; street: string } }[]>("list_my_addresses", null);
   assert.equal(mine.length, 1);
   console.log("[PASS] delete_saved_address removes the address from the owner's own list_my_addresses");
 

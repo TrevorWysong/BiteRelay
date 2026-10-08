@@ -11,7 +11,7 @@ use crate::settlement;
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{decode_or, open, resolve_latest, resolve_latest_decoded, seal};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,10 +23,16 @@ pub struct RequestDeliveryInput {
     /// The total the customer was shown -- the order is refused if pricing
     /// now comes to anything else.
     pub order_total: u64,
+    /// The exact drop-off. Never stored in the clear: only its area is public
+    /// (see `DeliveryOrder::sealed_dropoff`).
     pub dropoff: GeoPoint,
     pub max_delivery_fee: Option<u64>,
+    /// A note for the kitchen -- sealed to the store.
     #[serde(default)]
-    pub special_instructions: String,
+    pub kitchen_notes: String,
+    /// Drop-off instructions -- sealed with the address, for the driver.
+    #[serde(default)]
+    pub dropoff_notes: String,
     #[serde(default)]
     pub tip_cents: u64,
     /// `None` (the default) places a normal, immediately-open order. `Some`
@@ -68,6 +74,54 @@ fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: 
     // get_open_orders_near -- see plan §3's named "signals can silently drop" risk.
     let _ = notify_nearby_providers(action_hash, dropoff_geohash);
     Ok(())
+}
+
+/// A note sealed to `recipient`, or `None` if there's nothing to say.
+pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Option<XSalsa20Poly1305EncryptedData>> {
+    let note = note.trim();
+    if note.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(seal(recipient, &note.to_string())?))
+}
+
+/// What the caller may read of an order's sealed details: the drop-off
+/// (the customer, and the driver once their bid is accepted) and the
+/// kitchen note (the customer and the store). Everyone else gets nothing.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct OrderPrivateDetails {
+    pub dropoff: Option<DropoffDetails>,
+    pub kitchen_note: Option<String>,
+}
+
+#[hdk_extern]
+pub fn get_order_private_details(order_original_action: ActionHash) -> ExternResult<OrderPrivateDetails> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let record = resolve_latest(order_original_action)?;
+    if let Some(order) = decode_or::<DeliveryOrder>(&record) {
+        let dropoff = if me == order.requester {
+            open(&me, &order.sealed_dropoff)?
+        } else {
+            match &order.driver_dropoff {
+                // Only the accepted driver can open their copy; anyone else gets None.
+                Some(sealed) => open(&order.requester, sealed)?,
+                None => None,
+            }
+        };
+        return Ok(OrderPrivateDetails { dropoff, kitchen_note: open_kitchen_note(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())? });
+    }
+    if let Some(order) = decode_or::<PickupOrder>(&record) {
+        return Ok(OrderPrivateDetails { dropoff: None, kitchen_note: open_kitchen_note(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())? });
+    }
+    Ok(OrderPrivateDetails::default())
+}
+
+/// The kitchen note is sealed between the customer and the store; each
+/// opens it with the other as counterpart.
+fn open_kitchen_note(me: &AgentPubKey, requester: &AgentPubKey, merchant: &AgentPubKey, sealed: Option<&XSalsa20Poly1305EncryptedData>) -> ExternResult<Option<String>> {
+    let Some(sealed) = sealed else { return Ok(None) };
+    let counterpart = if me == requester { merchant } else if me == merchant { requester } else { return Ok(None) };
+    open(counterpart, sealed)
 }
 
 /// The store's catalog at its latest state.
@@ -139,6 +193,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         ensure_claim_confirmed(claim_ref)?;
     }
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+    let merchant = input.merchant.clone();
 
     // The store as it is now: its delivery radius (a pre-check -- see
     // `ensure_promo_active` for why current settings can't be validated)
@@ -155,19 +210,20 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
 
     let order = DeliveryOrder {
         requester: requester.clone(),
-        merchant: input.merchant,
+        merchant: merchant.clone(),
         catalog_ref: input.catalog_ref,
         lines: priced.lines,
         order_total: priced.order_total,
-        dropoff: input.dropoff,
         dropoff_geohash: dropoff_geohash.clone(),
+        sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes })?,
+        driver_dropoff: None,
+        kitchen_note: seal_note(&merchant, &input.kitchen_notes)?,
         max_delivery_fee: input.max_delivery_fee,
         status,
         accepted_bid: None,
         delivery_receipts: Vec::new(),
         dispute_ref: None,
         requested_at: now,
-        special_instructions: input.special_instructions,
         tip_cents: input.tip_cents,
         delivery_subsidy_percent: catalog.delivery_subsidy_percent,
         requested_delivery_time: input.requested_delivery_time,

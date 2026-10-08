@@ -6,7 +6,7 @@
 //! dispute path in one place, rather than splitting across files the way
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
-use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use crate::pricing::{price_order, OrderItemInput};
 use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
@@ -23,8 +23,9 @@ pub struct RequestPickupOrderInput {
     pub items: Vec<OrderItemInput>,
     /// The total the customer was shown -- see `RequestDeliveryInput::order_total`.
     pub order_total: u64,
+    /// A note for the kitchen -- sealed to the store.
     #[serde(default)]
-    pub special_instructions: String,
+    pub kitchen_notes: String,
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
     #[serde(default)]
@@ -49,6 +50,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     }
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
 
+    let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -58,7 +60,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         status: PickupStatus::Placed,
         dispute_ref: None,
         requested_at,
-        special_instructions: input.special_instructions,
+        kitchen_note,
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,

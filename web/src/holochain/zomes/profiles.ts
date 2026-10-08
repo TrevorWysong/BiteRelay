@@ -1,6 +1,6 @@
 import { callZome } from "../client";
 import { decodeEntry } from "../decode";
-import type { ActionHash, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag, SavedAddress } from "../types";
+import type { ActionHash, AddressDetails, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag } from "../types";
 
 export async function createProfile(input: {
   display_name: string;
@@ -22,8 +22,24 @@ export async function getProfileForAgent(agent: AgentPubKey): Promise<HcRecord |
   return callZome("profiles", "get_profile_for_agent", agent);
 }
 
-export async function updateProfile(originalAction: ActionHash, updatedProfile: Profile): Promise<HcRecord> {
+/// A profile as this client sends it: the phone in the clear (the zome
+/// seals it to the caller before storing it).
+export interface ProfileInput {
+  display_name: string;
+  roles: RoleTag[];
+  created_at: number;
+  bio: string;
+  avatar_data_uri: string;
+  phone: string;
+}
+
+export async function updateProfile(originalAction: ActionHash, updatedProfile: ProfileInput): Promise<HcRecord> {
   return callZome("profiles", "update_profile", { original_action: originalAction, updated_profile: updatedProfile });
+}
+
+/// The caller's own phone number -- only they can read it.
+export async function getMyPhone(): Promise<string | null> {
+  return callZome("profiles", "get_my_phone", null);
 }
 
 export async function fetchProfile(agent: AgentPubKey): Promise<Profile | null> {
@@ -62,16 +78,17 @@ export async function fetchProviderCredential(profileAction: ActionHash): Promis
 // --- saved addresses -- a customer's own named address book ("Home",
 // "Work", ...), the DoorDash/UberEats-style "deliver to" switcher. ---
 
+/// A saved address, opened for its owner (it's stored sealed).
 export interface SavedAddressView {
   original_action: ActionHash;
-  record: HcRecord;
+  address: AddressDetails;
 }
 
-export async function saveAddress(address: SavedAddress): Promise<HcRecord> {
+export async function saveAddress(address: AddressDetails): Promise<HcRecord> {
   return callZome("profiles", "save_address", address);
 }
 
-export async function updateSavedAddress(originalAction: ActionHash, address: SavedAddress): Promise<HcRecord> {
+export async function updateSavedAddress(originalAction: ActionHash, address: AddressDetails): Promise<HcRecord> {
   return callZome("profiles", "update_saved_address", { original_action: originalAction, address });
 }
 

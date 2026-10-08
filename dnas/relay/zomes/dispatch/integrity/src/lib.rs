@@ -18,7 +18,7 @@ mod pickup;
 mod recurring;
 mod order_queues;
 pub use order_queues::{history_day, QueueOwner, HISTORY_BUCKET_MICROS};
-pub use recurring::{RecurrenceRule, RecurringOrderTemplate};
+pub use recurring::{RecurrenceRule, RecurringOrderTemplate, TemplateDetails};
 use bids::{validate_bid_update, validate_new_bid};
 use delivery::{validate_new_order, validate_order_transition};
 use pickup::{validate_new_pickup_order, validate_pickup_order_transition};
@@ -32,7 +32,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
+pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]

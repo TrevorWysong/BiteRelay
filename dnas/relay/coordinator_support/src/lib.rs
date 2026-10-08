@@ -52,6 +52,26 @@ fn resolve_latest_with(action_hash: ActionHash, options: GetOptions) -> ExternRe
     }
 }
 
+/// Encrypts `value` from the caller to `recipient` (libsodium box, keyed off
+/// both agents' own keys -- nothing to publish or exchange first). Box is
+/// symmetric between its two parties: the caller can always re-open what
+/// they sealed, so sealing to yourself keeps a value readable only by you.
+pub fn seal<T: Serialize + std::fmt::Debug>(recipient: &AgentPubKey, value: &T) -> ExternResult<XSalsa20Poly1305EncryptedData> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let bytes = ExternIO::encode(value).map_err(|e| wasm_error!(e))?.0;
+    ed_25519_x_salsa20_poly1305_encrypt(me, recipient.clone(), XSalsa20Poly1305Data::from(bytes))
+}
+
+/// Opens a box exchanged between the caller and `counterpart`, sealed in
+/// either direction (`counterpart` is the caller themselves for something
+/// they sealed to themselves). `None` when the caller isn't one of its two
+/// parties.
+pub fn open<T: for<'de> Deserialize<'de> + std::fmt::Debug>(counterpart: &AgentPubKey, sealed: &XSalsa20Poly1305EncryptedData) -> ExternResult<Option<T>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let Ok(data) = ed_25519_x_salsa20_poly1305_decrypt(me, counterpart.clone(), sealed.clone()) else { return Ok(None) };
+    Ok(ExternIO(data.as_ref().to_vec()).decode().ok())
+}
+
 /// The next page's `after` cursor, given the last link in this page.
 /// `LinkQuery.after` is inclusive (`>=`), so the cursor steps one
 /// microsecond past the last link. Two links in the same microsecond can
