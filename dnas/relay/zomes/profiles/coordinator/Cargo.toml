@@ -12,3 +12,8 @@ hdk.workspace = true
 serde.workspace = true
 relay_coordinator_support.workspace = true
 profiles_integrity = { path = "../integrity" }
+
+[features]
+# Raw link externs for validation tests; only ever hot-swapped into test
+# conductors, never packed into the hApp (see raw_link_test_externs!).
+test-utils = []

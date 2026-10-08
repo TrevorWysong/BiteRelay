@@ -190,6 +190,17 @@ pub struct PromoCode {
     pub auto_apply: bool,
 }
 
+/// The longest a goodie bag may stay listed, creation to the end of its
+/// pickup window. Bounding it is what lets every bag read query only the
+/// last week of links instead of every bag a store has ever listed.
+pub const MAX_GOODIE_BAG_LIFETIME_MICROS: i64 = 7 * 86_400 * 1_000_000;
+
+/// How far a self-reported `created_at`/`claimed_at` may sit from its own
+/// action's timestamp -- generous enough for clock skew, tight enough that
+/// a bag can't be backdated out of (or forward-dated into) the listing
+/// window above.
+pub const CLOCK_SKEW_TOLERANCE_MICROS: i64 = 10 * 60 * 1_000_000;
+
 /// A goodie bag: a quantity-limited, time-windowed, discounted mystery bag
 /// of surplus food. Deliberately not itemized the
 /// way a `MenuItem`-based order is -- the contents are the merchant's own

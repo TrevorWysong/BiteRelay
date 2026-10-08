@@ -5,7 +5,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{entry_def_parts, resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{resolve_latest, resolve_latest_decoded};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -86,42 +86,25 @@ pub fn advance_recurring_template(input: AdvanceRecurringTemplateInput) -> Exter
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back advanced recurring order template".into())))
 }
 
-/// Local chain query, filtered to `ActionType::Create` only -- a template
-/// that's since been updated (active toggled, next_run_at advanced) would
-/// otherwise come back as *two* separate `Record`s for the same logical
-/// template (the original creation action, plus every update action,
-/// since `query()` matches on entry type regardless of which action
-/// variant wrote it). Filtering to creations and then `resolve_latest`-ing
-/// each one is what collapses that back down to exactly one current
-/// `Record` per template the agent has ever created.
+/// A template's stable identity (what `advance_recurring_template` and
+/// `set_recurring_template_active` take) alongside its latest state.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RecurringTemplateView {
+    pub original_action: ActionHash,
+    pub record: Record,
+}
+
+/// Every template the caller has created, at its latest state -- a local
+/// chain read. Filtered to creations (one per template; `query` would
+/// otherwise return every update as well), each resolved to its latest.
 #[hdk_extern]
-pub fn list_my_recurring_templates(_: ()) -> ExternResult<Vec<Record>> {
-    let dummy = EntryTypes::RecurringOrderTemplate(RecurringOrderTemplate {
-        requester: AgentPubKey::from_raw_36(vec![0; 36]),
-        merchant: AgentPubKey::from_raw_36(vec![0; 36]),
-        catalog_ref: ActionHash::from_raw_36(vec![0; 36]),
-        item_refs: vec![],
-        dropoff: GeoPoint { lat: 0.0, lon: 0.0 },
-        max_delivery_fee: None,
-        special_instructions: String::new(),
-        tip_cents: 0,
-        dropoff_preference: DropoffPreference::LeaveAtDoor,
-        promo_code_ref: None,
-        recurrence: RecurrenceRule::Daily { hour: 0, minute: 0 },
-        next_run_at: Timestamp(0),
-        active: true,
-        created_at: Timestamp(0),
-    });
-    let (ScopedEntryDefIndex { zome_index, zome_type }, visibility) = entry_def_parts(&dummy)?;
-    let filter = ChainQueryFilter::new()
-        .entry_type(EntryType::App(AppEntryDef::new(zome_type, zome_index, visibility)))
-        .action_type(ActionType::Create);
-    let creations: Vec<Record> = query(filter)?;
-    let mut templates = Vec::with_capacity(creations.len());
-    for record in creations {
-        if let Ok(latest) = resolve_latest(record.action_address().clone()) {
-            templates.push(latest);
-        }
-    }
-    Ok(templates)
+pub fn list_my_recurring_templates(_: ()) -> ExternResult<Vec<RecurringTemplateView>> {
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::RecurringOrderTemplate)?).action_type(ActionType::Create);
+    Ok(query(filter)?
+        .into_iter()
+        .filter_map(|creation| {
+            let original_action = creation.action_address().clone();
+            resolve_latest(original_action.clone()).ok().map(|record| RecurringTemplateView { original_action, record })
+        })
+        .collect())
 }

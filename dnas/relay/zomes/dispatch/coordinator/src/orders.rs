@@ -4,11 +4,11 @@
 //! bidding steps in between, and `matching.rs`/`signals.rs` for how a new
 //! order actually reaches nearby providers.
 
-use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path, OPEN_ORDER_BUCKET_MILLIS};
-use crate::store_queue::{self, QueuedOrder};
+use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path};
+use crate::order_queues::{self, OrderParties};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{resolve_latest, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{resolve_latest, resolve_latest_decoded};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -64,6 +64,34 @@ fn publish_to_open_anchor_and_notify(action_hash: &ActionHash, dropoff_geohash: 
     Ok(())
 }
 
+/// Coordinator pre-checks for an order's optional references, shared by
+/// both order verticals. Validation can only see these entries as created
+/// (see `dispatch_integrity::checks`), so "still active" / "confirmed yet"
+/// can only be answered here, against their latest state. A failed lookup
+/// lets the order through to validation rather than blocking it over a
+/// convenience check that couldn't resolve.
+pub(crate) fn ensure_promo_active(promo_ref: &ActionHash) -> ExternResult<()> {
+    if let Ok(ZomeCallResponse::Ok(io)) = call(CallTargetCell::Local, "catalog", "get_promo_code".into(), None, promo_ref.clone()) {
+        if let Ok(Some(promo)) = io.decode::<Record>().map(|r| r.entry().to_app_option::<catalog_types::PromoCode>().ok().flatten()) {
+            if !promo.active {
+                return Err(wasm_error!(WasmErrorInner::Guest("promo code is not active".into())));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_claim_confirmed(claim_ref: &ActionHash) -> ExternResult<()> {
+    if let Ok(ZomeCallResponse::Ok(io)) = call(CallTargetCell::Local, "catalog", "get_bag_claim".into(), None, claim_ref.clone()) {
+        if let Ok(Some(claim)) = io.decode::<Record>().map(|r| r.entry().to_app_option::<catalog_types::BagClaim>().ok().flatten()) {
+            if claim.status != catalog_types::BagClaimStatus::Confirmed {
+                return Err(wasm_error!(WasmErrorInner::Guest("goodie bag claim is not yet confirmed".into())));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[hdk_extern]
 pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
@@ -73,46 +101,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Open };
     let is_open = status == DeliveryStatus::Open;
 
-    // Best-effort "is this code still active" pre-check -- see
-    // `dispatch_integrity::validate_new_order`'s own doc comment for why
-    // this genuinely can't be the deterministic source of truth (only
-    // `catalog_ref` match and `expires_at` are enforced there). A failed
-    // lookup here degrades to "let validate() decide on what it actually
-    // can check" rather than blocking the order over a convenience
-    // pre-check that couldn't resolve.
     if let Some(promo_ref) = &input.promo_code_ref {
-        let response = call(CallTargetCell::Local, "catalog", "get_promo_code".into(), None, promo_ref.clone());
-        if let Ok(ZomeCallResponse::Ok(extern_io)) = response {
-            if let Ok(record) = extern_io.decode::<Record>() {
-                if let Ok(Some(promo)) = record.entry().to_app_option::<catalog_types::PromoCode>() {
-                    if !promo.active {
-                        return Err(wasm_error!(WasmErrorInner::Guest("promo code is not active".into())));
-                    }
-                }
-            }
-        }
+        ensure_promo_active(promo_ref)?;
     }
-
-    // Same best-effort shape as the promo-code pre-check just above, same
-    // reason: whether a claim is actually `Confirmed` isn't something
-    // `validate_new_order` can check deterministically (see its own doc
-    // comment), since that status only exists on the claim's *latest*
-    // state, not the literal record at `bag_claim_ref`'s own action hash.
-    // `catalog::get_bag_claim` resolves to latest, so this is the one place
-    // the question can genuinely be answered -- a failed lookup degrades to
-    // "let validate() decide on what it actually can check" rather than
-    // blocking the order over a convenience pre-check that couldn't resolve.
     if let Some(claim_ref) = &input.bag_claim_ref {
-        let response = call(CallTargetCell::Local, "catalog", "get_bag_claim".into(), None, claim_ref.clone());
-        if let Ok(ZomeCallResponse::Ok(extern_io)) = response {
-            if let Ok(record) = extern_io.decode::<Record>() {
-                if let Ok(Some(claim)) = record.entry().to_app_option::<catalog_types::BagClaim>() {
-                    if claim.status != catalog_types::BagClaimStatus::Confirmed {
-                        return Err(wasm_error!(WasmErrorInner::Guest("goodie bag claim is not yet confirmed".into())));
-                    }
-                }
-            }
-        }
+        ensure_claim_confirmed(claim_ref)?;
     }
 
     // Best-effort, same shape and trust tier as the promo-code/bag-claim
@@ -164,11 +157,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         bag_claim_ref: input.bag_claim_ref,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
-    create_link(requester, action_hash.clone(), LinkTypes::RequesterToOrder, ())?;
     // The merchant is never in `notify_nearby_providers`'s signal audience
     // below (that's providers only) -- the store's queues are how they find
     // the order at all.
-    store_queue::enqueue(&catalog_ref, &action_hash, now)?;
+    order_queues::enqueue(&action_hash, &catalog_ref, &requester, now)?;
 
     if is_open {
         publish_to_open_anchor_and_notify(&action_hash, &dropoff_geohash, now)?;
@@ -221,15 +213,6 @@ pub fn get_order(order_original_action: ActionHash) -> ExternResult<Record> {
     resolve_latest(order_original_action)
 }
 
-/// The requester's own `RequesterToOrder` links -- always creatable from a
-/// purely local read for the requester's own base, since they authored
-/// every one of these links themselves.
-#[hdk_extern]
-pub fn get_orders_for_requester(requester: AgentPubKey) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(requester, LinkTypes::RequesterToOrder)?, GetStrategy::default())?;
-    Ok(resolve_links_to_records(links))
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetOrderStatusInput {
     pub order_original_action: ActionHash,
@@ -253,7 +236,7 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
     order.status = input.next_status;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
     if order.status.is_terminal() {
-        store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &order.catalog_ref, requester: &order.requester, merchant: &order.merchant })?;
+        order_queues::retire(&OrderParties::delivery(&input.order_original_action, &order)?)?;
     }
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated order".into())))
@@ -412,17 +395,11 @@ pub(crate) fn settle_delivery_fee(
 /// the order to Delivered -- then, and only then, releases payment and
 /// records a reputation event.
 ///
-/// The completion gate itself (does this order actually have a valid
-/// attestation for every required leg?) used to be trusted from here alone:
-/// nothing stopped a peer from calling the lower-level `update_entry` path
-/// directly to skip it. It's now enforced by `dispatch_integrity`'s
-/// deterministic `validate()` too, which independently re-derives and checks
-/// `delivery_receipts` against the DHT (see that crate's
-/// `validate_delivery_receipts`) -- this function's own pre-check below is
-/// just a fast-fail for the honest case, not the source of truth anymore.
-/// `update_entry` is deliberately attempted *before* payment settlement: if
-/// validation rejects the receipts for any reason this coordinator's own
-/// check missed, nothing gets paid out.
+/// The completion gate (a valid attestation for every required leg) is
+/// enforced by validation, which re-checks `delivery_receipts` against the
+/// DHT (`validate_delivery_receipts`); the pre-check here only fails fast
+/// for honest callers. The order is updated *before* any payment, so if
+/// validation rejects the receipts, nothing is paid out.
 #[hdk_extern]
 pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
@@ -459,6 +436,7 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
         ))));
     }
 
+    let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let requester = order.requester.clone();
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
@@ -467,12 +445,10 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
+    order_queues::retire(&parties)?;
 
-    // Food payment, entirely separate from the delivery-fee split above --
-    // customer pays the merchant for what was ordered, regardless of how
-    // the delivery fee itself gets split. Previously missing entirely: the
-    // merchant was never actually paid anything through the ledger.
+    // The food: customer pays the merchant the order total, separately from
+    // however the delivery fee is split below.
     settle_order_total(input.order_original_action.clone(), requester.clone(), merchant.clone(), order_total)?;
 
     settle_delivery_fee(

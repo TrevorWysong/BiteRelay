@@ -137,7 +137,13 @@ pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<Reputati
         None => (ReputationSummary::default(), None, None),
     };
 
+    // Link validation already guarantees every event under this base is
+    // about this target; checking again here costs nothing and keeps the
+    // summary honest even if that guarantee ever regressed.
     fold_since_checkpoint::<ReputationEvent, _, _>(base, event_link, since, already_counted, &mut summary, |summary, event| {
+        if event.target != target {
+            return;
+        }
         match event.kind {
             ReputationEventKind::OrderCompleted => summary.completed_count += 1,
             ReputationEventKind::OrderCancelledByThem => summary.cancelled_by_them_count += 1,
@@ -277,33 +283,40 @@ pub struct ReviewsPage {
     pub next_before: Option<Timestamp>,
 }
 
-/// Newest-first, paginated -- a busy store accumulates reviews forever, and
-/// a store page only ever shows the most recent handful (the average comes
-/// from `get_rating_summary`, not from loading every review). `before` is
+/// One newest-first page of the reviews linked from `base`, keeping only
+/// those `belongs` accepts (link validation already guarantees it; checking
+/// again keeps a list honest even if that ever regressed). `before` is
 /// inclusive (`<=`, the mirror of `after`'s `>=`, see `next_page_cursor`),
 /// so the next cursor steps one microsecond back from the oldest review
 /// included.
-#[hdk_extern]
-pub fn get_reviews_for(input: GetReviewsInput) -> ExternResult<ReviewsPage> {
-    let (base, review_link, _) = review_links(&input.target);
-    let mut query = LinkQuery::try_new(base, review_link)?;
-    query.before = input.before;
+fn review_page(base: AnyLinkableHash, link_type: LinkTypes, before: Option<Timestamp>, belongs: impl Fn(&Record) -> bool) -> ExternResult<ReviewsPage> {
+    let mut query = LinkQuery::try_new(base, link_type)?;
+    query.before = before;
     let mut links = get_links(query, GetStrategy::default())?;
     links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
-    let next_before = if links.len() > REVIEW_PAGE_SIZE {
-        Some(Timestamp::from_micros(links[REVIEW_PAGE_SIZE - 1].timestamp.as_micros() - 1))
-    } else {
-        None
-    };
+    let next_before = (links.len() > REVIEW_PAGE_SIZE).then(|| Timestamp::from_micros(links[REVIEW_PAGE_SIZE - 1].timestamp.as_micros() - 1));
     links.truncate(REVIEW_PAGE_SIZE);
     let mut reviews = Vec::with_capacity(links.len());
     for link in links {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
         if let Some(record) = get(action_hash, GetOptions::default())? {
-            reviews.push(record);
+            if belongs(&record) {
+                reviews.push(record);
+            }
         }
     }
     Ok(ReviewsPage { reviews, next_before })
+}
+
+/// A store's or driver's reviews, newest first -- a busy store accumulates
+/// reviews forever, and a store page only ever shows the most recent
+/// handful (the average comes from `get_rating_summary`).
+#[hdk_extern]
+pub fn get_reviews_for(input: GetReviewsInput) -> ExternResult<ReviewsPage> {
+    let (base, review_link, _) = review_links(&input.target);
+    review_page(base, review_link, input.before, |record| {
+        record.entry().to_app_option::<Review>().ok().flatten().is_some_and(|review| review.target == input.target)
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -328,7 +341,11 @@ pub fn get_rating_summary(target: ReviewTarget) -> ExternResult<RatingSummary> {
         ),
         None => (RatingSummary::default(), None, None),
     };
+    // Same belt-and-braces check as `get_reputation_summary`'s.
     fold_since_checkpoint::<Review, _, _>(base, review_link, since, already_counted, &mut summary, |summary, review| {
+        if review.target != target {
+            return;
+        }
         summary.count += 1;
         summary.rating_sum += review.rating as u32;
     })?;
@@ -429,15 +446,25 @@ pub fn get_item_rating_summary(item_ref: ActionHash) -> ExternResult<ItemRatingS
     Ok(summary)
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ItemReviewsInput {
+    pub item_ref: ActionHash,
+    /// Page cursor -- the previous page's `next_before`. `None` starts from
+    /// the newest review.
+    pub before: Option<Timestamp>,
+}
+
+/// A menu item's reviews, newest first (see `get_reviews_for`).
 #[hdk_extern]
-pub fn get_item_reviews(item_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let links = get_links(LinkQuery::try_new(item_ref, LinkTypes::ItemToReview)?, GetStrategy::default())?;
-    let mut reviews = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Some(record) = get(action_hash, GetOptions::default())? {
-            reviews.push(record);
-        }
-    }
-    Ok(reviews)
+pub fn get_item_reviews(input: ItemReviewsInput) -> ExternResult<ReviewsPage> {
+    review_page(input.item_ref.clone().into(), LinkTypes::ItemToReview, input.before, |record| {
+        record.entry().to_app_option::<ItemReview>().ok().flatten().is_some_and(|review| review.item_ref == input.item_ref)
+    })
+}
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use reputation_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(StoreToEvent, DriverToEvent, CustomerToEvent, StoreToReputationCheckpoint, DriverToReputationCheckpoint, CustomerToReputationCheckpoint, StoreToReview, DriverToReview, StoreToRatingCheckpoint, DriverToRatingCheckpoint, OrderToReview, ItemToReview, ItemToRatingCheckpoint);
 }

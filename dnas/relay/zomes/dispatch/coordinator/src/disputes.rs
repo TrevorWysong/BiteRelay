@@ -11,7 +11,7 @@
 //! that were speculatively designed in the original architecture pass and
 //! never wired up until now).
 
-use crate::store_queue::{self, QueuedOrder};
+use crate::order_queues::{self, OrderParties};
 use crate::orders::{record_reputation_event, settle_delivery_fee, settle_order_total, ReputationEventKindWire, ReputationTargetWire, SettleInputWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -193,6 +193,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
         DisputeOutcome::FavorProvider { .. } => DeliveryStatus::Delivered,
         DisputeOutcome::FavorRequester { .. } => DeliveryStatus::Cancelled,
     };
+    let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let mut updated_order = order;
     updated_order.status = target_status;
     // Advance dispute_ref from the dispute's original creation hash to its
@@ -204,7 +205,7 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
     // Both outcomes (Delivered / Cancelled) are terminal.
-    store_queue::retire(QueuedOrder { order_ref: &input.order_original_action, catalog_ref: &catalog_ref, requester: &requester, merchant: &merchant })?;
+    order_queues::retire(&parties)?;
 
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {

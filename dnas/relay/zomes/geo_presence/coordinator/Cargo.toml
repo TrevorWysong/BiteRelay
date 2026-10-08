@@ -11,5 +11,11 @@ name = "geo_presence"
 hdk.workspace = true
 hdi.workspace = true
 serde.workspace = true
+relay_coordinator_support.workspace = true
 relay_types.workspace = true
 geo_presence_integrity = { path = "../integrity" }
+
+[features]
+# Raw link externs for validation tests; only ever hot-swapped into test
+# conductors, never packed into the hApp (see raw_link_test_externs!).
+test-utils = []

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customerA, customerB, driver] = await scenario.addPlayersWithApps([
@@ -69,8 +69,14 @@ await runScenario(async (scenario) => {
   await dispatchOf(customerB)("accept_bid", { order_original_action: orderRefB, bid_action: actionHash(bidRecordB) });
   await dhtSync(all, driver.cells[0].cell_id[0]);
 
-  const myBids = await dispatchOf(driver)<HcRecord[]>("list_my_bids", null);
-  assert.equal(myBids.length, 2, "the driver should have exactly 2 bids on their own chain");
+  // Both land in the driver's active-delivery queue, linked by each
+  // customer when they accepted.
+  const active = await retryUntil(
+    () => dispatchOf(driver)<{ order: { original_action: Uint8Array } }[]>("get_my_active_deliveries", null),
+    (rows) => rows.length === 2,
+  );
+  const activeHexes = active.map((row) => Buffer.from(row.order.original_action).toString("hex")).sort();
+  assert.deepEqual(activeHexes, [orderRefA, orderRefB].map((ref) => Buffer.from(ref).toString("hex")).sort(), "the driver's active queue should hold exactly orders A and B");
 
   const orderA = decodeEntry<{ status: string; accepted_bid: Uint8Array }>(await dispatchOf(driver)<HcRecord>("get_order", orderRefA));
   const orderB = decodeEntry<{ status: string; accepted_bid: Uint8Array }>(await dispatchOf(driver)<HcRecord>("get_order", orderRefB));

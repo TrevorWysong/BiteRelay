@@ -43,9 +43,9 @@ await runScenario(async (scenario) => {
 
   const itemA = actionHash(await catalogOf(merchant)<HcRecord>("add_menu_item", { catalog_ref: storeA, name: "Cuban Sandwich", price_cents: 1250, available: true }));
   const itemB = actionHash(await catalogOf(merchant)<HcRecord>("add_menu_item", { catalog_ref: storeB, name: "Al Pastor", price_cents: 900, available: true }));
-  const menuA = await catalogOf(merchant)<{ items: HcRecord[] }>("list_menu_items", { catalog_ref: storeA, after: null });
+  const menuA = await catalogOf(merchant)<{ items: { original_action: Uint8Array; record: HcRecord }[] }>("list_menu_items", { catalog_ref: storeA, after: null });
   assert.equal(menuA.items.length, 1);
-  assert.ok(bytesEqual(actionHash(menuA.items[0]), itemA), "store A's menu must only contain store A's items");
+  assert.ok(bytesEqual(menuA.items[0].original_action, itemA), "store A's menu must only contain store A's items");
   console.log("[PASS] each store keeps its own menu");
   await sync();
 

@@ -5,6 +5,8 @@
 
 use hdi::prelude::*;
 
+mod links;
+
 // Leg/LegKind/ReceiptAttestation now live in `attestation_types` so
 // `dispatch_integrity` can decode them too, for its own completion-gate
 // validation -- see that crate's doc comment for why a direct dependency on
@@ -33,6 +35,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::Leg(leg) => validate_leg(&leg, action.author()),
             EntryTypes::ReceiptAttestation(receipt) => validate_receipt(&receipt, action.author()),
         },
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { .. }) => links::validate_delete_link(),
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }

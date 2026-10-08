@@ -17,3 +17,8 @@ dispatch_integrity = { path = "../integrity" }
 dispute_types.workspace = true
 catalog_types.workspace = true
 relay_governance.workspace = true
+
+[features]
+# Raw link externs for validation tests; only ever hot-swapped into test
+# conductors, never packed into the hApp (see raw_link_test_externs!).
+test-utils = []

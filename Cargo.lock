@@ -24,6 +24,7 @@ dependencies = [
  "attestation_integrity",
  "hdi",
  "hdk",
+ "relay_coordinator_support",
  "relay_types",
  "serde",
 ]
@@ -35,6 +36,7 @@ dependencies = [
  "attestation_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -111,6 +113,7 @@ dependencies = [
  "catalog_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -296,6 +299,7 @@ dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "relay_governance",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -330,6 +334,7 @@ dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "relay_governance",
+ "relay_integrity_support",
  "serde",
 ]
 
@@ -471,6 +476,7 @@ dependencies = [
  "geo_presence_integrity",
  "hdi",
  "hdk",
+ "relay_coordinator_support",
  "relay_types",
  "serde",
 ]
@@ -481,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -794,6 +801,7 @@ dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "relay_governance",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -909,6 +917,7 @@ dependencies = [
  "catalog_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -945,6 +954,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay_integrity_support"
+version = "0.1.0"
+dependencies = [
+ "hdi",
+ "holochain_serialized_bytes",
+ "serde",
+]
+
+[[package]]
 name = "relay_types"
 version = "0.1.0"
 dependencies = [
@@ -968,6 +986,7 @@ dependencies = [
  "dispatch_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "serde",
 ]
 

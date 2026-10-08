@@ -143,6 +143,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         FlatOp::Link(OpLink::DeleteLink { original_action, link_type: LinkTypes::OwnerToSavedAddress, action }) => {
             validate_saved_address_removal(&original_action, &action)
         }
+        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_identity_link(link_type, &action.base_address, &action.target_address, action.author()),
+        FlatOp::Link(OpLink::DeleteLink { .. }) => relay_integrity_support::invalid("profile and credential links can't be deleted"),
         _ => Ok(ValidateCallbackResult::Valid),
     }
 }
@@ -161,19 +163,9 @@ fn validate_profile(profile: &Profile) -> ExternResult<ValidateCallbackResult> {
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// `Profile` has no `owner` field of its own (ownership comes purely from
-/// the `AgentToProfile` link base, same as every other agent-identity
-/// entry here) -- which means, unlike `DeliveryOrder`/`MerchantCatalog`
-/// updates elsewhere in this codebase, there's no entry *content* to check
-/// authorship against. Found and fixed as a real, exploitable gap:
-/// `update_profile` previously ran content-only validation
-/// (`validate_profile`) on *every* update, with nothing stopping any
-/// agent from calling it against another agent's own profile hash and
-/// successfully overwriting their display_name/roles/bio/phone.
-/// `must_get_action` resolves just the original action's own metadata
-/// (its real cryptographic author) without needing to decode entry
-/// content at all, so this works even though there's no stored field to
-/// lean on.
+/// Only a profile's author may update it. `Profile` has no owner field, so
+/// authorship comes from the original action itself (`must_get_action`):
+/// without this check anyone could overwrite anyone's profile.
 fn validate_profile_update(profile: &Profile, author: &AgentPubKey, original_action_hash: &ActionHash) -> ExternResult<ValidateCallbackResult> {
     let original_author = must_get_action(original_action_hash.clone())?.action().author().clone();
     if &original_author != author {
@@ -317,4 +309,29 @@ fn validate_saved_address_removal(
         ));
     }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// An agent's profile and a profile's vehicle credential are looked up by
+/// these links, so only their own author may create them, under the agent
+/// (or profile) they actually belong to -- otherwise anyone could attach a
+/// fake profile to someone's key, or a fake credential to their profile.
+fn validate_identity_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    use relay_integrity_support::{decode, invalid, link_target, require, LinkTarget};
+    let LinkTarget::Record(record) = link_target(target)? else {
+        return invalid("profile links must target a record");
+    };
+    if author != record.action().author() {
+        return invalid("a profile link must be authored by the author of the entry it indexes");
+    }
+    match link_type {
+        LinkTypes::AgentToProfile => {
+            require(decode::<Profile>(&record).is_some() && base == &AnyLinkableHash::from(author.clone()), "a profile may only be linked under its own author")
+        }
+        LinkTypes::ProfileToProviderCredential => {
+            let Some(credential) = decode::<ProviderCredential>(&record) else { return invalid("target is not a ProviderCredential") };
+            require(base == &AnyLinkableHash::from(credential.profile_action), "a credential may only be linked under the profile it names")
+        }
+        // Handled by their own rules above.
+        LinkTypes::AgentToFavorite | LinkTypes::OwnerToSavedAddress => Ok(ValidateCallbackResult::Valid),
+    }
 }

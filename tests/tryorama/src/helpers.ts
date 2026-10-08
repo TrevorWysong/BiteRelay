@@ -72,6 +72,18 @@ export async function retryUntilOk<T>(fn: () => Promise<T>, maxAttempts = 20, de
   throw new Error("unreachable");
 }
 
+/// Re-reads until `done` accepts the result -- for reads that are already
+/// valid but may not reflect a just-gossiped write yet. Returns the last
+/// result either way, so the caller's own assertion reports what was seen.
+export async function retryUntil<T>(fn: () => Promise<T>, done: (value: T) => boolean, maxAttempts = 20, delayMs = 500): Promise<T> {
+  let value = await fn();
+  for (let attempt = 1; attempt < maxAttempts && !done(value); attempt++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    value = await fn();
+  }
+  return value;
+}
+
 /// The dispute/arbitration subsystem (plan §8) needs an arbitrator roster
 /// baked into DNA properties -- a value every player must install with
 /// *identically*, since `properties` is part of the DNA hash. That pubkey
@@ -166,4 +178,37 @@ export async function installManyAgents(conductor: Conductor, count: number, lab
     players.push({ conductor, appWs, ...agentApp });
   }
   return players;
+}
+
+/// Swaps the `test-utils` build of the named coordinator zomes into a
+/// player's cell, adding the raw `test_create_link`/`test_delete_link`/
+/// `test_get_link_hashes` externs (see `raw_link_test_externs!`). Lets a
+/// test attempt exactly the links a malicious peer could write and assert
+/// link validation rejects them. Coordinators aren't part of the DNA hash,
+/// so the swap leaves the cell on the same DNA as everyone else. Build
+/// first with `npm run build:test-coordinators`.
+export async function useTestCoordinators(player: PlayerApp, zomes: string[]): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const wasmDir = fileURLToPath(new URL("../../../target/test-utils/wasm32-unknown-unknown/release/", import.meta.url));
+  const adminWs = player.conductor.adminWs();
+  for (const zome of zomes) {
+    const file = `${zome}.wasm`;
+    const bytes = new Uint8Array(await readFile(`${wasmDir}${file}`));
+    await adminWs.updateCoordinators({
+      cell_id: player.cells[0].cell_id,
+      source: { type: "bundle", value: { manifest: { zomes: [{ name: zome, hash: null, path: file, dependencies: [{ name: `${zome}_integrity` }] }] }, resources: { [file]: bytes } } },
+    } as never);
+  }
+}
+
+/// An agent key in the form Holochain stores it as a link base: the same
+/// 32-byte core, retyped from Agent to Entry (holo_hash's
+/// `From<AgentPubKey> for AnyLinkableHash`). Needed when a raw test link
+/// names an agent as its base.
+export function agentAsLinkBase(agentPubKey: Uint8Array): Uint8Array {
+  const AGENT_PREFIX = [0x84, 0x20, 0x24];
+  assert.deepEqual([...agentPubKey.slice(0, 3)], AGENT_PREFIX, "not an agent public key");
+  const retyped = new Uint8Array(agentPubKey);
+  retyped[1] = 0x21;
+  return retyped;
 }

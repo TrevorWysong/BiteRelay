@@ -33,24 +33,10 @@ pub struct RelayDnaProperties {
     pub arbitrators: Vec<String>,
 }
 
-/// A real bug, found only by testing a code path no existing test had
-/// actually exercised: `try_from_dna_properties()` *errors* (doesn't
-/// return an empty/default value) when `dna.yaml`'s `properties:` is `~`
-/// (the literal default this DNA ships with -- a real arbitrator roster
-/// is only baked in at build time for a production deployment, per this
-/// crate's own doc comment). Every *existing* call site happened to avoid
-/// this: the dispute-flow tests explicitly configure a roster via
-/// `rolesSettings`, and every other caller of `is_arbitrator` is gated
-/// behind `&&` short-circuiting on an `author_is_party`/similar check that
-/// was already `true`, so this branch was simply never reached. It's
-/// reached for real by `ledger_integrity::validate_transaction`'s
-/// third-party-author exception whenever that *isn't* already true -- a
-/// perfectly ordinary, non-dispute payment authored by neither of its own
-/// two parties (see that function's own doc comment for the real case:
-/// `settle_delivery_fee`'s merchant-subsidy transaction). "No roster
-/// configured yet" is a legitimate, common deployment state, not an
-/// error -- it just means nobody is an arbitrator, which is exactly what
-/// returning `false` here already says correctly.
+/// Whether `agent` is on the DNA's arbitrator roster. A DNA built without a
+/// roster (`properties: ~`, the default outside production) makes
+/// `try_from_dna_properties` error rather than return an empty roster; that
+/// just means nobody is an arbitrator, so it reads as `false`.
 pub fn is_arbitrator(agent: &AgentPubKey) -> ExternResult<bool> {
     let Ok(props) = RelayDnaProperties::try_from_dna_properties() else {
         return Ok(false);

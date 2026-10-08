@@ -162,15 +162,10 @@ pub struct DeliveryOrder {
     /// Empty until the `PickedUp -> Delivered` transition, at which point it
     /// must reference a `ReceiptAttestation` for every required leg kind
     /// (`MerchantHandoff`, `CustomerHandoff`) belonging to this exact order.
-    /// This used to be a coordinator-level trust check only
-    /// (`dispatch::complete_delivery` cross-zome-called `attestation` and
-    /// trusted its own count) -- nothing stopped a peer from calling
-    /// `update_entry` directly to skip it. Putting the references on the
-    /// entry itself lets `validate_order_transition` independently re-derive
-    /// and check them via `must_get_valid_record`, which is deterministic
-    /// (content-addressed, already-validated history) unlike a `get_links`
-    /// query would be -- so this is now enforced network-wide, not just for
-    /// honest callers of `complete_delivery`.
+    /// Carrying the references on the entry is what lets validation check
+    /// them deterministically (`must_get_valid_record`, unlike a link query),
+    /// so the gate holds for every peer, not just honest callers of
+    /// `complete_delivery`.
     pub delivery_receipts: Vec<ActionHash>,
     /// Empty until a dispute is raised (`PickedUp`/`Delivered -> Disputed`),
     /// at which point it references the one `Dispute` entry (`dispute`

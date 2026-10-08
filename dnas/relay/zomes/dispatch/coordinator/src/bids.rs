@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{entry_def_parts, next_page_cursor, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
 use relay_types::LedgerCommitmentRef;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -15,30 +15,6 @@ pub struct SubmitBidInput {
     pub eta_seconds: u32,
     pub price_offer: u64,
     pub collateral_commitment: LedgerCommitmentRef,
-}
-
-/// Queries the caller's own source chain directly for every `Bid` they've
-/// authored -- a driver's own bids never need gossip or a link to discover,
-/// since they're already sitting on that driver's own chain. Same pattern
-/// as `attestation_coordinator::list_my_receipts`: a driver's dashboard has
-/// no other way to answer "which orders am I bidding on/delivering" --
-/// there's no BidderToOrder link, unlike RequesterToOrder/MerchantToOrder.
-#[hdk_extern]
-pub fn list_my_bids(_: ()) -> ExternResult<Vec<Record>> {
-    let dummy = EntryTypes::Bid(Bid {
-        order_ref: ActionHash::from_raw_36(vec![0; 36]),
-        bidder: agent_info()?.agent_initial_pubkey,
-        eta_seconds: 0,
-        price_offer: 0,
-        collateral_commitment: LedgerCommitmentRef { account: String::new(), amount: 0, ledger_txn_ref: String::new() },
-        status: BidStatus::Open,
-        created_at: Timestamp(0),
-    });
-    let (scoped, visibility) = entry_def_parts(&dummy)?;
-    let filter = ChainQueryFilter::new()
-        .entry_type(EntryType::App(AppEntryDef::new(scoped.zome_type, scoped.zome_index, visibility)))
-        .include_entries(true);
-    query(filter)
 }
 
 #[hdk_extern]
@@ -56,10 +32,14 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         created_at: sys_time()?,
     };
     let bid_hash = create_entry(&EntryTypes::Bid(bid))?;
-    create_link(input.order_ref.clone(), bid_hash.clone(), LinkTypes::OrderToBid, ())?;
+    // Under the order's identity, not the exact version bid on (a scheduled
+    // order is bid on via the update that opened it), so the customer finds
+    // every bid in one place.
+    let order_original = original_action_of(input.order_ref)?;
+    create_link(order_original.clone(), bid_hash.clone(), LinkTypes::OrderToBid, ())?;
 
     let _ = send_remote_signal(
-        RemoteSignal::BidPlaced { order_hash: input.order_ref, bid_hash: bid_hash.clone() },
+        RemoteSignal::BidPlaced { order_hash: order_original, bid_hash: bid_hash.clone() },
         vec![order.requester],
     );
 
@@ -151,6 +131,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     // real current chain tip -- see resolve_latest's doc comment for why
     // that matters (a plain get() would not give this).
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    crate::order_queues::enqueue_for_driver(&input.order_original_action, &input.bid_action, &winning_bid.bidder)?;
 
     let _ = send_remote_signal(
         RemoteSignal::BidAccepted { bid_hash: input.bid_action.clone() },

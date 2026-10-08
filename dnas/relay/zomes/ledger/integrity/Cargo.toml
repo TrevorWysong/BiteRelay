@@ -13,3 +13,4 @@ holochain_serialized_bytes.workspace = true
 relay_types.workspace = true
 relay_governance.workspace = true
 dispatch_types.workspace = true
+relay_integrity_support.workspace = true

@@ -204,3 +204,10 @@ pub fn list_my_transactions(input: ListMyTransactionsInput) -> ExternResult<Tran
     }
     Ok(TransactionsPage { transactions, next_after })
 }
+
+#[cfg(feature = "test-utils")]
+mod test_utils {
+    use hdk::prelude::*;
+    use ledger_integrity::LinkTypes;
+    relay_coordinator_support::raw_link_test_externs!(AgentToTransaction, AgentToBalanceCheckpoint);
+}
