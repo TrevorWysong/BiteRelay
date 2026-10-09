@@ -13,6 +13,11 @@ env:
   CARGO_TERM_COLOR: always
   # Keep in step with the hdk/hdi versions in Cargo.toml.
   HOLOCHAIN_VERSION: 0.7.0
+  # The attestation zome uses countersigning, which Holochain 0.7 builds
+  # only with this feature -- and Cargo unifies features across the
+  # workspace, so every zome imports it. A conductor without it can't load
+  # the hApp.
+  HOLOCHAIN_FEATURES: unstable-countersigning
   HC_VERSION: 0.7.0
   LAIR_VERSION: 0.7.1
   BOOTSTRAP_VERSION: 0.5.0
@@ -20,9 +25,9 @@ env:
 jobs:
   checks:
     name: Build, types and lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -35,7 +40,7 @@ jobs:
         run: cargo build --release --target wasm32-unknown-unknown
       - name: Generated TS types are up to date
         run: cargo run --quiet --manifest-path tools/typegen/Cargo.toml -- --check
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -58,28 +63,28 @@ jobs:
 
   rust-tests:
     name: Rust unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --lib
 
   holochain-tools:
     name: Holochain binaries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - id: cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo/holochain-bin
-          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HOLOCHAIN_FEATURES }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install holochain, hc, lair-keystore and the bootstrap server
         run: |
-          cargo install --locked --root ~/.cargo/holochain-bin holochain --version "$HOLOCHAIN_VERSION"
+          cargo install --locked --root ~/.cargo/holochain-bin holochain --version "$HOLOCHAIN_VERSION" --features "$HOLOCHAIN_FEATURES"
           cargo install --locked --root ~/.cargo/holochain-bin holochain_cli --version "$HC_VERSION"
           cargo install --locked --root ~/.cargo/holochain-bin lair_keystore --version "$LAIR_VERSION"
           cargo install --locked --root ~/.cargo/holochain-bin kitsune2_bootstrap_srv --version "$BOOTSTRAP_VERSION"
@@ -90,14 +95,14 @@ jobs:
     # a time, since conductors sharing a machine contend.
     name: Tryorama suite (${{ matrix.shard }}/4)
     needs: [checks, holochain-tools]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -105,10 +110,10 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/.cargo/holochain-bin
-          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HOLOCHAIN_FEATURES }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
           fail-on-cache-miss: true
       - run: echo "$HOME/.cargo/holochain-bin/bin" >> "$GITHUB_PATH"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -133,10 +138,10 @@ jobs:
   e2e:
     name: Browser smoke tests
     needs: [checks, holochain-tools]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -144,10 +149,10 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/.cargo/holochain-bin
-          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
+          key: holochain-bin-${{ runner.os }}-${{ env.HOLOCHAIN_VERSION }}-${{ env.HOLOCHAIN_FEATURES }}-${{ env.HC_VERSION }}-${{ env.LAIR_VERSION }}-${{ env.BOOTSTRAP_VERSION }}
           fail-on-cache-miss: true
       - run: echo "$HOME/.cargo/holochain-bin/bin" >> "$GITHUB_PATH"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
