@@ -1,10 +1,11 @@
 //! What an agent's own conductor does for them with no app open, on the
 //! conductor's scheduler (as `settlement` does for store payouts):
 //!
-//! - **A customer's orders.** A scheduled order is placed with its store
-//!   when it's due, and an order its store never answers is cancelled once
-//!   the store's window passes (`Cancellation::StoreDidNotRespond`) -- so no
-//!   customer waits on a store that's offline.
+//! - **A customer's orders.** A recurring order fires when it's due, a
+//!   scheduled order is placed with its store when it's due, and an order
+//!   its store never answers is cancelled once the store's window passes
+//!   (`Cancellation::StoreDidNotRespond`) -- so no customer waits on a
+//!   store that's offline.
 //! - **A store's new orders.** A store set to auto-accept accepts each one
 //!   as it arrives, declining any priced from an outdated menu. A goodie-bag
 //!   order, whose claim the store already confirmed, is accepted either way.
@@ -73,6 +74,10 @@ fn tend_customer_orders() -> ExternResult<Option<Duration>> {
         if let Ok(Some(due)) = tend_order(&entry, now, window) {
             next = Some(next.map_or(due, |earliest| earliest.min(due)));
         }
+    }
+    // Standing orders that are due fire too.
+    if let Some(due) = crate::recurring::tend_templates(now)? {
+        next = Some(next.map_or(due, |earliest| earliest.min(due)));
     }
     Ok(next.map(|due| Duration::from_micros(due.saturating_sub(now).max(0) as u64)))
 }

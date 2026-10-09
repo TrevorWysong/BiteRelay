@@ -236,8 +236,8 @@ export async function sendLocationUpdate(orderRef: ActionHash, lat: number, lon:
   return callZome("dispatch", "send_location_update", { order_ref: orderRef, lat, lon });
 }
 
-// --- recurring order templates ("same order every Monday") -- client-
-// fired, no p2p cron, see recurring.rs's own doc comment ---
+// --- recurring order templates ("same order every Monday") -- fired by
+// the customer's own conductor when due, see recurring.rs ---
 
 export async function createRecurringTemplate(input: {
   merchant: AgentPubKey;
@@ -253,7 +253,8 @@ export async function createRecurringTemplate(input: {
   dropoff_preference?: DropoffPreference;
   promo_code_ref?: ActionHash | null;
   recurrence: RecurrenceRule;
-  next_run_at: number;
+  /// The IANA zone `recurrence` is in -- the device's own.
+  time_zone: string;
 }): Promise<HcRecord> {
   return callZome("dispatch", "create_recurring_template", {
     kitchen_notes: "",
@@ -267,10 +268,6 @@ export async function createRecurringTemplate(input: {
 
 export async function setRecurringTemplateActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {
   return callZome("dispatch", "set_recurring_template_active", { original_action: originalAction, active });
-}
-
-export async function advanceRecurringTemplate(originalAction: ActionHash, nextRunAt: number): Promise<HcRecord> {
-  return callZome("dispatch", "advance_recurring_template", { original_action: originalAction, next_run_at: nextRunAt });
 }
 
 /// `original_action` is the template's identity (what the other recurring

@@ -969,13 +969,8 @@ export interface ReceiptAttestation {
 /**
  * How often a `RecurringOrderTemplate` fires. Deliberately just these two
  * shapes -- the literal "same order every Monday" ask, plus daily as the
- * same shape with no weekday -- not a general cron expression, which
- * would need real per-agent timezone handling this app doesn't otherwise
- * carry anywhere (every `Timestamp` here is bare microseconds-since-epoch,
- * with no timezone concept at all -- the *client* that created the
- * template is responsible for meaning "9am in my own local time" when it
- * picks `hour`/`minute`, same as `requested_delivery_time` already is for
- * one-shot scheduled orders).
+ * same shape with no weekday. `hour`/`minute` are wall-clock time in the
+ * template's `time_zone`, and `weekday` counts from Sunday = 0.
  */
 export type RecurrenceRule =
   | {
@@ -1008,11 +1003,15 @@ export interface RecurringOrderTemplate {
   promo_code_ref: ActionHash | null;
   recurrence: RecurrenceRule;
   /**
-   * Set once at creation, then advanced forward by
-   * `advance_recurring_template` every time the template fires --
-   * exactly like `next_page_cursor` advances a pagination cursor, the
-   * one field (besides `active`) this entry's update is allowed to
-   * change.
+   * The IANA time zone `recurrence` is in ("America/New_York"), so "9:00
+   * every day" stays 9:00 local across daylight-saving changes. Templates
+   * from before this read as UTC.
+   */
+  time_zone: string;
+  /**
+   * When it next fires: set at creation, and moved forward each time it
+   * fires -- the one field (besides `active`) an update may change, and
+   * only ever forward.
    */
   next_run_at: Timestamp;
   active: boolean;
@@ -1109,15 +1108,9 @@ export interface SavedAddress {
  * discover these, so `list_my_recurring_templates` is a local chain
  * `query()`, the same zero-anchor-growth shape as
  * `attestation::list_my_receipts`, not a `get_links` anchor like
- * `DeliveryOrder` itself needs for matching. There is no p2p cron here
- * (and couldn't be, deterministically) -- see
- * `DeliveryOrder.requested_delivery_time`'s own doc comment for the
- * identical reasoning already applied to one-shot scheduled orders.
- * Firing is entirely client-driven: the requester's own client checks
- * `next_run_at` on a timer while the app is open and calls
- * `dispatch::request_delivery` + `advance_recurring_template` itself --
- * this entry is just the durable recipe plus bookkeeping, never an active
- * process.
+ * `DeliveryOrder` itself needs for matching. The requester's own conductor
+ * fires it when `next_run_at` arrives, with no app open, and advances it
+ * to the next occurrence (`dispatch::upkeep`).
  * A recurring order's private parts -- only ever stored sealed.
  */
 export interface TemplateDetails {

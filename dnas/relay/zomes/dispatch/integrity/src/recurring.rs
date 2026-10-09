@@ -5,13 +5,8 @@ use super::*;
 
 /// How often a `RecurringOrderTemplate` fires. Deliberately just these two
 /// shapes -- the literal "same order every Monday" ask, plus daily as the
-/// same shape with no weekday -- not a general cron expression, which
-/// would need real per-agent timezone handling this app doesn't otherwise
-/// carry anywhere (every `Timestamp` here is bare microseconds-since-epoch,
-/// with no timezone concept at all -- the *client* that created the
-/// template is responsible for meaning "9am in my own local time" when it
-/// picks `hour`/`minute`, same as `requested_delivery_time` already is for
-/// one-shot scheduled orders).
+/// same shape with no weekday. `hour`/`minute` are wall-clock time in the
+/// template's `time_zone`, and `weekday` counts from Sunday = 0.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RecurrenceRule {
     Daily { hour: u8, minute: u8 },
@@ -23,15 +18,9 @@ pub enum RecurrenceRule {
 /// discover these, so `list_my_recurring_templates` is a local chain
 /// `query()`, the same zero-anchor-growth shape as
 /// `attestation::list_my_receipts`, not a `get_links` anchor like
-/// `DeliveryOrder` itself needs for matching. There is no p2p cron here
-/// (and couldn't be, deterministically) -- see
-/// `DeliveryOrder.requested_delivery_time`'s own doc comment for the
-/// identical reasoning already applied to one-shot scheduled orders.
-/// Firing is entirely client-driven: the requester's own client checks
-/// `next_run_at` on a timer while the app is open and calls
-/// `dispatch::request_delivery` + `advance_recurring_template` itself --
-/// this entry is just the durable recipe plus bookkeeping, never an active
-/// process.
+/// `DeliveryOrder` itself needs for matching. The requester's own conductor
+/// fires it when `next_run_at` arrives, with no app open, and advances it
+/// to the next occurrence (`dispatch::upkeep`).
 /// A recurring order's private parts -- only ever stored sealed.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TemplateDetails {
@@ -58,15 +47,25 @@ pub struct RecurringOrderTemplate {
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
     pub recurrence: RecurrenceRule,
-    /// Set once at creation, then advanced forward by
-    /// `advance_recurring_template` every time the template fires --
-    /// exactly like `next_page_cursor` advances a pagination cursor, the
-    /// one field (besides `active`) this entry's update is allowed to
-    /// change.
+    /// The IANA time zone `recurrence` is in ("America/New_York"), so "9:00
+    /// every day" stays 9:00 local across daylight-saving changes. Templates
+    /// from before this read as UTC.
+    #[serde(default = "utc")]
+    pub time_zone: String,
+    /// When it next fires: set at creation, and moved forward each time it
+    /// fires -- the one field (besides `active`) an update may change, and
+    /// only ever forward.
     pub next_run_at: Timestamp,
     pub active: bool,
     pub created_at: Timestamp,
 }
+
+fn utc() -> String {
+    "UTC".into()
+}
+
+/// An IANA zone name is at most a few dozen characters.
+const MAX_TIME_ZONE_LEN: usize = 64;
 
 pub(crate) fn validate_recurrence(recurrence: &RecurrenceRule) -> Option<&'static str> {
     match recurrence {
@@ -90,6 +89,9 @@ pub(crate) fn validate_new_recurring_template(template: &RecurringOrderTemplate,
     }
     if let Some(reason) = validate_recurrence(&template.recurrence) {
         return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    if template.time_zone.is_empty() || template.time_zone.len() > MAX_TIME_ZONE_LEN {
+        return Ok(ValidateCallbackResult::Invalid("time_zone must be an IANA zone name".into()));
     }
     if let Some(reason) = check_merchant_owns_catalog(&template.merchant, &template.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
@@ -130,11 +132,15 @@ pub(crate) fn validate_recurring_template_update(
         && prior.dropoff_preference == template.dropoff_preference
         && prior.promo_code_ref == template.promo_code_ref
         && prior.recurrence == template.recurrence
+        && prior.time_zone == template.time_zone
         && prior.created_at == template.created_at;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "a recurring order template update may only change active/next_run_at -- every other field must stay the same".into(),
         ));
+    }
+    if template.next_run_at < prior.next_run_at {
+        return Ok(ValidateCallbackResult::Invalid("a recurring order's next_run_at only moves forward".into()));
     }
     Ok(ValidateCallbackResult::Valid)
 }
