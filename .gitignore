@@ -2,6 +2,7 @@
 /tools/*/target
 *.dna
 *.happ
+*.webhapp
 .hc
 .hc-live-*
 node_modules
@@ -17,3 +18,6 @@ tests/tryorama/.logs/
 web/test-results/
 web/playwright-report/
 web/dev-conductor.log
+
+# Production packaging (web/scripts/package.mjs)
+deploy/properties.json

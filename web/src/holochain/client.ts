@@ -1,5 +1,7 @@
 // The connection to a real Holochain conductor's App API -- there is no
-// central server here. This module owns exactly one AppWebsocket instance;
+// central server here. Production connects through its launcher
+// (`connectLauncher`); development, with a token the dev host issued
+// (`connect`) -- see `host.ts`. This module owns exactly one AppWebsocket instance;
 // every zome call in the app goes through `callZome` below, which resolves
 // against the "relay" DNA role by name rather than a manually-tracked
 // cell_id, since a browser client has no admin-level cell enumeration of
@@ -28,6 +30,14 @@ export async function connect({ url, token, wsClientOptions }: ConnectParams): P
     token: token as unknown as AppAuthenticationToken,
     wsClientOptions,
   });
+  return appWs;
+}
+
+/// Connects through the runtime hosting this app (see `host.ts`): it
+/// provides the app and its connection, and signs every zome call, so
+/// there's nothing to pass.
+export async function connectLauncher(): Promise<AppWebsocket> {
+  appWs = await AppWebsocket.connect();
   return appWs;
 }
 

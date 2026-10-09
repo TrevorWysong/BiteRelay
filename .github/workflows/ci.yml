@@ -48,6 +48,13 @@ jobs:
           npm run lint
           npm test
           npx vite build
+      - name: The production UI carries no dev-host (Admin API) code
+        working-directory: web
+        run: |
+          if grep -l "relay.happ\|listNodeIdentities\|provisionNewIdentity" dist/assets/*.js; then
+            echo "A production build must not contain the dev host's identity code -- see src/holochain/host.ts"
+            exit 1
+          fi
 
   rust-tests:
     name: Rust unit tests

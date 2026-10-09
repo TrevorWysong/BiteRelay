@@ -12,6 +12,7 @@ import type { GeoPoint, RoleTag } from "../holochain/types";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
 import { DEV_ADMIN_URL } from "../lib/devNode";
+import { HOST } from "../holochain/host";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
@@ -33,8 +34,10 @@ const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 export function Onboarding() {
   const navigate = useNavigate();
   const { createIdentity, reconnect, adoptIdentity, hasStoredIdentity, status, error, signOut } = useSession();
-  // In dev, the persistent conductor always listens on the same address.
-  const [adminUrl, setAdminUrl] = useState(import.meta.env.DEV ? DEV_ADMIN_URL : "");
+  // Only the dev host asks which node to provision on; the persistent dev
+  // conductor always listens on the same address.
+  const devHost = HOST === "dev";
+  const [adminUrl, setAdminUrl] = useState(devHost ? DEV_ADMIN_URL : "");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [phone, setPhone] = useState("");
@@ -98,7 +101,7 @@ export function Onboarding() {
   async function finish() {
     setLocalError(null);
     try {
-      await createIdentity(adminUrl, displayName.trim(), roles, location, { bio, avatarDataUri, phone });
+      await createIdentity(displayName.trim(), roles, location, { bio, avatarDataUri, phone }, adminUrl);
       if (roles.includes("Provider")) {
         await registerProviderCredential({
           profile_action: useSession.getState().profileActionHash!,
@@ -228,14 +231,18 @@ export function Onboarding() {
                     streetLabel="Your location"
                   />
                 </div>
-                <div className="mb-1">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">Local node address</label>
-                  <Input value={adminUrl} onChange={(e) => setAdminUrl(e.target.value)} placeholder="ws://localhost:XXXXX/" className="font-mono" />
-                </div>
-                <p className="text-[11px] text-ink-400 mb-4">
-                  Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
-                  <code className="bg-ink-100 rounded px-1">web/</code>). It starts a local node that keeps its data between restarts, always at this address.
-                </p>
+                {devHost && (
+                  <>
+                    <div className="mb-1">
+                      <label className="block text-xs font-semibold text-ink-500 mb-1">Local node address</label>
+                      <Input value={adminUrl} onChange={(e) => setAdminUrl(e.target.value)} placeholder="ws://localhost:XXXXX/" className="font-mono" />
+                    </div>
+                    <p className="text-[11px] text-ink-400 mb-4">
+                      Run <code className="bg-ink-100 rounded px-1">npm run dev:conductor</code> in another terminal (from{" "}
+                      <code className="bg-ink-100 rounded px-1">web/</code>). It starts a local node that keeps its data between restarts, always at this address.
+                    </p>
+                  </>
+                )}
 
                 {showError && (
                   <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -247,7 +254,7 @@ export function Onboarding() {
                   <Button variant="ghost" onClick={() => setStep("roles")} disabled={connecting}>
                     Back
                   </Button>
-                  <Button className="flex-1" onClick={goToDetailsNext} disabled={connecting || !displayName.trim() || !adminUrl.trim()}>
+                  <Button className="flex-1" onClick={goToDetailsNext} disabled={connecting || !displayName.trim() || (devHost && !adminUrl.trim())}>
                     {connecting ? <Spinner className="h-4 w-4" /> : roles.includes("Provider") ? "Next: vehicle info" : "Enter Relay"}
                   </Button>
                 </div>
@@ -305,9 +312,9 @@ export function Onboarding() {
             )}
           </AnimatePresence>
 
-          {import.meta.env.DEV && step === "roles" && <DevIdentityPicker adminUrl={adminUrl} onPick={handleAdopt} disabled={connecting} />}
+          {devHost && step === "roles" && <DevIdentityPicker adminUrl={adminUrl} onPick={handleAdopt} disabled={connecting} />}
 
-          {hasStoredIdentity() && step === "roles" && (
+          {devHost && hasStoredIdentity() && step === "roles" && (
             <div className="mt-4">
               <button onClick={handleReconnect} disabled={connecting} className="w-full text-center text-xs font-semibold text-relay-600 hover:underline">
                 {connecting ? "Reconnecting..." : "Continue as your existing identity"}

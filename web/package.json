@@ -9,6 +9,7 @@
     "dev:reset": "node scripts/dev-conductor.mjs --reset --seed",
     "backend": "node scripts/backend.mjs",
     "seed": "node scripts/seed.mjs",
+    "package": "node scripts/package.mjs",
     "typegen": "cargo run --quiet --manifest-path ../tools/typegen/Cargo.toml",
     "typegen:check": "cargo run --quiet --manifest-path ../tools/typegen/Cargo.toml -- --check",
     "build": "tsc -b && vite build",

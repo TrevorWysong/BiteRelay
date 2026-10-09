@@ -2,6 +2,8 @@
 
 All commands run from `web/`.
 
+This is the development setup: the UI in a browser, provisioning identities on a shared dev conductor. Production runs the UI inside a Holochain runtime instead; see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 | Command | What it does |
 | --- | --- |
 | `npm run dev:conductor` | Starts the persistent dev conductor at `ws://localhost:8870`. Its data lives in `.dev/conductor/` and **survives restarts**. Logs: `.dev/conductor.log`. |
@@ -10,6 +12,7 @@ All commands run from `web/`.
 | `npm run typegen` | Regenerates `src/holochain/generated.ts` from the Rust types (`tools/typegen`). `npm run backend` runs it for you; CI fails if it's stale. |
 | `npm run seed` | Creates a demo world on an empty conductor: three stores (two with the same owner), a driver, customers, and orders in every state. `-- --at lat,lon` seeds around any location. |
 | `npm run dev:reset` | Wipes all dev data, restarts the conductor on the current build, and seeds it. |
+| `npm run package -- --network-seed <name>` | Builds the production `deploy/relay.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
 
 ## What `npm run backend` does to a running conductor
 
