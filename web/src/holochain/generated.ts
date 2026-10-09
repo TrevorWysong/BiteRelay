@@ -334,9 +334,17 @@ export type DispatchLocalSignal =
    */
   | { OrderPlaced: ActionHash }
   /**
-   * An order this agent is party to changed -- re-read it.
+   * An order this agent is party to changed -- what it changed to, and
+   * which side of it this agent is on, so the app can say so without
+   * re-reading it.
    */
-  | { OrderUpdated: ActionHash }
+  | {
+      OrderUpdated: {
+        order_hash: ActionHash;
+        change: OrderChange;
+        role: OrderRole;
+      };
+    }
   | { NewOrderNearby: ActionHash }
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }
@@ -668,6 +676,23 @@ export interface OpeningPeriod {
 }
 
 /**
+ * What an order changed to.
+ */
+export type OrderChange =
+  | {
+      Delivery: {
+        status: DeliveryStatus;
+        cancellation: Cancellation | null;
+      };
+    }
+  | {
+      Pickup: {
+        status: PickupStatus;
+        cancellation: Cancellation | null;
+      };
+    };
+
+/**
  * One line of an order: an item, the exact version of it that was priced
  * (the item as the customer saw it -- validation reads its price from
  * there), and how many.
@@ -684,6 +709,11 @@ export interface OrderLine {
   priced_version: ActionHash;
   quantity: number;
 }
+
+/**
+ * Which side of an order a signal's recipient is on.
+ */
+export type OrderRole = "Customer" | "Store" | "Driver";
 
 /**
  * One part of settling a completed order. Each is paid by its own payer

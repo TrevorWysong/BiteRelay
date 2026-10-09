@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators, waitForSignal } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
@@ -57,7 +57,11 @@ await runScenario(async (scenario) => {
   // --- A price change racing an honest order is honoured... ---
   await call(merchant, "catalog")("update_menu_item", { original_action: burgerV1, item: { ...burger, price_cents: 1200 } });
   await sync();
+  // The customer hears it, told what changed and as whom.
+  const told = waitForSignal(customer.appWs as never, (p) => "OrderUpdated" in p, 30_000);
   assert.equal(decodeEntry<{ status: string }>(await acceptOrder(merchant, order, all)).status, "Open");
+  const update = (await told)?.OrderUpdated;
+  assert.deepEqual([update?.role, update?.change], ["Customer", { Delivery: { status: "Open", cancellation: null } }], "the customer is signalled the change, as the customer");
   assert.equal((await call(driver, "dispatch")<HcRecord[]>("get_open_orders_near", dropoff_geohash)).length, 1, "drivers see it once it's accepted");
   console.log("[PASS] the store accepts an order placed just before its price changed, and only then do drivers see it");
 

@@ -18,6 +18,7 @@ import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
 import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
 import { HOST } from "../holochain/host";
+import { NotificationSettings } from "../components/NotificationSettings";
 
 /// One identity, several hats: ratings and stats are shown per role (your
 /// driving) and per store (each restaurant you run), never blended into
@@ -228,6 +229,7 @@ export function ProfilePage() {
       )}
 
       <motion.div variants={fadeSlideUp}>
+      <NotificationSettings runsStore={!!profile?.roles.includes("Merchant")} />
       <Card className="mb-4 p-4">
         <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Your identity</p>
         <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "N/A"}</p>

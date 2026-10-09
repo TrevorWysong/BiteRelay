@@ -77,6 +77,20 @@ export function usePolling(run: () => unknown, { pollMs, refreshOn, background =
   }, [enabled, pollMs, hasSignalFilter, restartKey, background]);
 }
 
+/// Calls `handler` with every conductor signal while mounted (and while
+/// `enabled`) -- for reacting to what a signal says, not just refreshing a
+/// read. The latest `handler` is always the one called.
+export function useLocalSignal(handler: (signal: LocalSignal) => void, enabled = true) {
+  const handlerRef = useRef(handler);
+  useLayoutEffect(() => {
+    handlerRef.current = handler;
+  });
+  useEffect(() => {
+    if (!enabled) return;
+    return onLocalSignal((signal) => handlerRef.current(signal));
+  }, [enabled]);
+}
+
 interface ResourceState<T> {
   key: string | null;
   data: T | undefined;
