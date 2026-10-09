@@ -3,42 +3,20 @@
 // right now. Everything else (cart, UI mode) is disposable; this is not --
 // losing it means losing the ability to reconnect as the same identity.
 import { create } from "zustand";
-import { connect, isConnected, myAgentPubKey } from "../holochain/client";
-import { provisionNewIdentity, reconnectIdentity } from "../holochain/admin";
+import { connectLauncher, isConnected, myAgentPubKey } from "../holochain/client";
+import { HOST } from "../holochain/host";
+import { forgetStoredIdentity, loadStoredIdentity } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
-import { bytesToBase64, base64ToBytes } from "../lib/base64";
 import { isArbitrator as checkIsArbitrator } from "../holochain/governance";
-import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
 import { describeError } from "../lib/errors";
-import { withTimeout } from "../lib/timeout";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
 
-const STORAGE_KEY = "relay.identity.v1";
-
-interface StoredIdentity {
-  adminUrl: string;
-  installedAppId: string;
-  agentPubKeyB64: string;
-  /// Absent on identities created before this existed, or on a
-  /// device/browser without a platform authenticator available at signup
-  /// time -- `reconnect()` simply skips the passkey gate for those, rather
-  /// than retroactively requiring something that was never set up.
-  credentialId?: string;
-}
-
-function loadStoredIdentity(): StoredIdentity | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as StoredIdentity;
-  } catch {
-    return null;
-  }
-}
-
-function saveStoredIdentity(id: StoredIdentity) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(id));
+/// The development host's identity code (Admin API, passkeys), loaded only
+/// where it exists -- see `holochain/host.ts`.
+async function devHost() {
+  if (!__DEV_HOST__) throw new Error("Relay runs inside the Relay app -- open it there.");
+  return import("../holochain/devHost");
 }
 
 const LOCATION_STORAGE_KEY = "relay.location.v1";
@@ -101,18 +79,24 @@ interface SessionState {
   /// every zome call downstream just wants a GeoPoint.
   location: GeoPoint;
 
+  /// Whether there's an identity to reconnect as: always, in a launcher
+  /// (it's the launcher's agent); in development, one this browser
+  /// remembers.
   hasStoredIdentity: () => boolean;
+  /// Connects as this app's agent and loads its profile -- which may not
+  /// exist yet (a first launch), leaving onboarding to create it.
   reconnect: () => Promise<void>;
+  /// Creates this agent's profile. In development it first provisions a
+  /// new identity on the node at `devAdminUrl`.
   createIdentity: (
-    adminUrl: string,
     displayName: string,
     roles: RoleTag[],
     location: GeoPoint,
     extras?: { bio?: string; avatarDataUri?: string; phone?: string },
+    devAdminUrl?: string,
   ) => Promise<void>;
-  /// Signs this browser in as an identity that already exists on the node
-  /// (dev-only: the onboarding picker for seeded identities). No passkey is
-  /// registered for it -- those are per-device, set up at creation.
+  /// Development only: signs this browser in as an identity that already
+  /// exists on the node (the onboarding picker for seeded people).
   adoptIdentity: (adminUrl: string, installedAppId: string, agentPubKey: Uint8Array) => Promise<void>;
   setMode: (mode: Mode) => void;
   setLocation: (location: GeoPoint) => void;
@@ -131,43 +115,15 @@ export const useSession = create<SessionState>((set, get) => ({
   mode: "customer",
   location: loadStoredLocation() ?? { lat: 27.7676, lon: -82.6403 }, // St. Petersburg, FL -- matches the backend test suite's own default, used only when nothing's been saved yet
 
-  hasStoredIdentity: () => loadStoredIdentity() !== null,
+  hasStoredIdentity: () => HOST === "launcher" || loadStoredIdentity() !== null,
 
   reconnect: async () => {
-    const stored = loadStoredIdentity();
-    if (!stored) throw new Error("no stored identity to reconnect");
     set({ status: "connecting", error: null });
     try {
-      // Gate *before* touching the admin API at all -- a cancelled/failed
-      // passkey check should never even attempt to reconnect the identity.
-      // Tagged distinctly so callers that auto-retry (App.tsx's bootstrap)
-      // can tell this apart from a transient infra failure -- a Touch
-      // ID/Windows Hello prompt is user-interactive and can itself take up
-      // to a minute (see webauthn.ts's own ceremony timeout), so blindly
-      // retrying it 2-3 more times on failure means up to several more
-      // minutes of prompts stacking up, which reads as the page freezing,
-      // not as a helpful retry.
-      if (stored.credentialId) {
-        try {
-          // A backstop to webauthn.ts's abort signal, which Safari can
-          // ignore -- leaving the page frozen on the prompt.
-          await withTimeout(verifyPasskey(stored.credentialId), 30000, "Sign-in prompt timed out");
-        } catch (err) {
-          const tagged = new Error(describeError(err));
-          tagged.name = "PasskeyError";
-          throw tagged;
-        }
-      }
-      // Same backstop for the rest of the sequence -- none of these admin
-      // API/zome calls have their own timeout at all, so a conductor that
-      // genuinely stops responding (vs. just being slow) would otherwise
-      // hang this forever too, with no way back to the error UI.
-      const agentPubKey = base64ToBytes(stored.agentPubKeyB64);
-      const identity = await withTimeout(reconnectIdentity(stored.adminUrl, stored.installedAppId, agentPubKey), 30000, "Reconnecting to your local node timed out");
-      await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
-      // One call, not getProfileForAgent *then* fetchProfile (which just
-      // calls getProfileForAgent again internally) -- decode locally
-      // instead of paying for the same zome call twice every reconnect.
+      let hasDeviceLock = false;
+      if (HOST === "launcher") await connectLauncher();
+      else hasDeviceLock = await (await devHost()).reconnectStoredIdentity();
+      // One call: decode the record here rather than fetching it twice.
       const profileRecord = await getProfileForAgent(myAgentPubKey());
       const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
       const arbitrator = await checkIsArbitrator(myAgentPubKey());
@@ -181,7 +137,7 @@ export const useSession = create<SessionState>((set, get) => ({
         // with the customer nav.
         mode: profile ? primaryModeForRoles(profile.roles) : "customer",
         isArbitrator: arbitrator,
-        hasDeviceLock: !!stored.credentialId,
+        hasDeviceLock,
       });
     } catch (err) {
       set({ status: "error", error: describeError(err) });
@@ -189,53 +145,38 @@ export const useSession = create<SessionState>((set, get) => ({
     }
   },
 
-  createIdentity: async (adminUrl, displayName, roles, location, extras) => {
+  createIdentity: async (displayName, roles, location, extras, devAdminUrl) => {
     saveStoredLocation(location);
     set({ status: "connecting", error: null, location });
     try {
-      const installedAppId = `relay-${crypto.randomUUID()}`;
-      const identity = await provisionNewIdentity(adminUrl, installedAppId);
-      await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
+      // A launcher already runs this app as its agent; in development, a
+      // new identity is provisioned on the node first.
+      let devIdentity: { installedAppId: string; agentPubKey: Uint8Array } | null = null;
+      if (HOST === "launcher") {
+        if (!isConnected()) await connectLauncher();
+      } else {
+        devIdentity = await (await devHost()).provisionAndConnect(devAdminUrl ?? "");
+      }
 
-      const now = Date.now() * 1000;
       const profileRecord = await createProfile({
         display_name: displayName,
         roles,
-        created_at: now,
+        created_at: Date.now() * 1000,
         bio: extras?.bio,
         avatar_data_uri: extras?.avatarDataUri,
         phone: extras?.phone,
       });
-      // createProfile already returned the record -- no need for a second
-      // get_profile_for_agent zome call just to read back what was sent.
       const profile = decodeEntry<Profile>(profileRecord);
       const arbitrator = await checkIsArbitrator(myAgentPubKey());
-
-      // Best-effort: a device without a platform authenticator (or a user
-      // who cancels) still gets a fully working identity, just without the
-      // reconnect gate -- this must never block onboarding itself. The
-      // explicit timeout matters here as much as in reconnect() -- without
-      // it, the same Safari AbortSignal unreliability would hang onboarding
-      // itself, not just a later reconnect.
-      let credentialId: string | undefined;
-      if (isWebAuthnAvailable()) {
-        try {
-          credentialId = await withTimeout(registerPasskey(displayName, identity.agentPubKey), 20000, "Passkey setup timed out");
-        } catch {
-          credentialId = undefined;
-        }
-      }
-
-      saveStoredIdentity({ adminUrl, installedAppId, agentPubKeyB64: bytesToBase64(identity.agentPubKey), credentialId });
-      const initialMode: Mode = primaryModeForRoles(roles);
+      const hasDeviceLock = devIdentity ? await (await devHost()).rememberIdentity(devAdminUrl ?? "", devIdentity.installedAppId, devIdentity.agentPubKey, displayName) : false;
       set({
         status: "connected",
         agentPubKey: myAgentPubKey(),
         profile,
         profileActionHash: actionHash(profileRecord),
-        mode: initialMode,
+        mode: primaryModeForRoles(roles),
         isArbitrator: arbitrator,
-        hasDeviceLock: !!credentialId,
+        hasDeviceLock,
       });
     } catch (err) {
       set({ status: "error", error: describeError(err) });
@@ -244,7 +185,7 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   adoptIdentity: async (adminUrl, installedAppId, agentPubKey) => {
-    saveStoredIdentity({ adminUrl, installedAppId, agentPubKeyB64: bytesToBase64(agentPubKey) });
+    (await devHost()).adoptIdentity(adminUrl, installedAppId, agentPubKey);
     await get().reconnect();
   },
 
@@ -261,8 +202,10 @@ export const useSession = create<SessionState>((set, get) => ({
     set({ profile, profileActionHash: profileRecord ? actionHash(profileRecord) : null });
   },
 
+  /// Development only: forgets this browser's identity. In a launcher the
+  /// identity is the app's own; there's nothing to sign out of.
   signOut: () => {
-    localStorage.removeItem(STORAGE_KEY);
+    forgetStoredIdentity();
     window.location.reload();
   },
 }));

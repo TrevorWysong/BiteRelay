@@ -1,0 +1,5 @@
+{
+  "arbitrators": ["uhCAk_replace_with_each_arbitrators_agent_key"],
+  "store_response_secs": 300,
+  "ledger_settle_secs": 3600
+}

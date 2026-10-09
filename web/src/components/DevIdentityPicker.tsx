@@ -2,7 +2,6 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, UserRound } from "lucide-react";
 import { encodeHashToBase64 } from "@holochain/client";
-import { listNodeIdentities } from "../holochain/admin";
 import { identityLabel } from "../lib/devNode";
 import { useResource } from "../lib/useResource";
 import { describeError } from "../lib/errors";
@@ -15,7 +14,12 @@ import { Spinner } from "./ui";
 /// picker is opened.
 export function DevIdentityPicker({ adminUrl, onPick, disabled }: { adminUrl: string; onPick: (installedAppId: string, agentPubKey: Uint8Array) => void; disabled: boolean }) {
   const [open, setOpen] = useState(false);
-  const { data: identities, error } = useResource(open && adminUrl ? `node-identities:${adminUrl}` : null, () => listNodeIdentities(adminUrl));
+  // The Admin API code loads only when the picker is opened (and only exists
+  // in dev builds -- see holochain/host.ts).
+  const { data: identities, error } = useResource(open && adminUrl ? `node-identities:${adminUrl}` : null, async () => {
+    if (!__DEV_HOST__) return [];
+    return (await import("../holochain/admin")).listNodeIdentities(adminUrl);
+  });
 
   return (
     <div className="mt-4 rounded-xl border border-dashed border-ink-200 dark:border-ink-700">

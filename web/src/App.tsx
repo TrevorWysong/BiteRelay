@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useSession } from "./store/session";
+import { HOST } from "./holochain/host";
 import { Spinner } from "./components/ui";
 import { AppShell } from "./components/AppShell";
 import { Onboarding } from "./routes/Onboarding";
@@ -95,7 +96,22 @@ function HomeForMode() {
   return <Navigate to={mode === "driver" ? "/driver" : mode === "merchant" ? "/merchant" : mode === "arbitrator" ? "/arbitrator" : "/customer"} replace />;
 }
 
+/// A production build opened in a plain browser: there's no conductor here
+/// to talk to -- Relay runs inside its own app (see holochain/host.ts).
+function NoHost() {
+  return (
+    <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-8 text-center text-white">
+      <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
+      <h1 className="text-xl font-black">Open Relay in the Relay app</h1>
+      <p className="max-w-sm text-sm text-white/80">
+        Relay has no servers: it runs on your own device, in the Relay app, which keeps your identity and data with you. This page can't reach it from a browser.
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
+  if (HOST === "none") return <NoHost />;
   return (
     <SessionBootstrap>
       <Routes>

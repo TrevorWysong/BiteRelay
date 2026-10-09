@@ -17,6 +17,7 @@ import { formatCents } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { describeError } from "../lib/errors";
 import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
+import { HOST } from "../holochain/host";
 
 /// One identity, several hats: ratings and stats are shown per role (your
 /// driving) and per store (each restaurant you run), never blended into
@@ -233,12 +234,15 @@ export function ProfilePage() {
         <p className="mt-2 text-xs text-ink-400">
           This is your real cryptographic identity. There's no account behind it on any server, and nobody but you holds the private key.
         </p>
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
-          <Fingerprint size={13} className={hasDeviceLock ? "text-presence-600" : "text-ink-300"} />
-          {hasDeviceLock
-            ? "Device lock enabled: reconnecting on this device requires your passkey (Face ID, Touch ID, or Windows Hello)."
-            : "Device lock not set up. This device has no passkey gate, so reconnecting here doesn't ask for one."}
-        </p>
+        {/* In the app, the identity is the app's own; these are the dev host's. */}
+        {HOST === "dev" && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
+            <Fingerprint size={13} className={hasDeviceLock ? "text-presence-600" : "text-ink-300"} />
+            {hasDeviceLock
+              ? "Device lock enabled: reconnecting on this device requires your passkey (Face ID, Touch ID, or Windows Hello)."
+              : "Device lock not set up. This device has no passkey gate, so reconnecting here doesn't ask for one."}
+          </p>
+        )}
       </Card>
       </motion.div>
 
@@ -310,11 +314,13 @@ export function ProfilePage() {
         </motion.div>
       )}
 
-      <motion.div variants={fadeSlideUp}>
-        <Button variant="ghost" className="w-full" onClick={signOut}>
-          <LogOut size={16} /> Disconnect this identity
-        </Button>
-      </motion.div>
+      {HOST === "dev" && (
+        <motion.div variants={fadeSlideUp}>
+          <Button variant="ghost" className="w-full" onClick={signOut}>
+            <LogOut size={16} /> Disconnect this identity
+          </Button>
+        </motion.div>
+      )}
     </motion.div>
   );
 }
