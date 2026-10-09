@@ -171,8 +171,13 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
         if picked_up && author == &requester {
             facts.receipt = Some(version.action_address().clone());
         }
+        // The update that cancelled the order -- not a later one that only
+        // carries its cancellation forward (raising a cancellation dispute
+        // does), which would read as cancelled from "already cancelled".
         if let (Some(cancellation), Some(stage)) = (cancellation, stage) {
-            facts.cancellation = Some((version.action_address().clone(), cancellation, stage));
+            if stage != Stage::Other {
+                facts.cancellation = Some((version.action_address().clone(), cancellation, stage));
+            }
         }
     }
     if delivery.is_some() {

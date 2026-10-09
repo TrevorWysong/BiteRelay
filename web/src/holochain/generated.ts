@@ -45,6 +45,15 @@ export interface AddressDetails {
 }
 
 /**
+ * A secret sealed to one arbitrator on the DNA's roster -- evidence only
+ * arbitrators can open: a delivery PIN, a photo at the door.
+ */
+export interface ArbitratorSeal {
+  arbitrator: AgentPubKey;
+  sealed: XSalsa20Poly1305EncryptedData;
+}
+
+/**
  * A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
  * this feature's scarcity resolution (see the architecture doc's own
  * reasoning: a scarce resource on a DHT with no distributed locks is
@@ -316,6 +325,26 @@ export interface DeliveryOrder {
    * their update that picks the order up.
    */
   collateral_hold: ActionHash | null;
+  /**
+   * The delivery PIN's commitment, `sha256(pin || salt)` -- 32 bytes, or
+   * empty for none. Public, and useless without the salt (see
+   * `dispute_types::PinSecret`).
+   */
+  pin_commitment: Uint8Array;
+  /**
+   * The PIN and salt, sealed to the customer -- what their app shows.
+   */
+  sealed_pin: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * The PIN and salt, sealed to each arbitrator on the roster, to check
+   * a driver's word against in a dispute.
+   */
+  pin_for_arbitrators: ArbitratorSeal[];
+  /**
+   * Whether the driver must collect the PIN at the door -- set by the
+   * store when it accepts the order (its `PinPolicy`), never changed.
+   */
+  pin_required: boolean;
 }
 
 export type DeliveryStatus =
@@ -398,7 +427,12 @@ export type DispatchLocalSignal =
   /**
    * See `pickup::mark_ready_for_pickup` -- merchant -> requester only.
    */
-  | { PickupReady: ActionHash };
+  | { PickupReady: ActionHash }
+  /**
+   * The driver says this order reached the customer: confirm it, or
+   * report a problem, within the window.
+   */
+  | { HandoffRecorded: ActionHash };
 
 /**
  * A dispute case, either over whether a delivery was actually completed
@@ -455,6 +489,13 @@ export type DisputeReason =
    * left to gate here, only a ledger forfeiture.
    */
   | "UnjustCancellation"
+  /**
+   * Raised by the driver when a delivery they've recorded handing over
+   * hasn't been confirmed by the customer within the network's window
+   * (`relay_governance::confirm_window`) -- with their sealed evidence
+   * shared to the arbitrators. Unanswered, it's the provider's.
+   */
+  | "NotConfirmed"
   | "Other";
 
 export type DisputeStatus = "Open" | "Resolved";
@@ -484,6 +525,16 @@ export interface DropoffDetails {
  * choice drivers act on differently (knock-and-wait vs. leave-and-go).
  */
 export type DropoffPreference = "LeaveAtDoor" | "HandToMe" | "MeetOutside";
+
+/**
+ * A handoff's evidence (`HandoffEvidence`) shared with the arbitrators by
+ * one of its two parties, for a dispute -- each seal opens to it for one
+ * arbitrator. Nobody else can read it.
+ */
+export interface EvidenceShare {
+  leg: ActionHash;
+  seals: ArbitratorSeal[];
+}
 
 export interface GeoPoint {
   lat: number;
@@ -675,6 +726,13 @@ export interface Leg {
    * party's `ReceiptAttestation`.
    */
   sealed_evidence: XSalsa20Poly1305EncryptedData;
+  /**
+   * The PIN the customer gave the driver at the door, sealed to each
+   * arbitrator -- empty if none was collected. Required on a drop-off
+   * whose order says `pin_required`. Only an arbitrator can open it, to
+   * check against the PIN the customer committed to at checkout.
+   */
+  sealed_pin_for_arbitrators: ArbitratorSeal[];
 }
 
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
@@ -739,6 +797,13 @@ export interface MerchantCatalog {
    * waiting for someone to tap Accept.
    */
   auto_accept_orders: boolean;
+  /**
+   * When this store's deliveries must be handed over against the
+   * customer's PIN -- see `PinPolicy`. A store that waives it carries the
+   * risk of a "never arrived" claim with only the driver's photo to
+   * answer it, like a parcel left without a signature.
+   */
+  pin_policy: PinPolicy;
   /**
    * How far from `location` this merchant is willing to deliver, in
    * kilometers -- a per-merchant business rule, not a single app-wide
@@ -918,6 +983,56 @@ export interface PickupOrder {
  * no leg attestation here at all, just the requester and the merchant.
  */
 export type PickupStatus = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "PickedUp" | "Cancelled" | "Disputed";
+
+/**
+ * When a store's deliveries are handed over against the customer's PIN --
+ * proof only the customer (or someone with their phone) could give that the
+ * food reached them.
+ */
+export type PinPolicy =
+  /**
+   * Never: drivers may still ask for it.
+   */
+  | "Off"
+  /**
+   * For customers who've raised or lost disputes before.
+   */
+  | "CustomersWithHistory"
+  | "Always";
+
+/**
+ * A delivery's PIN, as the customer seals it at checkout -- to
+ * themselves, to show at the door, and to the arbitrators, to check a
+ * driver's word against. The order publishes only a commitment to it
+ * (`sha256(pin || salt)`); without `salt`, which only the customer and
+ * the arbitrators hold, nobody can test PINs against that commitment.
+ */
+export interface PinSecret {
+  pin: string;
+  salt: Uint8Array;
+}
+
+/**
+ * What an arbitrator finds checking a delivery's PIN.
+ */
+export type PinVerdict =
+  /**
+   * The order has no PIN, or the driver didn't collect it.
+   */
+  | "NotCollected"
+  /**
+   * The driver's PIN is the customer's: the customer was there.
+   */
+  | "Matches"
+  /**
+   * The driver's PIN isn't the customer's.
+   */
+  | "Mismatch"
+  /**
+   * What the customer sealed at checkout doesn't match what they
+   * committed to -- they tampered with their own PIN.
+   */
+  | "CustomerTampered";
 
 /**
  * One part of a hold, collected or waived on its own.

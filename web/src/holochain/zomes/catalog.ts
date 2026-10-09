@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, OpeningPeriod, PinPolicy, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -264,4 +264,9 @@ export async function listPendingClaimsForMerchant(catalogRef: ActionHash): Prom
 
 export async function confirmClaim(claimRef: ActionHash): Promise<HcRecord> {
   return callZome("catalog", "confirm_claim", claimRef);
+}
+
+/// When the store's deliveries must be handed over against the customer's PIN.
+export async function setPinPolicy(originalAction: ActionHash, pinPolicy: PinPolicy): Promise<HcRecord> {
+  return callZome("catalog", "set_pin_policy", { original_action: originalAction, pin_policy: pinPolicy });
 }

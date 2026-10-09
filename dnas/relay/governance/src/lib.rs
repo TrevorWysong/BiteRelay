@@ -48,6 +48,11 @@ pub struct RelayDnaProperties {
     /// `credit_limit_cents`). Unset, it's a development allowance.
     #[serde(default)]
     pub credit_limit_cents: Option<u64>,
+    /// How long a customer has to confirm a delivery, or report a problem
+    /// with it, once the driver says it's handed over -- see
+    /// `confirm_window`. Defaults to a day; tests set it low.
+    #[serde(default)]
+    pub confirm_window_secs: Option<u64>,
 }
 
 const DEFAULT_STORE_RESPONSE_SECS: u64 = 300;
@@ -63,6 +68,29 @@ const DEVELOPMENT_CREDIT_LIMIT_CENTS: u64 = 1_000_000;
 pub fn store_response_window() -> core::time::Duration {
     let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.store_response_secs).unwrap_or(DEFAULT_STORE_RESPONSE_SECS);
     core::time::Duration::from_secs(secs)
+}
+
+const DEFAULT_CONFIRM_WINDOW_SECS: u64 = 86_400;
+
+/// How long a customer has to confirm a delivery or report a problem, once
+/// the driver records handing it over. After that, an unconfirmed delivery
+/// goes to the arbitrators with the driver's evidence.
+pub fn confirm_window() -> core::time::Duration {
+    let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.confirm_window_secs).unwrap_or(DEFAULT_CONFIRM_WINDOW_SECS);
+    core::time::Duration::from_secs(secs)
+}
+
+/// The same, for a delivery handed over against the customer's PIN: the
+/// customer was there, so an hour is plenty (or the network's window, if
+/// shorter).
+pub fn pin_confirm_window() -> core::time::Duration {
+    confirm_window().min(core::time::Duration::from_secs(3_600))
+}
+
+/// The arbitrators on the DNA's roster, as key strings -- empty for a DNA
+/// without one.
+pub fn arbitrator_roster() -> Vec<String> {
+    RelayDnaProperties::try_from_dna_properties().map(|p| p.arbitrators).unwrap_or_default()
 }
 
 /// How far below zero a balance may go -- see `credit_limit_cents`.

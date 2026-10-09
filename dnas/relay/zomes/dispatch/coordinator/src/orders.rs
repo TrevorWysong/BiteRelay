@@ -221,6 +221,9 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     }
 
     let customer_name = my_name()?;
+    // Every delivery gets a PIN; whether the driver must collect it is the
+    // store's call, when it accepts (see `pin`).
+    let pin = crate::pin::new_pin()?;
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: merchant.clone(),
@@ -251,6 +254,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         driver_pay_hold: None,
         subsidy_hold: None,
         collateral_hold: None,
+        pin_commitment: pin.commitment,
+        sealed_pin: Some(pin.sealed_pin),
+        pin_for_arbitrators: pin.for_arbitrators,
+        pin_required: false,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The food is paid for up front, in this same commit: the store can't
@@ -322,6 +329,7 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
     let original = original_action_of(order_original_action.clone())?;
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
+    order.pin_required = crate::pin::pin_required(current_catalog(&order.catalog_ref)?.pin_policy, &order)?;
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
@@ -401,6 +409,14 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
 #[hdk_extern]
 pub fn get_store_response_secs(_: ()) -> ExternResult<u64> {
     Ok(relay_governance::store_response_window().as_secs())
+}
+
+/// How long a customer has to confirm a delivery or report a problem once
+/// the driver records it, in seconds -- with and without the PIN collected
+/// (see `relay_governance::confirm_window`).
+#[hdk_extern]
+pub fn get_confirm_windows(_: ()) -> ExternResult<(u64, u64)> {
+    Ok((relay_governance::confirm_window().as_secs(), relay_governance::pin_confirm_window().as_secs()))
 }
 
 /// The driver picking the order up from the store: they set aside their

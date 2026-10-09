@@ -27,6 +27,7 @@
 //! - `store_queue` -- each store's active queue and day-bucketed history,
 //!   shared by both verticals.
 
+mod arbitration;
 mod bids;
 mod chat;
 mod claims;
@@ -35,6 +36,7 @@ mod matching;
 mod order_queues;
 mod orders;
 mod parties;
+mod pin;
 mod pickup;
 mod pricing;
 mod receipts;
@@ -45,6 +47,7 @@ mod stores;
 mod tracking;
 mod upkeep;
 
+pub use arbitration::*;
 pub use bids::*;
 pub use chat::*;
 pub use disputes::*;
@@ -54,6 +57,7 @@ pub use orders::*;
 pub use pickup::*;
 pub use pricing::OrderItemInput;
 pub use recurring::*;
+pub use pin::*;
 pub use settlement::*;
 pub use signals::*;
 pub use tracking::*;

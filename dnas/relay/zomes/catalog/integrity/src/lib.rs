@@ -15,7 +15,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS, DEFAULT_PREP_MINUTES, MAX_OPENING_PERIODS, MAX_PREP_MINUTES};
+pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PinPolicy, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS, DEFAULT_PREP_MINUTES, MAX_OPENING_PERIODS, MAX_PREP_MINUTES};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths

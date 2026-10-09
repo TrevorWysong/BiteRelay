@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cancelOrder, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, getConfirmWindows, getMyDeliveryPin, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
 import { confirmDeliveryReceived, HandoffNotYetHere } from "../../lib/handoffs";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
@@ -17,7 +17,7 @@ import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { WaitingForStore } from "../../components/WaitingForStore";
-import { formatCents, formatEta, shortAgentId, formatClockTime } from "../../lib/format";
+import { formatCents, formatEta, shortAgentId, formatClockTime, formatDeadline } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
@@ -111,16 +111,23 @@ export function OrderDetail() {
   // The drop-off photo can only appear once the order's picked up; polled
   // until the handoff leg is attested, then read once more on delivery.
   const photoStatus = order && (order.status === "PickedUp" || order.status === "Delivered") ? order.status : null;
-  const { data: dropoffPhoto = null } = useResource(
-    photoStatus && `order-photo:${hash}:${photoStatus}`,
+  const { data: dropoff = null } = useResource(
+    photoStatus && `order-dropoff:${hash}:${photoStatus}`,
     async () => {
-      const dropoff = (await getLegsForOrder(orderRef)).find((r) => decodeEntry<Leg>(r).kind === "CustomerHandoff");
-      if (!dropoff) return null;
+      const record = (await getLegsForOrder(orderRef)).find((r) => decodeEntry<Leg>(r).kind === "CustomerHandoff");
+      if (!record) return null;
       // Sealed to this customer; only they and the driver can open it.
-      return (await getHandoffEvidence(actionHash(dropoff)))?.photo_data_uri || null;
+      const evidence = await getHandoffEvidence(actionHash(record));
+      const pinCollected = decodeEntry<Leg>(record).sealed_pin_for_arbitrators.length > 0;
+      return { at: timestampOf(record), photo: evidence?.photo_data_uri || null, pinCollected };
     },
-    { pollMs: photoStatus === "PickedUp" ? POLL.signalled : undefined, refreshOn: isOrderSignal },
+    { pollMs: photoStatus === "PickedUp" ? POLL.signalled : undefined, refreshOn: (s) => "HandoffRecorded" in s || isOrderSignal(s) },
   );
+  const dropoffPhoto = dropoff?.photo ?? null;
+  const { data: confirmWindows } = useResource(dropoff ? "confirm-windows" : null, getConfirmWindows);
+  // The customer's PIN, while a driver's on the way: read out at the door.
+  const awaitingDriver = order && ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"].includes(order.status) && !dropoff;
+  const { data: deliveryPin = null } = useResource(awaitingDriver ? `delivery-pin:${hash}` : null, () => getMyDeliveryPin(orderRef));
   // What this customer already rated on this order, read back from the
   // conductor rather than kept in memory -- otherwise a reload would offer
   // the rating form again and invite a duplicate.
@@ -266,7 +273,7 @@ export function OrderDetail() {
   // A cancellation is only worth disputing if a driver was involved and the
   // customer didn't cancel it themselves.
   const unfairCancellation = order.status === "Cancelled" && order.accepted_bid !== null && order.cancellation !== "ByCustomer" && order.cancellation !== "ByArbitrator";
-  const canDispute = order.status === "Delivered" || unfairCancellation;
+  const canDispute = order.status === "Delivered" || order.status === "PickedUp" || unfairCancellation;
 
   async function cancel() {
     setCancelling(true);
@@ -407,6 +414,16 @@ export function OrderDetail() {
         </motion.div>
       )}
 
+      {deliveryPin && (
+        <motion.div variants={fadeSlideUp} className="mt-4 rounded-2xl border border-ink-100 p-4 text-center dark:border-ink-800">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">Your delivery PIN</p>
+          <p className="mt-1 font-mono text-3xl font-black tracking-[0.3em] text-ink-900 dark:text-ink-50">{deliveryPin}</p>
+          <p className="mt-1 text-xs text-ink-400">
+            {order.pin_required ? "Your driver will ask for this at the door." : "Give this to your driver if they ask."} Only share it once you have your order.
+          </p>
+        </motion.div>
+      )}
+
       {order.status === "PickedUp" && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <div className="flex items-center gap-3">
@@ -419,10 +436,18 @@ export function OrderDetail() {
               Your driver has set aside {formatCents(order.order_total)}, the value of your food, until it reaches you.
             </p>
           )}
-          <p className="text-xs text-relay-700 dark:text-relay-300">
-            Your payment is held until you confirm you have your order; confirming releases it to the store and your driver. If
-            something's wrong, report a problem instead.
-          </p>
+          {dropoff ? (
+            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">
+              Your driver says your order was delivered at {formatClockTime(dropoff.at)}. Confirm you have it, or report a problem
+              {confirmWindows && ` by ${formatDeadline(dropoff.at + (dropoff.pinCollected ? confirmWindows[1] : confirmWindows[0]) * 1_000_000)}`}
+              {" "}-- after that, it goes to an arbitrator with your driver's evidence.
+            </p>
+          ) : (
+            <p className="text-xs text-relay-700 dark:text-relay-300">
+              Your payment is held until you confirm you have your order; confirming releases it to the store and your driver. If
+              something's wrong, report a problem instead.
+            </p>
+          )}
           <Button loading={completing} onClick={confirmReceipt}>
             Confirm receipt
           </Button>

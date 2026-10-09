@@ -56,6 +56,7 @@ const SOURCES: &[Source] = &[
     all("dnas/relay/zomes/ledger/types/src/lib.rs"),
     only("dnas/relay/zomes/ledger/coordinator/src/lib.rs", &["ShareView", "HoldView", "WaiverView"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/pin.rs", &["PinVerdict"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/receipts.rs", &["Receipt", "ReceiptLine", "ReceiptPayment"]),
     only("dnas/relay/zomes/reputation/coordinator/src/lib.rs", &["ReputationSummary", "RatingSummary"]),
     Source { path: "dnas/relay/zomes/dispatch/coordinator/src/signals.rs", only: Some(&["LocalSignal", "OrderChange", "OrderRole"]), rename: &[("LocalSignal", "DispatchLocalSignal")] },

@@ -18,6 +18,13 @@ pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target
                 "a leg may only be linked under its own order, by its author",
             )
         }
+        LinkTypes::LegToEvidenceShare => {
+            let Some(share) = decode::<EvidenceShare>(&record) else { return invalid("target is not an EvidenceShare") };
+            require(
+                base == &AnyLinkableHash::from(share.leg) && author == record.action().author(),
+                "shared evidence may only be linked under its own handoff, by whoever shared it",
+            )
+        }
         LinkTypes::LegToReceipt => {
             let Some(receipt) = decode::<ReceiptAttestation>(&record) else { return invalid("target is not a ReceiptAttestation") };
             require(

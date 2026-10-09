@@ -97,6 +97,29 @@ pub fn open<T: for<'de> Deserialize<'de> + std::fmt::Debug>(counterpart: &AgentP
     Ok(ExternIO(data.as_ref().to_vec()).decode().ok())
 }
 
+/// `value` sealed once to each arbitrator on `roster` (their keys as
+/// strings, as `relay_governance::arbitrator_roster` returns them) --
+/// evidence only arbitrators can open.
+pub fn seal_to_arbitrators<T: Serialize + std::fmt::Debug>(roster: &[String], value: &T) -> ExternResult<Vec<dispute_types::ArbitratorSeal>> {
+    roster
+        .iter()
+        .map(|key| {
+            let arbitrator: AgentPubKey = AgentPubKeyB64::from_b64_str(key).map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("bad arbitrator key: {e}"))))?.into();
+            Ok(dispute_types::ArbitratorSeal { sealed: seal(&arbitrator, value)?, arbitrator })
+        })
+        .collect()
+}
+
+/// The caller's own seal among `seals`, opened -- `None` if there isn't
+/// one, or it doesn't open. `sealer` is whoever sealed it.
+pub fn open_my_seal<T: for<'de> Deserialize<'de> + std::fmt::Debug>(seals: &[dispute_types::ArbitratorSeal], sealer: &AgentPubKey) -> ExternResult<Option<T>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    match seals.iter().find(|s| s.arbitrator == me) {
+        Some(mine) => open(sealer, &mine.sealed),
+        None => Ok(None),
+    }
+}
+
 /// The next page's `after` cursor, given the last link in this page.
 /// `LinkQuery.after` is inclusive (`>=`), so the cursor steps one
 /// microsecond past the last link. Two links in the same microsecond can

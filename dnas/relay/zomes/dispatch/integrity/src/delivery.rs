@@ -18,6 +18,9 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     if order.cancellation.is_some() || order.ready_by.is_some() || order.food_hold.is_some() || order.driver_pay_hold.is_some() || order.subsidy_hold.is_some() || order.collateral_hold.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order can't already be accepted, cancelled or picked up".into()));
     }
+    if let Some(reason) = check_new_pin(order) {
+        return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
     }
@@ -261,6 +264,12 @@ pub(crate) fn validate_order_transition(
         written_at: action_timestamp,
     };
     let store_accepting = prior.status == DeliveryStatus::Placed && order.status == DeliveryStatus::Open;
+    // Only the store, accepting the order, may require the PIN -- and only
+    // if the order has one.
+    let pin_ok = if store_accepting { !order.pin_required || !order.pin_commitment.is_empty() } else { prior.pin_required == order.pin_required };
+    if !pin_ok {
+        return Ok(ValidateCallbackResult::Invalid("pin_required is set once, by the store accepting an order that has a PIN".into()));
+    }
     if store_accepting && !update.within_response_window() {
         return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
     }
@@ -445,7 +454,10 @@ pub(crate) fn validate_order_transition(
         && prior.requested_delivery_time == order.requested_delivery_time
         && prior.promo_code_ref == order.promo_code_ref
         && prior.dropoff_preference == order.dropoff_preference
-        && prior.bag_claim_ref == order.bag_claim_ref;
+        && prior.bag_claim_ref == order.bag_claim_ref
+        && prior.pin_commitment == order.pin_commitment
+        && prior.sealed_pin == order.sealed_pin
+        && prior.pin_for_arbitrators == order.pin_for_arbitrators;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "an order update may only change status (and accepted_bid, on acceptance) -- every other field must stay the same".into(),
@@ -453,4 +465,20 @@ pub(crate) fn validate_order_transition(
     }
 
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// A new delivery's PIN: none at all, or a 32-byte commitment with the
+/// customer's own sealed copy and one seal for each arbitrator on the
+/// roster -- so an arbitrator can always check a driver's PIN against it.
+/// What's inside the seals can't be checked here; an arbitrator who finds
+/// them inconsistent with the commitment has caught the customer out.
+fn check_new_pin(order: &DeliveryOrder) -> Option<&'static str> {
+    if order.pin_required {
+        return Some("a new order's PIN is required (or not) by its store, when it accepts it");
+    }
+    match order.pin_commitment.len() {
+        0 if order.sealed_pin.is_none() && order.pin_for_arbitrators.is_empty() => None,
+        32 if order.sealed_pin.is_some() && dispute_types::seals_cover_roster(&order.pin_for_arbitrators, &relay_governance::arbitrator_roster()) => None,
+        _ => Some("a delivery PIN is a 32-byte commitment, the customer's sealed copy, and one seal for each arbitrator"),
+    }
 }

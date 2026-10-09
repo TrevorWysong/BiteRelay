@@ -20,6 +20,7 @@ import { formatCents, formatEta, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
+import { CustomerHistory } from "../../components/CustomerHistory";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 
@@ -314,6 +315,9 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropoffPhoto, setDropoffPhoto] = useState("");
+  // The customer's delivery PIN, read out at the door -- required when the
+  // store says so, and the driver's best proof of delivery either way.
+  const [pin, setPin] = useState("");
 
   useLocationBroadcast(row.hash, TRACKED_STATUSES.includes(row.order.status));
 
@@ -327,6 +331,9 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
         await pickUpOrder(row.hash);
       } else if (action === "await_dropoff") {
+        if (row.order.pin_required && pin.trim().length !== 6) {
+          throw new Error("This store requires the customer's 6-digit PIN. Ask them for it before marking the order delivered.");
+        }
         await recordLeg({
           order_ref: row.hash,
           sequence: 1,
@@ -334,6 +341,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           to: row.order.requester,
           geo_at_completion: location,
           photo_data_uri: dropoffPhoto,
+          pin: pin.trim() || null,
         });
       }
       await onAdvanced();
@@ -387,6 +395,17 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
           <div className="flex flex-col items-center gap-2">
             <p className="text-xs text-ink-400">Optional: photo at drop-off, for the customer's reassurance.</p>
             <PhotoInput value={dropoffPhoto} onChange={setDropoffPhoto} shape="banner" className="w-full" />
+            <label className="mt-2 block text-xs font-semibold text-ink-500">
+              {row.order.pin_required ? "Customer's delivery PIN (required)" : "Customer's delivery PIN (recommended)"}
+            </label>
+            <input
+              inputMode="numeric"
+              maxLength={6}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="6 digits"
+              className="mt-1 w-full rounded-xl border border-ink-200 px-3 py-2 text-sm dark:border-ink-700 dark:bg-ink-900"
+            />
             <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
               Confirm handoff to customer
             </Button>
@@ -443,9 +462,10 @@ function BidCard({
         {order.ready_by !== null && <span> · ready {formatClockTime(order.ready_by)}</span>}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
+      <CustomerHistory customer={order.requester} pinRequired={order.pin_required} />
       {/* The bid commits it; validation requires it at pickup. */}
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
-        <ShieldCheck size={12} /> You'll hold {formatCents(order.order_total)} collateral with the customer from pickup until delivery.
+        <ShieldCheck size={12} /> You'll set aside {formatCents(order.order_total)} collateral from pickup until delivery.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">

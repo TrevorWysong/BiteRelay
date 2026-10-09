@@ -13,6 +13,7 @@
 
 use hdi::prelude::*;
 use relay_types::GeoPoint;
+pub use dispute_types::ArbitratorSeal;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum LegKind {
@@ -42,6 +43,22 @@ pub struct Leg {
     /// Evidence, not part of what completes a delivery: that's the other
     /// party's `ReceiptAttestation`.
     pub sealed_evidence: XSalsa20Poly1305EncryptedData,
+    /// The PIN the customer gave the driver at the door, sealed to each
+    /// arbitrator -- empty if none was collected. Required on a drop-off
+    /// whose order says `pin_required`. Only an arbitrator can open it, to
+    /// check against the PIN the customer committed to at checkout.
+    #[serde(default)]
+    pub sealed_pin_for_arbitrators: Vec<ArbitratorSeal>,
+}
+
+/// A handoff's evidence (`HandoffEvidence`) shared with the arbitrators by
+/// one of its two parties, for a dispute -- each seal opens to it for one
+/// arbitrator. Nobody else can read it.
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct EvidenceShare {
+    pub leg: ActionHash,
+    pub seals: Vec<ArbitratorSeal>,
 }
 
 /// What a handoff's sealed evidence holds.

@@ -39,6 +39,7 @@ pub enum DisputeReasonWire {
     WrongOrIncompleteItems,
     ProviderAbandoned,
     UnjustCancellation,
+    NotConfirmed,
     Other,
 }
 

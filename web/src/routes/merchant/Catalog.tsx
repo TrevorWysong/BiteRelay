@@ -11,7 +11,7 @@ import { Skeleton } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";
 import { NewStoreForm } from "./NewStore";
-import { AutoAcceptCard, DeliverySubsidyCard, StoreDetailsCard } from "./catalog/StoreDetailsCard";
+import { AutoAcceptCard, DeliverySubsidyCard, PinPolicyCard, StoreDetailsCard } from "./catalog/StoreDetailsCard";
 import { HoursCard } from "./catalog/HoursCard";
 import { PromoCodesCard } from "./catalog/PromoCodesCard";
 import { MenuSection } from "./catalog/MenuSection";
@@ -110,6 +110,7 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
         </motion.div>
         <motion.div variants={fadeSlideUp}>
           <AutoAcceptCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          <PinPolicyCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
         </motion.div>
         <motion.div variants={fadeSlideUp}>
           <DeliverySubsidyCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />

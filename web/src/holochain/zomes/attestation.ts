@@ -13,6 +13,8 @@ export async function recordLeg(input: {
   to: AgentPubKey;
   geo_at_completion: GeoPoint;
   photo_data_uri?: string;
+  /// The customer's delivery PIN, if the driver asked for it.
+  pin?: string | null;
 }): Promise<HcRecord> {
   return callZome("attestation", "record_leg", { photo_data_uri: "", ...input });
 }
@@ -35,4 +37,9 @@ export async function getReceiptForLeg(leg: ActionHash): Promise<HcRecord | null
 /// so `null` for anyone else.
 export async function getHandoffEvidence(leg: ActionHash): Promise<HandoffEvidence | null> {
   return callZome("attestation", "get_handoff_evidence", leg);
+}
+
+/// A handoff's evidence as shared with the caller, an arbitrator.
+export async function getSharedEvidence(leg: ActionHash): Promise<HandoffEvidence | null> {
+  return callZome("attestation", "get_shared_evidence", leg);
 }
