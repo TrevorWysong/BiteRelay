@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -55,6 +55,12 @@ export async function acceptDeliveryOrder(orderOriginalAction: ActionHash, prepM
 /// The store turning a delivery down (or calling it off), and why.
 export async function declineOrder(orderOriginalAction: ActionHash, reason: DeclineReason): Promise<HcRecord> {
   return callZome("dispatch", "decline_order", { order_original_action: orderOriginalAction, reason });
+}
+
+/// The itemized receipt for one of the caller's completed orders, with the
+/// ledger transactions that paid it.
+export async function getOrderReceipt(orderOriginalAction: ActionHash): Promise<Receipt> {
+  return callZome("dispatch", "get_order_receipt", orderOriginalAction);
 }
 
 /// The customer withdrawing their delivery.
