@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -71,9 +71,9 @@ await runScenario(async (scenario) => {
   const pastOrderRef = actionHash(pastOrderRecord);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
-  const openedRecord = await dispatchOf(customer)<HcRecord>("open_scheduled_order", pastOrderRef);
-  const openedOrder = decodeEntry<{ status: string }>(openedRecord);
-  assert.equal(openedOrder.status, "Placed", "opening a due scheduled order places it with the store");
+  // The customer's conductor places a due order with its store by itself.
+  const opened = await retryUntil(async () => decodeEntry<{ status: string }>(await dispatchOf(customer)<HcRecord>("get_order", pastOrderRef)).status, (status) => status !== "Scheduled", 60, 1000);
+  assert.equal(opened, "Placed", "a due scheduled order is placed with the store, with no one calling open_scheduled_order");
   await dhtSync(both, customer.cells[0].cell_id[0]);
   assert.equal((await dispatchOf(driver)<HcRecord[]>("get_open_orders_near", geohash)).length, 0, "drivers don't see it until the store accepts it");
 

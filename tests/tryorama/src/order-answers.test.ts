@@ -29,8 +29,10 @@ await runScenario(async (scenario) => {
   const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
   const pickupState = async (p: typeof customer, ref: Uint8Array) => decodeEntry<OrderState>(await call(p, "dispatch")<HcRecord>("get_pickup_order", ref));
   const deliveryState = async (ref: Uint8Array) => decodeEntry<OrderState>(await call(customer, "dispatch")<HcRecord>("get_order", ref));
-  // The scheduler and gossip both take a moment; poll for up to a minute.
-  const eventually = <T>(read: () => Promise<T>, done: (value: T) => boolean) => retryUntil(read, done, 60, 1000);
+  // The scheduler and gossip both take a moment: poll for up to a minute,
+  // through reads that fail because a record hasn't arrived yet.
+  const eventually = <T>(read: () => Promise<T>, done: (value: T) => boolean, attempts = 60) =>
+    retryUntil(() => read().catch(() => undefined), (value): value is T => value !== undefined && done(value), attempts, 1000) as Promise<T>;
 
   const now = Date.now() * 1000;
   await call(customer, "profiles")("create_profile", { display_name: "Cara", roles: ["Requester"], created_at: now });
@@ -120,7 +122,7 @@ await runScenario(async (scenario) => {
   );
   await sync();
   // Nothing signals the store about a raw order -- its minute sweep finds it.
-  const refused = await retryUntil(() => pickupState(customer, pinned), (o) => o.status !== "Placed", 120, 1000);
+  const refused = await eventually(() => pickupState(customer, pinned), (o) => o.status !== "Placed", 120);
   assert.deepEqual(refused.cancellation, { ByStore: "OutdatedPrices" });
   console.log("[PASS] an auto-accepting store declines an order priced from an outdated menu, saying so");
 
