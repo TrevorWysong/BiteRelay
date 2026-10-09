@@ -46,6 +46,7 @@ const SOURCES: &[Source] = &[
     all("dnas/relay/types/src/lib.rs"),
     all("dnas/relay/zomes/attestation/types/src/lib.rs"),
     all("dnas/relay/zomes/catalog/types/src/lib.rs"),
+    only("dnas/relay/zomes/catalog/types/src/hours.rs", &["OpeningPeriod"]),
     all("dnas/relay/zomes/dispatch/types/src/lib.rs"),
     all("dnas/relay/zomes/dispatch/types/src/settlement.rs"),
     all("dnas/relay/zomes/dispute/types/src/lib.rs"),

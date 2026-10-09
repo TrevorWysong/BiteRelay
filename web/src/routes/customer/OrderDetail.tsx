@@ -16,7 +16,7 @@ import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { LiveMap } from "../../components/LiveMap";
 import { WaitingForStore } from "../../components/WaitingForStore";
-import { formatCents, formatEta, shortAgentId } from "../../lib/format";
+import { formatCents, formatEta, shortAgentId, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
@@ -303,6 +303,11 @@ export function OrderDetail() {
       <motion.div variants={fadeSlideUp}>
         <Card className="p-4">
           <OrderStatusTimeline status={order.status} cancellation={order.cancellation} />
+          {order.ready_by !== null && ["Open", "BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant"].includes(order.status) && (
+            <p className="mt-3 border-t border-ink-100 dark:border-ink-800 pt-3 text-xs text-ink-500">
+              The store expects it ready by <span className="font-semibold text-ink-900 dark:text-ink-50">{formatClockTime(order.ready_by)}</span>.
+            </p>
+          )}
         </Card>
       </motion.div>
 

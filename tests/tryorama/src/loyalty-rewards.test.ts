@@ -82,7 +82,7 @@ await runScenario(async (scenario) => {
   );
   const first = actionHash(await dispatchOf(customer)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: catalogRef, items: [{ item_ref: menuItemRef, quantity: 1 }], order_total: 1000 }));
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await dispatchOf(merchant)("confirm_pickup_prep", first);
+  await dispatchOf(merchant)("accept_pickup_order", { order_original_action: first });
   await dispatchOf(merchant)("mark_ready_for_pickup", first);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("complete_pickup", first);

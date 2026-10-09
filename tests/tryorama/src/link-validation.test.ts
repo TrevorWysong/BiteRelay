@@ -39,7 +39,7 @@ await runScenario(async (scenario) => {
   const placePickup = async () =>
     actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1000 }));
   const completePickup = async (order: Uint8Array) => {
-    await call(merchant, "dispatch")("confirm_pickup_prep", order);
+    await call(merchant, "dispatch")("accept_pickup_order", { order_original_action: order });
     await call(merchant, "dispatch")("mark_ready_for_pickup", order);
     await sync();
     await call(customer, "dispatch")("complete_pickup", order);

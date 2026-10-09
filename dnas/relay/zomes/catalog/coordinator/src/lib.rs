@@ -48,12 +48,25 @@ pub struct PublishCatalogInput {
     pub address_state: String,
     #[serde(default)]
     pub address_zip: String,
+    /// See `MerchantCatalog::weekly_hours`.
     #[serde(default)]
-    pub hours_open: String,
-    #[serde(default)]
-    pub hours_close: String,
+    pub weekly_hours: Vec<OpeningPeriod>,
+    /// The merchant's IANA time zone -- the app sends the device's; UTC if
+    /// left out.
+    #[serde(default = "utc")]
+    pub time_zone: String,
+    #[serde(default = "default_prep_minutes")]
+    pub prep_minutes: u16,
     #[serde(default = "default_max_delivery_radius_km")]
     pub max_delivery_radius_km: f64,
+}
+
+fn utc() -> String {
+    "UTC".into()
+}
+
+fn default_prep_minutes() -> u16 {
+    DEFAULT_PREP_MINUTES
 }
 
 fn default_max_delivery_radius_km() -> f64 {
@@ -117,8 +130,9 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         address_city: input.address_city,
         address_state: input.address_state,
         address_zip: input.address_zip,
-        hours_open: input.hours_open,
-        hours_close: input.hours_close,
+        weekly_hours: input.weekly_hours,
+        time_zone: input.time_zone,
+        prep_minutes: input.prep_minutes,
         delivery_subsidy_percent: 50,
         max_delivery_radius_km: input.max_delivery_radius_km,
         dietary_tags: Vec::new(),
@@ -188,8 +202,11 @@ pub struct UpdateCatalogDetailsInput {
     pub address_city: String,
     pub address_state: String,
     pub address_zip: String,
-    pub hours_open: String,
-    pub hours_close: String,
+    /// See `MerchantCatalog::weekly_hours`.
+    pub weekly_hours: Vec<OpeningPeriod>,
+    /// The merchant's IANA time zone, from their device.
+    pub time_zone: String,
+    pub prep_minutes: u16,
     pub max_delivery_radius_km: f64,
 }
 
@@ -204,8 +221,9 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
     catalog.address_city = input.address_city;
     catalog.address_state = input.address_state;
     catalog.address_zip = input.address_zip;
-    catalog.hours_open = input.hours_open;
-    catalog.hours_close = input.hours_close;
+    catalog.weekly_hours = input.weekly_hours;
+    catalog.time_zone = input.time_zone;
+    catalog.prep_minutes = input.prep_minutes;
     catalog.max_delivery_radius_km = input.max_delivery_radius_km;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?

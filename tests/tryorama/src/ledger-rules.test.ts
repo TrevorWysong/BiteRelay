@@ -25,7 +25,7 @@ await runScenario(async (scenario) => {
   // One completed pickup: the customer owes the store 700.
   const order = actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity: 1 }], order_total: 700 }));
   await sync();
-  await call(merchant, "dispatch")("confirm_pickup_prep", order);
+  await call(merchant, "dispatch")("accept_pickup_order", { order_original_action: order });
   await call(merchant, "dispatch")("mark_ready_for_pickup", order);
   await sync();
   const completed = actionHash(await call(customer, "dispatch")<HcRecord>("complete_pickup", order));

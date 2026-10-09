@@ -17,7 +17,7 @@ import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { PhotoInput } from "../../components/PhotoInput";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
-import { formatCents, formatEta } from "../../lib/format";
+import { formatCents, formatEta, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { usePolling, useResource } from "../../lib/useResource";
@@ -376,6 +376,9 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   return (
     <Card className="border-2 border-relay-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
+      {row.order.ready_by !== null && (row.order.status === "BidAccepted" || row.order.status === "MerchantConfirmed" || row.order.status === "DriverEnRouteToMerchant") && (
+        <p className="mt-2 text-xs text-ink-500">Food ready at the store by {formatClockTime(row.order.ready_by)}.</p>
+      )}
       <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
       {row.dropoff?.notes && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
@@ -465,6 +468,7 @@ function BidCard({
       )}
       <p className="mt-1 text-xs text-ink-400">
         {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
+        {order.ready_by !== null && <span> · ready {formatClockTime(order.ready_by)}</span>}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
       {/* The bid commits it; validation requires it at pickup. */}

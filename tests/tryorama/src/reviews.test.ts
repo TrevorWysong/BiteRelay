@@ -174,7 +174,7 @@ await runScenario(async (scenario) => {
   const selfOrder = actionHash(
     await dispatchOf(merchant)<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeB, items: [{ item_ref: itemB, quantity: 1 }], order_total: 900 }),
   );
-  await dispatchOf(merchant)("confirm_pickup_prep", selfOrder);
+  await dispatchOf(merchant)("accept_pickup_order", { order_original_action: selfOrder });
   await dispatchOf(merchant)("mark_ready_for_pickup", selfOrder);
   await dispatchOf(merchant)("complete_pickup", selfOrder);
   await assert.rejects(

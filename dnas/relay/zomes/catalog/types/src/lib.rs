@@ -12,7 +12,9 @@
 use hdi::prelude::*;
 use relay_types::GeoPoint;
 
+mod hours;
 mod pricing;
+pub use hours::*;
 pub use pricing::*;
 
 #[hdk_entry_helper]
@@ -45,10 +47,18 @@ pub struct MerchantCatalog {
     pub address_state: String,
     #[serde(default)]
     pub address_zip: String,
+    /// When the store takes orders, in `time_zone` (see `hours`). Empty
+    /// means no set hours: open whenever `is_open` is on.
     #[serde(default)]
-    pub hours_open: String,
-    #[serde(default)]
-    pub hours_close: String,
+    pub weekly_hours: Vec<OpeningPeriod>,
+    /// The store's IANA time zone ("America/New_York") -- what its hours
+    /// mean. From the merchant's device when they set up or edit the store.
+    #[serde(default = "utc")]
+    pub time_zone: String,
+    /// How long the kitchen usually takes, in minutes -- the default when
+    /// the store accepts an order, which records when it'll be ready.
+    #[serde(default = "default_prep_minutes")]
+    pub prep_minutes: u16,
     /// What share (0-100) of a winning bid's delivery fee this merchant
     /// covers -- see architecture plan §12 (2026-10-01 revision) for why
     /// this defaults to 50, not 0.
@@ -88,7 +98,19 @@ pub struct MerchantCatalog {
     pub dietary_tags: Vec<String>,
 }
 
-pub fn default_delivery_subsidy_percent() -> u8 {
+pub fn utc() -> String {
+    "UTC".into()
+}
+
+pub const DEFAULT_PREP_MINUTES: u16 = 15;
+/// No kitchen promises further out than this.
+pub const MAX_PREP_MINUTES: u16 = 240;
+
+fn default_prep_minutes() -> u16 {
+    DEFAULT_PREP_MINUTES
+}
+
+fn default_delivery_subsidy_percent() -> u8 {
     50
 }
 

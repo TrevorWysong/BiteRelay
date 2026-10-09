@@ -2,7 +2,7 @@
 //! machine, and pickup disputes.
 
 use super::*;
-use crate::cancellation::{check_cancellation, CancelledFrom, OrderUpdate};
+use crate::store_answer::{check_cancellation, check_ready_by, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
 
@@ -22,8 +22,8 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
     if order.dispute_ref.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new pickup order cannot already have a dispute_ref".into()));
     }
-    if order.cancellation.is_some() {
-        return Ok(ValidateCallbackResult::Invalid("a new pickup order can't already be cancelled".into()));
+    if order.cancellation.is_some() || order.ready_by.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new pickup order can't already be accepted or cancelled".into()));
     }
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
@@ -150,8 +150,12 @@ pub(crate) fn validate_pickup_order_transition(
         prior_written_at: prior_record.action().timestamp(),
         written_at: action_timestamp,
     };
-    if prior.status == PickupStatus::Placed && order.status == PickupStatus::MerchantConfirmed && !update.within_response_window() {
+    let accepting = prior.status == PickupStatus::Placed && order.status == PickupStatus::MerchantConfirmed;
+    if accepting && !update.within_response_window() {
         return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
+    }
+    if let Some(reason) = check_ready_by(&update, accepting, prior.ready_by, order.ready_by) {
+        return Ok(ValidateCallbackResult::Invalid(reason.into()));
     }
     let cancelled_from = (prior.status != PickupStatus::Cancelled && order.status == PickupStatus::Cancelled).then(|| match prior.status {
         PickupStatus::Placed => CancelledFrom::Placed,

@@ -54,7 +54,7 @@ await runScenario(async (scenario) => {
 
   // The merchant cancels a delivery; the customer completes a pickup.
   await call(merchant, "dispatch")("decline_order", { order_original_action: placed[0].ref, reason: "TooBusy" });
-  await call(merchant, "dispatch")("confirm_pickup_prep", placed[1].ref);
+  await call(merchant, "dispatch")("accept_pickup_order", { order_original_action: placed[1].ref });
   await call(merchant, "dispatch")("mark_ready_for_pickup", placed[1].ref);
   await sync();
   await call(customer, "dispatch")("complete_pickup", placed[1].ref);

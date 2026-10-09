@@ -1,5 +1,6 @@
 //! Rules both order types share about the store's answer: how long it has
-//! to accept an order, and who may cancel one and for what reason.
+//! to accept an order, when it says the order will be ready, and who may
+//! cancel one and for what reason.
 
 use super::*;
 use relay_governance::store_response_window;
@@ -56,4 +57,20 @@ pub(crate) fn check_cancellation(update: &OrderUpdate<'_>, cancelled_from: Optio
         Cancellation::ByArbitrator => false,
     };
     (!allowed).then(|| format!("{reason:?} isn't a cancellation this author can give here"))
+}
+
+/// The longest a store may say an order will take.
+const MAX_READY_MICROS: i64 = 240 * 60 * 1_000_000;
+
+/// `ready_by` across one update: set when the store accepts the order
+/// (`accepting`), to a time after the acceptance and within the longest a
+/// kitchen may promise, and never changed after. `None` if valid.
+pub(crate) fn check_ready_by(update: &OrderUpdate<'_>, accepting: bool, prior: Option<Timestamp>, next: Option<Timestamp>) -> Option<&'static str> {
+    if !accepting {
+        return (prior != next).then_some("ready_by is set once, when the store accepts the order");
+    }
+    match next {
+        Some(ready_by) if ready_by > update.written_at && ready_by.as_micros() - update.written_at.as_micros() <= MAX_READY_MICROS => None,
+        _ => Some("accepting an order must say when it'll be ready, within four hours"),
+    }
 }

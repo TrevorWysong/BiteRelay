@@ -6,6 +6,8 @@ import { bytesToHex } from "../holochain/decode";
 import { Badge } from "./ui";
 import { StarRating } from "./StarRating";
 import { fadeSlideUp } from "../lib/motion";
+import clsx from "clsx";
+import { storeStatus } from "../lib/storeHours";
 
 // Purely-cosmetic fallback for a merchant with no banner photo set yet --
 // deterministic per catalog action hash so the same restaurant always
@@ -28,6 +30,8 @@ function pick<T>(arr: T[], seed: Uint8Array): T {
 interface Props {
   catalogHash: Uint8Array;
   catalog: MerchantCatalog;
+  /// What "open now" is judged against -- the list's clock.
+  now: Date;
   rating?: number;
   reviewCount?: number;
   /// Both omitted means "no favorite affordance at all" -- `Browse` is the
@@ -37,7 +41,8 @@ interface Props {
   onToggleFavorite?: () => void;
 }
 
-export function RestaurantCard({ catalogHash, catalog, rating, reviewCount, favorited, onToggleFavorite }: Props) {
+export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount, favorited, onToggleFavorite }: Props) {
+  const status = storeStatus(catalog, now);
   const gradient = pick(GRADIENTS, catalogHash);
   const emoji = pick(EMOJI, catalogHash.slice().reverse());
   const hex = bytesToHex(catalogHash);
@@ -61,7 +66,7 @@ export function RestaurantCard({ catalogHash, catalog, rating, reviewCount, favo
               {emoji}
             </div>
           )}
-          {!catalog.is_open && (
+          {!status.open && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Badge tone="neutral">Closed</Badge>
             </div>
@@ -88,12 +93,10 @@ export function RestaurantCard({ catalogHash, catalog, rating, reviewCount, favo
             ) : (
               <span>{catalog.cuisine_type || "New"}</span>
             )}
-            {(catalog.hours_open || catalog.hours_close) && (
-              <span className="flex items-center gap-1">
-                <Clock size={11} />
-                {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
-              </span>
-            )}
+            <span className={clsx("flex min-w-0 items-center gap-1 truncate", status.open ? "text-presence-600" : "text-ink-400")}>
+              <Clock size={11} className="shrink-0" />
+              {status.label}
+            </span>
           </div>
         </div>
       </Link>

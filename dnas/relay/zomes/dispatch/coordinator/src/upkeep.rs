@@ -17,10 +17,10 @@
 //! restart left.
 
 use crate::order_queues::{get_active_orders_for_store, get_my_active_orders, OrderEntry, OrderKind};
-use crate::orders::{accept_delivery_order, cancel_delivery, open_scheduled_order};
-use crate::pickup::{cancel_pickup, confirm_pickup_prep};
+use crate::orders::{accept_delivery_order, cancel_delivery, open_scheduled_order, AcceptOrderInput};
+use crate::pickup::{accept_pickup_order, cancel_pickup};
 use crate::pricing::outdated_item;
-use crate::stores::{current_catalog, my_stores};
+use crate::stores::{closed_reason, current_catalog, my_stores};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::decode_or;
@@ -170,17 +170,20 @@ fn answer_store_orders() -> ExternResult<Answers> {
     let window = store_response_window().as_micros() as i64;
     let mut answers = Answers { waiting: 0, failed: 0 };
     for store in my_stores()? {
-        let auto_accept = current_catalog(&store)?.auto_accept_orders;
+        let catalog = current_catalog(&store)?;
+        // Taking orders right now? An order placed while closed slipped past
+        // the customer's own check, and is declined as such.
+        let open_now = closed_reason(&catalog, now).is_none();
         for entry in get_active_orders_for_store(store)? {
             let Some(waiting) = WaitingOrder::from_entry(&entry) else { continue };
             answers.waiting += 1;
             // Past the window the store can't accept it; the customer's
             // conductor cancels it.
             let expired = now >= entry.record.action().timestamp().as_micros() + window;
-            if expired || !(auto_accept || waiting.bag_order) {
+            if expired || !(catalog.auto_accept_orders || waiting.bag_order) {
                 continue;
             }
-            if waiting.answer(&entry.original_action).is_err() {
+            if waiting.answer(&entry.original_action, open_now).is_err() {
                 answers.failed += 1;
             }
         }
@@ -211,15 +214,23 @@ impl WaitingOrder {
         Some(Self { kind: entry.kind.clone(), bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref })
     }
 
-    /// Accepts it, or declines it if it's priced from an outdated menu.
-    fn answer(&self, order_ref: &ActionHash) -> ExternResult<()> {
-        let outdated = outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref())?.is_some();
-        let decline = Cancellation::ByStore(DeclineReason::OutdatedPrices);
-        match (&self.kind, outdated) {
-            (OrderKind::Delivery, false) => accept_delivery_order(order_ref.clone()).map(|_| ()),
-            (OrderKind::Delivery, true) => cancel_delivery(order_ref.clone(), decline).map(|_| ()),
-            (OrderKind::Pickup, false) => confirm_pickup_prep(order_ref.clone()).map(|_| ()),
-            (OrderKind::Pickup, true) => cancel_pickup(order_ref.clone(), decline).map(|_| ()),
+    /// Accepts it, with the store's usual prep time -- or declines it if
+    /// the store is closed (a goodie bag runs on its own window) or it's
+    /// priced from an outdated menu.
+    fn answer(&self, order_ref: &ActionHash, open_now: bool) -> ExternResult<()> {
+        let decline = if !open_now && !self.bag_order {
+            Some(DeclineReason::Closed)
+        } else if outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref())?.is_some() {
+            Some(DeclineReason::OutdatedPrices)
+        } else {
+            None
+        };
+        let accept = AcceptOrderInput { order_original_action: order_ref.clone(), prep_minutes: None };
+        match (&self.kind, decline) {
+            (OrderKind::Delivery, None) => accept_delivery_order(accept).map(|_| ()),
+            (OrderKind::Delivery, Some(reason)) => cancel_delivery(order_ref.clone(), Cancellation::ByStore(reason)).map(|_| ()),
+            (OrderKind::Pickup, None) => accept_pickup_order(accept).map(|_| ()),
+            (OrderKind::Pickup, Some(reason)) => cancel_pickup(order_ref.clone(), Cancellation::ByStore(reason)).map(|_| ()),
         }
     }
 }

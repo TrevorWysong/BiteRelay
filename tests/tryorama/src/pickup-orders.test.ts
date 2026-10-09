@@ -52,7 +52,7 @@ await runScenario(async (scenario) => {
   assert.equal(merchantSide[0].kind, "Pickup");
   console.log("[PASS] get_active_orders_for_store discovers the order");
 
-  await dispatchOf(merchant)("confirm_pickup_prep", orderRef);
+  await dispatchOf(merchant)("accept_pickup_order", { order_original_action: orderRef });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(merchant)("mark_ready_for_pickup", orderRef);
   await dhtSync(all, customer.cells[0].cell_id[0]);

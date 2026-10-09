@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import {
   acceptDeliveryOrder,
-  confirmPickupPrep,
+  acceptPickupOrder,
   declineOrder,
   declinePickupOrder,
   getOrderHistoryForStore,
@@ -13,7 +13,7 @@ import {
   markReadyForPickup,
   setOrderStatus,
 } from "../../holochain/zomes/dispatch";
-import { itemCount, mergeNewestFirst } from "../../lib/orderEntries";
+import { isFinished, itemCount, mergeNewestFirst } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/merchantQueue";
 import { useResource } from "../../lib/useResource";
@@ -23,7 +23,7 @@ import { useStoreResponseSecs } from "../../lib/useStoreResponseSecs";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, timeAgo } from "../../lib/format";
+import { formatCents, formatClockTime, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
@@ -36,6 +36,10 @@ const TABS = [
 
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
+
+/// The prep times a kitchen picks from when it accepts an order.
+const PREP_CHOICES = [5, 10, 15, 20, 30, 45, 60];
+const DEFAULT_PREP_MINUTES = 15;
 
 /// A merchant's orders across every store they run, the way a DoorDash/
 /// Uber Eats store tablet splits them: the **active** queue (what the
@@ -162,7 +166,14 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
                 <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">{errors[row.hex]}</p>
               )}
               {row.order.status === "Placed" && windowSecs !== undefined ? (
-                <AnswerOrder row={row} windowSecs={windowSecs} now={data!.now} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
+                <AnswerOrder
+                  row={row}
+                  windowSecs={windowSecs}
+                  now={data!.now}
+                  defaultPrep={stores.find((s) => s.hex === row.storeHex)?.catalog.prep_minutes ?? DEFAULT_PREP_MINUTES}
+                  busy={busyHex === row.hex}
+                  onAdvance={(action) => advance(row, action)}
+                />
               ) : (
                 <ActiveActions row={row} busy={busyHex === row.hex} onAdvance={(action) => advance(row, action)} />
               )}
@@ -181,13 +192,17 @@ type OrderAction = (ref: Uint8Array) => Promise<unknown>;
 /// delivery, what puts it in front of drivers -- or Decline, with a reason
 /// the customer is told. Past the window it can't be accepted; the
 /// customer's conductor cancels it.
-function AnswerOrder({ row, windowSecs, now, busy, onAdvance }: { row: QueueRow; windowSecs: number; now: number; busy: boolean; onAdvance: (action: OrderAction) => void }) {
+function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { row: QueueRow; windowSecs: number; now: number; defaultPrep: number; busy: boolean; onAdvance: (action: OrderAction) => void }) {
   const [choosingReason, setChoosingReason] = useState(false);
+  // How long this one will take -- the store's usual time unless the
+  // kitchen picks another; the customer is told when it'll be ready.
+  const [prep, setPrep] = useState(defaultPrep);
+  const prepChoices = [...new Set([defaultPrep, ...PREP_CHOICES])].sort((a, b) => a - b);
   const deadlineMs = responseDeadlineMs(row.writtenAt, windowSecs);
   if (now >= deadlineMs) {
     return <p className="mt-2 text-xs text-ink-400">Not accepted in time, so the customer's order is being cancelled.</p>;
   }
-  const accept: OrderAction = row.kind === "Delivery" ? acceptDeliveryOrder : confirmPickupPrep;
+  const accept: OrderAction = row.kind === "Delivery" ? (ref) => acceptDeliveryOrder(ref, prep) : (ref) => acceptPickupOrder(ref, prep);
   const decline = (reason: (typeof DECLINE_REASONS)[number]["reason"]): OrderAction =>
     row.kind === "Delivery" ? (ref) => declineOrder(ref, reason) : (ref) => declinePickupOrder(ref, reason);
   return (
@@ -208,14 +223,33 @@ function AnswerOrder({ row, windowSecs, now, busy, onAdvance }: { row: QueueRow;
           </div>
         </div>
       ) : (
-        <div className="mt-3 flex gap-2">
-          <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => setChoosingReason(true)}>
-            Decline
-          </Button>
-          <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
-            Accept order
-          </Button>
-        </div>
+        <>
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar" role="radiogroup" aria-label="Ready in">
+            <span className="shrink-0 text-[11px] font-semibold text-ink-500">Ready in</span>
+            {prepChoices.map((minutes) => (
+              <button
+                key={minutes}
+                role="radio"
+                aria-checked={prep === minutes}
+                onClick={() => setPrep(minutes)}
+                className={clsx(
+                  "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition",
+                  prep === minutes ? "bg-ink-900 text-white dark:bg-white dark:text-ink-900" : "bg-ink-100 text-ink-500 dark:bg-ink-800",
+                )}
+              >
+                {minutes} min
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => setChoosingReason(true)}>
+              Decline
+            </Button>
+            <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
+              Accept · {prep} min
+            </Button>
+          </div>
+        </>
       )}
     </>
   );
@@ -332,6 +366,7 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
       </div>
       <p className="mt-1 text-xs text-ink-400">
         {count} item{count === 1 ? "" : "s"}
+        {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · ready by {formatClockTime(order.ready_by)}</span>}
       </p>
       {order.kitchen_note && <KitchenNote orderHex={row.hex} orderRef={row.ref} />}
       {children}

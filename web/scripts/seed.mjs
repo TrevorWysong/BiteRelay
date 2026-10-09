@@ -18,6 +18,8 @@ import { WORLD } from "./lib/world.mjs";
 const DEFAULT_CENTER = { lat: 27.7676, lon: -82.6403 }; // matches session.ts's default browse location
 
 const ROLE = "relay";
+/// The seeded stores' time zone -- the default location is St. Petersburg, FL.
+const SEED_TIME_ZONE = "America/New_York";
 const SEED_PREFIX = "seed-";
 
 // ----------------------------------------------------------------- engine
@@ -66,10 +68,12 @@ async function createAgent(adminWs, appPort, happBytes, person) {
   return { ...person, appId, key: agentKey, call, close: () => appWs.client.close() };
 }
 
-async function seedStore(store, owner, center) {
-  const location = near(center, store.at);
-  const ref = hash(await owner.call("catalog", "publish_catalog", { business_name: store.name, location, address_street: store.details.address_street ?? "" }));
-  await owner.call("catalog", "update_catalog_details", {
+/// `HH:MM` as minutes after midnight.
+const minutes = (clock) => Number(clock.split(":")[0]) * 60 + Number(clock.split(":")[1]);
+
+/// A store's full details, with `weeklyHours` for its schedule.
+function storeDetails(ref, store, weeklyHours) {
+  return {
     original_action: ref,
     description: "",
     cuisine_type: "",
@@ -79,11 +83,18 @@ async function seedStore(store, owner, center) {
     address_city: "",
     address_state: "",
     address_zip: "",
-    hours_open: "",
-    hours_close: "",
     max_delivery_radius_km: 8,
+    time_zone: SEED_TIME_ZONE,
+    prep_minutes: 15,
     ...store.details,
-  });
+    weekly_hours: weeklyHours,
+  };
+}
+
+async function seedStore(store, owner, center) {
+  const location = near(center, store.at);
+  const ref = hash(await owner.call("catalog", "publish_catalog", { business_name: store.name, location, address_street: store.details.address_street ?? "" }));
+  await owner.call("catalog", "update_catalog_details", storeDetails(ref, store, []));
   const items = new Map();
   for (const item of store.menu) {
     const record = await owner.call("catalog", "add_menu_item", {
@@ -151,7 +162,7 @@ async function seedDelivery(order, customer, store, driver) {
     ),
   );
   if (!reached(DELIVERY_STEPS, order.until, "Open")) return orderRef;
-  await eventually("store accepts", () => store.owner.call("dispatch", "accept_delivery_order", orderRef));
+  await eventually("store accepts", () => store.owner.call("dispatch", "accept_delivery_order", { order_original_action: orderRef }));
   if (!reached(DELIVERY_STEPS, order.until, "BidPlaced")) return orderRef;
   const bidRef = hash(
     await eventually("submit bid", () =>
@@ -189,7 +200,7 @@ async function seedPickup(order, customer, store) {
     ),
   );
   if (!reached(PICKUP_STEPS, order.until, "MerchantConfirmed")) return orderRef;
-  await eventually("confirm pickup prep", () => store.owner.call("dispatch", "confirm_pickup_prep", orderRef));
+  await eventually("store accepts", () => store.owner.call("dispatch", "accept_pickup_order", { order_original_action: orderRef }));
   if (!reached(PICKUP_STEPS, order.until, "ReadyForPickup")) return orderRef;
   await eventually("mark ready", () => store.owner.call("dispatch", "mark_ready_for_pickup", orderRef));
   if (!reached(PICKUP_STEPS, order.until, "PickedUp")) return orderRef;
@@ -240,6 +251,15 @@ async function main() {
       if (order.kind === "delivery") await seedDelivery(order, customer, store, people.get(order.driver));
       else await seedPickup(order, customer, store);
       console.log(`  ✓ ${order.kind} ${customer.name.split(" ")[0]} -> ${store.name}: ${order.until}`);
+    }
+
+    // Hours go on last: a store only takes orders while it's open, and the
+    // seeded orders are placed now, whatever time it is.
+    for (const store of stores.values()) {
+      if (!store.hours) continue;
+      const everyDay = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, opens: minutes(store.hours.opens), closes: minutes(store.hours.closes) }));
+      await store.owner.call("catalog", "update_catalog_details", storeDetails(store.ref, store, everyDay));
+      console.log(`  ✓ ${store.name} -- open ${store.hours.opens}-${store.hours.closes} daily`);
     }
 
     console.log("\nSeeded. Sign in as anyone from the onboarding screen's \"Use an existing identity\" list.");

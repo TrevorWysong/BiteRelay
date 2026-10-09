@@ -16,7 +16,9 @@ export const WORLD = {
       owner: "mo",
       name: "Mo's Kitchen",
       at: [0.4, 0.3],
-      details: { cuisine_type: "American", description: "Burgers, bowls and breakfast all day.", hours_open: "08:00", hours_close: "22:00", address_street: "120 Central Ave" },
+      details: { cuisine_type: "American", description: "Burgers, bowls and breakfast all day.", address_street: "120 Central Ave", prep_minutes: 15 },
+      // Every day, in the seed's time zone (see seed.mjs).
+      hours: { opens: "08:00", closes: "22:00" },
       menu: [
         { name: "Smash Burger", price: 1250, category: "Burgers", description: "Two patties, American cheese, house sauce." },
         { name: "Veggie Burger", price: 1150, category: "Burgers", dietary_tags: ["Vegetarian"] },
@@ -31,7 +33,9 @@ export const WORLD = {
       owner: "mo",
       name: "Mo's Tacos",
       at: [-0.7, 0.5],
-      details: { cuisine_type: "Mexican", description: "Street tacos from the same family kitchen.", hours_open: "11:00", hours_close: "23:00", address_street: "455 1st Ave N" },
+      // No set hours -- open whenever it's taking orders, so the browser
+      // smoke tests can order from it at any time of day.
+      details: { cuisine_type: "Mexican", description: "Street tacos from the same family kitchen.", address_street: "455 1st Ave N", prep_minutes: 10 },
       menu: [
         { name: "Al Pastor Taco", price: 450, category: "Tacos" },
         { name: "Mushroom Taco", price: 425, category: "Tacos", dietary_tags: ["Vegetarian"] },
@@ -45,7 +49,8 @@ export const WORLD = {
       owner: "cara",
       name: "Cara's Café",
       at: [1.1, -0.4],
-      details: { cuisine_type: "Café", description: "Coffee, pastries and lunch plates.", hours_open: "07:00", hours_close: "18:00", address_street: "88 Beach Dr NE" },
+      details: { cuisine_type: "Café", description: "Coffee, pastries and lunch plates.", address_street: "88 Beach Dr NE", prep_minutes: 8 },
+      hours: { opens: "07:00", closes: "18:00" },
       menu: [
         { name: "Flat White", price: 475, category: "Coffee" },
         { name: "Almond Croissant", price: 425, category: "Pastries", dietary_tags: ["Vegetarian"] },

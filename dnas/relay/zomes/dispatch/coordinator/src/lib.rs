@@ -123,15 +123,18 @@ mod test_utils {
         pub next_status: PickupStatus,
         #[serde(default)]
         pub cancellation: Option<Cancellation>,
+        #[serde(default)]
+        pub ready_by: Option<Timestamp>,
     }
 
-    /// `force_order_update_for_testing` for a `PickupOrder`: any status and
-    /// cancellation, past every check the real externs make.
+    /// `force_order_update_for_testing` for a `PickupOrder`: any status,
+    /// cancellation and ready time, past every check the real externs make.
     #[hdk_extern]
     pub fn force_pickup_update_for_testing(input: ForcePickupUpdateInput) -> ExternResult<Record> {
         let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action, "PickupOrder")?;
         order.status = input.next_status;
         order.cancellation = input.cancellation;
+        order.ready_by = input.ready_by;
         let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
         get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced pickup update".into())))
     }
