@@ -3,6 +3,8 @@
 //! (merchant-scoped discount codes).
 
 use hdi::prelude::*;
+use relay_integrity_support::{first_problem, image_problem, text_problem};
+use relay_integrity_support::{classify, decode, invalid, Checked};
 
 mod links;
 pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
@@ -16,8 +18,8 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS, DEFAULT_PREP_MINUTES, MAX_OPENING_PERIODS, MAX_PREP_MINUTES};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
-/// scale), matching the presence-beacon precision in `geo_presence` so both
-/// discovery paths compose over the same geohash grid.
+/// scale), matching open orders' drop-off precision so both discovery paths
+/// compose over the same geohash grid.
 pub const CATALOG_GEOHASH_PRECISION: usize = 6;
 
 #[hdk_entry_types]
@@ -53,28 +55,71 @@ pub enum LinkTypes {
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
-    match op.flattened::<EntryTypes, LinkTypes>()? {
-        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+    match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
+        Checked::Create { entry, action } => match entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
             EntryTypes::PromoCode(promo) => validate_new_promo_code(&promo, action.author()),
             EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author(), action.timestamp()),
             EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp()),
         },
-        FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
-            EntryTypes::MerchantCatalog(catalog) => validate_catalog(&catalog, action.author()),
-            EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
+        Checked::Update { entry, action } => match entry {
+            EntryTypes::MerchantCatalog(catalog) => validate_catalog_update(&catalog, action.author(), &action.original_action_address),
+            EntryTypes::MenuItem(item) => validate_menu_item_update(&item, action.author(), &action.original_action_address),
             EntryTypes::PromoCode(promo) => validate_promo_code_update(&promo, action.author(), &action.original_action_address),
             EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author(), &action.original_action_address),
             EntryTypes::BagClaim(claim) => validate_claim_confirmation(&claim, action.author(), &action.original_action_address),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
-        FlatOp::Link(OpLink::DeleteLink { original_action, action, .. }) => links::validate_delete_link(original_action.author(), action.author()),
-        _ => Ok(ValidateCallbackResult::Valid),
+        // A store's menu, promos and bags are retired by updating them
+        // (unavailable, inactive), never deleted: orders and reviews cite them.
+        Checked::Delete { .. } => invalid("catalog entries can't be deleted"),
+        Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        Checked::DeleteLink { original, action, .. } => links::validate_delete_link(original.author(), action.author()),
+        Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
 }
 
+/// A store's details, changed only by its owner: the version being updated
+/// must be theirs, and the store stays theirs. (Each version is checked the
+/// same way when written, so every version of a store is its owner's.)
+fn validate_catalog_update(catalog: &MerchantCatalog, author: &AgentPubKey, original: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original.clone())?;
+    let Some(prior) = decode::<MerchantCatalog>(&prior_record) else {
+        return invalid("original_action_hash does not point at a MerchantCatalog entry");
+    };
+    if prior_record.action().author() != author || &prior.owner != author || catalog.owner != prior.owner {
+        return invalid("only a store's owner may change it, and it stays theirs");
+    }
+    validate_catalog(catalog, author)
+}
+
+/// A menu item, changed only by whoever wrote it, and only within its own
+/// store.
+fn validate_menu_item_update(item: &MenuItem, author: &AgentPubKey, original: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original.clone())?;
+    let Some(prior) = decode::<MenuItem>(&prior_record) else {
+        return invalid("original_action_hash does not point at a MenuItem entry");
+    };
+    if prior_record.action().author() != author || item.catalog_ref != prior.catalog_ref {
+        return invalid("only a store's owner may change its menu items, and an item stays on its own store's menu");
+    }
+    validate_menu_item(item, author)
+}
+
 fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([
+        image_problem(&catalog.banner_data_uri).map(String::from),
+        text_problem("business_name", &catalog.business_name, 100),
+        text_problem("description", &catalog.description, 2_000),
+        text_problem("cuisine_type", &catalog.cuisine_type, 60),
+        text_problem("phone", &catalog.phone, 30),
+        text_problem("address_street", &catalog.address_street, 200),
+        text_problem("address_city", &catalog.address_city, 100),
+        text_problem("address_state", &catalog.address_state, 100),
+        text_problem("address_zip", &catalog.address_zip, 20),
+    ]) {
+        return Ok(invalid);
+    }
     if catalog.business_name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("business_name must not be empty".into()));
     }
@@ -110,6 +155,14 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
 }
 
 fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([
+        image_problem(&item.photo_data_uri).map(String::from),
+        text_problem("name", &item.name, 100),
+        text_problem("description", &item.description, 2_000),
+        text_problem("category", &item.category, 60),
+    ]) {
+        return Ok(invalid);
+    }
     if item.name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("name must not be empty".into()));
     }
@@ -214,6 +267,9 @@ fn reward_item_ref(reward: &PromoReward) -> Option<&ActionHash> {
 }
 
 fn validate_new_promo_code(promo: &PromoCode, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([text_problem("code", &promo.code, 40)]) {
+        return Ok(invalid);
+    }
     if promo.code.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("code must not be empty".into()));
     }
@@ -286,6 +342,13 @@ fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey, created: Times
 
 /// The rules a bag's content must always satisfy, on creation and update.
 fn validate_bag_fields(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([
+        image_problem(&bag.photo_data_uri).map(String::from),
+        text_problem("title", &bag.title, 100),
+        text_problem("description", &bag.description, 2_000),
+    ]) {
+        return Ok(invalid);
+    }
     if bag.title.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("title must not be empty".into()));
     }

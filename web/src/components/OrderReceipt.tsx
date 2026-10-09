@@ -3,7 +3,7 @@ import { getOrderReceipt } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
 import { useResource } from "../lib/useResource";
 import { formatCents } from "../lib/format";
-import { PAYMENT_LEG_LABEL } from "../lib/ledger";
+import { PORTION_LABEL } from "../lib/ledger";
 import { Button, Card, Skeleton } from "./ui";
 
 /// The itemized receipt for a completed order: each item at the price it
@@ -66,7 +66,7 @@ export function OrderReceipt({ orderRef }: { orderRef: Uint8Array }) {
           {receipt.payments.map((payment) => (
             <div key={bytesToHex(payment.transaction)} className="flex justify-between gap-3 text-xs text-ink-500">
               <span>
-                {PAYMENT_LEG_LABEL[payment.leg]} <span className="font-mono text-ink-300" title={bytesToHex(payment.transaction)}>· {bytesToHex(payment.transaction).slice(0, 10)}</span>
+                {PORTION_LABEL[payment.leg]} <span className="font-mono text-ink-300" title={bytesToHex(payment.transaction)}>· {bytesToHex(payment.transaction).slice(0, 10)}</span>
               </span>
               <span className="tabular-nums">{formatCents(payment.amount_cents)}</span>
             </div>

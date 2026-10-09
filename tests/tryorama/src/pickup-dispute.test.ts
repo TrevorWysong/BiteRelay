@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, decodeEntry, setupArbitratedPlayers, ST_PETE } from "./helpers.js";
+import { actionHash, decodeEntry, setupArbitratedPlayers, ST_PETE, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   // setupArbitratedPlayers names its second player "driver" (generic
@@ -18,6 +18,8 @@ await runScenario(async (scenario) => {
   const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
   const disputeOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispute");
   const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
+  // Each party's conductor settles the held money on its own.
+  const balanceOnceSettled = (p: typeof customer, expected: number) => retryUntil(() => ledgerOf(p)<number>("get_balance", p.agentPubKey), (b) => b === expected, 120, 1000);
   const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
 
   const now = Date.now() * 1000;
@@ -61,7 +63,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputedA.dispute_ref,
-    outcome: { FavorProvider: { forfeit_amount: 0 } },
+    outcome: "FavorProvider",
     reasoning: "Merchant's own records show it was ready on time",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -70,9 +72,9 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
   assert.equal(decodeEntry<{ status: string }>(resolvedA).status, "PickedUp");
 
-  const merchantBalanceA = await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey);
+  const merchantBalanceA = await balanceOnceSettled(merchant, 600);
   const customerBalanceA = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
-  assert.equal(merchantBalanceA, 600, "FavorProvider settles order_total to the merchant, same as an honest complete_pickup");
+  assert.equal(merchantBalanceA, 600, "FavorProvider lets the store collect the held order_total, same as an honest complete_pickup");
   assert.equal(customerBalanceA, -600);
   console.log("[PASS] FavorProvider resolves to PickedUp and settles order_total");
 
@@ -82,7 +84,7 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] validate() rejects replaying the same pickup-dispute resolution");
 
-  // --- Scenario 2: FavorRequester (customer) -- order cancels, merchant forfeits. ---
+  // --- Scenario 2: FavorRequester (customer) -- order cancels, the customer has their money back. ---
   const orderRefB = await driveToReadyForPickup();
   const disputedOrderB = await dispatchOf(merchant)<HcRecord>("raise_pickup_dispute", {
     order_original_action: orderRefB,
@@ -100,7 +102,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputedB.dispute_ref,
-    outcome: { FavorRequester: { forfeit_amount: 100 } },
+    outcome: "FavorRequester",
     reasoning: "Order was actually never properly prepared",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -109,9 +111,9 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
   assert.equal(decodeEntry<{ status: string }>(resolvedB).status, "Cancelled");
 
-  const merchantBalanceB = await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey);
-  assert.equal(merchantBalanceB, 500, "FavorRequester forfeits from the merchant to the customer, no order_total settlement");
-  console.log("[PASS] FavorRequester resolves to Cancelled and forfeits from the merchant, no order_total settlement");
+  assert.equal(await balanceOnceSettled(customer, -600), -600, "FavorRequester returns the customer's held payment");
+  assert.equal(await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey), 600, "and the store collects nothing for it");
+  console.log("[PASS] FavorRequester resolves to Cancelled and returns the customer's money; the store collects nothing");
 
   const merchantReputation = await reputationOf(merchant)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Store: catalogRef });
   assert.equal(merchantReputation.dispute_resolved_against_count, 1, "merchant lost scenario 2 only");

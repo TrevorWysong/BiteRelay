@@ -1,7 +1,8 @@
 // The app's wire types. Everything that mirrors a Rust type is generated
 // (`generated.ts`, by tools/typegen -- run `npm run typegen` after changing
 // a Rust type); only client-side shapes are written by hand here.
-import type { ActionHash, AgentPubKey, CatalogLocalSignal, DispatchLocalSignal, Profile, Timestamp } from "./generated";
+import type { Record as ClientRecord } from "@holochain/client";
+import type { ActionHash, AgentPubKey, CatalogLocalSignal, DispatchLocalSignal, Profile } from "./generated";
 
 export * from "./generated";
 
@@ -17,8 +18,7 @@ export interface ProfileWithAgent {
 }
 
 /// A Holochain record as the client sees it -- what callZome returns for an
-/// entry; `decodeEntry` pulls the struct out.
-export interface HcRecord {
-  signed_action: { hashed: { hash: ActionHash; content: { author: AgentPubKey; timestamp: Timestamp } } };
-  entry: { Present?: { entry_type: string; entry: Uint8Array | [unknown, Uint8Array] } } | "NotApplicable" | "Hidden" | "NotStored";
-}
+/// entry; `decodeEntry` pulls the struct out. The client's own type, so a
+/// change to the wire shape (0.7 moved an action's author and timestamp
+/// under `header`) is a compile error here rather than an `undefined`.
+export type HcRecord = ClientRecord;

@@ -196,22 +196,23 @@ struct WaitingOrder {
     kind: OrderKind,
     lines: Vec<OrderLine>,
     bag_claim_ref: Option<ActionHash>,
+    promo_code_ref: Option<ActionHash>,
     bag_order: bool,
 }
 
 impl WaitingOrder {
     fn from_entry(entry: &OrderEntry) -> Option<Self> {
-        let (lines, bag_claim_ref) = match entry.kind {
+        let (lines, bag_claim_ref, promo_code_ref) = match entry.kind {
             OrderKind::Delivery => {
                 let order = decode_or::<DeliveryOrder>(&entry.record).filter(|o| o.status == DeliveryStatus::Placed)?;
-                (order.lines, order.bag_claim_ref)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref)
             }
             OrderKind::Pickup => {
                 let order = decode_or::<PickupOrder>(&entry.record).filter(|o| o.status == PickupStatus::Placed)?;
-                (order.lines, order.bag_claim_ref)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref)
             }
         };
-        Some(Self { kind: entry.kind.clone(), bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref })
+        Some(Self { kind: entry.kind.clone(), bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref })
     }
 
     /// Accepts it, with the store's usual prep time -- or declines it if
@@ -220,7 +221,7 @@ impl WaitingOrder {
     fn answer(&self, order_ref: &ActionHash, open_now: bool) -> ExternResult<()> {
         let decline = if !open_now && !self.bag_order {
             Some(DeclineReason::Closed)
-        } else if outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref())?.is_some() {
+        } else if outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref(), self.promo_code_ref.as_ref())?.is_some() {
             Some(DeclineReason::OutdatedPrices)
         } else {
             None

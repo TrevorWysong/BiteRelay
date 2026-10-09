@@ -1,4 +1,16 @@
-//! Shared building blocks for link validation in every integrity zome.
+//! Shared building blocks for validation in every integrity zome.
+//!
+//! **Every op, not just one.** Holochain validates each action as several
+//! ops, each at a different authority: the record (what `must_get_valid_record`
+//! and `get` by action hash serve), the entry, the update or delete as
+//! registered at the original (what an original's `updates` and `deletes`
+//! list), the link at its base, and the agent's activity. An authority only
+//! knows what its own op's validation said -- so a rule applied to one op
+//! type and not another holds only at some authorities, and a peer running a
+//! modified conductor (which skips validating its own writes) can publish an
+//! action every other authority accepts. `classify` folds every op that
+//! carries the same action into one shape, so each zome's rules run at every
+//! authority alike.
 //!
 //! A link is only as trustworthy as its validation: without a rule, any
 //! agent can attach anything under anyone's base -- e.g. another store's
@@ -30,7 +42,7 @@ pub fn link_target(target: &AnyLinkableHash) -> ExternResult<LinkTarget> {
 /// Decodes `record`'s entry as `T`; `None` for any other entry type
 /// (including a failed decode, which is how a wrong type usually shows up).
 /// Unlike `RecordEntry::to_app_option`, this also decodes countersigned
-/// entries (e.g. receipt attestations), which it would silently report as
+/// entries (none in this app today), which it would silently report as
 /// absent.
 pub fn decode<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(record: &Record) -> Option<T> {
     match record.entry().as_option()? {
@@ -55,6 +67,98 @@ pub fn original_creation(action_hash: ActionHash) -> ExternResult<ActionHash> {
             _ => return Ok(current),
         }
     }
+}
+
+/// What an op is about, whichever authority is validating it.
+pub enum Checked<ET, LT> {
+    /// A new app entry: at its record, its entry and its agent's activity.
+    Create { entry: ET, action: TypedAction<CreateData> },
+    /// An update of an app entry: at its record, its entry, and at the
+    /// original as a registered update.
+    Update { entry: ET, action: TypedAction<UpdateData> },
+    /// A deleted entry: at its record and at the deleted original.
+    Delete { action: TypedAction<DeleteData> },
+    CreateLink { link_type: LT, action: TypedAction<CreateLinkData> },
+    /// A deleted link, with the link it deletes.
+    DeleteLink { link_type: LT, original: TypedAction<CreateLinkData>, action: TypedAction<DeleteLinkData> },
+    /// Anything else: chain structure, capability grants, agent keys --
+    /// nothing app rules apply to.
+    Other,
+}
+
+/// Folds every op carrying the same action into one [`Checked`].
+pub fn classify<ET, LT>(op: FlatOp<ET, LT>) -> ExternResult<Checked<ET, LT>>
+where
+    ET: UnitEnum,
+    LT: LinkTypesHelper,
+    WasmError: From<<LT as LinkTypesHelper>::Error>,
+{
+    Ok(match op {
+        FlatOp::CreateRecord(OpRecord::CreateEntry { app_entry, action }) | FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => Checked::Create { entry: app_entry, action },
+        FlatOp::CreateRecord(OpRecord::UpdateEntry { app_entry, action })
+        | FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action })
+        | FlatOp::Update(OpUpdate::Entry { app_entry, action }) => Checked::Update { entry: app_entry, action },
+        FlatOp::CreateRecord(OpRecord::DeleteEntry { action }) | FlatOp::Delete(OpDelete { action }) => Checked::Delete { action },
+        FlatOp::CreateRecord(OpRecord::CreateLink { link_type, action }) | FlatOp::Link(OpLink::CreateLink { link_type, action }) => Checked::CreateLink { link_type, action },
+        FlatOp::Link(OpLink::DeleteLink { original_action, link_type, action }) => Checked::DeleteLink { link_type, original: original_action, action },
+        // At its record, a deleted link arrives without the link it deletes.
+        FlatOp::CreateRecord(OpRecord::DeleteLink { action }) => {
+            let created = must_get_action(action.data.link_add_address.clone())?;
+            let content = &created.hashed.content;
+            let ActionData::CreateLink(data) = &content.data else {
+                return Err(wasm_error!(WasmErrorInner::Guest("a deleted link must delete a link".into())));
+            };
+            let Some(link_type) = LT::from_type(*data.zome_index, *data.link_type)? else {
+                return Err(wasm_error!(WasmErrorInner::Guest("that link belongs to another zome".into())));
+            };
+            Checked::DeleteLink { link_type, original: TypedAction { header: content.header.clone(), data: data.clone() }, action }
+        }
+        _ => Checked::Other,
+    })
+}
+
+/// The author of the action `hash` -- for an update or delete, whose entry
+/// it changes.
+pub fn author_of(hash: &ActionHash) -> ExternResult<AgentPubKey> {
+    Ok(must_get_action(hash.clone())?.hashed.content.header.author.clone())
+}
+
+/// The largest image an entry may carry, as a data URI -- the same ceiling
+/// the app's own uploader resizes to (`web/src/lib/image.ts`). An entry is
+/// stored by every authority for it, forever.
+pub const MAX_IMAGE_URI_BYTES: usize = 300_000;
+
+/// Why `uri` isn't an acceptable image, if it isn't. An image is empty or an
+/// inline `data:` URI of a raster format, never a link: a link would have
+/// every viewer's app fetch it from a server that learns who they are and
+/// what they looked at, and an SVG can carry script.
+pub fn image_problem(uri: &str) -> Option<&'static str> {
+    if uri.is_empty() {
+        return None;
+    }
+    if uri.len() > MAX_IMAGE_URI_BYTES {
+        return Some("an image may be at most 300KB");
+    }
+    let raster = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,", "data:image/gif;base64,"];
+    let Some(payload) = raster.iter().find_map(|prefix| uri.strip_prefix(prefix)) else {
+        return Some("an image must be an inline PNG, JPEG, WebP or GIF");
+    };
+    if !payload.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=') {
+        return Some("an image's data must be base64");
+    }
+    None
+}
+
+/// Why a piece of text is unacceptable, if it is: longer than `max_chars`
+/// characters. Every free-text field has a bound, so no entry can grow
+/// without limit.
+pub fn text_problem(field: &'static str, text: &str, max_chars: usize) -> Option<String> {
+    (text.chars().count() > max_chars).then(|| format!("{field} may be at most {max_chars} characters"))
+}
+
+/// The first problem among `checks`, as an invalid result.
+pub fn first_problem(checks: impl IntoIterator<Item = Option<String>>) -> Option<ValidateCallbackResult> {
+    checks.into_iter().flatten().next().map(ValidateCallbackResult::Invalid)
 }
 
 pub fn valid() -> ExternResult<ValidateCallbackResult> {

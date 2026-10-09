@@ -1,105 +1,93 @@
-// Proves the plan's other flagged risk: native Holochain countersigning
-// actually completing a dual-signed ReceiptAttestation across two real
-// conductors -- preflight exchange, both sides committing the identical
-// entry durably to their own chain. This is genuinely untested territory
-// (hdk gates it behind "unstable-countersigning"), so this is the isolated
-// spike the plan called for, not a mocked assertion.
-//
-// First pass at this found a real bug: non-enzymatic sessions didn't
-// reliably finalize (trial commits succeeded on both sides, but the entry
-// never durably landed on either chain -- see initiate_leg_attestation's
-// doc comment for the root cause and fix). Fixed by using an enzymatic
-// session; this test is what proves that fix actually works.
+// Proves delivery handoffs: the driver records each one and the other
+// party acknowledges it, each signed on their own chain -- and validation,
+// not the honest coordinator, holds them to it: a handoff only by the
+// order's assigned driver, only with that order's store or customer; an
+// acknowledgment only by the handoff's other party. Forgeries are written
+// raw (test-utils), the way a modified client could.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, retryUntilOk, ST_PETE } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
-  const [customer, driver] = await scenario.addPlayersWithApps([
+  const [customer, merchant, driver, stranger] = await scenario.addPlayersWithApps([
+    { appBundleSource: appSource },
+    { appBundleSource: appSource },
     { appBundleSource: appSource },
     { appBundleSource: appSource },
   ]);
-  const both = [customer, driver];
-
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
-  const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
+  const all = [customer, merchant, driver, stranger];
+  await scenario.shareAllAgents();
+  for (const p of [driver, stranger]) await useTestCoordinators(p, ["attestation"]);
+  const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
+  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
 
   const now = Date.now() * 1000;
-  await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester", "Merchant"], created_at: now });
-  await profilesOf(driver)("create_profile", { display_name: "Dana Driver", roles: ["Provider"], created_at: now });
+  await call(customer, "profiles")("create_profile", { display_name: "Cara", roles: ["Requester"], created_at: now });
+  await call(merchant, "profiles")("create_profile", { display_name: "Mo", roles: ["Merchant"], created_at: now });
+  await call(driver, "profiles")("create_profile", { display_name: "Dana", roles: ["Provider"], created_at: now });
+  const store = actionHash(await call(merchant, "catalog")<HcRecord>("publish_catalog", { business_name: "Mo's", location: ST_PETE }));
+  const item = actionHash(await call(merchant, "catalog")<HcRecord>("add_menu_item", { catalog_ref: store, name: "Soup", price_cents: 600, available: true }));
+  await sync();
 
-  const catalogRecord = await catalogOf(customer)<HcRecord>("publish_catalog", { business_name: "Cara's Kitchen", location: ST_PETE });
-  const catalogRef = actionHash(catalogRecord);
-  const menuItemRecord = await catalogOf(customer)<HcRecord>("add_menu_item", {
-    catalog_ref: catalogRef,
-    name: "Empanada",
-    price_cents: 600,
-    available: true,
-  });
-  const menuItemRef = actionHash(menuItemRecord);
-
-  const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
-    merchant: customer.agentPubKey,
-    catalog_ref: catalogRef,
-    items: [{ item_ref: menuItemRef, quantity: 1 }],
-    order_total: 600,
-    dropoff: ST_PETE,
-    max_delivery_fee: null,
-  });
-  const orderRef = actionHash(orderRecord);
-
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  const legRecord = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
+  const order = actionHash(
+    await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity: 1 }], order_total: 600, dropoff: ST_PETE, max_delivery_fee: null }),
+  );
+  await sync();
+  await acceptOrder(merchant, order, all);
+  const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400 }));
+  await sync();
+  await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
+  await sync();
+  await call(merchant, "dispatch")("set_order_status", { order_original_action: order, next_status: "MerchantConfirmed" });
+  await sync();
+  await call(driver, "dispatch")("set_order_status", { order_original_action: order, next_status: "DriverEnRouteToMerchant" });
+  await sync();
+  // The version of the order naming this driver -- what a handoff cites.
+  const current = actionHash(await call(driver, "dispatch")<HcRecord>("get_order", order));
+  const leg = (fields: Record<string, unknown>) => ({
+    order_ref: current,
     sequence: 0,
-    kind: "CustomerHandoff",
-    to: customer.agentPubKey,
-    geo_at_completion: ST_PETE,
+    kind: "MerchantHandoff",
+    from: driver.agentPubKey,
+    to: merchant.agentPubKey,
+    completed_at: Date.now() * 1000,
+    // Sealed evidence isn't what these cases are about.
+    sealed_evidence: { nonce: new Uint8Array(24), encrypted_data: new Uint8Array(32) },
+    ...fields,
   });
-  const legRef = actionHash(legRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
 
-  // Root-caused the earlier "never finalizes" finding: a NON-enzymatic
-  // session's finalization depends on some peer currently holding DHT-basis
-  // authority over the entry hash to gather both signed actions and send
-  // back a signature bundle -- on a fresh/tiny network that authority may
-  // never resolve in time, so the session just times out. Setting
-  // `enzymatic: true` (leg.from as the designated authority) makes both
-  // parties push their signed action directly to that known peer instead,
-  // sidestepping DHT-authority resolution entirely. This test is what
-  // proves whether that actually fixes durability, not just trial-commit.
-  const receiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", legRef);
-  const receiptRef = actionHash(receiptRecord);
-  const receipt = decodeEntry<{ leg: Uint8Array; attested_at: number }>(receiptRecord);
-  assert.ok(bytesEqual(receipt.leg, legRef), "driver's trial-committed receipt should reference the leg");
-  console.log("[PASS] Preflight + trial commit succeeded with correct content");
+  // --- Only the assigned driver records a handoff, only with the order's own parties. ---
+  await assert.rejects(call(stranger, "attestation")("create_raw_leg_for_testing", leg({ from: stranger.agentPubKey })), /only the order's assigned driver records its handoffs/);
+  await assert.rejects(call(driver, "attestation")("create_raw_leg_for_testing", leg({ to: stranger.agentPubKey })), /with the order's own store or customer/);
+  await assert.rejects(call(driver, "attestation")("create_raw_leg_for_testing", leg({ kind: "CustomerHandoff", sequence: 1 })), /with the order's own store or customer/, "a drop-off is with the customer, not the store");
+  await assert.rejects(call(stranger, "attestation")("create_raw_leg_for_testing", leg({})), /recorded by the driver who made it/, "nobody records a handoff in the driver's name");
+  console.log("[PASS] validation takes a handoff only from the order's driver, with its own store or customer");
 
-  // With enzymatic sessions this now clears on the first attempt in
-  // practice (near-instant) -- kept as a bounded retry rather than a single
-  // call since chain-lock release is still an async conductor workflow, not
-  // something the app should assume is synchronous with the commit call.
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: legRef, receipt: receiptRef }));
-  console.log("[PASS] Driver's chain unlocked and a separate write succeeded");
+  // --- The driver records collecting it; the store acknowledges, on its own chain. ---
+  const pickup = await call(driver, "attestation")<HcRecord>("record_leg", { order_ref: order, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE });
+  const pickupRef = actionHash(pickup);
+  assert.ok(Buffer.from(decodeEntry<{ order_ref: Uint8Array }>(pickup).order_ref).equals(Buffer.from(current)), "it cites the version of the order naming the driver");
+  await sync();
+  await assert.rejects(call(customer, "attestation")("acknowledge_leg", pickupRef), /only the other party to a handoff can acknowledge it/);
+  await assert.rejects(call(stranger, "attestation")("create_raw_receipt_for_testing", { leg: pickupRef, attested_at: Date.now() * 1000 }), /acknowledged by the other party to it/, "even written directly");
+  const receipt = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));
+  const again = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));
+  assert.ok(Buffer.from(again).equals(Buffer.from(receipt)), "acknowledging again returns the same receipt");
+  await sync();
+  const found = await call(driver, "attestation")<HcRecord | null>("get_receipt_for_leg", pickupRef);
+  assert.ok(found && Buffer.from(actionHash(found)).equals(Buffer.from(receipt)), "the store's acknowledgment is found under the handoff");
+  console.log("[PASS] the store acknowledges the driver's pickup on its own chain, once");
 
-  const driverReceipts = await attestationOf(driver)<HcRecord[]>("list_my_receipts", null);
-
-  // The authoritative check: query the customer's own source chain directly
-  // (no DHT/link lookup involved at all) to confirm they actually hold the
-  // countersigned entry on their own chain, not just that the initiator's
-  // trial commit claimed success.
-  const customerReceipts = await retryUntilOk(async () => {
-    const receipts = await attestationOf(customer)<HcRecord[]>("list_my_receipts", null);
-    assert.ok(receipts.length > 0, "customer's chain does not have the receipt yet");
-    return receipts;
-  });
-  assert.equal(driverReceipts.length, 1, "the driver's own chain should hold exactly one countersigned receipt");
-  assert.equal(customerReceipts.length, 1, "the customer's own chain should hold exactly one countersigned receipt");
-  const customerReceipt = decodeEntry<{ leg: Uint8Array; attested_at: number }>(customerReceipts[0]);
-  assert.ok(bytesEqual(customerReceipt.leg, legRef));
-  assert.equal(customerReceipt.attested_at, receipt.attested_at, "both sides' committed entries should be byte-identical");
-  console.log("[PASS] Countersigning proven durable and dual-sided: both independently-queried chains hold the identical receipt");
+  // --- Each side writes in its own time: no shared session to fail. ---
+  await call(driver, "dispatch")("pick_up_order", order);
+  const dropoff = actionHash(await call(driver, "attestation")<HcRecord>("record_leg", { order_ref: order, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }));
+  const legs = await call(customer, "attestation")<HcRecord[]>("get_legs_for_order", order);
+  assert.ok(legs.length >= 1, "the customer finds the order's handoffs");
+  await sync();
+  await call(customer, "attestation")("acknowledge_leg", dropoff);
+  const proof = await call(customer, "attestation")<Uint8Array[]>("delivery_proof_for_order", order);
+  assert.deepEqual(proof.map((h) => Buffer.from(h).toString("hex")).slice(0, 1), [Buffer.from(pickupRef).toString("hex")], "the proof is the driver's pickup...");
+  assert.equal(proof.length, 2, "...and the customer's acknowledgment");
+  console.log("[PASS] a delivery's proof is the driver's pickup and the customer's acknowledgment");
 });

@@ -13,6 +13,7 @@ serde.workspace = true
 relay_coordinator_support.workspace = true
 relay_governance.workspace = true
 ledger_integrity = { path = "../integrity" }
+dispatch_types.workspace = true
 
 [features]
 # Raw link externs for validation tests; only ever hot-swapped into test

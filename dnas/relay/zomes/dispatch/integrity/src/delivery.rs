@@ -2,6 +2,8 @@
 //! leg-attestation completion gate, and delivery disputes.
 
 use super::*;
+use crate::holds::{check_hold, terms_of, ExpectedHold};
+use dispatch_types::HoldPurpose;
 use relay_integrity_support::decode;
 use crate::store_answer::{check_cancellation, check_ready_by, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
@@ -13,7 +15,7 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
             "a delivery order can only be authored by its own requester".into(),
         ));
     }
-    if order.cancellation.is_some() || order.collateral_hold.is_some() || order.ready_by.is_some() {
+    if order.cancellation.is_some() || order.ready_by.is_some() || order.food_hold.is_some() || order.driver_pay_hold.is_some() || order.subsidy_hold.is_some() || order.collateral_hold.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order can't already be accepted, cancelled or picked up".into()));
     }
     if order.delivery_subsidy_percent > 100 {
@@ -61,50 +63,44 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// Required leg kinds for a delivery's completion chain (3-party:
-/// merchant -> driver -> customer, so 2 legs) -- see `Leg`'s doc comment.
-pub(crate) const REQUIRED_LEG_KINDS: [LegKind; 2] = [LegKind::MerchantHandoff, LegKind::CustomerHandoff];
-
-/// The actual completion gate, now run as part of deterministic validation
-/// rather than trusted from the coordinator: every entry in
-/// `delivery_receipts` must be a real `ReceiptAttestation` for a real `Leg`
-/// that belongs to *this* order, and together they must cover every
-/// required leg kind. Returns `Err(reason)` rather than bailing out with
-/// `?` into `ValidateCallbackResult::Invalid` directly, so the caller can
-/// build one consistent error message.
+/// The completion gate, run in validation rather than trusted from the
+/// coordinator: `delivery_receipts` must prove both ends of the delivery --
+/// the driver's record of collecting the order from the store (a
+/// `MerchantHandoff` leg, or the store's acknowledgment of it) and the
+/// customer's acknowledgment that it reached them (a receipt for a
+/// `CustomerHandoff` leg). The attestation zome's own validation already
+/// guarantees a leg is the assigned driver's and a receipt its recipient's;
+/// this checks they're for *this* order and cover both ends. Returns
+/// `Err(reason)` so the caller builds one consistent message.
 pub(crate) fn validate_delivery_receipts(order_original_creation: &ActionHash, receipts: &[ActionHash]) -> ExternResult<Result<(), String>> {
-    let mut kinds_seen: Vec<LegKind> = Vec::new();
-    for receipt_ref in receipts {
-        let receipt_record = must_get_valid_record(receipt_ref.clone())?;
-        // `ReceiptAttestation` is committed via countersigning, so its wire
-        // shape is `Entry::CounterSign(session_data, bytes)`, not the plain
-        // `Entry::App(bytes)` that `to_app_option` (Entry-agnostic, only
-        // matches `Entry::App`) expects -- it would silently return `None`
-        // here for every genuine receipt. The `TryFrom<&Entry>` impl that
-        // `#[hdk_entry_helper]` generates handles both cases, so use that
-        // instead.
-        let Some(entry) = receipt_record.entry().as_option() else {
-            return Ok(Err("a delivery_receipts entry has no entry data".into()));
+    let mut collected = false;
+    let mut received = false;
+    for proof_ref in receipts {
+        let record = must_get_valid_record(proof_ref.clone())?;
+        let (leg, acknowledged) = if let Some(leg) = decode::<Leg>(&record) {
+            (leg, false)
+        } else if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
+            let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg.clone())?) else {
+                return Ok(Err("a delivery receipt does not acknowledge a handoff".into()));
+            };
+            (leg, true)
+        } else {
+            return Ok(Err("delivery_receipts may only hold handoffs and their receipts".into()));
         };
-        let Ok(receipt) = ReceiptAttestation::try_from(entry) else {
-            return Ok(Err("a delivery_receipts entry does not point at a ReceiptAttestation entry".into()));
-        };
-        let leg_record = must_get_valid_record(receipt.leg.clone())?;
-        let Some(leg): Option<Leg> = leg_record.entry().to_app_option().map_err(|e| wasm_error!(e))? else {
-            return Ok(Err("a delivery_receipts entry's receipt does not point at a Leg entry".into()));
-        };
-        let leg_order_creation = resolve_original_creation(leg.order_ref)?;
-        if &leg_order_creation != order_original_creation {
-            return Ok(Err("a delivery_receipts entry references a leg belonging to a different order".into()));
+        if &resolve_original_creation(leg.order_ref.clone())? != order_original_creation {
+            return Ok(Err("a delivery receipt belongs to a different order".into()));
         }
-        if !kinds_seen.contains(&leg.kind) {
-            kinds_seen.push(leg.kind);
+        match leg.kind {
+            LegKind::MerchantHandoff => collected = true,
+            LegKind::CustomerHandoff if acknowledged => received = true,
+            LegKind::CustomerHandoff => {}
         }
     }
-    for required in REQUIRED_LEG_KINDS {
-        if !kinds_seen.contains(&required) {
-            return Ok(Err(format!("missing an attested leg of kind {:?}", required)));
-        }
+    if !collected {
+        return Ok(Err("completing a delivery needs the driver's record of collecting it from the store".into()));
+    }
+    if !received {
+        return Ok(Err("completing a delivery needs the customer's acknowledgment that it reached them".into()));
     }
     Ok(Ok(()))
 }
@@ -189,26 +185,6 @@ pub(crate) fn check_resolving_cancellation_dispute(prior: &DeliveryOrder, order:
         return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
     }
     validate_cancellation_dispute_resolution_matches(new_dispute_ref, author)
-}
-
-/// The driver's collateral hold on a pickup: a `CollateralHold` the
-/// assigned driver wrote, to the customer, for this order, for exactly what
-/// their bid committed.
-fn check_collateral_hold(order: &DeliveryOrder, prior: &DeliveryOrder, order_original_creation: &ActionHash) -> ExternResult<Result<(), String>> {
-    let Some(hold_ref) = &order.collateral_hold else {
-        return Ok(Err("picking an order up requires the driver's collateral hold".into()));
-    };
-    let Some(bid_ref) = &prior.accepted_bid else { return Ok(Err("an order is only picked up by its assigned driver".into())) };
-    let Some(bid) = decode::<Bid>(&must_get_valid_record(bid_ref.clone())?) else { return Ok(Err("accepted_bid is not a Bid".into())) };
-    let hold_record = must_get_valid_record(hold_ref.clone())?;
-    let Some(hold) = decode::<LedgerTransaction>(&hold_record) else { return Ok(Err("collateral_hold is not a ledger transaction".into())) };
-    let matches = hold.reason == TxnReason::CollateralHold
-        && hold_record.action().author() == &bid.bidder
-        && hold.from == bid.bidder
-        && hold.to == prior.requester
-        && hold.amount == bid.collateral
-        && &hold.related_order == order_original_creation;
-    Ok(if matches { Ok(()) } else { Err("collateral_hold must be the assigned driver's committed collateral, posted to the customer for this order".into()) })
 }
 
 pub(crate) fn validate_order_transition(
@@ -329,16 +305,42 @@ pub(crate) fn validate_order_transition(
             "driver_dropoff must be set when a bid is accepted, and never changed".into(),
         ));
     }
-    // The driver posts their collateral in the update that picks the order
-    // up -- not before, not after, and never changed.
+    // The money behind each step, set aside by whoever owes it and cited
+    // by the step that needs it: the customer's food when the store
+    // accepts, the driver's pay when the customer accepts a bid, the
+    // store's fee share when it starts preparing, the driver's collateral
+    // when they pick the order up. Each is set once and never changes.
     let picking_up = prior.status == DeliveryStatus::DriverEnRouteToMerchant && order.status == DeliveryStatus::PickedUp;
-    if picking_up {
-        let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
-        if let Err(reason) = check_collateral_hold(order, &prior, &order_original_creation)? {
+    let confirming = prior.status == DeliveryStatus::BidAccepted && order.status == DeliveryStatus::MerchantConfirmed;
+    let order_original = resolve_original_creation(original_action_hash.clone())?;
+    let Some(terms) = terms_of(&order_original)? else { return Ok(ValidateCallbackResult::Invalid("not an order".into())) };
+    let bid_ref = if accepting { order.accepted_bid.clone() } else { prior.accepted_bid.clone() };
+    let bid = match &bid_ref {
+        Some(bid_ref) => decode::<Bid>(&must_get_valid_record(bid_ref.clone())?),
+        None => None,
+    };
+    let steps: [(bool, &Option<ActionHash>, &Option<ActionHash>, Option<HoldPurpose>, &str); 4] = [
+        (store_accepting, &prior.food_hold, &order.food_hold, Some(HoldPurpose::Food), "food_hold"),
+        (accepting, &prior.driver_pay_hold, &order.driver_pay_hold, bid_ref.clone().map(|bid| HoldPurpose::DriverPay { bid }), "driver_pay_hold"),
+        (confirming, &prior.subsidy_hold, &order.subsidy_hold, bid_ref.clone().map(|bid| HoldPurpose::Subsidy { bid }), "subsidy_hold"),
+        (picking_up, &prior.collateral_hold, &order.collateral_hold, bid_ref.clone().map(|bid| HoldPurpose::Collateral { bid }), "collateral_hold"),
+    ];
+    for (this_step, before, after, purpose, field) in steps {
+        if !this_step {
+            if before != after {
+                return Ok(ValidateCallbackResult::Invalid(format!("{field} is set once, by the step it pays for")));
+            }
+            continue;
+        }
+        if before.is_some() {
+            return Ok(ValidateCallbackResult::Invalid(format!("{field} is already set")));
+        }
+        let Some(purpose) = purpose else { return Ok(ValidateCallbackResult::Invalid("this step needs the order's accepted bid".into())) };
+        let needs_bid = !matches!(purpose, HoldPurpose::Food);
+        let expected = ExpectedHold { order_original: &order_original, terms: &terms, purpose, bid: if needs_bid { bid.as_ref() } else { None } };
+        if let Err(reason) = check_hold(after, expected)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
         }
-    } else if prior.collateral_hold != order.collateral_hold {
-        return Ok(ValidateCallbackResult::Invalid("collateral_hold is set once, by the update that picks the order up".into()));
     }
     // A scheduled order can only actually open once its requested time has
     // arrived. Deliberately checked against *this action's own recorded

@@ -4,11 +4,9 @@ All commands run from `web/`.
 
 This is the development setup: the UI in a browser, provisioning identities on a shared dev conductor. Production runs the UI inside a Holochain runtime instead; see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-**The conductor must be built with countersigning.** Delivery receipts use Holochain's countersigning, which 0.7 only builds with a feature flag, and every zome imports it (Cargo unifies features across the workspace). A conductor without it fails to load the hApp with `unknown import "__hc__accept_countersigning_preflight_request_1"`. Install it with:
+Needs Holochain 0.7.0 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-srv`) on your `PATH`. The official release binaries work; the app uses no unstable Holochain features.
 
-```sh
-cargo install --locked holochain --version 0.7.0 --features unstable-countersigning
-```
+Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account may go $10,000 into debt and orders work without funding anyone. A production network sets the limit (0 recommended) and names issuers who fund accounts; see DEPLOYMENT.md and SECURITY.md.
 
 | Command | What it does |
 | --- | --- |

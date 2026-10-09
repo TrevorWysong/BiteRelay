@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -19,7 +19,6 @@ await runScenario(async (scenario) => {
 
   const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
   const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const geoPresenceOf = (p: typeof customer) => getZomeCaller(p.cells[0], "geo_presence");
   const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
   const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
   const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
@@ -39,7 +38,6 @@ await runScenario(async (scenario) => {
   });
   const menuItemRef = actionHash(menuItemRecord);
 
-  await geoPresenceOf(driver)("announce_online", { location: ST_PETE, capabilities: ["Food"] });
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   const orderRecord = await dispatchOf(customer)<HcRecord>("request_delivery", {
@@ -79,37 +77,26 @@ await runScenario(async (scenario) => {
   // allow the requester/merchant to update the order at all.
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
 
-  const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
-    sequence: 0,
-    kind: "MerchantHandoff",
-    to: customer.agentPubKey,
-    geo_at_completion: ST_PETE,
-  });
-  const merchantLegRef = actionHash(merchantLegRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-  const merchantReceiptRef = actionHash(merchantReceiptRecord);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: merchantReceiptRef }));
-  console.log("[PASS] Merchant handoff leg attested (1 of 2)");
+  // The driver records collecting the order; the store (the customer runs
+  // it here) acknowledges handing it over.
+  await handOff(driver, customer, orderRef, "MerchantHandoff", both);
+  console.log("[PASS] Store handoff recorded by the driver and acknowledged by the store");
 
   await dispatchOf(driver)("pick_up_order", orderRef);
 
-  const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
-    sequence: 1,
-    kind: "CustomerHandoff",
-    to: customer.agentPubKey,
-    geo_at_completion: ST_PETE,
-  });
-  const customerLegRef = actionHash(customerLegRecord);
+  // The driver records handing it over. Until the customer acknowledges
+  // receiving it, the delivery can't complete.
+  const dropoffLeg = actionHash(
+    await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
+  );
   await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-  const customerReceiptRef = actionHash(customerReceiptRecord);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: customerReceiptRef }));
-  console.log("[PASS] Customer handoff leg attested (2 of 2)");
+  await assert.rejects(
+    dispatchOf(customer)("complete_delivery", { order_original_action: orderRef }),
+    /hasn't acknowledged receiving this order/,
+    "the driver's word alone doesn't complete a delivery",
+  );
+  await attestationOf(customer)("acknowledge_leg", dropoffLeg);
+  console.log("[PASS] Drop-off recorded by the driver and acknowledged by the customer");
 
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
@@ -125,7 +112,7 @@ await runScenario(async (scenario) => {
   const deliveredOrderRecord = await dispatchOf(customer)<HcRecord>("complete_delivery", { order_original_action: orderRef });
   const deliveredOrder = decodeEntry<{ status: string; accepted_bid: Uint8Array }>(deliveredOrderRecord);
   assert.equal(deliveredOrder.status, "Delivered");
-  console.log("[PASS] complete_delivery succeeded only after both legs were attested");
+  console.log("[PASS] complete_delivery succeeded once both ends of the delivery were acknowledged");
 
   // The ledger transaction and its two AgentToTransaction links are all
   // authored on the *customer's* chain (they called complete_delivery) --
@@ -133,8 +120,8 @@ await runScenario(async (scenario) => {
   // GetStrategy::Local balance query can see it.
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
-  const customerBalance = await retryUntilOk(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey));
-  const driverBalance = await retryUntilOk(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey));
+  const customerBalance = await retryUntil(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey), (b) => b === -400, 120, 1000);
+  const driverBalance = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 400, 120, 1000);
   assert.equal(customerBalance, -400, "customer should have paid the bid's price_offer");
   assert.equal(driverBalance, 400, "driver should have received the bid's price_offer");
   assert.equal(customerBalance + driverBalance, 0, "mutual-credit ledger must always net to zero");

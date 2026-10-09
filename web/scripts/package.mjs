@@ -34,6 +34,20 @@ if (!Array.isArray(properties.arbitrators) || properties.arbitrators.length === 
   fail("deploy/properties.json needs at least one arbitrator, each an agent key (uhCAk...): without one, no dispute can ever be resolved.");
 }
 
+// Money: a network states how far into debt anyone may go (0 recommended:
+// everything prepaid, so a fresh identity can't order on credit), and who
+// may issue funds -- without an issuer, nobody with a 0 limit could ever
+// have any. See relay_governance.
+if (!Number.isInteger(properties.credit_limit_cents) || properties.credit_limit_cents < 0) {
+  fail("deploy/properties.json needs credit_limit_cents: how far below zero any balance may go (0 = everything prepaid, recommended).");
+}
+if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uhCAk[A-Za-z0-9_-]{48}$/.test(key))) {
+  fail("deploy/properties.json needs issuers: the agent keys (uhCAk...) of whoever credits accounts against real payments.");
+}
+if (properties.credit_limit_cents === 0 && properties.issuers.length === 0) {
+  fail("With credit_limit_cents 0 and no issuers, nobody could ever have funds -- name at least one issuer.");
+}
+
 function fail(message) {
   console.error(message);
   process.exit(2);
@@ -73,6 +87,8 @@ try {
   console.log(`\n✓ ${path.relative(REPO, out)} (${Math.round(statSync(out).size / 1024)} KB)`);
   console.log(`  network seed: ${networkSeed}`);
   console.log(`  arbitrators:  ${properties.arbitrators.length}`);
+  console.log(`  issuers:      ${properties.issuers.length}`);
+  console.log(`  credit limit: ${properties.credit_limit_cents} cents`);
   console.log(`  bootstrap:    ${bootstrapUrl ?? "(runtime default)"}`);
   console.log(`  relay:        ${relayUrl ?? "(runtime default)"}`);
 } finally {

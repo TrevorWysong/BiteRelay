@@ -1,136 +1,155 @@
-//! The plain (non-countersigned) side of attestation: recording a leg,
-//! linking a leg to its receipt once countersigning completes (see
-//! `countersigning.rs`), and every read-side query, including the one
-//! `dispatch` actually depends on (`count_attested_legs_for_order`).
+//! Recording handoffs, acknowledging them, and reading them back --
+//! including `delivery_proof_for_order`, which `dispatch::complete_delivery`
+//! depends on.
 
-use crate::countersigning::entry_def_parts;
 use attestation_integrity::*;
 use hdk::prelude::*;
+use relay_coordinator_support::{open, original_action_of, resolve_latest, seal};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordLegInput {
+    /// The order (its original action, or any version of it).
     pub order_ref: ActionHash,
     pub sequence: u8,
     pub kind: LegKind,
+    /// The store (picking up) or the customer (handing over).
     pub to: AgentPubKey,
+    /// Where it happened -- sealed to the other party with the photo (see
+    /// `Leg::sealed_evidence`), never published.
     pub geo_at_completion: GeoPoint,
-    /// See `Leg.photo_data_uri`'s own doc comment -- optional, empty string
-    /// means no photo.
+    /// A photo at the door, inline; empty for none.
     #[serde(default)]
     pub photo_data_uri: String,
 }
 
-/// Either party on a leg (the one initiating a handoff) records the raw
-/// event unilaterally. The dual-signed *proof* that both parties agree it
-/// happened comes next, via `countersigning::initiate_leg_attestation` --
-/// see the integrity crate's doc comment on why these are two separate
-/// entries.
+/// The driver recording a handoff as it happens. The other party
+/// acknowledges it with `acknowledge_leg` whenever they can -- the store
+/// with a tap on its queue, the customer as they confirm they've received
+/// their order. Until then it stands as the driver's own claim.
 #[hdk_extern]
 pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
     let from = agent_info()?.agent_initial_pubkey;
+    let order = original_action_of(input.order_ref)?;
+    // Recorded against the order as it stands -- the version that names
+    // this driver, which validation checks.
+    let current = resolve_latest(order.clone())?;
+    if let Some(problem) = relay_integrity_support::image_problem(&input.photo_data_uri) {
+        return Err(guest(problem));
+    }
+    let evidence = HandoffEvidence { geo: input.geo_at_completion, photo_data_uri: input.photo_data_uri };
+    let sealed_evidence = seal(&input.to, &evidence)?;
     let leg = Leg {
-        order_ref: input.order_ref.clone(),
+        order_ref: current.action_address().clone(),
         sequence: input.sequence,
         kind: input.kind,
         from,
         to: input.to,
-        geo_at_completion: input.geo_at_completion,
         completed_at: sys_time()?,
-        photo_data_uri: input.photo_data_uri,
+        sealed_evidence,
     };
     let action_hash = create_entry(&EntryTypes::Leg(leg))?;
-    create_link(input.order_ref, action_hash.clone(), LinkTypes::OrderToLeg, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back leg".into())))
+    create_link(order, action_hash.clone(), LinkTypes::OrderToLeg, ())?;
+    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back leg"))
 }
 
-/// A genuinely separate zome call from `initiate_leg_attestation` -- not
-/// just a separate function. Holochain requires a countersigning write to
-/// be the *only* action flushed from that call; bundling this link creation
-/// into the same call (even via a helper function) still flushes together
-/// and trips `DirtyCounterSigningWrite`/the equivalent chain-error. One
-/// party linking once is enough for DHT-wide discoverability via `get_links`.
+/// The other party to a handoff acknowledging it -- signed on their own
+/// chain, so a completed delivery carries proof from both sides. Safe to
+/// repeat: a handoff already acknowledged returns the existing receipt.
 #[hdk_extern]
-pub fn link_leg_to_receipt(input: LinkLegToReceiptInput) -> ExternResult<()> {
-    create_link(input.leg, input.receipt, LinkTypes::LegToReceipt, ())?;
-    Ok(())
+pub fn acknowledge_leg(leg_action: ActionHash) -> ExternResult<Record> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let leg_record = resolve_latest(leg_action.clone())?;
+    let leg: Leg = leg_record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
+    if leg.to != me {
+        return Err(guest("only the other party to a handoff can acknowledge it"));
+    }
+    if let Some(existing) = my_receipt_for(&leg_action)? {
+        return Ok(existing);
+    }
+    let receipt = ReceiptAttestation { leg: leg_action.clone(), attested_at: sys_time()? };
+    let action_hash = create_entry(&EntryTypes::ReceiptAttestation(receipt))?;
+    create_link(leg_action, action_hash.clone(), LinkTypes::LegToReceipt, ())?;
+    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back receipt"))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LinkLegToReceiptInput {
-    pub leg: ActionHash,
-    pub receipt: ActionHash,
+/// A handoff's evidence -- where it happened, and any photo -- for either
+/// of its two parties; `None` for anyone else.
+#[hdk_extern]
+pub fn get_handoff_evidence(leg_action: ActionHash) -> ExternResult<Option<HandoffEvidence>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let record = get(leg_action, GetOptions::default())?.ok_or(guest("handoff not found"))?;
+    let leg: Leg = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
+    let counterpart = if me == leg.from {
+        leg.to
+    } else if me == leg.to {
+        leg.from
+    } else {
+        return Ok(None);
+    };
+    let evidence: Option<HandoffEvidence> = open(&counterpart, &leg.sealed_evidence)?;
+    // Checked again on the way out: a modified client could seal anything.
+    Ok(evidence.filter(|e| relay_integrity_support::image_problem(&e.photo_data_uri).is_none()))
 }
 
-/// Queries the caller's own source chain directly for every
-/// ReceiptAttestation they've committed -- entirely local, no DHT/link
-/// lookup involved. This is the authoritative check that a countersigning
-/// party actually has the entry on their own chain; `get_receipt_for_leg`'s
-/// link-based lookup is only a convenience index on top and is subject to
-/// DHT integration timing that this bypasses entirely.
+/// The caller's own receipt for `leg`, from their chain.
+fn my_receipt_for(leg: &ActionHash) -> ExternResult<Option<Record>> {
+    Ok(list_my_receipts(())?
+        .into_iter()
+        .find(|record| record.entry().to_app_option::<ReceiptAttestation>().ok().flatten().is_some_and(|r| &r.leg == leg)))
+}
+
+/// Every receipt the caller has signed, from their own chain.
 #[hdk_extern]
 pub fn list_my_receipts(_: ()) -> ExternResult<Vec<Record>> {
-    let dummy = EntryTypes::ReceiptAttestation(ReceiptAttestation {
-        leg: ActionHash::from_raw_36(vec![0; 36]),
-        attested_at: Timestamp(0),
-    });
-    let (ScopedEntryDefIndex { zome_index, zome_type }, _) = entry_def_parts(&dummy)?;
-    let filter = ChainQueryFilter::new()
-        .entry_type(EntryType::App(AppEntryDef::new(zome_type, zome_index, EntryVisibility::Public)))
-        .include_entries(true);
-    query(filter)
+    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ReceiptAttestation)?).include_entries(true))
 }
 
+/// The acknowledgment of a handoff, if it has one.
 #[hdk_extern]
 pub fn get_receipt_for_leg(leg: ActionHash) -> ExternResult<Option<Record>> {
-    // Local, not the default Network strategy: on a sparse/small network a
-    // peer may not yet be a confirmed authority for this hash, so a live
-    // network round-trip can come back empty even though gossip has already
-    // delivered the data into local storage. Local reads whatever's already
-    // arrived, which is what a retry loop here is actually waiting on.
-    let links = get_links(
-        LinkQuery::try_new(leg, LinkTypes::LegToReceipt)?,
-        GetStrategy::Local,
-    )?;
+    let links = get_links(LinkQuery::try_new(leg, LinkTypes::LegToReceipt)?, GetStrategy::default())?;
     let Some(link) = links.into_iter().next() else { return Ok(None) };
     let Some(action_hash) = link.target.into_action_hash() else { return Ok(None) };
-    get(action_hash, GetOptions::local())
+    get(action_hash, GetOptions::default())
 }
 
+/// Every handoff recorded on an order.
 #[hdk_extern]
 pub fn get_legs_for_order(order_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let links = get_links(
-        LinkQuery::try_new(order_ref, LinkTypes::OrderToLeg)?,
-        GetStrategy::default(),
-    )?;
+    let order = original_action_of(order_ref)?;
+    let links = get_links(LinkQuery::try_new(order, LinkTypes::OrderToLeg)?, GetStrategy::default())?;
     let mut legs = Vec::with_capacity(links.len());
     for link in links {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Some(record) = get(action_hash, GetOptions::local())? {
+        if let Some(record) = get(action_hash, GetOptions::default())? {
             legs.push(record);
         }
     }
     Ok(legs)
 }
 
-/// Cross-zome entry point for `dispatch::complete_delivery` to gather every
-/// attested receipt for an order's legs, before marking it Delivered.
-/// Returns the receipt `ActionHash`es (not just a count) because
-/// `dispatch_integrity`'s own `validate()` now re-derives and checks these
-/// same references from the order entry's `delivery_receipts` field --
-/// `complete_delivery` needs the actual hashes to populate that field, not
-/// just a number to trust. Callable locally (same conductor, same agent)
-/// without a capability grant, unlike the network-facing functions in
-/// `countersigning.rs`.
+/// What a delivery needs to complete: the driver's record of collecting it
+/// from the store, and the customer's acknowledgment that it reached them
+/// -- returned as the two references `DeliveryOrder::delivery_receipts`
+/// carries (which `dispatch_integrity` checks), or an error saying what's
+/// missing.
 #[hdk_extern]
-pub fn list_attested_receipts_for_order(order_ref: ActionHash) -> ExternResult<Vec<ActionHash>> {
+pub fn delivery_proof_for_order(order_ref: ActionHash) -> ExternResult<Vec<ActionHash>> {
     let legs = get_legs_for_order(order_ref)?;
-    let mut receipts = Vec::new();
-    for leg_record in legs {
-        if let Some(receipt_record) = get_receipt_for_leg(leg_record.action_address().clone())? {
-            receipts.push(receipt_record.action_address().clone());
+    let of_kind = |kind: LegKind| legs.iter().filter(move |r| r.entry().to_app_option::<Leg>().ok().flatten().is_some_and(|leg| leg.kind == kind));
+    let pickup = of_kind(LegKind::MerchantHandoff).next().ok_or(guest("the driver hasn't recorded collecting this order from the store"))?;
+    let mut customer_receipt = None;
+    for handoff in of_kind(LegKind::CustomerHandoff) {
+        if let Some(receipt) = get_receipt_for_leg(handoff.action_address().clone())? {
+            customer_receipt = Some(receipt);
+            break;
         }
     }
-    Ok(receipts)
+    let customer_receipt = customer_receipt.ok_or(guest("the customer hasn't acknowledged receiving this order"))?;
+    Ok(vec![pickup.action_address().clone(), customer_receipt.action_address().clone()])
+}
+
+fn guest(message: &str) -> WasmError {
+    wasm_error!(WasmErrorInner::Guest(message.into()))
 }

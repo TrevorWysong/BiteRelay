@@ -74,7 +74,7 @@ mod test_utils {
         DriverToActiveDelivery
     );
 
-    use dispatch_integrity::{Cancellation, DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder, PickupStatus};
+    use dispatch_integrity::{Bid, Cancellation, DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder, PickupStatus};
 
     /// Writes a `PickupOrder` exactly as given, skipping the coordinator's
     /// pricing -- what a modified client could do -- so a test can prove
@@ -99,6 +99,19 @@ mod test_utils {
         pub dispute_ref: Option<ActionHash>,
         #[serde(default)]
         pub cancellation: Option<Cancellation>,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct RawBidUpdateInput {
+        pub original_action: ActionHash,
+        pub bid: Bid,
+    }
+
+    /// Updates a bid with exactly the entry given -- what a modified client
+    /// could -- so a test can prove who validation lets change a bid.
+    #[hdk_extern]
+    pub fn update_raw_bid_for_testing(input: RawBidUpdateInput) -> ExternResult<ActionHash> {
+        update_entry(input.original_action, &EntryTypes::Bid(input.bid))
     }
 
     /// Updates a `DeliveryOrder` with caller-chosen `status`/`delivery_receipts`/
@@ -132,7 +145,13 @@ mod test_utils {
     /// cancellation and ready time, past every check the real externs make.
     #[hdk_extern]
     pub fn force_pickup_update_for_testing(input: ForcePickupUpdateInput) -> ExternResult<Record> {
-        let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action, "PickupOrder")?;
+        let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action.clone(), "PickupOrder")?;
+        // Accepting cites the customer's food hold, as the real acceptance
+        // does -- these tests are about the other rules.
+        if order.status == PickupStatus::Placed && input.next_status == PickupStatus::MerchantConfirmed {
+            let original = relay_coordinator_support::original_action_of(input.order_original_action)?;
+            order.food_hold = crate::settlement::find_hold(&original, &dispatch_integrity::HoldPurpose::Food, &order.requester)?;
+        }
         order.status = input.next_status;
         order.cancellation = input.cancellation;
         order.ready_by = input.ready_by;

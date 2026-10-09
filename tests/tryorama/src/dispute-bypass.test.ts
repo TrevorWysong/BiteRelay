@@ -89,7 +89,7 @@ await runScenario(async (scenario) => {
   // Now genuinely resolve it (FavorProvider), for cases B-D below.
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefA,
-    outcome: { FavorProvider: { forfeit_amount: 0 } },
+    outcome: "FavorProvider",
     reasoning: "Confirmed via out-of-band evidence",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);

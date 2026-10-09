@@ -1,10 +1,7 @@
-// Proves Leg.photo_data_uri: a photo attached at CustomerHandoff round-trips
-// through get_legs_for_order, a Leg recorded with no photo decodes to an
-// empty string (not missing/undefined), and this is independent of
-// countersigning entirely -- the photo lives on the plain, unilateral `Leg`
-// entry, not the dual-signed `ReceiptAttestation`, so this test never needs
-// to drive a countersigning session at all (see `Leg.photo_data_uri`'s own
-// doc comment for why that's a deliberate design choice, not an oversight).
+// Proves a handoff's evidence -- where it happened, and the photo at the
+// door -- is sealed between its two parties: nothing about it is published
+// in the clear, the driver and the recipient can open it, and nobody else
+// can. And a photo is an inline image, never a link.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
@@ -56,35 +53,31 @@ await runScenario(async (scenario) => {
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: actionHash(bidRecord) });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  // Pickup leg -- no photo, the common case.
-  const pickupLeg = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
-    sequence: 0,
-    kind: "MerchantHandoff",
-    to: merchant.agentPubKey,
-    geo_at_completion: ST_PETE,
-  });
-  assert.equal(decodeEntry<{ photo_data_uri: string }>(pickupLeg).photo_data_uri, "", "a leg recorded with no photo must decode to an empty string, not missing");
-  console.log("[PASS] a leg recorded with no photo decodes to an empty string");
-
-  // Drop-off leg -- with a photo, the DoorDash-style convention.
+  // Pickup -- no photo, the common case. Drop-off -- with a photo at the door.
+  const pickupLeg = actionHash(await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE }));
   const fakePhoto = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-  const dropoffLeg = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
-    sequence: 1,
-    kind: "CustomerHandoff",
-    to: customer.agentPubKey,
-    geo_at_completion: ST_PETE,
-    photo_data_uri: fakePhoto,
-  });
-  assert.equal(decodeEntry<{ photo_data_uri: string }>(dropoffLeg).photo_data_uri, fakePhoto, "the drop-off leg's photo must round-trip through create_entry exactly");
-  console.log("[PASS] a photo attached to a CustomerHandoff leg round-trips exactly");
-
+  const dropoffRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE, photo_data_uri: fakePhoto });
+  const dropoffLeg = actionHash(dropoffRecord);
+  await assert.rejects(
+    attestationOf(driver)("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE, photo_data_uri: "https://tracker.example/door.png" }),
+    /inline PNG, JPEG, WebP or GIF/,
+    "a handoff photo is an inline image, never a link",
+  );
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  const legs = await attestationOf(customer)<HcRecord[]>("get_legs_for_order", orderRef);
-  const decoded = legs.map((r) => decodeEntry<{ kind: string; photo_data_uri: string }>(r));
-  assert.equal(decoded.length, 2, "both legs should be visible via get_legs_for_order");
-  assert.equal(decoded.find((l) => l.kind === "CustomerHandoff")?.photo_data_uri, fakePhoto, "the customer reading get_legs_for_order must see the same photo the driver attached");
-  assert.equal(decoded.find((l) => l.kind === "MerchantHandoff")?.photo_data_uri, "", "the pickup leg must still show no photo");
-  console.log("[PASS] get_legs_for_order surfaces the photo to the customer, matching what the driver attached");
+
+  // What's published is sealed: no coordinates, no photo.
+  const published = JSON.stringify(decodeEntry<Record<string, unknown>>(dropoffRecord), (_, v) => (v instanceof Uint8Array ? `bytes:${v.length}` : v));
+  assert.ok(!published.includes("iVBOR") && !published.includes(String(ST_PETE.lat)), "the published handoff holds neither the photo nor the location");
+  console.log("[PASS] a handoff's location and photo are never published in the clear");
+
+  // The two parties to each handoff can open it; nobody else can.
+  const evidence = (p: typeof customer, leg: Uint8Array) => attestationOf(p)<{ geo: { lat: number }; photo_data_uri: string } | null>("get_handoff_evidence", leg);
+  const forCustomer = await evidence(customer, dropoffLeg);
+  assert.equal(forCustomer?.photo_data_uri, fakePhoto, "the customer sees the photo of their door");
+  assert.equal(forCustomer?.geo.lat, ST_PETE.lat, "and where it was left");
+  assert.equal((await evidence(driver, dropoffLeg))?.photo_data_uri, fakePhoto, "so does the driver who took it");
+  assert.equal(await evidence(merchant, dropoffLeg), null, "the store can't open the customer's drop-off");
+  assert.equal((await evidence(merchant, pickupLeg))?.photo_data_uri, "", "but can open its own pickup, which had no photo");
+  assert.equal(await evidence(customer, pickupLeg), null, "and the customer can't open the store's");
+  console.log("[PASS] only a handoff's two parties can open its location and photo");
 });

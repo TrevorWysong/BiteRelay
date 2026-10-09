@@ -4,6 +4,8 @@
 
 use catalog_types::MerchantCatalog;
 use hdi::prelude::*;
+use relay_integrity_support::{first_problem, image_problem, text_problem};
+use relay_integrity_support::{classify, Checked};
 pub use relay_types::{DeliveryCapability, GeoPoint};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -149,34 +151,38 @@ pub enum LinkTypes {
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
-    match op.flattened::<EntryTypes, LinkTypes>()? {
-        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+    match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
+        Checked::Create { entry, action } => match entry {
             EntryTypes::Profile(profile) => validate_profile(&profile),
-            EntryTypes::ProviderCredential(credential) => validate_provider_credential(&credential),
+            EntryTypes::ProviderCredential(credential) => validate_provider_credential(&credential, action.author()),
             EntryTypes::SavedAddress(address) => validate_saved_address(&address, action.author()),
         },
-        FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
+        Checked::Update { entry, action } => match entry {
             EntryTypes::Profile(profile) => validate_profile_update(&profile, action.author(), &action.original_action_address),
-            EntryTypes::ProviderCredential(credential) => validate_provider_credential(&credential),
-            EntryTypes::SavedAddress(address) => {
-                validate_saved_address_update(&address, action.author(), &action.original_action_address)
-            }
+            EntryTypes::ProviderCredential(credential) => validate_provider_credential_update(&credential, action.author(), &action.original_action_address),
+            EntryTypes::SavedAddress(address) => validate_saved_address_update(&address, action.author(), &action.original_action_address),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type: LinkTypes::AgentToFavorite, action }) => validate_new_favorite(&action),
-        FlatOp::Link(OpLink::DeleteLink { original_action, link_type: LinkTypes::AgentToFavorite, action }) => {
-            validate_favorite_removal(&original_action, &action)
-        }
-        FlatOp::Link(OpLink::CreateLink { link_type: LinkTypes::OwnerToSavedAddress, action }) => validate_new_saved_address_link(&action),
-        FlatOp::Link(OpLink::DeleteLink { original_action, link_type: LinkTypes::OwnerToSavedAddress, action }) => {
-            validate_saved_address_removal(&original_action, &action)
-        }
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_identity_link(link_type, &action.base_address, &action.target_address, action.author()),
-        FlatOp::Link(OpLink::DeleteLink { .. }) => relay_integrity_support::invalid("profile and credential links can't be deleted"),
-        _ => Ok(ValidateCallbackResult::Valid),
+        // Profiles and credentials are referenced by orders and bids; an
+        // address is retired by unlinking it.
+        Checked::Delete { .. } => relay_integrity_support::invalid("profile entries can't be deleted"),
+        Checked::CreateLink { link_type: LinkTypes::AgentToFavorite, action } => validate_new_favorite(&action),
+        Checked::DeleteLink { link_type: LinkTypes::AgentToFavorite, original, action } => validate_favorite_removal(&original, &action),
+        Checked::CreateLink { link_type: LinkTypes::OwnerToSavedAddress, action } => validate_new_saved_address_link(&action),
+        Checked::DeleteLink { link_type: LinkTypes::OwnerToSavedAddress, original, action } => validate_saved_address_removal(&original, &action),
+        Checked::CreateLink { link_type, action } => validate_identity_link(link_type, &action.base_address, &action.target_address, action.author()),
+        Checked::DeleteLink { .. } => relay_integrity_support::invalid("profile and credential links can't be deleted"),
+        Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
 }
 
 fn validate_profile(profile: &Profile) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([
+        image_problem(&profile.avatar_data_uri).map(String::from),
+        text_problem("display_name", &profile.display_name, 60),
+        text_problem("bio", &profile.bio, 1_000),
+    ]) {
+        return Ok(invalid);
+    }
     if profile.is_public() && profile.display_name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid(
             "a store or a driver must have a public display_name".into(),
@@ -261,8 +267,21 @@ fn validate_favorite_removal(
     Ok(ValidateCallbackResult::Valid)
 }
 
-fn validate_provider_credential(credential: &ProviderCredential) -> ExternResult<ValidateCallbackResult> {
+/// A driver's vehicle details, published by that driver about their own
+/// profile. `verified` is reserved for a verification service the network
+/// doesn't have yet -- until it does, nobody can claim it.
+fn validate_provider_credential(credential: &ProviderCredential, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([
+        image_problem(&credential.photo_data_uri).map(String::from),
+        text_problem("vehicle_description", &credential.vehicle_description, 100),
+        text_problem("license_plate", &credential.license_plate, 20),
+    ]) {
+        return Ok(invalid);
+    }
     let record = must_get_valid_record(credential.profile_action.clone())?;
+    if record.action().author() != author {
+        return Ok(ValidateCallbackResult::Invalid("a driver can only publish vehicle details for their own profile".into()));
+    }
     let profile: Profile = record
         .entry()
         .to_app_option()
@@ -275,12 +294,28 @@ fn validate_provider_credential(credential: &ProviderCredential) -> ExternResult
             "ProviderCredential can only be attached to a Profile with the Provider role".into(),
         ));
     }
+    if credential.verified {
+        return Ok(ValidateCallbackResult::Invalid("a driver can't mark themselves verified".into()));
+    }
     if credential.vehicle_description.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid(
             "vehicle_description must not be empty".into(),
         ));
     }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// The same rules, and only the driver who published the details may
+/// change them, for the same profile.
+fn validate_provider_credential_update(credential: &ProviderCredential, author: &AgentPubKey, original: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original.clone())?;
+    let Ok(Some(prior)) = prior_record.entry().to_app_option::<ProviderCredential>() else {
+        return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a ProviderCredential".into()));
+    };
+    if prior_record.action().author() != author || prior.profile_action != credential.profile_action {
+        return Ok(ValidateCallbackResult::Invalid("only the driver may change their own vehicle details".into()));
+    }
+    validate_provider_credential(credential, author)
 }
 
 /// The content is sealed, so there's nothing validation can read; the

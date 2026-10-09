@@ -1,32 +1,21 @@
-// Decoding a zome-call `Record` back into its app-level struct. Mirrors the
-// tryorama test suite's own `decodeEntry` helper (tests/tryorama/src/helpers.ts)
-// including its one real gotcha: a countersigned entry's wire shape is
-// `[CounterSigningSessionData, bytes]`, not a bare `Uint8Array` -- the actual
-// app-entry bytes we want are the second element. `ReceiptAttestation` is the
-// only entry type in this app that's ever countersigned, but this helper is
-// shared by every zome so it handles both shapes uniformly.
+// Decoding a zome-call `Record` back into its app-level struct -- the same
+// as the tryorama suite's `decodeEntry` (tests/tryorama/src/helpers.ts).
 import { decode } from "@msgpack/msgpack";
 import type { HcRecord } from "./types";
 
 export function decodeEntry<T>(record: HcRecord): T {
-  const entry = record.entry as { Present?: { entry_type: string; entry: Uint8Array | [unknown, Uint8Array] } };
+  const entry = record.entry as { Present?: { entry: Uint8Array } };
   if (!entry.Present) throw new Error("record has no entry data");
-  const raw = entry.Present.entry_type === "CounterSign"
-    ? (entry.Present.entry as [unknown, Uint8Array])[1]
-    : (entry.Present.entry as Uint8Array);
-  return decode(raw) as T;
+  return decode(entry.Present.entry) as T;
 }
 
 export function actionHash(record: HcRecord): Uint8Array {
   return record.signed_action.hashed.hash;
 }
 
-export function authorOf(record: HcRecord): Uint8Array {
-  return record.signed_action.hashed.content.author;
-}
-
+/// When the record's action was written, in microseconds.
 export function timestampOf(record: HcRecord): number {
-  return record.signed_action.hashed.content.timestamp;
+  return record.signed_action.hashed.content.header.timestamp;
 }
 
 // Byte-array equality/keying -- Uint8Array can't be used directly as a Map

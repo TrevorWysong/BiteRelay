@@ -32,19 +32,30 @@ use hdi::prelude::*;
 pub struct RelayDnaProperties {
     #[serde(default)]
     pub arbitrators: Vec<String>,
-    /// How old a ledger transaction must be before a balance checkpoint may
-    /// cover it -- see `balance_settle_window`. Defaults to an hour; tests
-    /// set it low to exercise checkpoints.
-    #[serde(default)]
-    pub ledger_settle_secs: Option<u64>,
     /// How long a store has to accept a new order -- see
     /// `store_response_window`. Defaults to five minutes; tests set it low.
     #[serde(default)]
     pub store_response_secs: Option<u64>,
+    /// Who may issue funds into the ledger (`ledger_integrity::IssuerGrant`)
+    /// -- the network's stand-in for a payment processor topping up an
+    /// account against a real card payment. Same string form as
+    /// `arbitrators`.
+    #[serde(default)]
+    pub issuers: Vec<String>,
+    /// How far below zero any agent's balance may go, in cents. A
+    /// production network sets this explicitly -- 0 means everything is
+    /// prepaid, so a fresh identity has nothing to spend (see
+    /// `credit_limit_cents`). Unset, it's a development allowance.
+    #[serde(default)]
+    pub credit_limit_cents: Option<u64>,
 }
 
-const DEFAULT_LEDGER_SETTLE_SECS: u64 = 3600;
 const DEFAULT_STORE_RESPONSE_SECS: u64 = 300;
+
+/// The development allowance when a DNA doesn't set `credit_limit_cents`:
+/// enough to order freely in a demo. `web/scripts/package.mjs` refuses to
+/// build a network bundle without an explicit limit.
+const DEVELOPMENT_CREDIT_LIMIT_CENTS: u64 = 1_000_000;
 
 /// How long a store has to accept an order once it's placed with it. After
 /// that the store can't, and the customer's conductor cancels it -- so a
@@ -54,12 +65,17 @@ pub fn store_response_window() -> core::time::Duration {
     core::time::Duration::from_secs(secs)
 }
 
-/// How long to wait before a balance checkpoint may cover a transaction:
-/// long enough for gossip to deliver anything paid to an agent up to then,
-/// so no payment can arrive *behind* a checkpoint and be missed.
-pub fn balance_settle_window() -> core::time::Duration {
-    let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.ledger_settle_secs).unwrap_or(DEFAULT_LEDGER_SETTLE_SECS);
-    core::time::Duration::from_secs(secs)
+/// How far below zero a balance may go -- see `credit_limit_cents`.
+pub fn credit_limit_cents() -> u64 {
+    RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.credit_limit_cents).unwrap_or(DEVELOPMENT_CREDIT_LIMIT_CENTS)
+}
+
+/// Whether `agent` may issue funds -- see `RelayDnaProperties::issuers`.
+pub fn is_issuer(agent: &AgentPubKey) -> ExternResult<bool> {
+    let Ok(props) = RelayDnaProperties::try_from_dna_properties() else {
+        return Ok(false);
+    };
+    Ok(props.issuers.contains(&agent.to_string()))
 }
 
 /// Whether `agent` is on the DNA's arbitrator roster. A DNA built without a

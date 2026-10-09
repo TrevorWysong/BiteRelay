@@ -13,7 +13,7 @@ The runtime runs the conductor, installs the hApp for its one agent, hands the U
 
 Development is different on purpose. `npm run dev` runs the UI in a browser against the dev conductor and provisions identities through its Admin API, so several people can share one node (`web/src/holochain/devHost.ts`). That code is compiled out of every production build: `__DEV_HOST__` is a build-time literal (`web/vite.config.ts`), and a production bundle contains no Admin API calls. A production build opened in a plain browser shows "Open Relay in the Relay app" and does nothing else.
 
-**The runtime's conductor must support countersigning.** Delivery receipts use Holochain's countersigning, which 0.7 builds only with the `unstable-countersigning` feature. A runtime whose conductor lacks it can't load the hApp (`unknown import "__hc__accept_countersigning_preflight_request_1"`). Check this first when choosing or building a runtime: build its Holochain with that feature if it bundles its own.
+**Any release runtime works.** The hApp uses no unstable Holochain features, so it runs on the official 0.7 binaries a runtime downloads. Delivery handoffs are two plain entries (the driver's record, the other party's acknowledgment), not a countersigned one; countersigning is still unstable and no release build ships it. It's worth revisiting for ledger transfers, where both balances must move atomically, once it's stable.
 
 ## 1. Decide the network
 
@@ -22,13 +22,14 @@ These values are part of the DNA hash. Everyone on a network must install a bund
 - **Network seed.** A name for the network, such as `relay-2026`. Change it to start a fresh network.
 - **Arbitrators** (`arbitrators`). The agent keys allowed to rule on disputes. Without at least one, no dispute can be resolved, and packaging refuses to run. Because the roster is fixed in the DNA, the keys must exist before the bundle does. Arbitrators should run a conductor you operate, with keys generated in its keystore ahead of time, and install the bundle with those keys. Changing the roster later means shipping a new DNA (see Upgrades).
 - **Store response window** (`store_response_secs`, default 300). How long a store has to accept an order before the customer's conductor cancels it.
-- **Ledger settling window** (`ledger_settle_secs`, default 3600). How old a payment must be before a balance checkpoint may cover it. It should comfortably exceed how long gossip takes on your network.
+- **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order on credit and walk away. Packaging refuses to run without it.
+- **Issuers** (`issuers`). The agent keys allowed to put money into the network: the stand-in for a payment processor crediting an account against a real card payment. With a credit limit of 0, nobody can pay for anything until an issuer credits them, so packaging requires at least one. Like arbitrators, they need keys generated on a conductor you operate before the bundle is built. An issuer calls `ledger::issue_grant` once a payment clears; the recipient's app collects it.
 
 Copy `deploy/properties.example.json` to `deploy/properties.json` (gitignored) and fill it in.
 
 ## 2. Run the network's servers
 
-Run `kitsune2-bootstrap-srv` (the same version CI installs; see `.github/workflows/ci.yml`) behind TLS. It serves both bootstrap and relay. Note its public URLs.
+Run `kitsune2-bootstrap-srv` (from the same Holochain release CI pins, with its checksum: `.github/actions/holochain-bins/action.yml`) behind TLS. It serves both bootstrap and relay. Note its public URLs.
 
 ## 3. Package
 

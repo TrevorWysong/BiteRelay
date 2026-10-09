@@ -1,13 +1,13 @@
 // Proves the store pays its own share of the delivery fee -- with the
-// customer, store and driver all different agents, the one case where the
-// customer's conductor can't pay it: the customer's completion signals the
-// store, whose conductor schedules the payment and makes it, with no client
-// involved. The periodic sweep then finds nothing left, and paying twice is
-// impossible.
+// customer, store and driver all different agents: the store sets its share
+// aside as it starts preparing, and once the customer confirms the
+// delivery, the driver's conductor collects the whole fee and the tip, and
+// the store's collects the food, with no client involved. Settling again
+// then changes nothing.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, acceptOrder, handOff } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
@@ -38,15 +38,9 @@ await runScenario(async (scenario) => {
   await call(merchant, "dispatch")("set_order_status", { order_original_action: order, next_status: "MerchantConfirmed" });
   await sync();
   await call(driver, "dispatch")("set_order_status", { order_original_action: order, next_status: "DriverEnRouteToMerchant" });
-  const handoff = async (sequence: number, kind: string, to: Uint8Array) => {
-    const leg = actionHash(await call(driver, "attestation")<HcRecord>("record_leg", { order_ref: order, sequence, kind, to, geo_at_completion: ST_PETE }));
-    await sync();
-    const receipt = actionHash(await call(driver, "attestation")<HcRecord>("initiate_leg_attestation", leg));
-    await retryUntilOk(() => call(driver, "attestation")("link_leg_to_receipt", { leg, receipt }));
-  };
-  await handoff(0, "MerchantHandoff", merchant.agentPubKey);
+  await handOff(driver, merchant, order, "MerchantHandoff", all);
   await call(driver, "dispatch")("pick_up_order", order);
-  await handoff(1, "CustomerHandoff", customer.agentPubKey);
+  await handOff(driver, customer, order, "CustomerHandoff", all);
   await sync();
   await call(customer, "dispatch")("complete_delivery", { order_original_action: order });
   await sync();
@@ -63,12 +57,11 @@ await runScenario(async (scenario) => {
   assert.equal(driverBalance, 600, "the driver gets the full $5.00 fee plus the $1.00 tip -- half the fee from the store");
   assert.equal(await call(customer, "ledger")<number>("get_balance", customer.agentPubKey), -(600 + 250 + 100), "the customer pays the food, half the fee and the tip");
   assert.equal(await call(merchant, "ledger")<number>("get_balance", merchant.agentPubKey), 600 - 250, "the store is paid for the food and pays its half of the fee");
-  console.log("[PASS] the store's conductor pays its fee share when the completion signals it");
+  console.log("[PASS] each party's conductor settles its share once the customer confirms the delivery");
 
-  const paid = await call(merchant, "dispatch")<number>("pay_outstanding_store_shares", null);
-  assert.equal(paid, 0, "the fallback sweep finds nothing left to pay");
-  await call(merchant, "dispatch")("pay_store_share", order);
-  await sync();
-  assert.equal(await call(driver, "ledger")<number>("get_balance", driver.agentPubKey), 600, "paying the share again changes nothing");
-  console.log("[PASS] the sweep and a repeated payment are both no-ops once the share is paid");
+  for (const p of [customer, merchant, driver]) {
+    assert.equal(await call(p, "dispatch")<number>("settle_order", order), 0, "settling again finds nothing left");
+  }
+  assert.equal(await call(driver, "ledger")<number>("get_balance", driver.agentPubKey), 600, "and changes nothing");
+  console.log("[PASS] once settled, settling again is a no-op for everyone");
 });

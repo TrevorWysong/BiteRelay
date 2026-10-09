@@ -45,15 +45,16 @@ test("a customer's order waits on the store, which can accept or decline it", as
   await page.getByText("Pickup", { exact: true }).click();
   await page.getByRole("button", { name: /Place pickup order/ }).click();
   await expect(page.getByText(/Waiting for the store to accept your order/)).toBeVisible();
+  await expect(page.getByText(/The store has until \d{1,2}:\d{2}/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel order" })).toBeVisible();
 
   // Mo runs Mo's Tacos; he also orders and drives, so switch to the store side.
   await signInAs(page, "mo");
   await page.getByRole("button", { name: "Sell" }).click();
   await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept order" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Accept · \d+ min$/ }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Decline" }).first()).toBeVisible();
-  await expect(page.getByText(/Accept by/).first()).toBeVisible();
+  await expect(page.getByText(/Accept by \d{1,2}:\d{2}/).first()).toBeVisible();
 });
 
 test("a driver goes online and sees the nearby order feed", async ({ page }) => {

@@ -7,71 +7,70 @@
 use crate::*;
 use relay_integrity_support::{decode, invalid, link_target, original_creation, require, LinkTarget};
 
-/// The link type an entry about `target` must be indexed under, and the
-/// base it must hang off.
-fn event_link(target: &ReputationTarget) -> (LinkTypes, LinkTypes, AnyLinkableHash) {
+/// The link type and base an event about `target` is indexed under.
+fn event_link(target: &ReputationTarget) -> (LinkTypes, AnyLinkableHash) {
     match target {
-        ReputationTarget::Store(c) => (LinkTypes::StoreToEvent, LinkTypes::StoreToReputationCheckpoint, c.clone().into()),
-        ReputationTarget::Driver(a) => (LinkTypes::DriverToEvent, LinkTypes::DriverToReputationCheckpoint, a.clone().into()),
-        ReputationTarget::Customer(a) => (LinkTypes::CustomerToEvent, LinkTypes::CustomerToReputationCheckpoint, a.clone().into()),
+        ReputationTarget::Store(c) => (LinkTypes::StoreToEvent, c.clone().into()),
+        ReputationTarget::Driver(a) => (LinkTypes::DriverToEvent, a.clone().into()),
+        ReputationTarget::Customer(a) => (LinkTypes::CustomerToEvent, a.clone().into()),
     }
 }
 
-fn review_link(target: &ReviewTarget) -> (LinkTypes, LinkTypes, AnyLinkableHash) {
+fn review_link(target: &ReviewTarget) -> (LinkTypes, AnyLinkableHash) {
     match target {
-        ReviewTarget::Store(c) => (LinkTypes::StoreToReview, LinkTypes::StoreToRatingCheckpoint, c.clone().into()),
-        ReviewTarget::Driver(a) => (LinkTypes::DriverToReview, LinkTypes::DriverToRatingCheckpoint, a.clone().into()),
+        ReviewTarget::Store(c) => (LinkTypes::StoreToReview, c.clone().into()),
+        ReviewTarget::Driver(a) => (LinkTypes::DriverToReview, a.clone().into()),
     }
 }
 
 /// A data link is valid only if its type and base match what the target
-/// entry says it's about, and it's authored by that entry's own author.
-pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+/// entry says it's about, it's authored by that entry's own author, and --
+/// for the links ratings and summaries are summed from -- its tag carries
+/// exactly what the entry says (see `review_tag`/`event_tag`).
+pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, tag: &LinkTag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let LinkTarget::Record(record) = link_target(target)? else {
         return invalid("reputation links must target a record");
     };
     if record.action().author() != author {
         return invalid("a reputation link must be authored by the author of the entry it indexes");
     }
-    let expected: Option<(LinkTypes, AnyLinkableHash)> = match link_type {
-        LinkTypes::StoreToEvent | LinkTypes::DriverToEvent | LinkTypes::CustomerToEvent => {
-            decode::<ReputationEvent>(&record).map(|e| {
-                let (t, _, b) = event_link(&e.target);
-                (t, b)
-            })
-        }
-        LinkTypes::StoreToReputationCheckpoint | LinkTypes::DriverToReputationCheckpoint | LinkTypes::CustomerToReputationCheckpoint => {
-            decode::<ReputationCheckpoint>(&record).map(|c| {
-                let (_, t, b) = event_link(&c.target);
-                (t, b)
-            })
-        }
-        LinkTypes::StoreToReview | LinkTypes::DriverToReview => decode::<Review>(&record).map(|r| {
-            let (t, _, b) = review_link(&r.target);
-            (t, b)
-        }),
-        LinkTypes::StoreToRatingCheckpoint | LinkTypes::DriverToRatingCheckpoint => decode::<RatingCheckpoint>(&record).map(|c| {
-            let (_, t, b) = review_link(&c.target);
-            (t, b)
-        }),
-        LinkTypes::OrderToReview => match decode::<Review>(&record) {
-            Some(review) => Some((LinkTypes::OrderToReview, original_creation(review.order_ref)?.into())),
+    let expected: Option<(LinkTypes, AnyLinkableHash, Option<LinkTag>)> = match link_type {
+        LinkTypes::StoreToEvent | LinkTypes::DriverToEvent | LinkTypes::CustomerToEvent => match decode::<ReputationEvent>(&record) {
+            Some(e) => {
+                let (t, b) = event_link(&e.target);
+                Some((t, b, Some(event_tag(&e.kind, &e.order_ref))))
+            }
             None => None,
         },
-        LinkTypes::ItemToReview => decode::<ItemReview>(&record).map(|r| (LinkTypes::ItemToReview, r.item_ref.into())),
-        LinkTypes::ItemToRatingCheckpoint => decode::<ItemRatingCheckpoint>(&record).map(|c| (LinkTypes::ItemToRatingCheckpoint, c.item_ref.into())),
+        LinkTypes::StoreToReview | LinkTypes::DriverToReview => match decode::<Review>(&record) {
+            Some(r) => {
+                let (t, b) = review_link(&r.target);
+                Some((t, b, Some(review_tag(r.rating, &original_creation(r.order_ref)?))))
+            }
+            None => None,
+        },
+        LinkTypes::OrderToReview => match decode::<Review>(&record) {
+            Some(review) => Some((LinkTypes::OrderToReview, original_creation(review.order_ref)?.into(), None)),
+            None => None,
+        },
+        LinkTypes::ItemToReview => match decode::<ItemReview>(&record) {
+            Some(r) => Some((LinkTypes::ItemToReview, r.item_ref.into(), Some(review_tag(r.rating, &original_creation(r.order_ref)?)))),
+            None => None,
+        },
     };
-    let Some((expected_type, expected_base)) = expected else {
+    let Some((expected_type, expected_base, expected_tag)) = expected else {
         return invalid("a reputation link's target is not the entry type its link type indexes");
     };
+    if expected_type != link_type || &expected_base != base {
+        return invalid("a reputation link must sit under the store, agent, order or item its entry is actually about");
+    }
     require(
-        expected_type == link_type && &expected_base == base,
-        "a reputation link must sit under the store, agent, order or item its entry is actually about",
+        expected_tag.is_none_or(|expected| &expected == tag),
+        "a rating or event link's tag must carry exactly what its entry says",
     )
 }
 
-/// Reputation is append-only: events, reviews and checkpoints are never
-/// unlinked.
+/// Reputation is append-only: events and reviews are never unlinked.
 pub fn validate_delete_link() -> ExternResult<ValidateCallbackResult> {
     invalid("reputation links can't be deleted")
 }

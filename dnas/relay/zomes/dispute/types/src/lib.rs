@@ -32,17 +32,17 @@ pub enum DisputeStatus {
 
 /// No `Dismissed`/no-fault outcome -- every dispute resolves to a definitive
 /// `Delivered` or `Cancelled` (see `DeliveryOrder::dispute_ref`'s doc
-/// comment). A dispute raised in error is `FavorProvider { forfeit_amount: 0 }`,
-/// not a revert to some remembered pre-dispute status.
+/// comment). A dispute raised in error is `FavorProvider`.
 ///
-/// `forfeit_amount` is what the losing side pays the winning one -- except a
-/// delivery ruled for the customer, where the forfeit is the collateral the
-/// driver posted at pickup, which the customer already holds; nothing more
-/// moves (the ledger refuses it).
+/// A ruling moves no money itself: it's the evidence each party's held
+/// money is settled by (see `ledger_integrity`). For the provider, the
+/// order is paid as if delivered and the driver's collateral returned; for
+/// the customer, their holds come back to them and the driver's collateral
+/// goes to the store, which handed over the food.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum DisputeOutcome {
-    FavorProvider { forfeit_amount: u64 },
-    FavorRequester { forfeit_amount: u64 },
+    FavorProvider,
+    FavorRequester,
 }
 
 /// A dispute case, either over whether a delivery was actually completed

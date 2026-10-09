@@ -28,5 +28,4 @@ test("steps nobody needs telling about stay quiet", () => {
   // A store hears nothing of its own "ready for pickup" -- it did that.
   const change = { Pickup: { status: "ReadyForPickup" as const, cancellation: null } };
   assert.equal(notificationFor({ OrderUpdated: { order_hash: order, change, role: "Store" } }), null);
-  assert.equal(notificationFor({ NewOrderNearby: order }), null, "a driver's nearby feed refreshes; it doesn't buzz for every order");
 });

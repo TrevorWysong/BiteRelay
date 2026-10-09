@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
@@ -60,9 +60,9 @@ await runScenario(async (scenario) => {
   await dispatchOf(customer)("complete_pickup", orderRef);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const merchantBalance = await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey);
+  const merchantBalance = await retryUntil(() => ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey), (b) => b === 600, 120, 1000);
   assert.equal(merchantBalance, 600, "merchant should be paid order_total -- no delivery-fee split exists for pickup");
-  const customerBalance = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
+  const customerBalance = await retryUntil(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey), (b) => b === -600, 120, 1000);
   assert.equal(customerBalance, -600, "customer should be debited exactly order_total, nothing else");
   console.log("[PASS] complete_pickup settles order_total with no delivery-fee concept at all");
 
@@ -99,7 +99,7 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("cancel_pickup_order", order2Ref);
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  const merchantBalanceAfterCancel = await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey);
+  const merchantBalanceAfterCancel = await retryUntil(() => ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey), (b) => b === 600, 120, 1000);
   assert.equal(merchantBalanceAfterCancel, 600, "cancelling before pickup must not settle any payment");
   console.log("[PASS] cancel_pickup_order leaves payment untouched");
 });

@@ -4,13 +4,12 @@
 //! bidding steps in between, and `matching.rs`/`signals.rs` for how a new
 //! order actually reaches nearby providers.
 
-use crate::matching::{geo_presence_precision, notify_nearby_providers, open_order_anchor_path};
+use crate::matching::{dropoff_geohash_precision, open_order_anchor_path};
 use crate::order_queues::{self, OrderParties};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement;
 use crate::stores::{closed_reason, current_catalog, ready_by};
 use crate::upkeep;
-use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{decode_or, open, original_action_of, resolve_latest, resolve_latest_decoded, seal};
@@ -61,20 +60,15 @@ pub struct RequestDeliveryInput {
     pub bag_claim_ref: Option<ActionHash>,
 }
 
-/// Publishes an order the store just accepted (`accept_delivery_order`) to
-/// the discovery anchor and fires the best-effort signal fan-out to drivers
-/// nearby -- nothing before the store's acceptance is ever discoverable.
-/// The anchor links the accepting version (validation checks it's Open);
-/// the signal names the order itself, as every other signal does.
-fn publish_to_open_anchor_and_notify(order_ref: &ActionHash, opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
+/// Once the store accepts a delivery, it's listed under its drop-off's cell
+/// for drivers nearby to find (`matching::get_open_orders_near`) -- nothing
+/// before the store's acceptance is ever discoverable. The listing links the
+/// accepting version (validation checks it's Open).
+fn publish_to_open_anchor(opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
     let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     let path = open_order_anchor_path(dropoff_geohash, bucket)?;
     path.ensure()?;
     create_link(path.path_entry_hash()?, opened.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
-
-    // Best-effort fast path. A driver who missed this falls back to polling
-    // get_open_orders_near -- see plan §3's named "signals can silently drop" risk.
-    let _ = notify_nearby_providers(order_ref, dropoff_geohash);
     Ok(())
 }
 
@@ -193,7 +187,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
-    let dropoff_geohash = relay_types::encode(input.dropoff, geo_presence_precision());
+    let dropoff_geohash = relay_types::encode(input.dropoff, dropoff_geohash_precision());
     let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Placed };
 
     if let Some(promo_ref) = &input.promo_code_ref {
@@ -252,10 +246,16 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
-        collateral_hold: None,
         ready_by: None,
+        food_hold: None,
+        driver_pay_hold: None,
+        subsidy_hold: None,
+        collateral_hold: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
+    // The food is paid for up front, in this same commit: the store can't
+    // accept an order whose money isn't set aside.
+    settlement::place_hold(&action_hash, HoldPurpose::Food)?;
     // The store finds it in its queue; drivers only once the store accepts
     // it (`accept_delivery_order`).
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, now)?;
@@ -319,12 +319,14 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     if order.merchant != agent_info()?.agent_initial_pubkey {
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
-    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
+    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
+    let original = original_action_of(order_original_action.clone())?;
+    order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    publish_to_open_anchor_and_notify(&original_action_of(order_original_action)?, &updated, &dropoff_geohash, sys_time()?)?;
+    publish_to_open_anchor(&updated, &dropoff_geohash, sys_time()?)?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted order".into())))
 }
@@ -377,6 +379,13 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
         )));
     }
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+    // A store starting on a delivery sets aside its share of the driver's
+    // fee, in this same commit.
+    // (Anyone else asking is refused by validation, with the reason why.)
+    if order.status == DeliveryStatus::BidAccepted && input.next_status == DeliveryStatus::MerchantConfirmed && order.merchant == agent_info()?.agent_initial_pubkey {
+        let bid = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
+        order.subsidy_hold = settlement::place_hold(&input.order_original_action, HoldPurpose::Subsidy { bid })?;
+    }
     order.status = input.next_status;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
     if order.status.is_terminal() {
@@ -394,34 +403,19 @@ pub fn get_store_response_secs(_: ()) -> ExternResult<u64> {
     Ok(relay_governance::store_response_window().as_secs())
 }
 
-/// Mirrors `ledger::HoldCollateralInput` over the zome-call boundary.
-#[derive(Serialize, Deserialize, Debug)]
-struct HoldCollateralWire {
-    related_order: ActionHash,
-    basis: ActionHash,
-    to: AgentPubKey,
-    amount: u64,
-}
-
-/// The driver picking the order up from the store: they post their
-/// collateral to the customer -- the value of the food they now carry --
-/// and the same update records it (validation requires both together).
-/// The customer hands it back on delivery (`PaymentLeg::CollateralReturn`).
+/// The driver picking the order up from the store: they set aside their
+/// collateral -- the value of the food they now carry -- in the same commit
+/// (validation requires both together). It's theirs again once the customer
+/// confirms the delivery, the store's if an arbitrator rules it never came.
 #[hdk_extern]
 pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::DriverEnRouteToMerchant {
         return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once its driver is at the store".into())));
     }
-    let bid_ref = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
-    let (_, bid): (_, Bid) = resolve_latest_decoded(bid_ref, "Bid")?;
-    let hold = HoldCollateralWire { related_order: original_action_of(order_original_action)?, basis: record.action_address().clone(), to: order.requester.clone(), amount: bid.collateral };
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "ledger", "hold_collateral".into(), None, hold)? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("posting your collateral failed".into())));
-    };
-    let hold_record: Record = io.decode().map_err(|e| wasm_error!(e))?;
+    let bid = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
+    order.collateral_hold = settlement::place_hold(&order_original_action, HoldPurpose::Collateral { bid })?;
     order.status = DeliveryStatus::PickedUp;
-    order.collateral_hold = Some(hold_record.action_address().clone());
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back picked-up order".into())))
@@ -511,7 +505,6 @@ pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationT
     Ok(())
 }
 
-const REQUIRED_LEGS_FOR_DELIVERY: u32 = 2; // MerchantHandoff + CustomerHandoff
 
 /// The gated path to marking a delivery Delivered. Unlike `set_order_status`,
 /// which trusts the integrity zome's state-machine table alone, this
@@ -540,47 +533,29 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
     let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
 
-    let receipts_response = call(
-        CallTargetCell::Local,
-        "attestation",
-        "list_attested_receipts_for_order".into(),
-        None,
-        input.order_original_action.clone(),
-    )?;
-    let ZomeCallResponse::Ok(extern_io) = receipts_response else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "list_attested_receipts_for_order cross-zome call failed".into()
-        )));
+    // The driver's pickup record and the customer's acknowledgment of
+    // receipt -- see `attestation::delivery_proof_for_order`.
+    let proof_response = call(CallTargetCell::Local, "attestation", "delivery_proof_for_order".into(), None, input.order_original_action.clone())?;
+    let attested_receipts: Vec<ActionHash> = match proof_response {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
+        // Says what's missing ("the customer hasn't acknowledged ...").
+        other => return Err(wasm_error!(WasmErrorInner::Guest(format!("cannot complete this delivery yet: {other:?}")))),
     };
-    let attested_receipts: Vec<ActionHash> = extern_io.decode().map_err(|e| wasm_error!(e))?;
-    if attested_receipts.len() < REQUIRED_LEGS_FOR_DELIVERY as usize {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!(
-            "cannot complete delivery: {} of {} required leg attestations found",
-            attested_receipts.len(),
-            REQUIRED_LEGS_FOR_DELIVERY
-        ))));
-    }
 
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = attested_receipts;
-    let owed = delivery_payments(&order, &bid);
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     order_queues::retire(&parties)?;
-
-    // The customer pays what they owe now; the store pays its fee share
-    // from its own conductor, told here that it's due (the sweep in
-    // `settlement` catches a missed signal).
-    let me = agent_info()?.agent_initial_pubkey;
-    settlement::pay_legs(&input.order_original_action, &updated, &owed, settlement::Payer::Me(&me))?;
-    if owed.iter().any(|p| p.leg == PaymentLeg::DeliveryFeeStoreShare && p.from != me) {
-        let _ = send_remote_signal(RemoteSignal::StoreShareDue { order_hash: input.order_original_action.clone() }, vec![merchant.clone()]);
-    }
+    // Nothing is paid here: the money was set aside as the order went, and
+    // the customer's receipt is what lets the store and driver collect it,
+    // each from their own conductor (`settlement`), told by this update's
+    // signal.
 
     // Best-effort: reputation bumps are valuable but shouldn't block
-    // payment or delivery completion if they fail. One per role this order
+    // delivery completion if they fail. One per role this order
     // actually involved -- the driver's completed delivery, and the store's
     // completed order -- each counted only toward its own target.
     record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted)?;

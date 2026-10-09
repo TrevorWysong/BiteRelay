@@ -1,307 +1,354 @@
-//! Coordinator zome for the stub mutual-credit ledger: append-only
-//! `LedgerTransaction`s recorded by whoever pays, and a derived balance
-//! read. See the integrity crate for what validation guarantees.
+//! Coordinator zome for the ledger: placing holds for orders, collecting or
+//! waiving the parts owed to the caller, issuing and collecting funds, and
+//! reading balances. See the integrity crate for what validation
+//! guarantees -- every function here only ever writes to the caller's own
+//! chain, with the balance that follows from their last entry.
 
+use dispatch_types::{hold_amount, hold_terms, Bid, DeliveryOrder, OrderTerms, PickupOrder, Share};
 use hdk::prelude::*;
 use ledger_integrity::*;
-use relay_coordinator_support::next_page_cursor;
+use relay_coordinator_support::original_action_of;
 
-/// The payment or forfeit already on the caller's chain for this order and
-/// reason, if any -- what makes `pay`/`forfeit` safe to retry. Payments are
-/// authored by their payer, so the caller's own chain is the whole answer.
-fn already_recorded(related_order: &ActionHash, reason: &TxnReason, from: &AgentPubKey) -> ExternResult<Option<Record>> {
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
-    Ok(query(filter)?.into_iter().find(|record| {
-        record
-            .entry()
-            .to_app_option::<LedgerTransaction>()
-            .ok()
-            .flatten()
-            .is_some_and(|txn| &txn.related_order == related_order && &txn.reason == reason && &txn.from == from)
+fn guest(message: impl Into<String>) -> WasmError {
+    wasm_error!(WasmErrorInner::Guest(message.into()))
+}
+
+/// The caller's ledger entries, oldest first.
+fn my_entries() -> ExternResult<Vec<Record>> {
+    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?).include_entries(true))
+}
+
+fn entry_of(record: &Record) -> Option<LedgerEntry> {
+    record.entry().to_app_option::<LedgerEntry>().ok().flatten()
+}
+
+/// Writes the caller's next ledger entry, after their latest.
+fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
+    let latest = my_entries()?.into_iter().last();
+    let (previous, balance) = match &latest {
+        Some(record) => (Some(record.action_address().clone()), entry_of(record).map_or(0, |e| e.balance)),
+        None => (None, 0),
+    };
+    let signed = i64::try_from(amount).map_err(|_| guest("amount out of range"))?;
+    let balance = match kind {
+        LedgerKind::Hold { .. } => {
+            let after = balance - signed;
+            let limit = relay_governance::credit_limit_cents() as i64;
+            if after < -limit {
+                return Err(guest("Not enough funds for this order."));
+            }
+            after
+        }
+        LedgerKind::Waive { .. } => balance,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } => balance + signed,
+    };
+    create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, previous }))
+}
+
+// --- funds ---
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IssueGrantInput {
+    pub to: AgentPubKey,
+    pub amount: u64,
+    pub reference: String,
+}
+
+/// An issuer (see `relay_governance::is_issuer`) crediting an agent -- the
+/// network's stand-in for a payment processor's top-up.
+#[hdk_extern]
+pub fn issue_grant(input: IssueGrantInput) -> ExternResult<ActionHash> {
+    let to = input.to.clone();
+    let hash = create_entry(&EntryTypes::IssuerGrant(IssuerGrant { to: input.to, amount: input.amount, reference: input.reference }))?;
+    create_link(to, hash.clone(), LinkTypes::AgentToGrant, ())?;
+    Ok(hash)
+}
+
+/// Collects every grant made to the caller that they haven't yet; returns
+/// how many.
+#[hdk_extern]
+pub fn collect_grants(_: ()) -> ExternResult<u32> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let collected: Vec<ActionHash> = my_entries()?
+        .iter()
+        .filter_map(entry_of)
+        .filter_map(|e| match e.kind {
+            LedgerKind::Deposit { grant } => Some(grant),
+            _ => None,
+        })
+        .collect();
+    let mut count = 0;
+    for link in get_links(LinkQuery::try_new(me.clone(), LinkTypes::AgentToGrant)?, GetStrategy::default())? {
+        let Some(grant_ref) = link.target.into_action_hash() else { continue };
+        if collected.contains(&grant_ref) {
+            continue;
+        }
+        let Some(record) = get(grant_ref.clone(), GetOptions::default())? else { continue };
+        let Ok(Some(grant)) = record.entry().to_app_option::<IssuerGrant>() else { continue };
+        if grant.to != me {
+            continue;
+        }
+        append(LedgerKind::Deposit { grant: grant_ref }, grant.amount)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+// --- holds ---
+
+/// One part of a hold, over the zome-call boundary.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ShareView {
+    pub portion: Portion,
+    pub recipient: AgentPubKey,
+    pub amount: u64,
+}
+
+impl From<&Share> for ShareView {
+    fn from(share: &Share) -> Self {
+        Self { portion: share.portion, recipient: share.recipient.clone(), amount: share.amount }
+    }
+}
+
+/// An order's terms, from its original record, and the bid a purpose names.
+fn order_context(order: &ActionHash, purpose: &HoldPurpose) -> ExternResult<(OrderTerms, Option<Bid>)> {
+    let record = get(order.clone(), GetOptions::default())?.ok_or(guest("order not found"))?;
+    let terms = if let Ok(Some(order)) = record.entry().to_app_option::<DeliveryOrder>() {
+        OrderTerms::of_delivery(&order)
+    } else if let Ok(Some(order)) = record.entry().to_app_option::<PickupOrder>() {
+        OrderTerms::of_pickup(&order)
+    } else {
+        return Err(guest("that isn't an order"));
+    };
+    let bid = match purpose {
+        HoldPurpose::Food => None,
+        HoldPurpose::DriverPay { bid } | HoldPurpose::Subsidy { bid } | HoldPurpose::Collateral { bid } => {
+            let record = get(bid.clone(), GetOptions::default())?.ok_or(guest("bid not found"))?;
+            record.entry().to_app_option::<Bid>().map_err(|e| wasm_error!(e))?
+        }
+    };
+    Ok((terms, bid))
+}
+
+/// Who pays a hold for `purpose` on `order`, and its parts.
+fn terms_of(order: &ActionHash, purpose: &HoldPurpose) -> ExternResult<(AgentPubKey, Vec<Share>)> {
+    let (terms, bid) = order_context(order, purpose)?;
+    hold_terms(&terms, purpose, bid.as_ref()).ok_or(guest("that kind of hold doesn't fit this order"))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PlaceHoldInput {
+    /// The order (any version of it).
+    pub order: ActionHash,
+    pub purpose: HoldPurpose,
+}
+
+/// Sets aside what the caller owes for `purpose` on an order, priced from
+/// its terms -- `None` if there's nothing to hold (a customer ordering from
+/// their own store, a fee the store covers in full). Safe to repeat: a hold
+/// already placed is returned. Called by the dispatch zome in the same call
+/// as the order step that needs it, so the two commit together.
+#[hdk_extern]
+pub fn place_hold(input: PlaceHoldInput) -> ExternResult<Option<ActionHash>> {
+    let order = original_action_of(input.order)?;
+    let (payer, shares) = terms_of(&order, &input.purpose)?;
+    if payer != agent_info()?.agent_initial_pubkey {
+        return Err(guest("a hold is placed by whoever owes it"));
+    }
+    if shares.is_empty() {
+        return Ok(None);
+    }
+    let existing = my_entries()?.into_iter().find(|record| {
+        entry_of(record).is_some_and(|e| matches!(&e.kind, LedgerKind::Hold { order: o, purpose: p } if o == &order && p == &input.purpose))
+    });
+    if let Some(record) = existing {
+        return Ok(Some(record.action_address().clone()));
+    }
+    let hash = append(LedgerKind::Hold { order: order.clone(), purpose: input.purpose }, hold_amount(&shares))?;
+    create_link(order, hash.clone(), LinkTypes::OrderToHold, ())?;
+    Ok(Some(hash))
+}
+
+/// A hold on an order: who paid it, what for, and its parts.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HoldView {
+    pub hold: ActionHash,
+    pub payer: AgentPubKey,
+    pub purpose: HoldPurpose,
+    pub amount: u64,
+    pub held_at: Timestamp,
+    pub shares: Vec<ShareView>,
+}
+
+/// Every hold on an order (its original action, or any version).
+#[hdk_extern]
+pub fn holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
+    let order = original_action_of(order)?;
+    let mut holds = Vec::new();
+    for link in get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToHold)?, GetStrategy::default())? {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
+        let Some(LedgerEntry { kind: LedgerKind::Hold { order: held_for, purpose }, amount, .. }) = entry_of(&record) else { continue };
+        if held_for != order {
+            continue;
+        }
+        let Ok((payer, shares)) = terms_of(&order, &purpose) else { continue };
+        if &payer != record.action().author() {
+            continue;
+        }
+        holds.push(HoldView { hold: hash, payer, purpose, amount, held_at: record.action().timestamp(), shares: shares.iter().map(ShareView::from).collect() });
+    }
+    Ok(holds)
+}
+
+// --- deciding a part of a hold ---
+
+/// Whether the caller has already collected or waived this part.
+fn my_decision(hold: &ActionHash, portion: Portion) -> ExternResult<Option<ActionHash>> {
+    Ok(my_entries()?.into_iter().find_map(|record| {
+        let decided = entry_of(&record).is_some_and(|e| match &e.kind {
+            LedgerKind::Collect { hold: h, portion: p, .. } | LedgerKind::Waive { hold: h, portion: p } => h == hold && *p == portion,
+            _ => false,
+        });
+        decided.then(|| record.action_address().clone())
     }))
 }
 
-fn record_transaction(txn: LedgerTransaction) -> ExternResult<Record> {
-    if let Some(existing) = already_recorded(&txn.related_order, &txn.reason, &txn.from)? {
-        return Ok(existing);
+/// A hold's part, as recorded on its order.
+fn share_of(hold: &ActionHash, portion: Portion) -> ExternResult<(HoldView, ShareView)> {
+    let record = get(hold.clone(), GetOptions::default())?.ok_or(guest("hold not found"))?;
+    let Some(LedgerEntry { kind: LedgerKind::Hold { order, .. }, .. }) = entry_of(&record) else { return Err(guest("that isn't a hold")) };
+    let view = holds_for_order(order)?.into_iter().find(|h| &h.hold == hold).ok_or(guest("hold not found on its order"))?;
+    let share = view.shares.iter().find(|s| s.portion == portion).cloned().ok_or(guest("that hold has no such part"))?;
+    Ok((view, share))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CollectInput {
+    pub hold: ActionHash,
+    pub portion: Portion,
+    /// What entitles the caller -- see `ledger_integrity::Basis`.
+    pub basis: ActionHash,
+}
+
+/// Collects a part of a hold the caller is entitled to. Safe to repeat.
+#[hdk_extern]
+pub fn collect(input: CollectInput) -> ExternResult<ActionHash> {
+    if let Some(done) = my_decision(&input.hold, input.portion)? {
+        return Ok(done);
     }
-    let (from, to) = (txn.from.clone(), txn.to.clone());
-    let action_hash = create_entry(&EntryTypes::LedgerTransaction(txn))?;
-    create_link(from, action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
-    create_link(to, action_hash.clone(), LinkTypes::AgentToTransaction, ())?;
-    get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back ledger transaction".into())))
+    let (_, share) = share_of(&input.hold, input.portion)?;
+    append(LedgerKind::Collect { hold: input.hold, portion: input.portion, basis: input.basis }, share.amount)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PayInput {
-    pub leg: PaymentLeg,
-    /// The order being settled (its original action).
-    pub related_order: ActionHash,
-    /// The order version that completed it -- see `LedgerTransaction::basis`.
-    pub basis: ActionHash,
-    /// The payer: the caller, unless an arbitrator is settling a ruling.
-    pub from: AgentPubKey,
-    pub to: AgentPubKey,
-    pub amount: u64,
+pub struct WaiveInput {
+    pub hold: ActionHash,
+    pub portion: Portion,
 }
 
-/// Records one leg of settling a completed order. Validation accepts it
-/// only for exactly what that leg owes, paid by its payer. Safe to retry:
-/// a leg already paid returns the existing transaction.
+/// The caller, a part's recipient, giving it back to the hold's payer.
+/// Safe to repeat.
 #[hdk_extern]
-pub fn pay(input: PayInput) -> ExternResult<Record> {
-    record_transaction(LedgerTransaction {
-        from: input.from,
-        to: input.to,
-        amount: input.amount,
-        reason: TxnReason::Payment(input.leg),
-        related_order: input.related_order,
-        basis: input.basis,
-        created_at: sys_time()?,
-    })
+pub fn waive(input: WaiveInput) -> ExternResult<ActionHash> {
+    if let Some(done) = my_decision(&input.hold, input.portion)? {
+        return Ok(done);
+    }
+    let hash = append(LedgerKind::Waive { hold: input.hold.clone(), portion: input.portion }, 0)?;
+    create_link(input.hold, hash.clone(), LinkTypes::HoldToWaive, ())?;
+    Ok(hash)
 }
 
+/// Whether the caller has decided this part of a hold yet.
+#[hdk_extern]
+pub fn have_i_decided(input: WaiveInput) -> ExternResult<bool> {
+    Ok(my_decision(&input.hold, input.portion)?.is_some())
+}
+
+/// A part waived back to its payer.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct HoldCollateralInput {
-    /// The order being secured (its original action).
-    pub related_order: ActionHash,
-    /// The version of the order that assigned the caller as its driver.
-    pub basis: ActionHash,
-    /// The customer, who holds it until delivery.
-    pub to: AgentPubKey,
-    pub amount: u64,
+pub struct WaiverView {
+    pub waiver: ActionHash,
+    pub portion: Portion,
+    pub by: AgentPubKey,
 }
 
-/// The caller (a driver) posting their collateral to the customer as they
-/// pick up the order -- see `TxnReason::CollateralHold`. Safe to retry.
+/// The waivers of a hold's parts.
 #[hdk_extern]
-pub fn hold_collateral(input: HoldCollateralInput) -> ExternResult<Record> {
-    record_transaction(LedgerTransaction {
-        from: agent_info()?.agent_initial_pubkey,
-        to: input.to,
-        amount: input.amount,
-        reason: TxnReason::CollateralHold,
-        related_order: input.related_order,
-        basis: input.basis,
-        created_at: sys_time()?,
-    })
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForfeitInput {
-    pub related_order: ActionHash,
-    /// The resolved `Dispute` whose ruling this carries out.
-    pub dispute: ActionHash,
-    pub from: AgentPubKey,
-    pub to: AgentPubKey,
-    pub amount: u64,
-}
-
-/// An arbitrator moving collateral per their ruling. Safe to retry.
-#[hdk_extern]
-pub fn forfeit(input: ForfeitInput) -> ExternResult<Record> {
-    record_transaction(LedgerTransaction {
-        from: input.from,
-        to: input.to,
-        amount: input.amount,
-        reason: TxnReason::CollateralForfeit,
-        related_order: input.related_order,
-        basis: input.dispute,
-        created_at: sys_time()?,
-    })
-}
-
-/// One payment the caller made: its transaction and what it paid.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct MyPayment {
-    pub transaction: ActionHash,
-    pub leg: PaymentLeg,
-    pub to: AgentPubKey,
-    pub amount: u64,
-    pub paid_at: Timestamp,
-}
-
-/// Every payment the caller made towards `order_ref` -- from their own
-/// chain, since a payer authors every payment they make. What a receipt
-/// cites as proof of payment.
-#[hdk_extern]
-pub fn my_payments_for_order(order_ref: ActionHash) -> ExternResult<Vec<MyPayment>> {
-    let me = agent_info()?.agent_initial_pubkey;
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
-    Ok(query(filter)?
-        .into_iter()
-        .filter_map(|record| {
-            let txn = record.entry().to_app_option::<LedgerTransaction>().ok().flatten()?;
-            let TxnReason::Payment(leg) = txn.reason else { return None };
-            (txn.from == me && txn.related_order == order_ref).then(|| MyPayment {
-                transaction: record.action_address().clone(),
-                leg,
-                to: txn.to,
-                amount: txn.amount,
-                paid_at: record.action().timestamp(),
-            })
-        })
-        .collect())
-}
-
-/// The orders the caller has already paid `leg` on -- from their own chain,
-/// since a payer authors every payment they make.
-#[hdk_extern]
-pub fn my_paid_orders(leg: PaymentLeg) -> ExternResult<Vec<ActionHash>> {
-    let me = agent_info()?.agent_initial_pubkey;
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
-    Ok(query(filter)?
-        .into_iter()
-        .filter_map(|record| record.entry().to_app_option::<LedgerTransaction>().ok().flatten())
-        .filter(|txn| txn.from == me && txn.reason == TxnReason::Payment(leg))
-        .map(|txn| txn.related_order)
-        .collect())
-}
-
-/// A checkpoint is written once this many settled transactions have built
-/// up since the last one, so a read sums at most about this many plus
-/// whatever arrived inside the settling window.
-const CHECKPOINT_EVERY: usize = 20;
-
-/// The agent's latest checkpoint -- only their own count (validation).
-fn latest_checkpoint(agent: &AgentPubKey) -> ExternResult<Option<BalanceCheckpoint>> {
-    let links = get_links(LinkQuery::try_new(agent.clone(), LinkTypes::AgentToBalanceCheckpoint)?, GetStrategy::default())?;
-    let mut latest: Option<BalanceCheckpoint> = None;
-    for link in links {
+pub fn waivers_for_hold(hold: ActionHash) -> ExternResult<Vec<WaiverView>> {
+    let mut waivers = Vec::new();
+    for link in get_links(LinkQuery::try_new(hold.clone(), LinkTypes::HoldToWaive)?, GetStrategy::default())? {
         let Some(hash) = link.target.into_action_hash() else { continue };
-        let Some(record) = get(hash, GetOptions::default())? else { continue };
-        let Ok(Some(checkpoint)) = record.entry().to_app_option::<BalanceCheckpoint>() else { continue };
-        if &checkpoint.agent != agent || record.action().author() != agent {
-            continue;
-        }
-        if latest.as_ref().is_none_or(|l| checkpoint.covers_until > l.covers_until) {
-            latest = Some(checkpoint);
+        let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
+        if let Some(LedgerEntry { kind: LedgerKind::Waive { hold: h, portion }, .. }) = entry_of(&record) {
+            if h == hold {
+                waivers.push(WaiverView { waiver: hash, portion, by: record.action().author().clone() });
+            }
         }
     }
-    Ok(latest)
+    Ok(waivers)
 }
 
-/// Net balance for `agent`: positive means net-received, negative net-paid.
-///
-/// Sums the transactions since the agent's latest checkpoint. When the
-/// agent reads their *own* balance and enough transactions older than the
-/// settling window (`relay_governance::balance_settle_window`) have built
-/// up, it writes a new checkpoint over exactly those -- never over recent
-/// ones, which gossip may still be delivering out of order.
+// --- reading ---
+
+/// `agent`'s balance: the balance on their latest ledger entry, which
+/// validation ties to every entry before it on their chain. 0 before any.
 #[hdk_extern]
 pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
-    let checkpoint = latest_checkpoint(&agent)?;
-    let base = checkpoint.as_ref().map_or(0, |c| c.balance);
-    let mut query = LinkQuery::try_new(agent.clone(), LinkTypes::AgentToTransaction)?;
-    query.after = checkpoint.as_ref().map(|c| c.covers_until);
-    let boundary = checkpoint.as_ref().map(|c| c.boundary.clone()).unwrap_or_default();
-
-    let now = sys_time()?;
-    let settled_before = Timestamp::from_micros(now.as_micros() - relay_governance::balance_settle_window().as_micros() as i64);
-    let mut balance = base;
-    let mut settled: Vec<(Timestamp, ActionHash, i64)> = Vec::new();
-    for link in get_links(query, GetStrategy::default())? {
-        let Some(hash) = link.target.into_action_hash() else { continue };
-        if boundary.contains(&hash) {
-            continue;
-        }
-        let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
-        let Ok(Some(txn)) = record.entry().to_app_option::<LedgerTransaction>() else { continue };
-        let delta = if txn.to == agent { txn.amount as i64 } else if txn.from == agent { -(txn.amount as i64) } else { 0 };
-        balance += delta;
-        if link.timestamp <= settled_before {
-            settled.push((link.timestamp, hash, delta));
-        }
+    if agent == agent_info()?.agent_initial_pubkey {
+        return Ok(my_entries()?.last().and_then(entry_of).map_or(0, |e| e.balance));
     }
-
-    if settled.len() >= CHECKPOINT_EVERY && agent == agent_info()?.agent_initial_pubkey {
-        write_checkpoint(&agent, checkpoint.as_ref(), &settled)?;
-    }
-    Ok(balance)
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?);
+    let activity = get_agent_activity(agent, filter, ActivityRequest::Full, GetOptions::default())?;
+    let Some((_, latest)) = activity.valid_activity.last() else { return Ok(0) };
+    let record = get(latest.clone(), GetOptions::default())?.ok_or(guest("couldn't read their latest ledger entry"))?;
+    Ok(entry_of(&record).map_or(0, |e| e.balance))
 }
 
-/// Rolls `settled` into a new checkpoint on top of `previous`.
-fn write_checkpoint(agent: &AgentPubKey, previous: Option<&BalanceCheckpoint>, settled: &[(Timestamp, ActionHash, i64)]) -> ExternResult<()> {
-    let covers_until = settled.iter().map(|(ts, _, _)| *ts).max().expect("checked non-empty");
-    let mut boundary: Vec<ActionHash> = settled.iter().filter(|(ts, _, _)| *ts == covers_until).map(|(_, hash, _)| hash.clone()).collect();
-    // Still at the previous checkpoint's boundary time: keep what it already
-    // counted there, or the next read would count it again.
-    if let Some(previous) = previous.filter(|p| p.covers_until == covers_until) {
-        boundary.extend(previous.boundary.iter().cloned());
-    }
-    let checkpoint = BalanceCheckpoint {
-        agent: agent.clone(),
-        balance: previous.map_or(0, |p| p.balance) + settled.iter().map(|(_, _, delta)| delta).sum::<i64>(),
-        covers_until,
-        boundary,
-    };
-    let action_hash = create_entry(&EntryTypes::BalanceCheckpoint(checkpoint))?;
-    create_link(agent.clone(), action_hash, LinkTypes::AgentToBalanceCheckpoint, ())?;
-    Ok(())
-}
-
-/// How many checkpoints `agent` has written -- for monitoring that they're
-/// engaging.
-#[hdk_extern]
-pub fn count_balance_checkpoints(agent: AgentPubKey) -> ExternResult<u32> {
-    let links = get_links(LinkQuery::try_new(agent, LinkTypes::AgentToBalanceCheckpoint)?, GetStrategy::default())?;
-    Ok(links.len() as u32)
-}
-
-const TRANSACTION_PAGE_SIZE: usize = 50;
+const LEDGER_PAGE_SIZE: usize = 50;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ListMyTransactionsInput {
-    /// Page cursor -- pass back the previous call's `next_after` to continue.
-    /// `None` starts from the beginning (oldest first), same convention as
-    /// `catalog::list_menu_items`.
-    pub after: Option<Timestamp>,
+pub struct MyLedgerInput {
+    /// Page cursor: the previous page's `next_before`. `None` starts with
+    /// the newest entry.
+    pub before: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct TransactionsPage {
-    pub transactions: Vec<Record>,
-    pub next_after: Option<Timestamp>,
+pub struct LedgerPage {
+    /// Newest first.
+    pub entries: Vec<Record>,
+    pub next_before: Option<u32>,
 }
 
-/// The "no-skim" transparency dashboard's one real data source: every
-/// `LedgerTransaction` this agent is a party to (as either `from` or
-/// `to`), full records rather than `get_balance`'s folded sum -- the
-/// dashboard shows *where* each cent went, not just the net total.
-/// Deliberately **not** checkpoint-accelerated like `get_balance`: a
-/// checkpoint only carries a running *sum* forward, which is exactly the
-/// information this read throws away on purpose (it wants the individual
-/// transactions, not a number). Paginated instead, same tool catalog
-/// discovery already uses for its own unbounded-but-real-signal lists
-/// (architecture plan §9.3) -- a transaction history is signal, not
-/// noise, so bucketing would be the wrong tool; bounding page size is the
-/// right one. `GetStrategy::Local`, same reasoning as `get_balance`.
+/// The caller's ledger, newest first -- every hold, collection, waiver and
+/// deposit, each with the balance it left them with.
 #[hdk_extern]
-pub fn list_my_transactions(input: ListMyTransactionsInput) -> ExternResult<TransactionsPage> {
+pub fn list_my_ledger(input: MyLedgerInput) -> ExternResult<LedgerPage> {
+    let mut entries: Vec<Record> = my_entries()?.into_iter().filter(|r| input.before.is_none_or(|before| r.action().action_seq() < before)).collect();
+    entries.reverse();
+    let next_before = (entries.len() > LEDGER_PAGE_SIZE).then(|| entries[LEDGER_PAGE_SIZE - 1].action().action_seq());
+    entries.truncate(LEDGER_PAGE_SIZE);
+    Ok(LedgerPage { entries, next_before })
+}
+
+/// The caller's holds for an order -- what a receipt lists as paid.
+#[hdk_extern]
+pub fn my_holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
     let me = agent_info()?.agent_initial_pubkey;
-    let mut query = LinkQuery::try_new(me, LinkTypes::AgentToTransaction)?;
-    query.after = input.after;
-    let mut links = get_links(query, GetStrategy::Local)?;
-    links.sort_by_key(|l| l.timestamp);
-    let next_after = if links.len() > TRANSACTION_PAGE_SIZE {
-        Some(next_page_cursor(links[TRANSACTION_PAGE_SIZE - 1].timestamp))
-    } else {
-        None
-    };
-    links.truncate(TRANSACTION_PAGE_SIZE);
-    let mut transactions = Vec::with_capacity(links.len());
-    for link in links {
-        let Some(action_hash) = link.target.into_action_hash() else { continue };
-        if let Some(record) = get(action_hash, GetOptions::local())? {
-            transactions.push(record);
-        }
-    }
-    Ok(TransactionsPage { transactions, next_after })
+    Ok(holds_for_order(order)?.into_iter().filter(|h| h.payer == me).collect())
 }
 
 #[cfg(feature = "test-utils")]
 mod test_utils {
     use hdk::prelude::*;
-    use ledger_integrity::LinkTypes;
-    relay_coordinator_support::raw_link_test_externs!(AgentToTransaction, AgentToBalanceCheckpoint);
+    use ledger_integrity::{EntryTypes, LedgerEntry, LinkTypes};
+    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant);
+
+    /// Writes a ledger entry exactly as given -- what a modified client
+    /// could -- so a test can prove what validation refuses.
+    #[hdk_extern]
+    pub fn create_raw_ledger_entry_for_testing(entry: LedgerEntry) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::LedgerEntry(entry))
+    }
 }

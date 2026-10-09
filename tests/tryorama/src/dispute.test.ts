@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { runScenario, getZomeCaller, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, setupArbitratedPlayers, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, retryUntilOk, setupArbitratedPlayers, ST_PETE, acceptOrder } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const { customer, driver, arbitrator, all } = await setupArbitratedPlayers(scenario);
@@ -21,6 +21,8 @@ await runScenario(async (scenario) => {
   const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
   const disputeOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispute");
   const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
+  // Each party's conductor settles the held money on its own.
+  const balanceOnceSettled = (p: typeof customer, expected: number) => retryUntil(() => ledgerOf(p)<number>("get_balance", p.agentPubKey), (b) => b === expected, 120, 1000);
   const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
 
   const now = Date.now() * 1000;
@@ -83,7 +85,7 @@ await runScenario(async (scenario) => {
   await assert.rejects(
     disputeOf(driver)("submit_resolution", {
       dispute_original_action: disputeRefA,
-      outcome: { FavorProvider: { forfeit_amount: 0 } },
+      outcome: "FavorProvider",
       reasoning: "I'm the driver, not an arbitrator",
     }),
     "a non-arbitrator must not be able to resolve a dispute",
@@ -92,7 +94,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefA,
-    outcome: { FavorProvider: { forfeit_amount: 0 } },
+    outcome: "FavorProvider",
     reasoning: "Delivery confirmed via out-of-band evidence",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -101,8 +103,8 @@ await runScenario(async (scenario) => {
   assert.equal(decodeEntry<{ status: string }>(resolvedOrderA).status, "Delivered");
   console.log("[PASS] FavorProvider ruling applied: order moved to Delivered");
 
-  const customerBalanceA = await retryUntilOk(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey));
-  const driverBalanceA = await retryUntilOk(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey));
+  const driverBalanceA = await balanceOnceSettled(driver, 400);
+  const customerBalanceA = await balanceOnceSettled(customer, -400);
   assert.equal(driverBalanceA, 400, "driver should have been paid the bid's price_offer");
   assert.equal(customerBalanceA + driverBalanceA, 0, "mutual-credit ledger must always net to zero");
   console.log("[PASS] Payment settled on FavorProvider ruling, net-zero across both parties");
@@ -136,7 +138,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefB,
-    outcome: { FavorRequester: { forfeit_amount: 0 } },
+    outcome: "FavorRequester",
     reasoning: "Driver's own location trace shows they never reached the dropoff",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -145,12 +147,13 @@ await runScenario(async (scenario) => {
   assert.equal(decodeEntry<{ status: string }>(resolvedOrderB).status, "Cancelled");
   console.log("[PASS] FavorRequester ruling applied: order moved to Cancelled");
 
-  const customerBalanceB = await retryUntilOk(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey));
-  const driverBalanceB = await retryUntilOk(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey));
-  // No payment for this order; the customer keeps the 600 the driver posted
-  // as collateral at pickup -- relative to their balances after scenario 1.
+  // No payment for this order: the customer (who runs the store) has their
+  // holds back and collects the 600 the driver set aside at pickup --
+  // relative to their balances after scenario 1.
+  const customerBalanceB = await balanceOnceSettled(customer, -400 + 600);
+  const driverBalanceB = await balanceOnceSettled(driver, 400 - 600);
   assert.equal(driverBalanceB, 400 - 600, "the driver should have forfeited their posted collateral, and been paid nothing");
-  assert.equal(customerBalanceB, -400 + 600, "the customer keeps the driver's collateral");
+  assert.equal(customerBalanceB, -400 + 600, "the store collects the driver's collateral");
   assert.equal(customerBalanceB + driverBalanceB, 0, "mutual-credit ledger must always net to zero");
   console.log("[PASS] Collateral forfeited on FavorRequester ruling, net-zero across both parties");
 

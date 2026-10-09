@@ -1,19 +1,18 @@
 //! The two dispatch-side halves of the dispute/arbitration subsystem
 //! (architecture plan §8): raising a dispute against an order in `PickedUp`
 //! or `Delivered`, and -- once an arbitrator has ruled, via `dispute`'s own
-//! `submit_resolution` -- applying that ruling's consequences (payment,
-//! forfeiture, reputation) and flipping the order to its terminal status.
+//! `submit_resolution` -- applying that ruling to the order (its terminal
+//! status, and reputation).
 //!
-//! Both cross-zome-call into `dispute` (for the case entry itself) and
-//! `ledger`/`reputation` (reusing the exact same functions
-//! `complete_delivery` already uses -- `ledger::release_on_completion` and
-//! the previously-unused `ledger::forfeit`, plus reputation event kinds
-//! that were speculatively designed in the original architecture pass and
-//! never wired up until now).
+//! A ruling moves no money itself. The order's money was set aside as it
+//! went (`settlement`), and the arbitrator's update applying the ruling is
+//! the evidence each party settles it by, from their own conductor: for the
+//! provider, the order is paid as if delivered and the driver's collateral
+//! comes back; for the customer, their holds come back and the driver's
+//! collateral goes to the store, which handed over the food.
 
 use crate::order_queues::{self, OrderParties};
 use crate::orders::{record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
-use crate::settlement::{self, Payer};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_decoded;
@@ -188,8 +187,8 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
 
     let requester = order.requester.clone();
     let target_status = match &outcome {
-        DisputeOutcome::FavorProvider { .. } => DeliveryStatus::Delivered,
-        DisputeOutcome::FavorRequester { .. } => DeliveryStatus::Cancelled,
+        DisputeOutcome::FavorProvider => DeliveryStatus::Delivered,
+        DisputeOutcome::FavorRequester => DeliveryStatus::Cancelled,
     };
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let mut updated_order = order;
@@ -199,28 +198,18 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     // it literally (`must_get_valid_record`), so it must point straight at
     // the Resolved content -- which `dispute::get_dispute` returned.
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
-    let owed = delivery_payments(&updated_order, &bid);
-    // The driver's collateral, posted at pickup -- the customer's to keep
-    // if the ruling goes their way.
+    // The driver's collateral, held since pickup -- the store's if the
+    // ruling goes the customer's way.
     let collateral_held = if updated_order.collateral_hold.is_some() { bid.collateral } else { 0 };
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
     // Both outcomes (Delivered / Cancelled) are terminal.
     order_queues::retire(&parties)?;
-    let dispute_basis = dispute_record.action_address();
 
     match outcome {
-        DisputeOutcome::FavorProvider { forfeit_amount } => {
-            // The ruling confirms the delivery happened, so the order is
-            // settled in full -- every leg, the driver's collateral back
-            // included, by the arbitrator.
-            settlement::pay_legs(&input.order_original_action, &updated, &owed, Payer::Arbitrator)?;
-            settlement::forfeit(&input.order_original_action, dispute_basis, &requester, &bid.bidder, forfeit_amount)?;
+        DisputeOutcome::FavorProvider => {
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
-        // The customer keeps the collateral the driver posted at pickup:
-        // that's the forfeit, and all the driver stood to lose, so nothing
-        // more moves (validation refuses it).
-        DisputeOutcome::FavorRequester { .. } => {
+        DisputeOutcome::FavorRequester => {
             record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
             if collateral_held > 0 {
                 record_reputation_event(
@@ -381,12 +370,11 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
 
+    // As above, the ruling moves no money itself: the update just written is
+    // what the parties settle the order's held money by.
     match outcome {
-        // The cancellation was unfair to the provider: the requester
-        // compensates them, same forfeit-only shape as the FavorRequester
-        // branch below just with from/to swapped.
-        DisputeOutcome::FavorProvider { forfeit_amount } => {
-            settlement::forfeit(&input.order_original_action, dispute_record.action_address(), &requester, &bid.bidder, forfeit_amount)?;
+        // The cancellation was unfair to the provider.
+        DisputeOutcome::FavorProvider => {
             // The requester lost this ruling (the cancellation was found
             // unfair to the provider) -- DisputeResolvedAgainst belongs on
             // them, not on the provider who just won. Mirrors
@@ -394,22 +382,9 @@ pub fn apply_cancellation_dispute_resolution(input: ApplyCancellationDisputeReso
             // correctly records this against `requester`.
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
-        // The cancellation was fine (or the provider themselves caused it):
-        // the provider compensates the requester, if anything is owed.
-        DisputeOutcome::FavorRequester { forfeit_amount } => {
-            settlement::forfeit(&input.order_original_action, dispute_record.action_address(), &bid.bidder, &requester, forfeit_amount)?;
-            // Unconditional -- the provider lost this ruling regardless of
-            // whether any amount was actually forfeited (mirrors
-            // apply_dispute_resolution's identical FavorRequester shape).
+        // The cancellation was fair (or the provider caused it).
+        DisputeOutcome::FavorRequester => {
             record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
-            if forfeit_amount > 0 {
-                record_reputation_event(
-                    &bid.bidder,
-                    ReputationTargetWire::Driver(bid.bidder.clone()),
-                    input.order_original_action.clone(),
-                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
-                )?;
-            }
         }
     }
 

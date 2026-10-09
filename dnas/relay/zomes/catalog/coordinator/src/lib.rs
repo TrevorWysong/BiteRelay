@@ -1,7 +1,7 @@
 //! Coordinator zome for merchant catalogs: publishing a catalog, toggling
 //! it open/closed, adding menu items, goodie bags and their claims
 //! (`bags`), and geohash-anchor discovery ("restaurants near me") -- the
-//! same anchor pattern `geo_presence` uses for provider beacons.
+//! same anchor pattern drivers use to find open orders.
 
 mod bags;
 mod signals;
@@ -243,9 +243,7 @@ pub fn get_catalog(catalog_ref: ActionHash) -> ExternResult<Record> {
 /// -- returns just the one field settlement needs, rather than having
 /// `dispatch_coordinator` partially-decode a `MerchantCatalog` entry it has
 /// no Cargo-level type for (coordinator zomes call each other over the
-/// zome-call boundary specifically to avoid that kind of coupling; see
-/// `dispatch_coordinator::matching::NearbyProviderView`'s doc comment for
-/// the same reasoning applied to `geo_presence`).
+/// zome-call boundary specifically to avoid that kind of coupling).
 #[hdk_extern]
 pub fn get_delivery_subsidy(catalog_ref: ActionHash) -> ExternResult<u8> {
     let (_, catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref, "MerchantCatalog")?;
@@ -372,6 +370,31 @@ pub fn get_my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<Item
         .collect())
 }
 
+/// One version of a promo code, as a store checks an order's promo against
+/// it.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PromoVersion {
+    pub active: bool,
+    pub expires_at: Option<Timestamp>,
+    pub written_at: Timestamp,
+}
+
+/// Every version of one of the caller's own promo codes, oldest first, from
+/// their source chain -- what a store checks an order's promo against
+/// before accepting it (`dispatch::pricing::outdated_item`). Empty if the
+/// caller didn't write it.
+#[hdk_extern]
+pub fn get_my_promo_versions(promo_ref: ActionHash) -> ExternResult<Vec<PromoVersion>> {
+    let records = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::PromoCode)?).include_entries(true))?;
+    Ok(item_versions(&promo_ref, &records)
+        .iter()
+        .filter_map(|record| {
+            let promo = record.entry().to_app_option::<PromoCode>().ok().flatten()?;
+            Some(PromoVersion { active: promo.active, expires_at: promo.expires_at, written_at: record.action().timestamp() })
+        })
+        .collect())
+}
+
 /// Every menu item version on the caller's chain, in the order written.
 fn my_menu_item_records() -> ExternResult<Vec<Record>> {
     query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::MenuItem)?).include_entries(true))
@@ -452,10 +475,9 @@ pub struct NearbyMerchantsPage {
 }
 
 /// Returns merchant catalogs declared in `geohash`'s cell and its 8
-/// neighbors -- the same discovery pattern `geo_presence` uses for provider
-/// beacons, so restaurant browsing and driver discovery compose over one
-/// grid. Paginated (architecture plan §9.3), not time-bucketed like
-/// presence/open-order discovery -- old catalogs are signal here, not noise,
+/// neighbors -- the same discovery pattern drivers use for open orders, so
+/// restaurant browsing and order discovery compose over one grid. Paginated
+/// (architecture plan §9.3), not time-bucketed like open-order discovery -- old catalogs are signal here, not noise,
 /// so bucketing would just mean re-linking every merchant forever instead
 /// of fixing anything. `after` filtering happens per-cell before the
 /// cross-cell merge below, so it also reduces per-cell payload size, not
@@ -629,6 +651,19 @@ pub fn list_promo_codes_for_catalog(input: ListPromoCodesInput) -> ExternResult<
 #[cfg(feature = "test-utils")]
 mod test_utils {
     use hdk::prelude::*;
-    use catalog_integrity::LinkTypes;
+    use catalog_integrity::{EntryTypes, LinkTypes, MerchantCatalog};
     relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo);
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct RawCatalogUpdate {
+        pub original_action: ActionHash,
+        pub catalog: MerchantCatalog,
+    }
+
+    /// Updates a catalog with exactly the entry given -- what a modified
+    /// client could -- so a test can prove who validation lets update one.
+    #[hdk_extern]
+    pub fn update_raw_catalog_for_testing(input: RawCatalogUpdate) -> ExternResult<ActionHash> {
+        update_entry(input.original_action, &EntryTypes::MerchantCatalog(input.catalog))
+    }
 }

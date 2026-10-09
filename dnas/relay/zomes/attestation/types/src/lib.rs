@@ -33,39 +33,38 @@ pub struct Leg {
     pub kind: LegKind,
     pub from: AgentPubKey,
     pub to: AgentPubKey,
-    pub geo_at_completion: GeoPoint,
     pub completed_at: Timestamp,
-    /// An optional data URI, captured by `from` at handoff time (typically
-    /// the driver, on `CustomerHandoff` -- "photo at the door," the
-    /// DoorDash-style delivery-confirmation convention). Empty string means
-    /// no photo. Deliberately informal evidence, *not* part of the
-    /// dual-signed `ReceiptAttestation` payload -- that payload is just
-    /// `{leg, attested_at}` and stays that way, so adding this field here
-    /// never touches the countersigning session's content or its own
-    /// documented fragility (see `ReceiptAttestation`'s doc comment on the
-    /// "isolated spike" this app's countersigning already needed). A
-    /// customer gets reassurance from a photo; the actual completion gate
-    /// (`dispatch_integrity`'s `delivery_receipts` check) still runs on the
-    /// real dual-signed receipt, same as before, regardless of this field.
-    #[serde(default)]
+    /// Where the handoff happened, and (on `CustomerHandoff`, typically) a
+    /// photo at the door -- a `HandoffEvidence`, sealed from `from` to
+    /// `to`. A drop-off's location is the customer's door, so it's never
+    /// published: only the two parties to the handoff can open it, and it
+    /// reaches an arbitrator only if one of them shares it in a dispute.
+    /// Evidence, not part of what completes a delivery: that's the other
+    /// party's `ReceiptAttestation`.
+    pub sealed_evidence: XSalsa20Poly1305EncryptedData,
+}
+
+/// What a handoff's sealed evidence holds.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HandoffEvidence {
+    pub geo: GeoPoint,
+    /// An inline image, or empty for none.
     pub photo_data_uri: String,
 }
 
-/// The dual-signed proof that a `Leg` actually happened. Intended to be
-/// created via a native Holochain countersigning session between `leg.from`
-/// and `leg.to`, not hand-rolled signature fields -- see the attestation
-/// coordinator's `initiate_leg_attestation` for the session setup.
+/// The other party to a `Leg` acknowledging it happened -- the store that
+/// handed the order to the driver, or the customer it reached -- authored
+/// on their own chain. Validation holds it to that party
+/// (`attestation_integrity::validate_receipt`), so a driver can record a
+/// handoff alone but can't acknowledge it for anyone. A delivery completes
+/// on the driver's pickup `Leg` plus the customer's acknowledgment of the
+/// drop-off (`dispatch_integrity`'s completion gate).
 ///
-/// NOTE: fully verifying countersigning-session membership from inside a
-/// deterministic `validate` callback is one of the trickier corners of the
-/// HDK (session timeout/abandonment edge cases). The check in
-/// `attestation_integrity::validate_receipt` is a best-effort placeholder
-/// (author must be one of the leg's two parties) -- full session-membership
-/// verification is flagged in the architecture plan as needing its own
-/// isolated spike, not solved here. `dispatch_integrity`'s completion gate
-/// (below, via this crate) checks that a `ReceiptAttestation` exists and is
-/// well-formed for each required leg -- it does not re-verify countersigning
-/// membership beyond what `attestation_integrity` already enforces.
+/// Two plain entries rather than one countersigned one: neither party has
+/// to be online at the same moment as the other, the acknowledgment is a
+/// deliberate act by the person (not something their conductor signs
+/// automatically), and it runs on any Holochain build -- countersigning is
+/// still behind an unstable feature that release runtimes don't ship.
 #[hdk_entry_helper]
 #[derive(Clone)]
 pub struct ReceiptAttestation {

@@ -119,6 +119,9 @@ pub struct AcceptBidInput {
 pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     let (_, winning_bid): (_, Bid) = resolve_latest_decoded(input.bid_action.clone(), "Bid")?;
+    if winning_bid.status != BidStatus::Open {
+        return Err(wasm_error!(WasmErrorInner::Guest("that driver has withdrawn their bid".into())));
+    }
 
     if !input.override_warrants {
         let warrants = check_warrants(winning_bid.bidder.clone())?;
@@ -137,6 +140,9 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     order.driver_dropoff = Some(seal(&winning_bid.bidder, &dropoff)?);
     order.status = DeliveryStatus::BidAccepted;
     order.accepted_bid = Some(input.bid_action.clone());
+    // The driver's pay -- the customer's share of the fee, and their tip --
+    // set aside in this same commit.
+    order.driver_pay_hold = crate::settlement::place_hold(&input.order_original_action, HoldPurpose::DriverPay { bid: input.bid_action.clone() })?;
     // order_record came from resolve_latest, so its action_address() is the
     // real current chain tip -- see resolve_latest's doc comment for why
     // that matters (a plain get() would not give this).
@@ -171,7 +177,7 @@ pub struct ListBidsInput {
     pub order_ref: ActionHash,
     /// Page cursor -- pass back the previous call's `next_after` to continue.
     /// `None` starts from the beginning. Bids-per-order is naturally small
-    /// (unlike the shared cross-user anchors in `matching.rs`/`geo_presence`,
+    /// (unlike the shared cross-user anchors in `matching.rs`,
     /// this is scoped to one order), so this is defensive pagination rather
     /// than a fix for a known hot spot -- see architecture plan §9.3.
     pub after: Option<Timestamp>,
