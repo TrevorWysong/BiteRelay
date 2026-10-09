@@ -13,6 +13,8 @@ The runtime runs the conductor, installs the hApp for its one agent, hands the U
 
 Development is different on purpose. `npm run dev` runs the UI in a browser against the dev conductor and provisions identities through its Admin API, so several people can share one node (`web/src/holochain/devHost.ts`). That code is compiled out of every production build: `__DEV_HOST__` is a build-time literal (`web/vite.config.ts`), and a production bundle contains no Admin API calls. A production build opened in a plain browser shows "Open Relay in the Relay app" and does nothing else.
 
+**The runtime's conductor must support countersigning.** Delivery receipts use Holochain's countersigning, which 0.7 builds only with the `unstable-countersigning` feature. A runtime whose conductor lacks it can't load the hApp (`unknown import "__hc__accept_countersigning_preflight_request_1"`). Check this first when choosing or building a runtime: build its Holochain with that feature if it bundles its own.
+
 ## 1. Decide the network
 
 These values are part of the DNA hash. Everyone on a network must install a bundle built with exactly the same values; a different value is a separate network that can't see this one.

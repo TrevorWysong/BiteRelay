@@ -4,6 +4,12 @@ All commands run from `web/`.
 
 This is the development setup: the UI in a browser, provisioning identities on a shared dev conductor. Production runs the UI inside a Holochain runtime instead; see [DEPLOYMENT.md](DEPLOYMENT.md).
 
+**The conductor must be built with countersigning.** Delivery receipts use Holochain's countersigning, which 0.7 only builds with a feature flag, and every zome imports it (Cargo unifies features across the workspace). A conductor without it fails to load the hApp with `unknown import "__hc__accept_countersigning_preflight_request_1"`. Install it with:
+
+```sh
+cargo install --locked holochain --version 0.7.0 --features unstable-countersigning
+```
+
 | Command | What it does |
 | --- | --- |
 | `npm run dev:conductor` | Starts the persistent dev conductor at `ws://localhost:8870`. Its data lives in `.dev/conductor/` and **survives restarts**. Logs: `.dev/conductor.log`. |
