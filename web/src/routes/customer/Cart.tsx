@@ -14,7 +14,7 @@ import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents } from "../../lib/format";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
 import { fetchMenu } from "../../lib/menu";
-import { nextOccurrence, toMicros, WEEKDAYS } from "../../lib/recurrence";
+import { WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
@@ -325,7 +325,7 @@ export function Cart() {
         dropoff_preference: dropoffPreference,
         promo_code_ref: appliedPromo?.hash ?? null,
         recurrence,
-        next_run_at: toMicros(nextOccurrence(recurrence)),
+        time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       setRecurringSaved(true);
       setShowRecurring(false);

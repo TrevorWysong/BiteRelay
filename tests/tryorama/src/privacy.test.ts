@@ -94,7 +94,7 @@ await runScenario(async (scenario) => {
     max_delivery_fee: null,
     dropoff_notes: "Gate code 4417",
     recurrence: { Daily: { hour: 9, minute: 0 } },
-    next_run_at: now + 86_400_000_000,
+    time_zone: "America/New_York",
   });
   assert.ok(!publishedBytes(template).includes("Gate code 4417"), "a recurring order's notes aren't published");
   const [view] = await call(customer, "dispatch")<{ details: { dropoff: { lat: number } } | null }[]>("list_my_recurring_templates", null);

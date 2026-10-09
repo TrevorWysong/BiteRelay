@@ -1,6 +1,7 @@
-// Goodie-bag claims have no p2p cron either (same reasoning as
-// `useRecurringOrderFiring`) -- once a merchant confirms a claim, the
-// *customer's own client* is the one that has to author the resulting
+// Goodie-bag claims are still finalized by the customer's client, unlike
+// scheduled and recurring orders (which their conductor places, see
+// `dispatch::upkeep`) -- once a merchant confirms a claim, the
+// customer's own agent is the one that has to author the resulting
 // `PickupOrder`/`DeliveryOrder` (every entry is authored on its own agent's
 // chain; see `BagClaim`'s Rust doc comment). This hook is that
 // finalization step, mounted once in the app shell so it runs whatever
@@ -33,7 +34,7 @@ async function finalizeConfirmedClaims() {
       if (await getMyOrderForClaim(hash)) continue;
       await placeOrderForClaim(hash, claim, dropoff);
     } catch {
-      // Best-effort, same posture as useRecurringOrderFiring -- a transient
+      // Best-effort, same posture as the conductor's order upkeep -- a transient
       // failure is retried on the next tick.
     }
   }

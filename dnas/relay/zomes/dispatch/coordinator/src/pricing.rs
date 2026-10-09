@@ -58,7 +58,10 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
     })
 }
 
-fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
+/// An order from the menu at current prices, less `promo_ref` -- what
+/// `price_order` checks a client's total against, and what a recurring
+/// order is placed at (`recurring::fire`).
+pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
     // One line per item, however the client listed them.
     let mut quantities: Vec<(ActionHash, u32)> = Vec::new();
     for item in items {

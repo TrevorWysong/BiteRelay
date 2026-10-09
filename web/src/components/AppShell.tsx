@@ -4,7 +4,6 @@ import clsx from "clsx";
 import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Gavel } from "lucide-react";
 import { useSession } from "../store/session";
 import { useCart } from "../store/cart";
-import { useRecurringOrderFiring } from "../hooks/useRecurringOrderFiring";
 import { useClaimFinalization } from "../hooks/useClaimFinalization";
 import { pageVariants } from "../lib/motion";
 import { PresenceDot } from "./ui";
@@ -32,7 +31,6 @@ export function AppShell() {
   const { mode, setMode, profile, agentPubKey, isArbitrator } = useSession();
   const cartCount = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const navigate = useNavigate();
-  useRecurringOrderFiring();
   useClaimFinalization();
   const roles = profile?.roles ?? [];
 

@@ -1,13 +1,12 @@
 // Proves recurring order templates: create/list round-trip, invalid
-// recurrence values rejected, toggling active and advancing next_run_at
-// both collapse correctly back to exactly one Record per template (the
-// real risk named in recurring.rs's own doc comment -- a naive local
-// query() would otherwise return one Record per *action*, including every
-// update, not one per logical template).
+// recurrence values rejected, updates collapse back to exactly one Record
+// per template (a naive local query() would return one per action), and
+// the customer's own conductor fires a due template -- placing its order
+// and moving it to its next occurrence -- with nothing calling it.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
@@ -35,7 +34,7 @@ await runScenario(async (scenario) => {
     item_refs: [itemRef],
     dropoff: ST_PETE,
     max_delivery_fee: null,
-    next_run_at: now + 7 * 24 * 60 * 60 * 1_000_000,
+    time_zone: "UTC",
   };
 
   // Invalid recurrence values rejected.
@@ -56,8 +55,11 @@ await runScenario(async (scenario) => {
     recurrence: { Weekly: { weekday: 1, hour: 9, minute: 0 } },
   });
   const templateRef = actionHash(templateRecord);
-  assert.deepEqual(decodeEntry<{ recurrence: unknown }>(templateRecord).recurrence, { Weekly: { weekday: 1, hour: 9, minute: 0 } });
-  console.log("[PASS] a valid Weekly recurring template is created and round-trips");
+  const created = decodeEntry<{ recurrence: unknown; next_run_at: number }>(templateRecord);
+  assert.deepEqual(created.recurrence, { Weekly: { weekday: 1, hour: 9, minute: 0 } });
+  const firstRun = new Date(created.next_run_at / 1000);
+  assert.ok(firstRun.getUTCDay() === 1 && firstRun.getUTCHours() === 9 && firstRun.getUTCMinutes() === 0 && created.next_run_at > now, "the conductor schedules the first run: the next Monday 9:00 in its zone");
+  console.log("[PASS] a valid Weekly recurring template is created, with its first run worked out in its own time zone");
 
   let templates = await dispatchOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_recurring_templates", null);
   assert.equal(templates.length, 1, "exactly one template should be listed after one creation");
@@ -71,12 +73,28 @@ await runScenario(async (scenario) => {
   assert.equal(decodeEntry<{ active: boolean }>(templates[0].record).active, false, "the toggled template should reflect active: false");
   console.log("[PASS] set_recurring_template_active updates in place, no duplicate Record");
 
-  const nextRun = now + 14 * 24 * 60 * 60 * 1_000_000;
-  await dispatchOf(customer)("advance_recurring_template", { original_action: templateRef, next_run_at: nextRun });
+  // --- A due template fires on the conductor, with no app involved. ---
+  // Daily, a couple of minutes from now in UTC.
+  const soon = new Date(Date.now() + 2 * 60_000);
+  const standing = actionHash(
+    await dispatchOf(customer)<HcRecord>("create_recurring_template", { ...baseInput, recurrence: { Daily: { hour: soon.getUTCHours(), minute: soon.getUTCMinutes() } } }),
+  );
+  const placed = await retryUntil(
+    () => dispatchOf(customer)<{ record: HcRecord }[]>("get_my_active_orders", null).catch(() => []),
+    (orders) => orders.length > 0,
+    240,
+    1000,
+  );
+  assert.equal(placed.length, 1, "the standing order fired once (the paused one didn't)");
+  const order = decodeEntry<{ status: string; lines: { item_ref: Uint8Array; quantity: number }[]; order_total: number }>(placed[0].record);
+  assert.equal(order.status, "Placed");
+  assert.equal(order.order_total, 1000, "priced from the menu as it stands");
   templates = await dispatchOf(customer)<{ original_action: Uint8Array; record: HcRecord }[]>("list_my_recurring_templates", null);
-  assert.equal(templates.length, 1, "advancing next_run_at must still not duplicate the template");
-  assert.equal(decodeEntry<{ next_run_at: number }>(templates[0].record).next_run_at, nextRun, "next_run_at should reflect the advanced value");
-  console.log("[PASS] advance_recurring_template advances in place, no duplicate Record");
+  assert.equal(templates.length, 2, "firing updates the template in place");
+  const fired = templates.find((t) => Buffer.from(t.original_action).equals(Buffer.from(standing)))!;
+  const nextRun = decodeEntry<{ next_run_at: number }>(fired.record).next_run_at;
+  assert.ok(nextRun > Date.now() * 1000 + 23 * 3_600_000_000, "and moves it to tomorrow's occurrence");
+  console.log("[PASS] the customer's conductor fires a due standing order and moves it to its next occurrence");
 
   // A non-owner can't tamper with someone else's template. Needs a real
   // dhtSync first -- this entry deliberately has no DHT link (see its own
