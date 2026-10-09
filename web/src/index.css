@@ -187,3 +187,23 @@
       linear-gradient(180deg, var(--color-relay-500), var(--color-relay-700));
   }
 }
+
+/* Printing a receipt prints just the receipt (components/OrderReceipt.tsx). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-receipt,
+  .print-receipt * {
+    visibility: visible;
+  }
+  .print-receipt {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    box-shadow: none;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

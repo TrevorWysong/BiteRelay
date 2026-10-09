@@ -111,6 +111,39 @@ pub fn forfeit(input: ForfeitInput) -> ExternResult<Record> {
     })
 }
 
+/// One payment the caller made: its transaction and what it paid.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MyPayment {
+    pub transaction: ActionHash,
+    pub leg: PaymentLeg,
+    pub to: AgentPubKey,
+    pub amount: u64,
+    pub paid_at: Timestamp,
+}
+
+/// Every payment the caller made towards `order_ref` -- from their own
+/// chain, since a payer authors every payment they make. What a receipt
+/// cites as proof of payment.
+#[hdk_extern]
+pub fn my_payments_for_order(order_ref: ActionHash) -> ExternResult<Vec<MyPayment>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerTransaction)?).include_entries(true);
+    Ok(query(filter)?
+        .into_iter()
+        .filter_map(|record| {
+            let txn = record.entry().to_app_option::<LedgerTransaction>().ok().flatten()?;
+            let TxnReason::Payment(leg) = txn.reason else { return None };
+            (txn.from == me && txn.related_order == order_ref).then(|| MyPayment {
+                transaction: record.action_address().clone(),
+                leg,
+                to: txn.to,
+                amount: txn.amount,
+                paid_at: record.action().timestamp(),
+            })
+        })
+        .collect())
+}
+
 /// The orders the caller has already paid `leg` on -- from their own chain,
 /// since a payer authors every payment they make.
 #[hdk_extern]

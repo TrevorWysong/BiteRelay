@@ -56,6 +56,7 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/geo_presence/integrity/src/lib.rs", &["PresenceBeacon"]),
     only("dnas/relay/zomes/ledger/types/src/lib.rs", &["TxnReason", "LedgerTransaction"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/receipts.rs", &["Receipt", "ReceiptLine", "ReceiptPayment"]),
     only("dnas/relay/zomes/reputation/coordinator/src/lib.rs", &["ReputationSummary", "RatingSummary"]),
     only("dnas/relay/zomes/geo_presence/coordinator/src/lib.rs", &["NearbyProvider"]),
     Source { path: "dnas/relay/zomes/dispatch/coordinator/src/signals.rs", only: Some(&["LocalSignal", "OrderChange", "OrderRole"]), rename: &[("LocalSignal", "DispatchLocalSignal")] },

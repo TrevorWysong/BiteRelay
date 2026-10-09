@@ -37,6 +37,7 @@ mod orders;
 mod parties;
 mod pickup;
 mod pricing;
+mod receipts;
 mod recurring;
 mod settlement;
 mod signals;

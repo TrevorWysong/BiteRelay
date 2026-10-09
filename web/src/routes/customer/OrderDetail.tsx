@@ -22,6 +22,7 @@ import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
+import { OrderReceipt } from "../../components/OrderReceipt";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -454,6 +455,12 @@ export function OrderDetail() {
           <Button variant="ghost" loading={cancelling} onClick={cancel} className="w-full">
             Cancel order
           </Button>
+        </motion.div>
+      )}
+
+      {order.status === "Delivered" && (
+        <motion.div variants={fadeSlideUp}>
+          <OrderReceipt orderRef={orderRef} />
         </motion.div>
       )}
 

@@ -17,6 +17,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
+import { OrderReceipt } from "../../components/OrderReceipt";
 
 
 /// `OrderDetail`'s pickup sibling -- no bids, no driver, no live map, no
@@ -193,6 +194,12 @@ export function PickupOrderDetail() {
           <Button loading={completing} onClick={confirmPickup}>
             I picked this up
           </Button>
+        </motion.div>
+      )}
+
+      {order.status === "PickedUp" && (
+        <motion.div variants={fadeSlideUp}>
+          <OrderReceipt orderRef={orderRef} />
         </motion.div>
       )}
 

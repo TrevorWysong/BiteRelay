@@ -7,7 +7,8 @@ import { Card, Skeleton, StatNumber } from "../components/ui";
 import { formatCents, timeAgo } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { useResource } from "../lib/useResource";
-import type { LedgerTransaction, PaymentLeg, TxnReason } from "../holochain/types";
+import type { LedgerTransaction, TxnReason } from "../holochain/types";
+import { PAYMENT_LEG_LABEL } from "../lib/ledger";
 
 interface Row {
   hash: Uint8Array;
@@ -26,14 +27,6 @@ interface Row {
 /// aggregation of. There is no operator account anywhere in this
 /// system's data model for a platform cut to land in -- not hidden, not
 /// omitted from this view, structurally absent from the ledger itself.
-const LEG_LABEL: Record<PaymentLeg, string> = {
-  OrderTotal: "Order payment",
-  DeliveryFeeCustomerShare: "Delivery fee (customer's share)",
-  DeliveryFeeStoreShare: "Delivery fee (store's share)",
-  Tip: "Tip",
-  CollateralReturn: "Driver's collateral returned",
-};
-
 function describeReason(reason: TxnReason): string {
   switch (reason) {
     case "CollateralHold":
@@ -41,7 +34,7 @@ function describeReason(reason: TxnReason): string {
     case "CollateralForfeit":
       return "Collateral forfeiture";
     default:
-      return LEG_LABEL[reason.Payment];
+      return PAYMENT_LEG_LABEL[reason.Payment];
   }
 }
 

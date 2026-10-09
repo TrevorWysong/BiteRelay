@@ -1009,6 +1009,35 @@ export interface RatingSummary {
   rating_sum: number;
 }
 
+export interface Receipt {
+  order_ref: ActionHash;
+  delivery: boolean;
+  store_name: string;
+  store_address: string;
+  placed_at: Timestamp;
+  completed_at: Timestamp;
+  lines: ReceiptLine[];
+  subtotal_cents: number;
+  /**
+   * A promo's discount: the lines less what the order was priced at.
+   */
+  discount_cents: number;
+  /**
+   * The customer's share of the driver's fee; 0 for pickup.
+   */
+  delivery_fee_cents: number;
+  tip_cents: number;
+  /**
+   * What the order cost the customer, all in.
+   */
+  total_cents: number;
+  /**
+   * The payments recorded for it (the driver's collateral, held and
+   * returned, isn't a charge and isn't listed).
+   */
+  payments: ReceiptPayment[];
+}
+
 /**
  * The dual-signed proof that a `Leg` actually happened. Intended to be
  * created via a native Holochain countersigning session between `leg.from`
@@ -1029,6 +1058,23 @@ export interface RatingSummary {
 export interface ReceiptAttestation {
   leg: ActionHash;
   attested_at: Timestamp;
+}
+
+export interface ReceiptLine {
+  name: string;
+  quantity: number;
+  unit_price_cents: number;
+  total_cents: number;
+}
+
+/**
+ * One payment the customer made towards the order, and the transaction
+ * that records it.
+ */
+export interface ReceiptPayment {
+  leg: PaymentLeg;
+  amount_cents: number;
+  transaction: ActionHash;
 }
 
 /**
