@@ -432,7 +432,11 @@ export type DispatchLocalSignal =
    * The driver says this order reached the customer: confirm it, or
    * report a problem, within the window.
    */
-  | { HandoffRecorded: ActionHash };
+  | { HandoffRecorded: ActionHash }
+  /**
+   * The customer reported items missing or wrong on this order.
+   */
+  | { IssueReported: ActionHash };
 
 /**
  * A dispute case, either over whether a delivery was actually completed
@@ -613,6 +617,100 @@ export interface HoldView {
 }
 
 /**
+ * What a customer can say about an issue, sealed to the store and the
+ * arbitrators: a note, and a photo.
+ */
+export interface IssueEvidence {
+  note: string;
+  /**
+   * An inline image, or empty for none.
+   */
+  photo_data_uri: string;
+}
+
+/**
+ * One line of an order, as reports are made against it.
+ */
+export interface IssueItem {
+  item_ref: ActionHash;
+  name: string;
+  unit_price_cents: number;
+  quantity: number;
+}
+
+/**
+ * What reports on an order are judged against: its lines, and what the
+ * customer paid for the food.
+ */
+export interface IssueItems {
+  order_total: number;
+  lines: IssueItem[];
+}
+
+export type IssueKind =
+  /**
+   * Not in the bag.
+   */
+  | "Missing"
+  /**
+   * Something else in its place.
+   */
+  | "Wrong";
+
+/**
+ * Some units of one item on the order.
+ */
+export interface IssueLine {
+  /**
+   * The item's original action, as the order's line names it.
+   */
+  item_ref: ActionHash;
+  quantity: number;
+  kind: IssueKind;
+}
+
+/**
+ * One report, as its order's parties and arbitrators see it.
+ */
+export interface IssueView {
+  issue: ActionHash;
+  reported_at: Timestamp;
+  lines: IssueLine[];
+  /**
+   * What it's worth of what the customer paid.
+   */
+  value: number;
+  /**
+   * The store's answer: accepted, declined, or not yet.
+   */
+  accepted: boolean | null;
+  /**
+   * The note and photo, for whoever can open them (the customer, the
+   * store, an arbitrator).
+   */
+  evidence: IssueEvidence | null;
+}
+
+/**
+ * An order's issue window, as the arbitrator keeping it has recorded it.
+ */
+export interface IssueWindowView {
+  /**
+   * Whether the order has an issue window at all: only on a network with
+   * arbitrators, for an order whose food was paid for.
+   */
+  available: boolean;
+  opened_at: Timestamp | null;
+  closes_at: Timestamp | null;
+  /**
+   * The refund named at the close, once closed.
+   */
+  closed: number | null;
+  closed_record: ActionHash | null;
+  opened_record: ActionHash | null;
+}
+
+/**
  * Funds issued to an agent by an issuer on the DNA's roster
  * (`relay_governance::is_issuer`) -- the stand-in for a payment processor
  * crediting an account against a real payment. The agent collects it into
@@ -625,6 +723,25 @@ export interface IssuerGrant {
    * The issuer's own reference (a payment id), so a grant is unique.
    */
   reference: string;
+}
+
+/**
+ * A customer reporting items missing or wrong on an order they have.
+ */
+export interface ItemIssue {
+  /**
+   * The order's original action.
+   */
+  order: ActionHash;
+  lines: IssueLine[];
+  /**
+   * The customer's `IssueEvidence`, sealed to the store.
+   */
+  sealed_for_store: XSalsa20Poly1305EncryptedData;
+  /**
+   * The same, sealed to each arbitrator.
+   */
+  sealed_for_arbitrators: ArbitratorSeal[];
 }
 
 /**
@@ -733,6 +850,13 @@ export interface Leg {
    * check against the PIN the customer committed to at checkout.
    */
   sealed_pin_for_arbitrators: ArbitratorSeal[];
+  /**
+   * The PIN and salt from the code the customer let the driver scan --
+   * checkable by anyone against the order's commitment, so a drop-off
+   * carrying them is proof the customer handed them over: their receipt.
+   * Revealed only at the door, once the food is there.
+   */
+  revealed_pin: PinSecret | null;
 }
 
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
@@ -833,6 +957,22 @@ export interface MerchantCatalog {
    * `order_total` already has (never independently re-derived either).
    */
   dietary_tags: string[];
+}
+
+/**
+ * The rules this network runs by, as its DNA sets them -- what the policy
+ * page quotes, so it can't drift from what's enforced.
+ */
+export interface NetworkTerms {
+  store_response_secs: number;
+  confirm_window_secs: number;
+  pin_confirm_window_secs: number;
+  issue_window_secs: number;
+  /**
+   * The arbitrators' agent keys, as the DNA lists them.
+   */
+  arbitrators: string[];
+  credit_limit_cents: number;
 }
 
 /**
@@ -1281,6 +1421,10 @@ export interface ReceiptAttestation {
 }
 
 export interface ReceiptLine {
+  /**
+   * The item's original action, as the order names it.
+   */
+  item_ref: ActionHash;
   name: string;
   quantity: number;
   unit_price_cents: number;

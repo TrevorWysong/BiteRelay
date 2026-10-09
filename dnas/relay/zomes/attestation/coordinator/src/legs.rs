@@ -26,6 +26,10 @@ pub struct RecordLegInput {
     /// arbitrators; nobody else ever sees it.
     #[serde(default)]
     pub pin: Option<String>,
+    /// The PIN and salt from the customer's handover code, if the driver
+    /// scanned it -- the customer's receipt, checked by validation.
+    #[serde(default)]
+    pub scanned: Option<PinSecret>,
 }
 
 /// The driver recording a handoff as it happens. The other party
@@ -48,6 +52,12 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
     if pin.as_ref().is_some_and(|p| p.len() != 6 || !p.bytes().all(|b| b.is_ascii_digit())) {
         return Err(guest("a delivery PIN is 6 digits"));
     }
+    if let Some(scanned) = &input.scanned {
+        let order_record: dispatch_types::DeliveryOrder = current.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a delivery"))?;
+        if !pin_matches(Some(scanned), &order_record.pin_commitment) {
+            return Err(guest("That code isn't for this order."));
+        }
+    }
     let sealed_pin_for_arbitrators = match &pin {
         Some(pin) => seal_to_arbitrators(&relay_governance::arbitrator_roster(), pin)?,
         None => Vec::new(),
@@ -61,6 +71,7 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
         completed_at: sys_time()?,
         sealed_evidence,
         sealed_pin_for_arbitrators,
+        revealed_pin: input.scanned,
     };
     let is_dropoff = leg.kind == LegKind::CustomerHandoff;
     let action_hash = create_entry(&EntryTypes::Leg(leg))?;
@@ -205,13 +216,18 @@ pub fn delivery_proof_for_order(order_ref: ActionHash) -> ExternResult<Vec<Actio
     let pickup = of_kind(LegKind::MerchantHandoff).next().ok_or(guest("the driver hasn't recorded collecting this order from the store"))?;
     let mut customer_receipt = None;
     for handoff in of_kind(LegKind::CustomerHandoff) {
+        // A drop-off against the customer's scanned code is their receipt.
+        if handoff.entry().to_app_option::<Leg>().ok().flatten().is_some_and(|leg| leg.revealed_pin.is_some()) {
+            customer_receipt = Some(handoff.action_address().clone());
+            break;
+        }
         if let Some(receipt) = get_receipt_for_leg(handoff.action_address().clone())? {
-            customer_receipt = Some(receipt);
+            customer_receipt = Some(receipt.action_address().clone());
             break;
         }
     }
     let customer_receipt = customer_receipt.ok_or(guest("the customer hasn't acknowledged receiving this order"))?;
-    Ok(vec![pickup.action_address().clone(), customer_receipt.action_address().clone()])
+    Ok(vec![pickup.action_address().clone(), customer_receipt])
 }
 
 fn guest(message: &str) -> WasmError {

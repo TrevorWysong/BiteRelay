@@ -89,6 +89,10 @@ export function notificationFor(signal: LocalSignal): AppNotification | null {
     const hex = bytesToHex(signal.HandoffRecorded);
     return { title: "Your order was delivered", body: "Confirm you have it, or report a problem.", tag: `order-${hex}`, route: `/customer/orders/${hex}`, urgent: true };
   }
+  if ("IssueReported" in signal) {
+    const hex = bytesToHex(signal.IssueReported);
+    return { title: "A customer reported a problem", body: "Accept or contest it before their window closes, or it's refunded.", tag: `issue-${hex}`, route: "/merchant", urgent: true };
+  }
   if ("ClaimConfirmed" in signal) {
     return { title: "Goodie bag confirmed", body: "The store confirmed your goodie bag.", tag: `claim-${bytesToHex(signal.ClaimConfirmed)}`, route: "/customer/orders", urgent: false };
   }

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, decodeEntry, setupArbitratedPlayers, ST_PETE, retryUntil } from "./helpers.js";
+import { actionHash, closeIssueWindow, decodeEntry, setupArbitratedPlayers, ST_PETE, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   // setupArbitratedPlayers names its second player "driver" (generic
@@ -71,6 +71,8 @@ await runScenario(async (scenario) => {
   const resolvedA = await dispatchOf(arbitrator)<HcRecord>("apply_pickup_dispute_resolution", { order_original_action: orderRefA });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   assert.equal(decodeEntry<{ status: string }>(resolvedA).status, "PickedUp");
+  // Ruled collected: the food is the store's once the issue window closes.
+  await closeIssueWindow(arbitrator, merchant, orderRefA, all);
 
   const merchantBalanceA = await balanceOnceSettled(merchant, 600);
   const customerBalanceA = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);

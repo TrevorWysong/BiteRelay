@@ -12,6 +12,8 @@ use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReceiptLine {
+    /// The item's original action, as the order names it.
+    pub item_ref: ActionHash,
     pub name: String,
     pub quantity: u32,
     pub unit_price_cents: u64,
@@ -78,7 +80,7 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
     let mut receipt_lines = Vec::with_capacity(lines.len());
     for line in &lines {
         let (name, unit_price_cents) = priced_line(&line.priced_version, bag)?;
-        receipt_lines.push(ReceiptLine { name, quantity: line.quantity, unit_price_cents, total_cents: unit_price_cents * line.quantity as u64 });
+        receipt_lines.push(ReceiptLine { item_ref: line.item_ref.clone(), name, quantity: line.quantity, unit_price_cents, total_cents: unit_price_cents * line.quantity as u64 });
     }
     let subtotal_cents: u64 = receipt_lines.iter().map(|line| line.total_cents).sum();
     let catalog = current_catalog(&catalog_ref)?;

@@ -9,7 +9,9 @@ use hdi::prelude::*;
 pub use dispute_types::{ArbitratorSeal, PinSecret};
 use relay_types::GeoPoint;
 
+mod issues;
 mod settlement;
+pub use issues::*;
 pub use settlement::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

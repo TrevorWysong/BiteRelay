@@ -176,6 +176,8 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     let parties = OrderParties::pickup(&order_original_action, &order);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     order_queues::retire(&parties)?;
+    // Its issue window starts now (see `issues`).
+    crate::issues::queue_for_window(&order_original_action);
     // This update is the customer's receipt: it lets the store collect the
     // food's held payment, from its own conductor (`settlement`).
 

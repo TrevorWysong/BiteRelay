@@ -19,7 +19,7 @@ mod links;
 // this crate wouldn't work. Re-exported here so nothing else in this crate
 // or the coordinator crate (which imports via `attestation_integrity::*`)
 // needs to change.
-pub use attestation_types::{ArbitratorSeal, EvidenceShare, HandoffEvidence, Leg, LegKind, ReceiptAttestation};
+pub use attestation_types::{ArbitratorSeal, EvidenceShare, HandoffEvidence, Leg, LegKind, PinSecret, ReceiptAttestation};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -94,12 +94,29 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
     // can't be recorded without it.
     let roster = relay_governance::arbitrator_roster();
     let collected = !leg.sealed_pin_for_arbitrators.is_empty();
+    let scanned = leg.revealed_pin.is_some();
+    if scanned && !pin_matches(leg.revealed_pin.as_ref(), &order.pin_commitment) {
+        return invalid("a scanned code must match the order's PIN");
+    }
     match leg.kind {
-        LegKind::MerchantHandoff if collected => invalid("a PIN is collected from the customer, not the store"),
-        LegKind::CustomerHandoff if order.pin_required && !collected => invalid("this order's store requires the customer's PIN at the door"),
+        LegKind::MerchantHandoff if collected || scanned => invalid("a PIN is collected from the customer, not the store"),
+        LegKind::CustomerHandoff if order.pin_required && !collected && !scanned => invalid("this order's store requires the customer's PIN at the door"),
         _ if collected && !dispute_types::seals_cover_roster(&leg.sealed_pin_for_arbitrators, &roster) => invalid("a collected PIN is sealed once to each arbitrator"),
         _ => valid(),
     }
+}
+
+/// Whether `revealed` opens `commitment`: `sha256(pin || salt)`.
+pub fn pin_matches(revealed: Option<&PinSecret>, commitment: &[u8]) -> bool {
+    use sha2::{Digest, Sha256};
+    let Some(secret) = revealed else { return false };
+    if commitment.len() != 32 {
+        return false;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(secret.pin.as_bytes());
+    hasher.update(&secret.salt);
+    hasher.finalize().as_slice() == commitment
 }
 
 /// A handoff's evidence shared with the arbitrators: by one of its two

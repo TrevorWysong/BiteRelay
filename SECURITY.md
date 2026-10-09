@@ -53,6 +53,21 @@ Peers choose their own action timestamps. Holochain only requires each agent's t
 - A handoff's location and photo are sealed between its two parties, and reach arbitrators only when a party shares them.
 - Drivers publish no presence: they find work by reading the open orders around them.
 
+**Handover scans** (`attestation::legs`, `lib/handoverCode.ts`).
+- The customer's app can show their PIN and its salt as a QR code. The driver's app checks it against the order's commitment before recording the drop-off, and validation checks it again (`sha256(pin || salt)`). Anyone can verify it, and only the customer could have given it.
+- A drop-off against a scanned code lets the driver complete the delivery without waiting for the customer. The completing order version is then the customer's receipt, and validation refuses any dispute about that delivery.
+- The scan alone settles nothing. If the customer disputes before the driver completes, there's no receipt, and only a ruling settles the order, so money can't move both ways. An arbitrator's conductor also refuses to rule against a scan, so an honest arbitrator isn't misled.
+
+**Missing and wrong items** (`dispatch_types::issues`, `dispatch::issues`).
+- Once an order is confirmed, the store's payment for the food stays held for the issue window (`issue_window_secs`, 2 hours). The driver's pay doesn't wait: what's inside a sealed bag isn't theirs to answer for.
+- Only the order's customer reports, only items on the order, and never more units than were ordered. Only the store answers each report, and only once. Evidence is sealed to the store and to each arbitrator.
+- The window is kept by the order's *closing arbitrator*, chosen from the order's hash. Parties choose their own timestamps, so the window runs on the arbitrator's clock:
+  - It opens the window once, citing a real confirmation (the customer's receipt, a scanned drop-off, a collected pickup, or a ruling that the order arrived).
+  - It closes the window once, no sooner than `issue_window_secs` after opening it, by its own timestamps.
+  - The refund can't exceed what the cited reports are worth of what the customer paid. That's each unit at its price, scaled by any promo, never more than was ordered (`claimed_value`).
+- With arbitrators on the roster, the ledger refuses to let the store take the food on a receipt or a ruling. The food moves only at the close: the store collects the food less the refund, the customer collects the refund.
+- The store has the final say, as it would if you ordered from it directly. Reports it accepts or never answers are refunded; reports it declines aren't. Holding its payment is what makes it answer. However late a report comes, the store gets up to 30 minutes to answer before the close. The arbitrator decides nothing here: it keeps the clock and applies the store's answers.
+
 ## 2026-10 audit: findings and fixes
 
 | Finding | Severity | Fix |
@@ -76,6 +91,7 @@ The tests in `tests/tryorama/src/security-regressions.test.ts` and `ledger-rules
 ## What remains
 
 - **Arbitrators are trusted.** One arbitrator decides a dispute, and two contradictory rulings on one order could pay out twice. The roster is fixed in the DNA and is the network's deliberate trust anchor.
+- **The closing arbitrator keeps the window honestly.** Holochain doesn't refuse future timestamps, so an arbitrator could future-date a close to end a window early (every later action on its chain would then have to follow it). It could also delay a close, or misapply the store's answers (validation checks the refund against the reports, not against the answers, which it can't enumerate). It can never refund more than the reports are worth, and its writes are public and attributable.
 - **Without a PIN, a photo is the driver's word.** A driver could photograph the wrong door, or record the drop-off early. The customer is told at once and can dispute within the window; an undisputed, photographed drop-off is ruled for the provider. Stores that don't require the PIN carry this risk, as a sender does for a parcel left without a signature.
 - **Who orders from whom** is visible to anyone reading an order's public fields, as is a customer's ~1 km drop-off area. A driver's reads of the open-order lists for an area are seen by the peers that store those lists. See DEVELOPMENT.md, "Personal data".
 - **Reviews from colluding identities.** A store can buy from itself with a second identity and review itself. It costs real money (the food is paid for), but it isn't detected.

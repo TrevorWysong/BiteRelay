@@ -29,6 +29,7 @@ import type { Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { acknowledgeLeg } from "../../holochain/zomes/attestation";
 import { CustomerHistory } from "../../components/CustomerHistory";
+import { OrderIssues } from "../../components/OrderIssues";
 import { unconfirmedPickup } from "../../lib/handoffs";
 
 
@@ -332,7 +333,9 @@ function OrderHistory({ stores, storeLabel, scope }: ListProps) {
   return (
     <div className="flex flex-col gap-3">
       {data.rows.map((row) => (
-        <OrderCard key={row.hex} row={row} storeLabel={storeLabel(row.storeHex)} showTime />
+        <OrderCard key={row.hex} row={row} storeLabel={storeLabel(row.storeHex)} showTime>
+          {mayHaveOpenIssues(row) && <OrderIssues orderRef={row.ref} role="store" />}
+        </OrderCard>
       ))}
       {hasMore && (
         <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="w-full py-2 text-xs">
@@ -349,6 +352,16 @@ async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Tim
     rows: mergeNewestFirst([], pages.flatMap(({ store, page }) => page.orders.map((entry) => toRow(entry, store.hex)))),
     cursors: Object.fromEntries(pages.map(({ store, page }) => [store.hex, page.next_before])),
   };
+}
+
+/// A day covers an order's 2-hour issue window and the time a store has to
+/// answer a late report, with room to spare; older orders aren't checked,
+/// which keeps a long history cheap to show.
+const ISSUE_LOOKBACK_MICROS = 24 * 60 * 60 * 1_000_000;
+
+function mayHaveOpenIssues(row: QueueRow): boolean {
+  const completed = row.kind === "Delivery" ? row.order.status === "Delivered" : row.order.status === "PickedUp";
+  return completed && Date.now() * 1000 - row.order.requested_at < ISSUE_LOOKBACK_MICROS;
 }
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {

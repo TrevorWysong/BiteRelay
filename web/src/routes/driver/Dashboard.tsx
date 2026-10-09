@@ -14,7 +14,7 @@ import { Button, Card, EmptyState, Input, PresenceDot, Skeleton, StatNumber } fr
 import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
-import { PhotoInput } from "../../components/PhotoInput";
+import { DropoffStep } from "./DropoffStep";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
@@ -314,14 +314,10 @@ function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: Ge
 function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; location: { lat: number; lon: number }; onAdvanced: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dropoffPhoto, setDropoffPhoto] = useState("");
-  // The customer's delivery PIN, read out at the door -- required when the
-  // store says so, and the driver's best proof of delivery either way.
-  const [pin, setPin] = useState("");
 
   useLocationBroadcast(row.hash, TRACKED_STATUSES.includes(row.order.status));
 
-  async function advance(action: "en_route" | "pickup" | "await_dropoff") {
+  async function advance(action: "en_route" | "pickup") {
     setBusy(true);
     setError(null);
     try {
@@ -330,19 +326,6 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       } else if (action === "pickup") {
         await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
         await pickUpOrder(row.hash);
-      } else if (action === "await_dropoff") {
-        if (row.order.pin_required && pin.trim().length !== 6) {
-          throw new Error("This store requires the customer's 6-digit PIN. Ask them for it before marking the order delivered.");
-        }
-        await recordLeg({
-          order_ref: row.hash,
-          sequence: 1,
-          kind: "CustomerHandoff",
-          to: row.order.requester,
-          geo_at_completion: location,
-          photo_data_uri: dropoffPhoto,
-          pin: pin.trim() || null,
-        });
       }
       await onAdvanced();
     } catch (err) {
@@ -391,26 +374,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
             Confirm pickup from merchant
           </Button>
         )}
-        {row.order.status === "PickedUp" && (
-          <div className="flex flex-col items-center gap-2">
-            <p className="text-xs text-ink-400">Optional: photo at drop-off, for the customer's reassurance.</p>
-            <PhotoInput value={dropoffPhoto} onChange={setDropoffPhoto} shape="banner" className="w-full" />
-            <label className="mt-2 block text-xs font-semibold text-ink-500">
-              {row.order.pin_required ? "Customer's delivery PIN (required)" : "Customer's delivery PIN (recommended)"}
-            </label>
-            <input
-              inputMode="numeric"
-              maxLength={6}
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-              placeholder="6 digits"
-              className="mt-1 w-full rounded-xl border border-ink-200 px-3 py-2 text-sm dark:border-ink-700 dark:bg-ink-900"
-            />
-            <Button className="w-full" loading={busy} onClick={() => advance("await_dropoff")}>
-              Confirm handoff to customer
-            </Button>
-          </div>
-        )}
+        {row.order.status === "PickedUp" && <DropoffStep orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
         {row.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
       </div>
       <div className="mt-4">

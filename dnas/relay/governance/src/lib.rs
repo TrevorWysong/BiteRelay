@@ -53,6 +53,10 @@ pub struct RelayDnaProperties {
     /// `confirm_window`. Defaults to a day; tests set it low.
     #[serde(default)]
     pub confirm_window_secs: Option<u64>,
+    /// How long a customer has to report items missing or wrong once an
+    /// order is confirmed -- see `issue_window`. Defaults to two hours.
+    #[serde(default)]
+    pub issue_window_secs: Option<u64>,
 }
 
 const DEFAULT_STORE_RESPONSE_SECS: u64 = 300;
@@ -85,6 +89,29 @@ pub fn confirm_window() -> core::time::Duration {
 /// shorter).
 pub fn pin_confirm_window() -> core::time::Duration {
     confirm_window().min(core::time::Duration::from_secs(3_600))
+}
+
+const DEFAULT_ISSUE_WINDOW_SECS: u64 = 7_200;
+
+/// How long a customer has, once an order is confirmed, to report items
+/// missing or wrong -- and so how long the store's payment for the food
+/// waits. Kept by the order's closing arbitrator on its own clock.
+pub fn issue_window() -> core::time::Duration {
+    let secs = RelayDnaProperties::try_from_dna_properties().ok().and_then(|p| p.issue_window_secs).unwrap_or(DEFAULT_ISSUE_WINDOW_SECS);
+    core::time::Duration::from_secs(secs)
+}
+
+/// The arbitrator who keeps `order`'s issue window: one per order, fixed by
+/// its hash, so no two arbitrators ever settle the same one -- and the load
+/// spreads across the roster. `None` without a roster (development), where
+/// there's no window.
+pub fn closing_arbitrator(order: &ActionHash) -> Option<AgentPubKey> {
+    let roster = arbitrator_roster();
+    if roster.is_empty() {
+        return None;
+    }
+    let index = order.get_raw_39().iter().fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(*b as usize)) % roster.len();
+    AgentPubKeyB64::from_b64_str(&roster[index]).ok().map(AgentPubKey::from)
 }
 
 /// The arbitrators on the DNA's roster, as key strings -- empty for a DNA

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, decodeEntry, handOff, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE } from "./helpers.js";
+import { acceptOrder, actionHash, closeIssueWindow, decodeEntry, handOff, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE } from "./helpers.js";
 
 const PHOTO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -20,7 +20,7 @@ interface Order {
 }
 
 await runScenario(async (scenario) => {
-  const [customer, merchant, driver, arbitrator] = await setupPlayersWithProperties(scenario, 4, (keys) => ({ arbitrators: [keys[3]], confirm_window_secs: 5 }));
+  const [customer, merchant, driver, arbitrator] = await setupPlayersWithProperties(scenario, 4, (keys) => ({ arbitrators: [keys[3]], confirm_window_secs: 5, issue_window_secs: 3 }));
   const all = [customer, merchant, driver, arbitrator];
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
   const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
@@ -77,7 +77,8 @@ await runScenario(async (scenario) => {
   await sync();
   assert.equal((await order(photographed)).status, "Delivered");
   assert.equal(await balance(driver, 400), 400, "the driver is paid the whole fee and has their collateral back");
-  assert.equal(await balance(merchant, 1000 - 200), 1000 - 200, "the store is paid for the food");
+  await closeIssueWindow(arbitrator, merchant, photographed, all);
+  assert.equal(await balance(merchant, 1000 - 200), 1000 - 200, "the store is paid for the food once its issue window closes");
   console.log("[PASS] an unconfirmed drop-off with the driver's photo, never disputed, is ruled for the provider");
 
   // --- That customer has now lost a dispute, so the store asks for their PIN. ---
@@ -101,7 +102,8 @@ await runScenario(async (scenario) => {
   await sync();
   assert.equal((await order(withPin)).status, "Delivered");
   assert.equal(await balance(driver, 800), 800, "the driver is paid");
-  assert.equal(await balance(merchant, 2 * (1000 - 200)), 2 * (1000 - 200), "and the store");
+  await closeIssueWindow(arbitrator, merchant, withPin, all);
+  assert.equal(await balance(merchant, 2 * (1000 - 200)), 2 * (1000 - 200), "and the store, after the window");
   console.log("[PASS] an unconfirmed delivery with the customer's PIN is ruled for the provider, automatically");
 
   // --- A store requiring the PIN always; a wrong one is left for a person. ---

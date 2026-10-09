@@ -325,6 +325,12 @@ export function ProfilePage() {
         </motion.div>
       )}
 
+      <motion.div variants={fadeSlideUp} className="mb-4 mt-2 text-center">
+        <Link to="/policies" className="text-xs text-ink-400 underline-offset-4 hover:text-ink-600 hover:underline dark:hover:text-ink-200">
+          Policies, disputes and risks
+        </Link>
+      </motion.div>
+
       {HOST === "dev" && (
         <motion.div variants={fadeSlideUp}>
           <Button variant="ghost" className="w-full" onClick={signOut}>

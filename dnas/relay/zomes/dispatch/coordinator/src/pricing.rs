@@ -114,7 +114,16 @@ const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
 /// is the bag itself, never outdated. The same goes for the promo: it must
 /// still be live (validation can't tell a deactivated code from a live one
 /// either), or have stopped only after this order was placed, recently.
+/// How far ahead of the store's clock an order's timestamp may be.
+const MAX_CLOCK_SKEW_MICROS: i64 = 5 * 60 * 1_000_000;
+
 pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>, promo_ref: Option<&ActionHash>) -> ExternResult<()> {
+    // An order dated in the future would hold back the store's payment until
+    // then: its issue window can't open before the order's own timestamp.
+    let placed = get(order_ref.clone(), GetOptions::default())?.ok_or(guest("order not found".into()))?.action().timestamp();
+    if placed.as_micros() > sys_time()?.as_micros() + MAX_CLOCK_SKEW_MICROS {
+        return Err(guest("this order is dated in the future, so it can't be accepted -- decline it".into()));
+    }
     match outdated_item(order_ref, lines, bag_claim_ref, promo_ref)? {
         Some(name) => Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it"))),
         None => Ok(()),

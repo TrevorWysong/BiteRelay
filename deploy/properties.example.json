@@ -3,6 +3,8 @@
     "uhCAk_replace_with_each_arbitrators_agent_key"
   ],
   "store_response_secs": 300,
+  "confirm_window_secs": 86400,
+  "issue_window_secs": 7200,
   "issuers": [
     "uhCAk_replace_with_each_issuers_agent_key"
   ],

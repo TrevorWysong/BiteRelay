@@ -70,6 +70,13 @@ pub struct SubmitResolutionInput {
 #[hdk_extern]
 pub fn submit_resolution(input: SubmitResolutionInput) -> ExternResult<Record> {
     let (record, mut dispute): (_, Dispute) = resolve_latest_decoded(input.dispute_original_action.clone(), "Dispute")?;
+    // A drop-off against the customer's scanned code proves they had it.
+    // Validation can't see it from a ruling (the two can sit on different
+    // branches of the order), so it's refused here, on every arbitrator's
+    // own conductor.
+    if matches!(input.outcome, DisputeOutcome::FavorRequester) && handed_over_on_scan(&dispute.order_ref)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("The customer let the driver scan their handover code: they had this order. Rule for the provider, or have them report missing items instead.".into())));
+    }
     let arbitrator = agent_info()?.agent_initial_pubkey;
     dispute.status = DisputeStatus::Resolved;
     dispute.outcome = Some(input.outcome);
@@ -163,4 +170,15 @@ mod test_utils {
     use hdk::prelude::*;
     use dispute_integrity::LinkTypes;
     relay_coordinator_support::raw_link_test_externs!(OrderToDispute, OpenDisputeAnchor);
+}
+
+/// Whether `order` has a drop-off recorded against the customer's scanned
+/// handover code.
+fn handed_over_on_scan(order: &ActionHash) -> ExternResult<bool> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "attestation", "get_legs_for_order".into(), None, order.clone())? else { return Ok(false) };
+    let legs: Vec<Record> = io.decode().map_err(|e| wasm_error!(e))?;
+    Ok(legs
+        .iter()
+        .filter_map(|r| r.entry().to_app_option::<attestation_types::Leg>().ok().flatten())
+        .any(|leg| leg.kind == attestation_types::LegKind::CustomerHandoff && leg.revealed_pin.is_some()))
 }

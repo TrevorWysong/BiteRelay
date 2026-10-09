@@ -81,7 +81,10 @@ pub(crate) fn validate_delivery_receipts(order_original_creation: &ActionHash, r
     for proof_ref in receipts {
         let record = must_get_valid_record(proof_ref.clone())?;
         let (leg, acknowledged) = if let Some(leg) = decode::<Leg>(&record) {
-            (leg, false)
+            // A drop-off against the customer's scanned code is their
+            // receipt: validation checked the code against the commitment.
+            let scanned = leg.revealed_pin.is_some();
+            (leg, scanned)
         } else if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
             let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg.clone())?) else {
                 return Ok(Err("a delivery receipt does not acknowledge a handoff".into()));
@@ -249,7 +252,10 @@ pub(crate) fn validate_order_transition(
         RequiredAuthor::Any => is_requester_or_merchant || is_accepted_provider,
         RequiredAuthor::Arbitrator => relay_governance::is_arbitrator(author)?,
     };
-    if !authorized {
+    // A driver may complete a delivery themselves on the customer's scanned
+    // code -- the one receipt that doesn't need the customer's own update.
+    let driver_completes_on_scan = prior.status == DeliveryStatus::PickedUp && order.status == DeliveryStatus::Delivered && is_accepted_provider && attestation_types::rests_on_scan(&order.delivery_receipts)?;
+    if !authorized && !driver_completes_on_scan {
         return Ok(ValidateCallbackResult::Invalid(format!(
             "transition {:?} -> {:?} requires author role {:?}, but the author holds none of the roles it permits",
             prior.status, order.status, required_author
@@ -419,6 +425,11 @@ pub(crate) fn validate_order_transition(
         || (prior.status == DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled && prior.dispute_ref.is_none());
     let resolving_dispute =
         prior.status == DeliveryStatus::Disputed && matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Cancelled);
+    // The customer let the driver scan their handover code, and the driver
+    // completed the delivery on it: that's settled, and can't be disputed.
+    if raising_dispute && prior.status == DeliveryStatus::Delivered && attestation_types::rests_on_scan(&prior.delivery_receipts)? {
+        return Ok(ValidateCallbackResult::Invalid("a delivery completed on the customer's scanned code can't be disputed".into()));
+    }
     if raising_dispute {
         if let Err(reason) = check_raising_dispute(&prior, order, author, is_accepted_provider, &accepted_bidder, original_action_hash)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
@@ -482,3 +493,4 @@ fn check_new_pin(order: &DeliveryOrder) -> Option<&'static str> {
         _ => Some("a delivery PIN is a 32-byte commitment, the customer's sealed copy, and one seal for each arbitrator"),
     }
 }
+
