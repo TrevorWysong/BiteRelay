@@ -1,7 +1,8 @@
 //! What an agent's own conductor does for them with no app open, on the
 //! conductor's scheduler (as `settlement` does for store payouts):
 //!
-//! - **A customer's orders.** A recurring order fires when it's due, a
+//! - **A customer's orders.** A confirmed goodie-bag claim becomes its
+//!   order (`claims`), a recurring order fires when it's due, a
 //!   scheduled order is placed with its store when it's due, and an order
 //!   its store never answers is cancelled once the store's window passes
 //!   (`Cancellation::StoreDidNotRespond`) -- so no customer waits on a
@@ -45,6 +46,13 @@ pub(crate) fn tend_my_orders_soon() -> ExternResult<()> {
     schedule("tend_my_orders")
 }
 
+/// The same, for another zome on this cell: the catalog's `ClaimConfirmed`
+/// signal, so a confirmed claim becomes its order straight away.
+#[hdk_extern]
+pub fn schedule_order_upkeep(_: ()) -> ExternResult<()> {
+    tend_my_orders_soon()
+}
+
 /// Places the caller's due scheduled orders with their stores and cancels
 /// those their stores haven't answered in time, then runs again when the
 /// next one falls due.
@@ -75,6 +83,8 @@ fn tend_customer_orders() -> ExternResult<Option<Duration>> {
             next = Some(next.map_or(due, |earliest| earliest.min(due)));
         }
     }
+    // Confirmed goodie-bag claims become their orders.
+    crate::claims::redeem_confirmed_claims()?;
     // Standing orders that are due fire too.
     if let Some(due) = crate::recurring::tend_templates(now)? {
         next = Some(next.map_or(due, |earliest| earliest.min(due)));

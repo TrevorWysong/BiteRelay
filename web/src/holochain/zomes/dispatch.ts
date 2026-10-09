@@ -27,9 +27,9 @@ export async function requestDelivery(input: {
   requested_delivery_time?: Timestamp | null;
   promo_code_ref?: ActionHash | null;
   dropoff_preference?: DropoffPreference;
-  /// `null` for a normal cart order. Set only when this delivery is
-  /// finalizing a confirmed goodie-bag claim -- see
-  /// `useClaimFinalization`.
+  /// `null` for a normal cart order. Set only when this delivery redeems a
+  /// confirmed goodie-bag claim -- which the customer's conductor does on
+  /// its own (`dispatch::claims`).
   bag_claim_ref?: ActionHash | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_delivery", {

@@ -102,7 +102,7 @@ await runScenario(async (scenario) => {
   });
   const claimRef = actionHash(claimRecord);
   await dhtSync(all, merchant.cells[0].cell_id[0]);
-  await catalogOf(merchant)("confirm_claim", claimRef);
+  const confirmedClaim = actionHash(await catalogOf(merchant)<HcRecord>("confirm_claim", claimRef));
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   await assert.rejects(
@@ -113,7 +113,7 @@ await runScenario(async (scenario) => {
       order_total: 500,
       dropoff: NYC,
       max_delivery_fee: 300,
-      bag_claim_ref: claimRef,
+      bag_claim_ref: confirmedClaim,
     }),
     /past this store's .*delivery radius/,
     "a confirmed goodie-bag claim must still respect the merchant's delivery radius when finalized",
