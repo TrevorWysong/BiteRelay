@@ -7,8 +7,12 @@
 //!   amount that leg owes (`dispatch_types::settlement`), authored by the
 //!   agent paying it -- nobody can write a payment *to* themselves, or
 //!   between two other people;
-//! - collateral moves only by an arbitrator's ruling, for exactly the
-//!   amount ruled, from the losing side to the winning one;
+//! - a driver's collateral is posted by that driver, to the customer, for
+//!   exactly what their bid committed, on the order that assigned them --
+//!   and handed back as a payment leg (`PaymentLeg::CollateralReturn`)
+//!   once the order is delivered;
+//! - any other collateral moves only by an arbitrator's ruling, for exactly
+//!   the amount ruled, from the losing side to the winning one;
 //! - a balance checkpoint is only ever written by the agent it's for.
 //!
 //! What it can't: stop a payer from paying twice (that only costs them),
@@ -16,34 +20,10 @@
 //! is a dispute.
 
 use dispatch_types::{delivery_payments, pickup_payments, Bid, DeliveryOrder, DeliveryStatus, LegPayment, PickupOrder, PickupStatus};
-pub use dispatch_types::PaymentLeg;
-use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
+use dispute_types::{Dispute, DisputeOutcome, DisputeReason, DisputeStatus};
 use hdi::prelude::*;
+pub use ledger_types::{LedgerTransaction, PaymentLeg, TxnReason};
 use relay_integrity_support::{decode, invalid, link_target, original_creation, require, valid, LinkTarget};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum TxnReason {
-    /// One leg of settling a completed order.
-    Payment(PaymentLeg),
-    /// Collateral moved by an arbitrator's dispute ruling.
-    CollateralForfeit,
-}
-
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct LedgerTransaction {
-    pub from: AgentPubKey,
-    pub to: AgentPubKey,
-    pub amount: u64,
-    pub reason: TxnReason,
-    /// The order this settles (its original action).
-    pub related_order: ActionHash,
-    /// The record that justifies it: for a payment, the version of the
-    /// order that completed it (`Delivered`/`PickedUp`); for a forfeit, the
-    /// resolved `Dispute`.
-    pub basis: ActionHash,
-    pub created_at: Timestamp,
-}
 
 /// An agent's own running balance, so a read sums only the transactions
 /// since the last checkpoint rather than their whole history. Written only
@@ -126,6 +106,7 @@ fn validate_transaction(txn: &LedgerTransaction, author: &AgentPubKey) -> Extern
     }
     match &txn.reason {
         TxnReason::Payment(leg) => validate_payment(txn, *leg, author),
+        TxnReason::CollateralHold => validate_collateral_hold(txn, author),
         TxnReason::CollateralForfeit => validate_forfeit(txn, author),
     }
 }
@@ -165,6 +146,27 @@ fn validate_payment(txn: &LedgerTransaction, leg: PaymentLeg, author: &AgentPubK
     )
 }
 
+/// A driver posting their collateral to the customer: the driver whose bid
+/// the order accepted (`basis`, a version of the order that names it), for
+/// exactly what that bid committed, written by the driver themselves.
+fn validate_collateral_hold(txn: &LedgerTransaction, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if author != &txn.from {
+        return invalid("a collateral hold can only be posted by the driver it's from");
+    }
+    if original_creation(txn.basis.clone())? != txn.related_order {
+        return invalid("a collateral hold's basis must be a version of the order it secures");
+    }
+    let Some(order) = decode::<DeliveryOrder>(&must_get_valid_record(txn.basis.clone())?) else {
+        return invalid("a collateral hold's basis must be a DeliveryOrder");
+    };
+    let Some(bid_ref) = &order.accepted_bid else { return invalid("collateral is only posted once a driver is assigned") };
+    let Some(bid) = decode::<Bid>(&must_get_valid_record(bid_ref.clone())?) else { return invalid("accepted_bid is not a Bid") };
+    require(
+        txn.from == bid.bidder && txn.to == order.requester && txn.amount == bid.collateral,
+        "a collateral hold must be the assigned driver's committed collateral, posted to the customer",
+    )
+}
+
 /// Collateral moves only by an arbitrator's ruling: the amount it named,
 /// from the losing side to the winning one. The provider (driver or store)
 /// is whichever party to the dispute isn't the order's requester.
@@ -183,6 +185,13 @@ fn validate_forfeit(txn: &LedgerTransaction, author: &AgentPubKey) -> ExternResu
     }
     let order = must_get_valid_record(txn.related_order.clone())?;
     let requester = if let Some(o) = decode::<DeliveryOrder>(&order) {
+        // Ruling for the customer over a delivery, they keep the collateral
+        // the driver posted at pickup -- that is the forfeit, and it's all
+        // the driver stood to lose. (A cancellation dispute is different:
+        // the order never reached pickup, so nothing was posted.)
+        if matches!(outcome, DisputeOutcome::FavorRequester { .. }) && dispute.reason != DisputeReason::UnjustCancellation {
+            return invalid("ruling for the customer over a delivery, the driver's posted collateral is the forfeit -- nothing more moves");
+        }
         o.requester
     } else if let Some(o) = decode::<PickupOrder>(&order) {
         o.requester

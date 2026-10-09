@@ -61,7 +61,6 @@ await runScenario(async (scenario) => {
 
   const bidRecord = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRef, eta_seconds: 900, price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 100, ledger_txn_ref: "pending" },
   });
   const bidRef = actionHash(bidRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -83,7 +82,6 @@ await runScenario(async (scenario) => {
   await acceptOrder(customer, orderRef2, all);
   const bidRecord2 = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRef2, eta_seconds: 900, price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 100, ledger_txn_ref: "pending" },
   });
   const bidRef2 = actionHash(bidRecord2);
   await dhtSync(all, customer.cells[0].cell_id[0]);

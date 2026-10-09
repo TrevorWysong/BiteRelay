@@ -60,7 +60,6 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 900,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidRef = actionHash(bidRecord);
   await dhtSync(both, customer.cells[0].cell_id[0]);
@@ -95,7 +94,7 @@ await runScenario(async (scenario) => {
   await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: merchantReceiptRef }));
   console.log("[PASS] Merchant handoff leg attested (1 of 2)");
 
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+  await dispatchOf(driver)("pick_up_order", orderRef);
 
   const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", {
     order_ref: orderRef,

@@ -10,7 +10,6 @@ name = "ledger"
 [dependencies]
 hdk.workspace = true
 serde.workspace = true
-relay_types.workspace = true
 relay_coordinator_support.workspace = true
 relay_governance.workspace = true
 ledger_integrity = { path = "../integrity" }

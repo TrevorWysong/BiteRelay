@@ -31,10 +31,18 @@ const LEG_LABEL: Record<PaymentLeg, string> = {
   DeliveryFeeCustomerShare: "Delivery fee (customer's share)",
   DeliveryFeeStoreShare: "Delivery fee (store's share)",
   Tip: "Tip",
+  CollateralReturn: "Driver's collateral returned",
 };
 
 function describeReason(reason: TxnReason): string {
-  return reason === "CollateralForfeit" ? "Collateral forfeiture" : LEG_LABEL[reason.Payment];
+  switch (reason) {
+    case "CollateralHold":
+      return "Driver's collateral, held until delivery";
+    case "CollateralForfeit":
+      return "Collateral forfeiture";
+    default:
+      return LEG_LABEL[reason.Payment];
+  }
 }
 
 export function Transparency() {

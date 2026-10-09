@@ -26,6 +26,9 @@ pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey) -> ExternResult<
     if order.status != DeliveryStatus::Open {
         return Ok(ValidateCallbackResult::Invalid("bids can only be placed on an Open order".into()));
     }
+    if bid.collateral != required_collateral(&order) {
+        return Ok(ValidateCallbackResult::Invalid("a bid must commit the order's required collateral: the value of its food".into()));
+    }
     // Otherwise unenforced self-dealing: nothing else stops the requester or
     // merchant from bidding on (and accepting) their own order -- the first
     // symptom wouldn't be here, it'd be a much later, far more confusing

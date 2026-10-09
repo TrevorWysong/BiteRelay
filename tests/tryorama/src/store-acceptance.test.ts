@@ -41,7 +41,7 @@ await runScenario(async (scenario) => {
   assert.equal(placedStatus, "Placed");
   await sync();
   assert.equal((await call(driver, "dispatch")<HcRecord[]>("get_open_orders_near", dropoff_geohash)).length, 0, "drivers can't discover it");
-  const bid = () => call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } });
+  const bid = () => call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400 });
   await assert.rejects(bid(), /isn't open for bids/, "or bid on it");
   console.log("[PASS] a placed delivery waits for its store, unseen by drivers");
 

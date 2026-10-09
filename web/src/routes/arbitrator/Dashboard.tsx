@@ -15,6 +15,7 @@ import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import type { Dispute, DeliveryOrder } from "../../holochain/types";
+import { POLL } from "../../lib/poll";
 
 interface CaseRow {
   hash: Uint8Array;
@@ -22,7 +23,6 @@ interface CaseRow {
   order: DeliveryOrder | null;
 }
 
-const POLL_MS = 8000;
 
 export function ArbitratorDashboard() {
   const [cases, setCases] = useState<CaseRow[] | null>(null);
@@ -46,7 +46,8 @@ export function ArbitratorDashboard() {
     setCases(rows);
   }, []);
 
-  usePolling(refresh, { pollMs: POLL_MS });
+  // Nothing signals an arbitrator about a new case.
+  usePolling(refresh, { pollMs: POLL.unsignalled });
 
   async function resolve(row: CaseRow, favor: "provider" | "requester", forfeitAmount: number, reasoning: string) {
     setError(null);
@@ -118,7 +119,9 @@ function CaseCard({
   async function handle(favor: "provider" | "requester") {
     setResolving(true);
     try {
-      await onResolve(favor, forfeitAmount, reasoning.trim());
+      // Ruling for the customer over a delivery, the forfeit is the driver's
+      // posted collateral, which the customer already holds; nothing else moves.
+      await onResolve(favor, favor === "requester" && !isCancellation ? 0 : forfeitAmount, reasoning.trim());
     } catch {
       // error already surfaced by the parent's own error state
     } finally {
@@ -158,6 +161,11 @@ function CaseCard({
             onChange={(e) => setForfeitAmount(Math.max(0, Math.round(Number(e.target.value) * 100) || 0))}
             prefix="$"
           />
+          {!isCancellation && (
+            <p className="text-[11px] text-ink-400">
+              Charged to the customer if you favor the provider. If you favor the customer, they keep the driver's posted collateral ({formatCents(order.order_total)}) instead.
+            </p>
+          )}
           <label className="text-xs font-semibold text-ink-500">Reasoning</label>
           <Textarea value={reasoning} onChange={(e) => setReasoning(e.target.value)} rows={2} placeholder="Why you're ruling this way. This is recorded permanently." />
           <div className="mt-1 flex gap-2">

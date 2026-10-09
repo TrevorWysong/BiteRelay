@@ -55,7 +55,6 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: actionHash(bidRecord) });
@@ -71,7 +70,7 @@ await runScenario(async (scenario) => {
   const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
   await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
 
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+  await dispatchOf(driver)("pick_up_order", orderRef);
   const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
   const customerLegRef = actionHash(customerLegRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -83,13 +82,19 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   // Customer paid both the merchant (order_total) and the driver (delivery
-  // fee + tip, via the subsidy split) -- two outgoing transactions.
+  // fee + tip, via the subsidy split), and held the driver's collateral from
+  // pickup until handing it back: two payments, plus the hold and its return.
   const customerTxns = await ledgerOf(customer)<{ transactions: HcRecord[]; next_after: number | null }>("list_my_transactions", { after: null });
-  assert.equal(customerTxns.transactions.length, 2, "the customer should see both transactions they were a party to");
-  const customerDecoded = customerTxns.transactions.map((r) => decodeEntry<{ from: Uint8Array; to: Uint8Array; amount: number; related_order: Uint8Array }>(r));
-  assert.ok(customerDecoded.every((t) => bytesEqual(t.from, customer.agentPubKey)), "the customer should be the payer on every one of their transactions here");
-  assert.ok(customerDecoded.every((t) => bytesEqual(t.related_order, orderRef)), "both transactions should reference the same order");
-  console.log("[PASS] list_my_transactions shows the customer both outgoing payments for this order");
+  assert.equal(customerTxns.transactions.length, 4, "the customer should see every transaction they were a party to");
+  type Txn = { from: Uint8Array; to: Uint8Array; amount: number; related_order: Uint8Array; reason: unknown };
+  const customerDecoded = customerTxns.transactions.map((r) => decodeEntry<Txn>(r));
+  assert.ok(customerDecoded.every((t) => bytesEqual(t.related_order, orderRef)), "every transaction should reference the same order");
+  const [hold] = customerDecoded.filter((t) => t.reason === "CollateralHold");
+  assert.ok(hold && bytesEqual(hold.to, customer.agentPubKey), "the driver's collateral was posted to the customer");
+  const returned = customerDecoded.find((t) => JSON.stringify(t.reason) === JSON.stringify({ Payment: "CollateralReturn" }));
+  assert.equal(returned?.amount, hold.amount, "and handed back in full on delivery");
+  assert.ok(customerDecoded.filter((t) => t !== hold).every((t) => bytesEqual(t.from, customer.agentPubKey)), "the customer pays every other one");
+  console.log("[PASS] list_my_transactions shows the customer their payments and the driver's collateral, held and returned");
 
   const merchantTxns = await ledgerOf(merchant)<{ transactions: HcRecord[]; next_after: number | null }>("list_my_transactions", { after: null });
   assert.equal(merchantTxns.transactions.length, 1, "the merchant should see exactly the one transaction paying them");

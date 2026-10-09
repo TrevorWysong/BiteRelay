@@ -3,7 +3,6 @@
 // once in the app shell so it runs whatever screen is open. Best-effort by
 // design: a failed fire (a stale promo code, a since-closed store) still
 // advances `next_run_at`, so one bad occurrence can't wedge every later one.
-import { useRef } from "react";
 import { listMyRecurringTemplates, advanceRecurringTemplate, requestDelivery, countMyCompletedOrders } from "../holochain/zomes/dispatch";
 import { getPromoCode } from "../holochain/zomes/catalog";
 import { evaluatePromo } from "../lib/promotions";
@@ -17,21 +16,9 @@ import type { PromoCode, RecurringOrderTemplate, TemplateDetails } from "../holo
 const CHECK_INTERVAL_MS = 60_000;
 
 export function useRecurringOrderFiring() {
-  // A tick that started while the last was still firing would see the same
-  // templates as due and fire them twice; skip it instead.
-  const running = useRef(false);
-  usePolling(
-    async () => {
-      if (running.current) return;
-      running.current = true;
-      try {
-        await fireDueTemplates();
-      } finally {
-        running.current = false;
-      }
-    },
-    { pollMs: CHECK_INTERVAL_MS },
-  );
+  // `usePolling` runs one tick at a time, so a tick never sees templates the
+  // last one is still firing as due.
+  usePolling(fireDueTemplates, { pollMs: CHECK_INTERVAL_MS, background: true });
 }
 
 async function fireDueTemplates() {

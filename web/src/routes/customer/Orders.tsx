@@ -16,8 +16,8 @@ import { formatCents, timeAgo } from "../../lib/format";
 import { describeRecurrence } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { BagClaim, GoodieBag, MerchantCatalog, RecurringOrderTemplate, Timestamp } from "../../holochain/types";
+import { POLL } from "../../lib/poll";
 
-const POLL_MS = 8000;
 
 const TABS = [
   { value: "active", label: "In progress" },
@@ -47,7 +47,7 @@ export function Orders() {
 function ActiveOrders() {
   // Scheduled orders are sent to their stores by the customer's conductor
   // when due (`dispatch::upkeep`) -- nothing to do here but show them.
-  const { data: rows } = useResource("customer-active-orders", async () => (await getMyActiveOrders()).map(toOrderRow), { pollMs: POLL_MS, refreshOn: () => true });
+  const { data: rows } = useResource("customer-active-orders", async () => (await getMyActiveOrders()).map(toOrderRow), { pollMs: POLL.signalled, refreshOn: () => true });
 
   if (rows === undefined) return <ListSkeleton />;
   return (
@@ -190,7 +190,7 @@ function PendingClaims() {
         })),
       );
     },
-    { pollMs: POLL_MS, refreshOn: () => true },
+    { pollMs: POLL.signalled, refreshOn: () => true },
   );
   if (!claims?.length) return null;
   return (

@@ -8,12 +8,15 @@ import { onLocalSignal } from "../holochain/client";
 import type { LocalSignal } from "../holochain/types";
 
 interface PollOptions {
-  /// Re-run on this cadence while mounted. Every signal-driven screen must
-  /// also poll -- signals are a fast path, never a delivery guarantee (see
-  /// `onLocalSignal`'s doc comment).
+  /// Re-run on this cadence while mounted and visible -- see `POLL` for the
+  /// cadences. Every signal-driven screen must also poll: signals are a fast
+  /// path, never a delivery guarantee (see `onLocalSignal`'s doc comment).
   pollMs?: number;
   /// Re-run immediately when a matching conductor signal arrives.
   refreshOn?: (signal: LocalSignal) => boolean;
+  /// Keep polling while the tab is hidden -- for duties, not displays: a
+  /// driver's presence beacon, firing a recurring order.
+  background?: boolean;
 }
 
 /// Runs `run` now, on every `pollMs` tick, and on every matching signal,
@@ -24,7 +27,7 @@ interface PollOptions {
 /// `restartKey` changing restarts the loop (and runs immediately) -- pass
 /// whatever identifies *what* is being polled, so moving to a different
 /// one fetches it straight away instead of waiting for the next tick.
-export function usePolling(run: () => unknown, { pollMs, refreshOn }: PollOptions, enabled = true, restartKey?: string | null) {
+export function usePolling(run: () => unknown, { pollMs, refreshOn, background = false }: PollOptions, enabled = true, restartKey?: string | null) {
   const runRef = useRef(run);
   const filterRef = useRef(refreshOn);
   // Refreshed after every render, before any effect (below) or event
@@ -38,15 +41,40 @@ export function usePolling(run: () => unknown, { pollMs, refreshOn }: PollOption
 
   useEffect(() => {
     if (!enabled) return;
-    const tick = () => void runRef.current();
-    tick();
-    const interval = pollMs ? setInterval(tick, pollMs) : null;
-    const unsub = hasSignalFilter ? onLocalSignal((s) => filterRef.current?.(s) && tick()) : null;
+    // One read at a time: a tick while one is in flight just asks for
+    // another once it's done, so a burst of signals costs one extra read,
+    // not one per signal.
+    let running = false;
+    let again = false;
+    const tick = async () => {
+      if (running) {
+        again = true;
+        return;
+      }
+      running = true;
+      try {
+        do {
+          again = false;
+          await runRef.current();
+        } while (again);
+      } finally {
+        running = false;
+      }
+    };
+    void tick();
+    // Display polls skip while the tab is hidden, and catch up the moment
+    // it's back; background duties keep going.
+    const visible = () => background || document.visibilityState === "visible";
+    const interval = pollMs ? setInterval(() => visible() && void tick(), pollMs) : null;
+    const onVisible = () => visible() && void tick();
+    if (pollMs) document.addEventListener("visibilitychange", onVisible);
+    const unsub = hasSignalFilter ? onLocalSignal((s) => filterRef.current?.(s) && void tick()) : null;
     return () => {
       if (interval) clearInterval(interval);
+      if (pollMs) document.removeEventListener("visibilitychange", onVisible);
       unsub?.();
     };
-  }, [enabled, pollMs, hasSignalFilter, restartKey]);
+  }, [enabled, pollMs, hasSignalFilter, restartKey, background]);
 }
 
 interface ResourceState<T> {

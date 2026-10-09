@@ -53,7 +53,7 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/reputation/integrity/src/lib.rs", &["ReputationTarget", "ReviewTarget", "Review", "ItemReview", "ReputationEventKind"]),
     only("dnas/relay/zomes/dispatch/integrity/src/recurring.rs", &["RecurrenceRule", "RecurringOrderTemplate", "TemplateDetails"]),
     only("dnas/relay/zomes/geo_presence/integrity/src/lib.rs", &["PresenceBeacon"]),
-    only("dnas/relay/zomes/ledger/integrity/src/lib.rs", &["TxnReason", "LedgerTransaction"]),
+    only("dnas/relay/zomes/ledger/types/src/lib.rs", &["TxnReason", "LedgerTransaction"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
     only("dnas/relay/zomes/reputation/coordinator/src/lib.rs", &["ReputationSummary", "RatingSummary"]),
     only("dnas/relay/zomes/geo_presence/coordinator/src/lib.rs", &["NearbyProvider"]),

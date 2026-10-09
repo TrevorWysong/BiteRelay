@@ -42,18 +42,6 @@ pub enum DeliveryCapability {
     Goods,
 }
 
-/// A mutual-credit-shaped reference to a locked amount in the `ledger` zome,
-/// not a fixed-escrow-contract reference -- see the ledger zome's doc comment
-/// for why that distinction matters (it's what lets a real HoloFuel backing
-/// swap in later without touching this shape). Plain data embedded in `Bid`,
-/// not a Holochain entry of its own.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct LedgerCommitmentRef {
-    pub account: String,
-    pub amount: u64,
-    pub ledger_txn_ref: String,
-}
-
 const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
 
 /// Standard interleaved-bit geohash encoding. `precision` is the number of

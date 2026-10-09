@@ -72,7 +72,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] the customer reads everything, the store only its note, a stranger nothing");
 
   await acceptOrder(merchant, order, all);
-  const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }));
+  const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400 }));
   await sync();
   assert.equal((await detailsFor(driver)).dropoff, null, "a bidding driver doesn't get the address");
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });

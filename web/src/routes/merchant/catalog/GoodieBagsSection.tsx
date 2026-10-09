@@ -9,8 +9,8 @@ import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
 import { Button, Card, Checkbox, Field, Input, StatNumber, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import type { BagClaim, GoodieBag } from "../../../holochain/types";
+import { POLL } from "../../../lib/poll";
 
-const POLL_MS = 8000;
 /// Mirrors `MAX_GOODIE_BAG_LIFETIME_MICROS` -- validation rejects a window
 /// ending later than this after listing.
 const MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -33,7 +33,7 @@ async function fetchBags(catalogRef: Uint8Array): Promise<BagsData> {
 export function GoodieBagsSection({ storeHex, catalogRef }: { storeHex: string; catalogRef: Uint8Array }) {
   const [showForm, setShowForm] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
-  const { data, reload } = useResource(`store-bags:${storeHex}`, () => fetchBags(catalogRef), { pollMs: POLL_MS, refreshOn: () => true });
+  const { data, reload } = useResource(`store-bags:${storeHex}`, () => fetchBags(catalogRef), { pollMs: POLL.signalled, refreshOn: () => true });
   const bags = data?.bags ?? [];
   const claims = data?.claims ?? [];
   const bagTitle = new Map(bags.map((b) => [b.hex, b.bag.title]));

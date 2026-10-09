@@ -173,7 +173,6 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let now = sys_time()?;
     let dropoff_geohash = relay_types::encode(input.dropoff, geo_presence_precision());
     let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Placed };
-    let placed = status == DeliveryStatus::Placed;
 
     if let Some(promo_ref) = &input.promo_code_ref {
         ensure_promo_usable(promo_ref, &input.catalog_ref)?;
@@ -221,6 +220,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
+        collateral_hold: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The store finds it in its queue; drivers only once the store accepts
@@ -229,9 +229,6 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // This conductor sends a scheduled order to the store when it's due,
     // and cancels one the store never answers -- see `upkeep`.
     upkeep::tend_my_orders_soon()?;
-    if placed {
-        let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
-    }
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back delivery order".into())))
@@ -257,10 +254,8 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
         }
     }
     order.status = DeliveryStatus::Placed;
-    let merchant = order.merchant.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     upkeep::tend_my_orders_soon()?;
-    let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: updated.clone() }, vec![merchant]);
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
 }
@@ -327,6 +322,11 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
             "use cancel_order or decline_order to cancel an order -- they record why".into()
         )));
     }
+    if input.next_status == DeliveryStatus::PickedUp {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "use pick_up_order to pick an order up -- it posts the driver's collateral".into()
+        )));
+    }
     if input.next_status == DeliveryStatus::Delivered {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
@@ -348,6 +348,39 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
 #[hdk_extern]
 pub fn get_store_response_secs(_: ()) -> ExternResult<u64> {
     Ok(relay_governance::store_response_window().as_secs())
+}
+
+/// Mirrors `ledger::HoldCollateralInput` over the zome-call boundary.
+#[derive(Serialize, Deserialize, Debug)]
+struct HoldCollateralWire {
+    related_order: ActionHash,
+    basis: ActionHash,
+    to: AgentPubKey,
+    amount: u64,
+}
+
+/// The driver picking the order up from the store: they post their
+/// collateral to the customer -- the value of the food they now carry --
+/// and the same update records it (validation requires both together).
+/// The customer hands it back on delivery (`PaymentLeg::CollateralReturn`).
+#[hdk_extern]
+pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
+    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    if order.status != DeliveryStatus::DriverEnRouteToMerchant {
+        return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once its driver is at the store".into())));
+    }
+    let bid_ref = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
+    let (_, bid): (_, Bid) = resolve_latest_decoded(bid_ref, "Bid")?;
+    let hold = HoldCollateralWire { related_order: original_action_of(order_original_action)?, basis: record.action_address().clone(), to: order.requester.clone(), amount: bid.collateral };
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "ledger", "hold_collateral".into(), None, hold)? else {
+        return Err(wasm_error!(WasmErrorInner::Guest("posting your collateral failed".into())));
+    };
+    let hold_record: Record = io.decode().map_err(|e| wasm_error!(e))?;
+    order.status = DeliveryStatus::PickedUp;
+    order.collateral_hold = Some(hold_record.action_address().clone());
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back picked-up order".into())))
 }
 
 /// The customer withdrawing their delivery. Validation allows it until the

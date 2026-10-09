@@ -2,6 +2,7 @@
 //! leg-attestation completion gate, and delivery disputes.
 
 use super::*;
+use relay_integrity_support::decode;
 use crate::cancellation::{check_cancellation, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
@@ -12,8 +13,8 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
             "a delivery order can only be authored by its own requester".into(),
         ));
     }
-    if order.cancellation.is_some() {
-        return Ok(ValidateCallbackResult::Invalid("a new order can't already be cancelled".into()));
+    if order.cancellation.is_some() || order.collateral_hold.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new order can't already be cancelled or picked up".into()));
     }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
@@ -190,6 +191,26 @@ pub(crate) fn check_resolving_cancellation_dispute(prior: &DeliveryOrder, order:
     validate_cancellation_dispute_resolution_matches(new_dispute_ref, author)
 }
 
+/// The driver's collateral hold on a pickup: a `CollateralHold` the
+/// assigned driver wrote, to the customer, for this order, for exactly what
+/// their bid committed.
+fn check_collateral_hold(order: &DeliveryOrder, prior: &DeliveryOrder, order_original_creation: &ActionHash) -> ExternResult<Result<(), String>> {
+    let Some(hold_ref) = &order.collateral_hold else {
+        return Ok(Err("picking an order up requires the driver's collateral hold".into()));
+    };
+    let Some(bid_ref) = &prior.accepted_bid else { return Ok(Err("an order is only picked up by its assigned driver".into())) };
+    let Some(bid) = decode::<Bid>(&must_get_valid_record(bid_ref.clone())?) else { return Ok(Err("accepted_bid is not a Bid".into())) };
+    let hold_record = must_get_valid_record(hold_ref.clone())?;
+    let Some(hold) = decode::<LedgerTransaction>(&hold_record) else { return Ok(Err("collateral_hold is not a ledger transaction".into())) };
+    let matches = hold.reason == TxnReason::CollateralHold
+        && hold_record.action().author() == &bid.bidder
+        && hold.from == bid.bidder
+        && hold.to == prior.requester
+        && hold.amount == bid.collateral
+        && &hold.related_order == order_original_creation;
+    Ok(if matches { Ok(()) } else { Err("collateral_hold must be the assigned driver's committed collateral, posted to the customer for this order".into()) })
+}
+
 pub(crate) fn validate_order_transition(
     order: &DeliveryOrder,
     author: &AgentPubKey,
@@ -303,6 +324,17 @@ pub(crate) fn validate_order_transition(
         return Ok(ValidateCallbackResult::Invalid(
             "driver_dropoff must be set when a bid is accepted, and never changed".into(),
         ));
+    }
+    // The driver posts their collateral in the update that picks the order
+    // up -- not before, not after, and never changed.
+    let picking_up = prior.status == DeliveryStatus::DriverEnRouteToMerchant && order.status == DeliveryStatus::PickedUp;
+    if picking_up {
+        let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
+        if let Err(reason) = check_collateral_hold(order, &prior, &order_original_creation)? {
+            return Ok(ValidateCallbackResult::Invalid(reason));
+        }
+    } else if prior.collateral_hold != order.collateral_hold {
+        return Ok(ValidateCallbackResult::Invalid("collateral_hold is set once, by the update that picks the order up".into()));
     }
     // A scheduled order can only actually open once its requested time has
     // arrived. Deliberately checked against *this action's own recorded

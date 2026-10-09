@@ -54,7 +54,6 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: actionHash(bidRecord) });
@@ -79,7 +78,7 @@ await runScenario(async (scenario) => {
   const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
   await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
 
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+  await dispatchOf(driver)("pick_up_order", orderRef);
   const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
   const customerLegRef = actionHash(customerLegRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -121,7 +120,6 @@ await runScenario(async (scenario) => {
     order_ref: order2Ref,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("accept_bid", { order_original_action: order2Ref, bid_action: actionHash(bid2Record) });
@@ -137,7 +135,7 @@ await runScenario(async (scenario) => {
   const receipt2a = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", leg2aRef);
   await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: leg2aRef, receipt: actionHash(receipt2a) }));
 
-  await dispatchOf(driver)("set_order_status", { order_original_action: order2Ref, next_status: "PickedUp" });
+  await dispatchOf(driver)("pick_up_order", order2Ref);
   const leg2bRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: order2Ref, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
   const leg2bRef = actionHash(leg2bRecord);
   await dhtSync(all, customer.cells[0].cell_id[0]);

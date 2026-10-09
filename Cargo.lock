@@ -298,6 +298,7 @@ dependencies = [
  "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
+ "ledger_types",
  "relay_governance",
  "relay_integrity_support",
  "relay_types",
@@ -790,7 +791,6 @@ dependencies = [
  "ledger_integrity",
  "relay_coordinator_support",
  "relay_governance",
- "relay_types",
  "serde",
 ]
 
@@ -802,9 +802,20 @@ dependencies = [
  "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
+ "ledger_types",
  "relay_governance",
  "relay_integrity_support",
  "relay_types",
+ "serde",
+]
+
+[[package]]
+name = "ledger_types"
+version = "0.1.0"
+dependencies = [
+ "dispatch_types",
+ "hdi",
+ "holochain_serialized_bytes",
  "serde",
 ]
 

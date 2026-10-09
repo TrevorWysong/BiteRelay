@@ -53,7 +53,6 @@ await runScenario(async (scenario) => {
       order_ref: orderRef,
       eta_seconds: 600,
       price_offer: 400,
-      collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
     }),
     /cannot bid to deliver their own order/,
     "a requester/merchant must not be able to bid to deliver their own order",
@@ -66,7 +65,6 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidRef = actionHash(bidRecord);
   await dhtSync(both, customer.cells[0].cell_id[0]);

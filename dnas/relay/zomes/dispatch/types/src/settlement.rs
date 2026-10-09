@@ -18,6 +18,9 @@ pub enum PaymentLeg {
     DeliveryFeeStoreShare,
     /// The customer's tip, all of it to the driver.
     Tip,
+    /// The driver's collateral, held by the customer since pickup
+    /// (`DeliveryOrder::collateral_hold`), handed back on delivery.
+    CollateralReturn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,12 +43,21 @@ pub fn split_delivery_fee(fee: u64, store_percent: u8) -> (u64, u64) {
 /// store), are left out -- there's nothing to pay.
 pub fn delivery_payments(order: &DeliveryOrder, bid: &Bid) -> Vec<LegPayment> {
     let (store_share, customer_share) = split_delivery_fee(bid.price_offer, order.delivery_subsidy_percent);
+    let collateral = if order.collateral_hold.is_some() { bid.collateral } else { 0 };
     owed([
         (PaymentLeg::OrderTotal, &order.requester, &order.merchant, order.order_total),
         (PaymentLeg::DeliveryFeeCustomerShare, &order.requester, &bid.bidder, customer_share),
         (PaymentLeg::DeliveryFeeStoreShare, &order.merchant, &bid.bidder, store_share),
         (PaymentLeg::Tip, &order.requester, &bid.bidder, order.tip_cents),
+        (PaymentLeg::CollateralReturn, &order.requester, &bid.bidder, collateral),
     ])
+}
+
+/// The collateral a driver must post to deliver `order`: the value of the
+/// food they'll be carrying, so a driver who never delivers it has covered
+/// what the customer paid for.
+pub fn required_collateral(order: &DeliveryOrder) -> u64 {
+    order.order_total
 }
 
 /// Everything a picked-up order owes: just the food.

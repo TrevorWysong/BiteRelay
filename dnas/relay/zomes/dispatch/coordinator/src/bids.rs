@@ -7,14 +7,12 @@ use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{next_page_cursor, open, original_action_of, resolve_latest_decoded, resolve_links_to_records, seal};
-use relay_types::LedgerCommitmentRef;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitBidInput {
     pub order_ref: ActionHash,
     pub eta_seconds: u32,
     pub price_offer: u64,
-    pub collateral_commitment: LedgerCommitmentRef,
 }
 
 #[hdk_extern]
@@ -33,7 +31,8 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         bidder,
         eta_seconds: input.eta_seconds,
         price_offer: input.price_offer,
-        collateral_commitment: input.collateral_commitment,
+        // What the driver will post when they pick the order up.
+        collateral: required_collateral(&order),
         status: BidStatus::Open,
         created_at: sys_time()?,
     };

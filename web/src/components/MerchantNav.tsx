@@ -6,8 +6,7 @@ import { awaitsAnswer, fetchActiveQueue, storesKey } from "../store/merchantQueu
 import { useResource } from "../lib/useResource";
 import { useStoreResponseSecs } from "../lib/useStoreResponseSecs";
 import { BottomNavLink } from "./BottomNavLink";
-
-const POLL_MS = 15000;
+import { POLL, isOrderSignal } from "../lib/poll";
 
 /// The store side's bottom navigation, and its alert for orders waiting to
 /// be accepted: a badge on Orders, and -- on any other screen -- a banner,
@@ -20,7 +19,7 @@ export function MerchantNav() {
   const { data } = useResource(
     stores && stores.length > 0 ? `merchant-waiting:${storesKey(stores)}` : null,
     async () => ({ rows: await fetchActiveQueue(stores ?? []), now: Date.now() }),
-    { pollMs: POLL_MS, refreshOn: (signal) => "OrderPlaced" in signal },
+    { pollMs: POLL.signalled, refreshOn: isOrderSignal },
   );
   const waiting = data && windowSecs !== undefined ? data.rows.filter((row) => awaitsAnswer(row, windowSecs, data.now)).length : 0;
   const onQueue = pathname === "/merchant";

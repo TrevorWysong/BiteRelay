@@ -58,7 +58,6 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 900,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidRef = actionHash(bidRecord);
   await dhtSync(both, customer.cells[0].cell_id[0]);
@@ -68,7 +67,7 @@ await runScenario(async (scenario) => {
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+  await dispatchOf(driver)("pick_up_order", orderRef);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   // Attempt 1: no attestations at all -- an empty delivery_receipts list

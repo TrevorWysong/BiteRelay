@@ -6,7 +6,7 @@
 //! `validate` into the same wasm binary fails to link.
 
 use hdi::prelude::*;
-use relay_types::{GeoPoint, LedgerCommitmentRef};
+use relay_types::GeoPoint;
 
 mod settlement;
 pub use settlement::*;
@@ -309,6 +309,12 @@ pub struct DeliveryOrder {
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]
     pub cancellation: Option<Cancellation>,
+    /// The driver's collateral hold (a `ledger_types::LedgerTransaction`
+    /// from them to the customer), posted in the update that picks the
+    /// order up -- validation requires it there, and it never changes
+    /// after. Returned on delivery (`PaymentLeg::CollateralReturn`).
+    #[serde(default)]
+    pub collateral_hold: Option<ActionHash>,
 }
 
 #[hdk_entry_helper]
@@ -318,7 +324,9 @@ pub struct Bid {
     pub bidder: AgentPubKey,
     pub eta_seconds: u32,
     pub price_offer: u64,
-    pub collateral_commitment: LedgerCommitmentRef,
+    /// What the driver will post as collateral when they pick the order up
+    /// -- always `settlement::required_collateral` of the order (validated).
+    pub collateral: u64,
     pub status: BidStatus,
     pub created_at: Timestamp,
 }
