@@ -8,7 +8,7 @@ use crate::matching::{geo_presence_precision, notify_nearby_providers, open_orde
 use crate::order_queues::{self, OrderParties};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement;
-use crate::stores::current_catalog;
+use crate::stores::{closed_reason, current_catalog, ready_by};
 use crate::upkeep;
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
@@ -195,6 +195,14 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
             distance, catalog.max_delivery_radius_km
         ))));
     }
+    // Open when it's for -- now, or a scheduled order's time. A goodie bag
+    // runs on its own pickup window, which the store set.
+    if input.bag_claim_ref.is_none() {
+        let wanted_at = input.requested_delivery_time.unwrap_or(now).as_micros();
+        if let Some(reason) = closed_reason(&catalog, wanted_at) {
+            return Err(wasm_error!(WasmErrorInner::Guest(reason)));
+        }
+    }
 
     let order = DeliveryOrder {
         requester: requester.clone(),
@@ -221,6 +229,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
         collateral_hold: None,
+        ready_by: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The store finds it in its queue; drivers only once the store accepts
@@ -267,8 +276,18 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
 /// (`ensure_priced_from_current_menu`) -- a refused order never reaches a
 /// driver. The store declines with `decline_order`; its conductor can do
 /// either on its own (`upkeep`, for a store set to auto-accept).
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AcceptOrderInput {
+    pub order_original_action: ActionHash,
+    /// How long the kitchen expects this one to take; the store's usual
+    /// prep time if `None`. Recorded as the order's `ready_by`.
+    #[serde(default)]
+    pub prep_minutes: Option<u16>,
+}
+
 #[hdk_extern]
-pub fn accept_delivery_order(order_original_action: ActionHash) -> ExternResult<Record> {
+pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
+    let order_original_action = input.order_original_action;
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Placed {
         return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
@@ -277,6 +296,7 @@ pub fn accept_delivery_order(order_original_action: ActionHash) -> ExternResult<
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
+    order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;

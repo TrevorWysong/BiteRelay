@@ -11,7 +11,7 @@ use ledger_types::{LedgerTransaction, TxnReason};
 use relay_types::GeoPoint;
 
 mod bids;
-mod cancellation;
+mod store_answer;
 mod checks;
 mod delivery;
 mod disputes;

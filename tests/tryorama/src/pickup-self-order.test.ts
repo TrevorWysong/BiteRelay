@@ -29,7 +29,7 @@ await runScenario(async (scenario) => {
       order_total: 900,
     }),
   );
-  await dispatch("confirm_pickup_prep", orderRef);
+  await dispatch("accept_pickup_order", { order_original_action: orderRef });
   await dispatch("mark_ready_for_pickup", orderRef);
 
   await dispatch("complete_pickup", orderRef);

@@ -7,7 +7,8 @@
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
 use crate::upkeep;
-use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::stores::{closed_reason, current_catalog, ready_by};
+use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
@@ -50,6 +51,12 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         ensure_claim_confirmed(claim_ref)?;
     }
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+    // Open now -- a goodie bag runs on its own pickup window instead.
+    if input.bag_claim_ref.is_none() {
+        if let Some(reason) = closed_reason(&current_catalog(&input.catalog_ref)?, requested_at.as_micros()) {
+            return Err(wasm_error!(WasmErrorInner::Guest(reason)));
+        }
+    }
 
     let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
     let order = PickupOrder {
@@ -66,6 +73,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
+        ready_by: None,
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
@@ -82,9 +90,11 @@ pub fn get_pickup_order(order_original_action: ActionHash) -> ExternResult<Recor
 
 /// `Placed -> MerchantConfirmed` -- the store accepting the order and
 /// starting on it, once it's checked the order is priced from its current
-/// menu (see `ensure_priced_from_current_menu`). Only the store can.
+/// menu (see `ensure_priced_from_current_menu`), and saying when it'll be
+/// ready. Only the store can.
 #[hdk_extern]
-pub fn confirm_pickup_prep(order_original_action: ActionHash) -> ExternResult<Record> {
+pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
+    let order_original_action = input.order_original_action;
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::Placed {
         return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
@@ -93,10 +103,11 @@ pub fn confirm_pickup_prep(order_original_action: ActionHash) -> ExternResult<Re
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
+    order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = PickupStatus::MerchantConfirmed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back confirmed pickup order".into())))
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted pickup order".into())))
 }
 
 /// `MerchantConfirmed -> ReadyForPickup` -- signals the requester directly

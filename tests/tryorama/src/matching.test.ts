@@ -66,7 +66,7 @@ await runScenario(async (scenario) => {
   });
   const orderRef = actionHash(orderRecord);
   // Drivers hear of it once the store accepts it -- here the requester is the store.
-  await dispatchOf(requester)("accept_delivery_order", orderRef);
+  await dispatchOf(requester)("accept_delivery_order", { order_original_action: orderRef });
 
   const [gotA, gotB, gotC] = await Promise.all([signalA, signalB, signalC]);
 

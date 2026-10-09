@@ -104,7 +104,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] each store's active queue holds only that store's orders");
 
   // --- Reputation lands on the store the order came from. ---
-  await dispatchOf(merchant)("confirm_pickup_prep", pickupB);
+  await dispatchOf(merchant)("accept_pickup_order", { order_original_action: pickupB });
   await dispatchOf(merchant)("mark_ready_for_pickup", pickupB);
   await sync();
   await dispatchOf(customer)("complete_pickup", pickupB);

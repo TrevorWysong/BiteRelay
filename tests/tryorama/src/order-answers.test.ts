@@ -132,6 +132,6 @@ await runScenario(async (scenario) => {
   const late = await pickup(900);
   await customer.conductor.shutDown();
   await new Promise((resolve) => setTimeout(resolve, (WINDOW_SECS + 2) * 1000));
-  await assert.rejects(call(merchant, "dispatch")("confirm_pickup_prep", late), /the store's window to accept this order has passed/);
+  await assert.rejects(call(merchant, "dispatch")("accept_pickup_order", { order_original_action: late }), /the store's window to accept this order has passed/);
   console.log("[PASS] past its window, the store can't accept an order -- whether or not the customer's conductor is there to cancel it");
 });

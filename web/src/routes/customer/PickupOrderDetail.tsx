@@ -12,7 +12,7 @@ import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderS
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRatingInput } from "../../components/StarRating";
 import { WaitingForStore } from "../../components/WaitingForStore";
-import { formatCents } from "../../lib/format";
+import { formatCents, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
@@ -178,7 +178,9 @@ export function PickupOrderDetail() {
       {order.status === "MerchantConfirmed" && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <ChefHat size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">The store is preparing your order. This screen updates automatically.</p>
+          <p className="text-sm text-relay-700 dark:text-relay-300">
+            The store is preparing your order{order.ready_by !== null && <>, ready by <strong>{formatClockTime(order.ready_by)}</strong></>}. This screen updates automatically.
+          </p>
         </motion.div>
       )}
 

@@ -19,6 +19,8 @@ import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
 import type { GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
 import { POLL } from "../../lib/poll";
+import { useClock } from "../../lib/useClock";
+import { storeStatus } from "../../lib/storeHours";
 
 interface BagRow {
   hash: Uint8Array;
@@ -67,6 +69,8 @@ function StorePage({ hash }: { hash: string }) {
   const catalogHash = useMemo(() => hexToBytes(hash), [hash]);
   const { data: menu } = useResource(`store-menu:${hash}`, () => fetchStoreMenu(catalogHash), { pollMs: POLL.slow });
   const catalog = menu?.catalog ?? routerState?.catalog ?? null;
+  const now = useClock();
+  const status = catalog ? storeStatus(catalog, now) : null;
   const items = menu?.items ?? null;
   const bags = menu?.bags ?? [];
   // Bounded by the menu page itself (a merchant's own menu, already capped
@@ -198,14 +202,11 @@ function StorePage({ hash }: { hash: string }) {
 
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-400">
           {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} />}
-          <span className={catalog.is_open ? "font-semibold text-presence-600" : "font-semibold text-red-500"}>{catalog.is_open ? "Open now" : "Closed"}</span>
+          <span className={status?.open ? "flex items-center gap-1 font-semibold text-presence-600" : "flex items-center gap-1 font-semibold text-red-500"}>
+            <Clock size={12} />
+            {status?.label}
+          </span>
           {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
-          {(catalog.hours_open || catalog.hours_close) && (
-            <span className="flex items-center gap-1">
-              <Clock size={12} />
-              {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
-            </span>
-          )}
           {formatCatalogAddress(catalog) && (
             <span className="flex items-center gap-1">
               <MapPin size={12} /> {formatCatalogAddress(catalog)}
@@ -342,7 +343,7 @@ function StorePage({ hash }: { hash: string }) {
                   </div>
                   <motion.button
                     whileTap={{ scale: 0.85 }}
-                    disabled={!item.available || !catalog.is_open}
+                    disabled={!item.available || !status?.open}
                     aria-label={`Add ${item.name}`}
                     onClick={() => cart.addItem(catalogHash, catalog.owner, catalog.business_name, itemHash, item.name, item.price_cents)}
                     className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"

@@ -13,7 +13,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS};
+pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS, DEFAULT_PREP_MINUTES, MAX_OPENING_PERIODS, MAX_PREP_MINUTES};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching the presence-beacon precision in `geo_presence` so both
@@ -93,6 +93,18 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
         return Ok(ValidateCallbackResult::Invalid(
             "delivery_subsidy_percent must be between 0 and 100".into(),
         ));
+    }
+    if catalog.weekly_hours.len() > MAX_OPENING_PERIODS {
+        return Ok(ValidateCallbackResult::Invalid(format!("a store has at most {MAX_OPENING_PERIODS} opening periods a week")));
+    }
+    if let Some(problem) = catalog.weekly_hours.iter().find_map(|period| period.problem()) {
+        return Ok(ValidateCallbackResult::Invalid(problem.into()));
+    }
+    if catalog.time_zone.is_empty() || catalog.time_zone.len() > 64 {
+        return Ok(ValidateCallbackResult::Invalid("time_zone must be an IANA zone name".into()));
+    }
+    if catalog.prep_minutes == 0 || catalog.prep_minutes > MAX_PREP_MINUTES {
+        return Ok(ValidateCallbackResult::Invalid(format!("prep_minutes must be between 1 and {MAX_PREP_MINUTES}")));
     }
     Ok(ValidateCallbackResult::Valid)
 }

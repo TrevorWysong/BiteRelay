@@ -12,6 +12,7 @@ import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";
 import { NewStoreForm } from "./NewStore";
 import { AutoAcceptCard, DeliverySubsidyCard, StoreDetailsCard } from "./catalog/StoreDetailsCard";
+import { HoursCard } from "./catalog/HoursCard";
 import { PromoCodesCard } from "./catalog/PromoCodesCard";
 import { MenuSection } from "./catalog/MenuSection";
 import { GoodieBagsSection } from "./catalog/GoodieBagsSection";
@@ -103,6 +104,9 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
 
         <motion.div variants={fadeSlideUp}>
           <StoreDetailsCard catalog={catalog} catalogRef={catalogRef} startEditing={openDetailsOnArrival} onSaved={reloadProfile} />
+        </motion.div>
+        <motion.div variants={fadeSlideUp}>
+          <HoursCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
         </motion.div>
         <motion.div variants={fadeSlideUp}>
           <AutoAcceptCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />

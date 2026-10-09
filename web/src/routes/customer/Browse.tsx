@@ -17,6 +17,8 @@ import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { Chip, ChipRow, EmptyState, Skeleton } from "../../components/ui";
 import { staggerContainer } from "../../lib/motion";
 import { POLL } from "../../lib/poll";
+import { useClock } from "../../lib/useClock";
+import { storeStatus } from "../../lib/storeHours";
 
 interface Row {
   hash: Uint8Array;
@@ -39,8 +41,7 @@ type Sort = "relevance" | "rating" | "name";
 // seconds-to-a-minute scale here, not instant). Without a poll, a customer
 // already sitting on Browse when a merchant nearby publishes would see an
 // empty list forever unless they happened to navigate away and back.
-// Matches the ~8s poll cadence already used in driver Dashboard.tsx and
-// customer OrderDetail.tsx for the same reason.
+// Polled slowly (`POLL.slow`): stores open and close rarely.
 
 function CardSkeleton() {
   return (
@@ -55,6 +56,7 @@ function CardSkeleton() {
 }
 
 export function Browse() {
+  const now = useClock();
   const navigate = useNavigate();
   const location = useSession((s) => s.location);
   const [query, setQuery] = useState("");
@@ -117,14 +119,17 @@ export function Browse() {
     if (list && cuisine) list = list.filter((r) => r.catalog.cuisine_type === cuisine);
     if (list && favoritesOnly) list = list.filter((r) => favoritesHex.has(bytesToHex(r.hash)));
     if (list) {
+      // Open stores first, the way the list reads; then the chosen order.
+      const open = (r: Row) => (storeStatus(r.catalog, now).open ? 0 : 1);
       list = [...list].sort((a, b) => {
+        if (open(a) !== open(b)) return open(a) - open(b);
         if (sort === "rating") return b.rating - a.rating;
         if (sort === "name") return a.catalog.business_name.localeCompare(b.catalog.business_name);
         return 0;
       });
     }
     return list;
-  }, [rows, query, cuisine, sort, favoritesOnly, favoritesHex]);
+  }, [rows, query, cuisine, sort, favoritesOnly, favoritesHex, now]);
 
   return (
     <div className="px-4 pt-4">
@@ -230,6 +235,7 @@ export function Browse() {
               key={bytesToHex(r.hash)}
               catalogHash={r.hash}
               catalog={r.catalog}
+              now={now}
               rating={r.rating}
               reviewCount={r.reviewCount}
               favorited={favoritesHex.has(bytesToHex(r.hash))}

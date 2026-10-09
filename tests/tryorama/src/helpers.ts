@@ -231,7 +231,7 @@ export function agentAsLinkBase(agentPubKey: Uint8Array): Uint8Array {
 /// The store accepting a delivery order -- what opens it to drivers -- then
 /// a sync, so drivers see it open. Retried until the store has the order.
 export async function acceptOrder(store: PlayerApp, orderRef: Uint8Array, players: PlayerApp[]): Promise<HcRecord> {
-  const accepted = await retryUntilOk(() => store.cells[0].callZome<HcRecord>({ zome_name: "dispatch", fn_name: "accept_delivery_order", payload: orderRef }));
+  const accepted = await retryUntilOk(() => store.cells[0].callZome<HcRecord>({ zome_name: "dispatch", fn_name: "accept_delivery_order", payload: { order_original_action: orderRef } }));
   await dhtSync(players, store.cells[0].cell_id[0]);
   return accepted;
 }

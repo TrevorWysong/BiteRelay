@@ -309,6 +309,10 @@ pub struct DeliveryOrder {
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]
     pub cancellation: Option<Cancellation>,
+    /// When the store says the order will be ready -- set when it accepts
+    /// the order, never changed after. `None` until then.
+    #[serde(default)]
+    pub ready_by: Option<Timestamp>,
     /// The driver's collateral hold (a `ledger_types::LedgerTransaction`
     /// from them to the customer), posted in the update that picks the
     /// order up -- validation requires it there, and it never changes
@@ -453,4 +457,8 @@ pub struct PickupOrder {
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]
     pub cancellation: Option<Cancellation>,
+    /// When the store says the order will be ready -- set when it accepts
+    /// the order, never changed after. `None` until then.
+    #[serde(default)]
+    pub ready_by: Option<Timestamp>,
 }

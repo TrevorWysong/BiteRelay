@@ -80,8 +80,9 @@ await runScenario(async (scenario) => {
     address_city: "",
     address_state: "",
     address_zip: "",
-    hours_open: "",
-    hours_close: "",
+    weekly_hours: [],
+    time_zone: "UTC",
+    prep_minutes: 15,
     max_delivery_radius_km: 8,
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);

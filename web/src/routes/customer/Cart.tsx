@@ -19,6 +19,8 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
 import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
+import { useClock } from "../../lib/useClock";
+import { storeStatus } from "../../lib/storeHours";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] = [
@@ -91,6 +93,9 @@ interface CartStoreInfo {
   // `onValidate` treats as "nothing to check yet".
   merchantLocation: GeoPoint | null;
   merchantRadiusKm: number | null;
+  /// When the store takes orders -- checkout says so up front; the zome
+  /// refuses a closed store regardless. `null` until the catalog loads.
+  hours: Pick<MerchantCatalog, "is_open" | "weekly_hours" | "time_zone"> | null;
   promoCodes: PromoRow[];
   menuItems: { hash: ActionHash; item: MenuItem }[];
   completedOrderCount: number;
@@ -122,6 +127,7 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
     subsidyPercent: catalog?.delivery_subsidy_percent ?? 0,
     merchantLocation: catalog?.location ?? null,
     merchantRadiusKm: catalog?.max_delivery_radius_km ?? null,
+    hours: catalog,
     promoCodes,
     menuItems,
     completedOrderCount,
@@ -180,6 +186,7 @@ export function Cart() {
   const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
   const [customFee, setCustomFee] = useState("");
   const catalogRef = cart.catalogRef;
+  const now = useClock();
   const { data: storeInfo } = useResource(catalogRef && `cart-store:${bytesToHex(catalogRef)}`, () => fetchCartStoreInfo(catalogRef!));
   const subsidyPercent = storeInfo?.subsidyPercent ?? 0;
   const merchantLocation = storeInfo?.merchantLocation ?? null;
@@ -258,7 +265,12 @@ export function Cart() {
   // Date.parse treats it as local time already, matching what the customer
   // actually picked, so no further conversion is needed beyond ms -> µs.
   const requestedDeliveryTime = scheduled && scheduledFor ? Date.parse(scheduledFor) * 1000 : null;
-  const scheduleInvalid = scheduled && (!scheduledFor || (requestedDeliveryTime !== null && requestedDeliveryTime <= Date.now() * 1000));
+  const scheduleInvalid = scheduled && (!scheduledFor || (requestedDeliveryTime !== null && requestedDeliveryTime <= now.getTime() * 1000));
+  // Open when the order's for: now, or a scheduled delivery's time. A
+  // goodie bag isn't in the cart -- it runs on its own pickup window.
+  const orderFor = fulfillment === "Delivery" && requestedDeliveryTime !== null ? new Date(requestedDeliveryTime / 1000) : now;
+  const storeHours = storeInfo?.hours ? storeStatus(storeInfo.hours, orderFor) : null;
+  const storeClosed = storeHours !== null && !storeHours.open;
 
   async function placeOrder() {
     if (!cart.catalogRef || !cart.merchant) return;
@@ -631,11 +643,16 @@ export function Cart() {
 
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
-      <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md justify-center px-4">
+      <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md flex-col items-center gap-2 px-4">
+        {storeClosed && (
+          <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
+            {orderFor === now ? storeHours.label : "The store isn't open at that time."}
+          </p>
+        )}
         <Button
           className="w-full"
           loading={placing}
-          disabled={fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid)}
+          disabled={storeClosed || (fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid))}
           onClick={placeOrder}
         >
           {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}

@@ -31,3 +31,8 @@ export function shortAgentId(agent: Uint8Array): string {
   const hex = Array.from(agent.slice(0, 4), (b) => b.toString(16).padStart(2, "0")).join("");
   return `#${hex}`;
 }
+
+/// A Holochain timestamp (microseconds) as a time of day: "6:42 PM".
+export function formatClockTime(microseconds: number): string {
+  return new Date(microseconds / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}

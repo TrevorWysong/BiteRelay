@@ -44,10 +44,12 @@ export async function requestDelivery(input: {
   });
 }
 
-/// The store accepting a delivery order, which opens it to drivers. Refused
-/// if the order is priced from an outdated menu -- decline it instead.
-export async function acceptDeliveryOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
-  return callZome("dispatch", "accept_delivery_order", orderOriginalAction);
+/// The store accepting a delivery order, which opens it to drivers, and
+/// saying when it'll be ready: `prepMinutes` from now, or the store's usual
+/// prep time. Refused if the order is priced from an outdated menu --
+/// decline it instead.
+export async function acceptDeliveryOrder(orderOriginalAction: ActionHash, prepMinutes?: number): Promise<HcRecord> {
+  return callZome("dispatch", "accept_delivery_order", { order_original_action: orderOriginalAction, prep_minutes: prepMinutes ?? null });
 }
 
 /// The store turning a delivery down (or calling it off), and why.
@@ -321,8 +323,9 @@ export async function getPickupOrder(orderOriginalAction: ActionHash): Promise<H
   return callZome("dispatch", "get_pickup_order", orderOriginalAction);
 }
 
-export async function confirmPickupPrep(orderOriginalAction: ActionHash): Promise<HcRecord> {
-  return callZome("dispatch", "confirm_pickup_prep", orderOriginalAction);
+/// The store accepting a pickup order -- see `acceptDeliveryOrder`.
+export async function acceptPickupOrder(orderOriginalAction: ActionHash, prepMinutes?: number): Promise<HcRecord> {
+  return callZome("dispatch", "accept_pickup_order", { order_original_action: orderOriginalAction, prep_minutes: prepMinutes ?? null });
 }
 
 export async function markReadyForPickup(orderOriginalAction: ActionHash): Promise<HcRecord> {

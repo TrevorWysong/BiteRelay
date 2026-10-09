@@ -39,7 +39,7 @@ await runScenario(async (scenario) => {
     });
     const orderRef = actionHash(orderRecord);
     await dhtSync(all, customer.cells[0].cell_id[0]);
-    await dispatchOf(merchant)("confirm_pickup_prep", orderRef);
+    await dispatchOf(merchant)("accept_pickup_order", { order_original_action: orderRef });
     await dhtSync(all, customer.cells[0].cell_id[0]);
     await dispatchOf(merchant)("mark_ready_for_pickup", orderRef);
     await dhtSync(all, customer.cells[0].cell_id[0]);

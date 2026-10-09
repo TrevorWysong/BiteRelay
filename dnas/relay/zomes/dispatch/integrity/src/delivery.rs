@@ -3,7 +3,7 @@
 
 use super::*;
 use relay_integrity_support::decode;
-use crate::cancellation::{check_cancellation, CancelledFrom, OrderUpdate};
+use crate::store_answer::{check_cancellation, check_ready_by, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
 use crate::disputes::*;
 
@@ -13,8 +13,8 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
             "a delivery order can only be authored by its own requester".into(),
         ));
     }
-    if order.cancellation.is_some() || order.collateral_hold.is_some() {
-        return Ok(ValidateCallbackResult::Invalid("a new order can't already be cancelled or picked up".into()));
+    if order.cancellation.is_some() || order.collateral_hold.is_some() || order.ready_by.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("a new order can't already be accepted, cancelled or picked up".into()));
     }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
@@ -233,25 +233,6 @@ pub(crate) fn validate_order_transition(
         )));
     };
 
-    let update = OrderUpdate {
-        requester: &prior.requester,
-        merchant: &prior.merchant,
-        author,
-        prior_written_at: prior_record.action().timestamp(),
-        written_at: action_timestamp,
-    };
-    if prior.status == DeliveryStatus::Placed && order.status == DeliveryStatus::Open && !update.within_response_window() {
-        return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
-    }
-    let cancelled_from = (prior.status != DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled).then(|| match prior.status {
-        DeliveryStatus::Placed => CancelledFrom::Placed,
-        DeliveryStatus::Disputed => CancelledFrom::Disputed,
-        _ => CancelledFrom::Elsewhere,
-    });
-    if let Some(reason) = check_cancellation(&update, cancelled_from, &prior.cancellation, &order.cancellation) {
-        return Ok(ValidateCallbackResult::Invalid(reason));
-    }
-
     let is_requester_or_merchant = &prior.requester == author || &prior.merchant == author;
     let accepted_bidder: Option<AgentPubKey> = match &prior.accepted_bid {
         Some(bid_ref) => {
@@ -294,6 +275,29 @@ pub(crate) fn validate_order_transition(
             "transition {:?} -> {:?} requires author role {:?}, but the author holds none of the roles it permits",
             prior.status, order.status, required_author
         )));
+    }
+
+    let update = OrderUpdate {
+        requester: &prior.requester,
+        merchant: &prior.merchant,
+        author,
+        prior_written_at: prior_record.action().timestamp(),
+        written_at: action_timestamp,
+    };
+    let store_accepting = prior.status == DeliveryStatus::Placed && order.status == DeliveryStatus::Open;
+    if store_accepting && !update.within_response_window() {
+        return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
+    }
+    if let Some(reason) = check_ready_by(&update, store_accepting, prior.ready_by, order.ready_by) {
+        return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    }
+    let cancelled_from = (prior.status != DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled).then(|| match prior.status {
+        DeliveryStatus::Placed => CancelledFrom::Placed,
+        DeliveryStatus::Disputed => CancelledFrom::Disputed,
+        _ => CancelledFrom::Elsewhere,
+    });
+    if let Some(reason) = check_cancellation(&update, cancelled_from, &prior.cancellation, &order.cancellation) {
+        return Ok(ValidateCallbackResult::Invalid(reason));
     }
 
     // Every field except status (and accepted_bid, only for the one

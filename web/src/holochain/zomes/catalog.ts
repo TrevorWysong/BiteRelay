@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -34,10 +34,17 @@ export interface CatalogDetails {
   address_city?: string;
   address_state?: string;
   address_zip?: string;
-  hours_open?: string;
-  hours_close?: string;
+  /// When the store takes orders, in `time_zone` -- empty for no set hours.
+  weekly_hours?: OpeningPeriod[];
+  /// The store's IANA time zone; the device's own when it's set up or edited.
+  time_zone?: string;
+  /// The kitchen's usual prep time, in minutes.
+  prep_minutes?: number;
   max_delivery_radius_km?: number;
 }
+
+/// The device's IANA time zone -- what a store's hours mean.
+export const deviceTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const EMPTY_DETAILS: Required<CatalogDetails> = {
   description: "",
@@ -48,13 +55,33 @@ const EMPTY_DETAILS: Required<CatalogDetails> = {
   address_city: "",
   address_state: "",
   address_zip: "",
-  hours_open: "",
-  hours_close: "",
+  weekly_hours: [],
+  time_zone: "UTC",
+  prep_minutes: 15,
   max_delivery_radius_km: 8,
 };
 
+/// Every editable detail of a store as it stands -- what an edit to some
+/// of them starts from, since an update replaces them all.
+export function detailsOf(catalog: MerchantCatalog): Required<CatalogDetails> {
+  return {
+    description: catalog.description,
+    cuisine_type: catalog.cuisine_type,
+    banner_data_uri: catalog.banner_data_uri,
+    phone: catalog.phone,
+    address_street: catalog.address_street,
+    address_city: catalog.address_city,
+    address_state: catalog.address_state,
+    address_zip: catalog.address_zip,
+    weekly_hours: catalog.weekly_hours,
+    time_zone: catalog.time_zone,
+    prep_minutes: catalog.prep_minutes,
+    max_delivery_radius_km: catalog.max_delivery_radius_km,
+  };
+}
+
 export async function publishCatalog(input: { business_name: string; location: GeoPoint } & CatalogDetails): Promise<HcRecord> {
-  return callZome("catalog", "publish_catalog", { ...EMPTY_DETAILS, ...input });
+  return callZome("catalog", "publish_catalog", { ...EMPTY_DETAILS, time_zone: deviceTimeZone(), ...input });
 }
 
 // Every store the caller owns, oldest first, resolved directly via the
@@ -73,8 +100,10 @@ export async function listMyCatalogs(): Promise<CatalogView[]> {
   return callZome("catalog", "list_my_catalogs", null);
 }
 
-export async function updateCatalogDetails(originalAction: ActionHash, details: CatalogDetails): Promise<HcRecord> {
-  return callZome("catalog", "update_catalog_details", { original_action: originalAction, ...EMPTY_DETAILS, ...details });
+/// Replaces every detail -- start from `detailsOf(catalog)` and change what's
+/// being edited.
+export async function updateCatalogDetails(originalAction: ActionHash, details: Required<CatalogDetails>): Promise<HcRecord> {
+  return callZome("catalog", "update_catalog_details", { original_action: originalAction, ...details });
 }
 
 export async function setCatalogOpen(originalAction: ActionHash, isOpen: boolean): Promise<HcRecord> {

@@ -284,6 +284,11 @@ export interface DeliveryOrder {
    */
   cancellation: Cancellation | null;
   /**
+   * When the store says the order will be ready -- set when it accepts
+   * the order, never changed after. `None` until then.
+   */
+  ready_by: Timestamp | null;
+  /**
    * The driver's collateral hold (a `ledger_types::LedgerTransaction`
    * from them to the customer), posted in the update that picks the
    * order up -- validation requires it there, and it never changes
@@ -587,8 +592,21 @@ export interface MerchantCatalog {
   address_city: string;
   address_state: string;
   address_zip: string;
-  hours_open: string;
-  hours_close: string;
+  /**
+   * When the store takes orders, in `time_zone` (see `hours`). Empty
+   * means no set hours: open whenever `is_open` is on.
+   */
+  weekly_hours: OpeningPeriod[];
+  /**
+   * The store's IANA time zone ("America/New_York") -- what its hours
+   * mean. From the merchant's device when they set up or edit the store.
+   */
+  time_zone: string;
+  /**
+   * How long the kitchen usually takes, in minutes -- the default when
+   * the store accepts an order, which records when it'll be ready.
+   */
+  prep_minutes: number;
   /**
    * What share (0-100) of a winning bid's delivery fee this merchant
    * covers -- see architecture plan §12 (2026-10-01 revision) for why
@@ -635,6 +653,18 @@ export interface MerchantCatalog {
 export interface NearbyProvider {
   provider: AgentPubKey;
   capabilities: DeliveryCapability[];
+}
+
+/**
+ * One period a store is open: from `opens` to `closes` on `weekday`
+ * (0 = Sunday), in minutes after local midnight. A `closes` at or before
+ * `opens` runs past midnight into the next day -- 18:00 to 02:00 is
+ * `opens: 1080, closes: 120`.
+ */
+export interface OpeningPeriod {
+  weekday: number;
+  opens: number;
+  closes: number;
 }
 
 /**
@@ -756,6 +786,11 @@ export interface PickupOrder {
    * and checked against who wrote it. `None` until then.
    */
   cancellation: Cancellation | null;
+  /**
+   * When the store says the order will be ready -- set when it accepts
+   * the order, never changed after. `None` until then.
+   */
+  ready_by: Timestamp | null;
 }
 
 /**

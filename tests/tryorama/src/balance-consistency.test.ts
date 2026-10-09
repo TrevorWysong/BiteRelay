@@ -65,7 +65,7 @@ await runScenario(async (scenario) => {
     const total = 100 * i;
     const order = actionHash(await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: item, quantity: i }], order_total: total }));
     // Each side retries until the other's last step has reached it.
-    await retryUntilOk(() => call(merchant, "dispatch")("confirm_pickup_prep", order), 40);
+    await retryUntilOk(() => call(merchant, "dispatch")("accept_pickup_order", { order_original_action: order }), 40);
     await call(merchant, "dispatch")("mark_ready_for_pickup", order);
     await retryUntilOk(() => call(customer, "dispatch")("complete_pickup", order), 40);
     paid += total;

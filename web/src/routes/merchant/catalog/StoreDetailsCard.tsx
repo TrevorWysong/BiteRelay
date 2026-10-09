@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { setAutoAcceptOrders, setDeliverySubsidyPercent, updateCatalogDetails } from "../../../holochain/zomes/catalog";
+import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, updateCatalogDetails } from "../../../holochain/zomes/catalog";
 import { formatCatalogAddress } from "../../../lib/format";
 import { Button, Card, Field, Input, Switch, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
@@ -25,7 +25,7 @@ export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }:
             <DetailsEditor
               catalog={catalog}
               onSave={async (draft) => {
-                await updateCatalogDetails(catalogRef, draft);
+                await updateCatalogDetails(catalogRef, { ...detailsOf(catalog), ...draft });
                 await onSaved();
                 setEditing(false);
               }}
@@ -38,11 +38,6 @@ export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }:
               {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
               {formatCatalogAddress(catalog) && <span>{formatCatalogAddress(catalog)}</span>}
               {catalog.phone && <span>{catalog.phone}</span>}
-              {(catalog.hours_open || catalog.hours_close) && (
-                <span>
-                  {catalog.hours_open || "?"}–{catalog.hours_close || "?"}
-                </span>
-              )}
               <span>Delivers within {catalog.max_delivery_radius_km}km</span>
             </div>
           </motion.div>
@@ -64,8 +59,6 @@ function detailsDraftFrom(catalog: MerchantCatalog) {
     address_city: catalog.address_city,
     address_state: catalog.address_state,
     address_zip: catalog.address_zip,
-    hours_open: catalog.hours_open,
-    hours_close: catalog.hours_close,
     max_delivery_radius_km: catalog.max_delivery_radius_km,
   };
 }
@@ -107,14 +100,6 @@ function DetailsEditor({ catalog, onSave }: { catalog: MerchantCatalog; onSave: 
       <Field label="Phone">
         <Input value={draft.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="(555) 555-0100" />
       </Field>
-      <div className="flex gap-2">
-        <Field label="Opens">
-          <Input value={draft.hours_open} onChange={(e) => set({ hours_open: e.target.value })} placeholder="09:00" />
-        </Field>
-        <Field label="Closes">
-          <Input value={draft.hours_close} onChange={(e) => set({ hours_close: e.target.value })} placeholder="22:00" />
-        </Field>
-      </div>
       <Field label="Delivery radius (km)">
         <Input type="number" min={0} step="any" value={draft.max_delivery_radius_km} onChange={(e) => set({ max_delivery_radius_km: Number(e.target.value) })} placeholder="8" />
       </Field>

@@ -79,13 +79,18 @@ await runScenario(async (scenario) => {
     address_city: "St. Petersburg",
     address_state: "FL",
     address_zip: "33710",
-    hours_open: "09:00",
-    hours_close: "22:00",
+    // Mondays 09:00-22:00 in New York.
+    weekly_hours: [{ weekday: 1, opens: 540, closes: 1320 }],
+    time_zone: "America/New_York",
+    prep_minutes: 20,
   });
   const catalogRef = actionHash(catalogRecord);
-  let catalog = decodeEntry<{ cuisine_type: string; hours_open: string; description: string }>(catalogRecord);
+  type Hours = { weekday: number; opens: number; closes: number }[];
+  let catalog = decodeEntry<{ cuisine_type: string; weekly_hours: Hours; time_zone: string; prep_minutes: number; description: string }>(catalogRecord);
   assert.equal(catalog.cuisine_type, "Cuban");
-  assert.equal(catalog.hours_open, "09:00");
+  assert.deepEqual(catalog.weekly_hours, [{ weekday: 1, opens: 540, closes: 1320 }]);
+  assert.equal(catalog.time_zone, "America/New_York");
+  assert.equal(catalog.prep_minutes, 20);
   console.log("[PASS] publish_catalog round-trips all storefront detail fields");
 
   const updatedCatalogRecord = await catalogOf(customer)<HcRecord>("update_catalog_details", {
@@ -98,18 +103,38 @@ await runScenario(async (scenario) => {
     address_city: "St. Petersburg",
     address_state: "FL",
     address_zip: "33710",
-    hours_open: "08:00",
-    hours_close: "23:00",
+    // An overnight shift, Friday into Saturday.
+    weekly_hours: [{ weekday: 5, opens: 1080, closes: 120 }],
+    time_zone: "America/New_York",
+    prep_minutes: 25,
     max_delivery_radius_km: 8,
   });
   catalog = decodeEntry(updatedCatalogRecord);
   assert.equal(catalog.description, "Updated Cuban food");
-  assert.equal(catalog.hours_open, "08:00");
+  assert.deepEqual(catalog.weekly_hours, [{ weekday: 5, opens: 1080, closes: 120 }]);
+  assert.equal(catalog.prep_minutes, 25);
   console.log("[PASS] update_catalog_details updates fields correctly");
+  // Back to no set hours, so the orders below aren't refused for the time
+  // of day this happens to run (store-hours.test.ts covers hours).
+  await catalogOf(customer)("update_catalog_details", {
+    original_action: catalogRef,
+    description: "Updated Cuban food",
+    cuisine_type: "Cuban",
+    banner_data_uri: "",
+    phone: "555-0200",
+    address_street: "123 Main St",
+    address_city: "St. Petersburg",
+    address_state: "FL",
+    address_zip: "33710",
+    weekly_hours: [],
+    time_zone: "America/New_York",
+    prep_minutes: 25,
+    max_delivery_radius_km: 8,
+  });
 
   // --- Non-owner cannot update catalog details or add menu items ---
   await assert.rejects(
-    catalogOf(driver)("update_catalog_details", { original_action: catalogRef, description: "hijacked", cuisine_type: "", banner_data_uri: "", phone: "", address_street: "", address_city: "", address_state: "", address_zip: "", hours_open: "", hours_close: "", max_delivery_radius_km: 8 }),
+    catalogOf(driver)("update_catalog_details", { original_action: catalogRef, description: "hijacked", cuisine_type: "", banner_data_uri: "", phone: "", address_street: "", address_city: "", address_state: "", address_zip: "", weekly_hours: [], time_zone: "UTC", prep_minutes: 15, max_delivery_radius_km: 8 }),
     "a non-owner must not be able to update someone else's catalog details",
   );
   await assert.rejects(
