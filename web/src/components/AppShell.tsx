@@ -8,6 +8,7 @@ import { pageVariants } from "../lib/motion";
 import { PresenceDot } from "./ui";
 import { BottomNavLink } from "./BottomNavLink";
 import { MerchantNav } from "./MerchantNav";
+import { Notifier } from "./Notifier";
 
 /// Wraps whichever route is active in a short fade+rise so navigating
 /// between screens (Browse -> cart, an order's detail page, switching
@@ -74,6 +75,7 @@ export function AppShell() {
         </div>
       </header>
 
+      <Notifier />
       <main className="flex-1 overflow-y-auto pb-20">
         <AnimatedOutlet />
       </main>

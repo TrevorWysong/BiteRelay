@@ -53,6 +53,10 @@ Some of Relay's work happens on people's own conductors through Holochain's sche
 - **Stores** should keep the app running while they're open, the way a store keeps its order tablet on. Their conductor accepts orders automatically (if auto-accept is on) and pays its share of delivery fees. A store whose app is closed doesn't answer orders; once the response window passes, validation won't let it accept them.
 - **Customers'** conductors place scheduled orders when they're due and cancel orders a store never answered. If a customer's app is closed, this happens the next time it runs. Their unanswered orders can't be accepted in the meantime either.
 
+## Notifications
+
+Each order change is signalled straight to the order's other parties, conductor to conductor, and the app turns that into a system notification (Profile → Notifications), plus a chime on a store's device for each new order. This works while the app is running, in front or in the background; Kangaroo's Electron shell shows web notifications natively, and a Tauri build needs its notification plugin allowed. A fully quit app receives nothing until it's opened again, when its screens catch up. Notifying a phone whose app is closed needs a push relay (APNs/FCM), which means running a server that learns who to wake; that's a deliberate later decision, not something the network needs to work.
+
 ## Upgrades
 
 - **Coordinator-only changes** (no change to entry types, link types or validation) keep the DNA hash. Ship a new app version and the network carries on.
