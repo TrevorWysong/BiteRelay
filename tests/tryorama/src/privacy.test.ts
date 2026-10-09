@@ -1,5 +1,6 @@
-// Proves what the DHT publishes about a customer: an order's area, never
-// its exact drop-off or notes. Those are sealed -- the drop-off to the
+// Proves what the DHT publishes about a customer: no name, and an order's
+// area, never its exact drop-off or notes; their name goes only to each
+// order's store and driver. Those are sealed -- the drop-off to the
 // customer and, once a bid is accepted, to that driver alone; the kitchen
 // note to the store -- and so are standing orders and delivery claims.
 // Every check that something is hidden looks at the raw published bytes,
@@ -16,8 +17,9 @@ function publishedBytes(record: HcRecord): Buffer {
 }
 
 interface Details {
-  dropoff: { point: { lat: number; lon: number }; notes: string } | null;
+  dropoff: { point: { lat: number; lon: number }; notes: string; recipient: string } | null;
   kitchen_note: string | null;
+  customer_name: string | null;
 }
 
 await runScenario(async (scenario) => {
@@ -36,6 +38,16 @@ await runScenario(async (scenario) => {
   for (const [p, name, roles] of [[customer, "Cara", ["Requester"]], [merchant, "Mo", ["Merchant"]], [driver, "Dana", ["Provider"]], [stranger, "Sly", ["Requester"]]] as const) {
     await call(p, "profiles")("create_profile", { display_name: name, roles, created_at: now });
   }
+  // A customer publishes no name; a store's is public.
+  const profileOf = async (p: typeof customer) => decodeEntry<{ display_name: string; sealed_name: unknown }>((await call(p, "profiles")<HcRecord | null>("get_profile_for_agent", p.agentPubKey))!);
+  const customerProfile = await profileOf(customer);
+  assert.equal(customerProfile.display_name, "", "a customer's profile carries no name");
+  assert.ok(customerProfile.sealed_name, "it's sealed to them");
+  assert.ok(!Buffer.from(JSON.stringify(customerProfile)).includes("Cara"), "nowhere in the clear");
+  assert.equal(await call(customer, "profiles")<string | null>("get_my_name", null), "Cara", "they read it back");
+  assert.equal((await profileOf(merchant)).display_name, "Mo", "a store's name is public");
+  console.log("[PASS] a customer's name isn't published; a store's is");
+
   const store = actionHash(await call(merchant, "catalog")<HcRecord>("publish_catalog", { business_name: "Mo's", location: ST_PETE }));
   const item = actionHash(await call(merchant, "catalog")<HcRecord>("add_menu_item", { catalog_ref: store, name: "Soup", price_cents: 800, available: true }));
   await sync();
@@ -63,22 +75,25 @@ await runScenario(async (scenario) => {
 
   const detailsFor = (p: typeof customer) => call(p, "dispatch")<Details>("get_order_private_details", order);
   const mine = await detailsFor(customer);
-  assert.deepEqual(mine.dropoff, { point: home, notes: "Gate code 4417" }, "the customer reads their own drop-off");
+  assert.deepEqual(mine.dropoff, { point: home, notes: "Gate code 4417", recipient: "Cara" }, "the customer reads their own drop-off");
   assert.equal(mine.kitchen_note, "Allergic to peanuts");
   const storeView = await detailsFor(merchant);
   assert.equal(storeView.kitchen_note, "Allergic to peanuts", "the store reads the kitchen note");
+  assert.equal(storeView.customer_name, "Cara", "and who the order's for");
   assert.equal(storeView.dropoff, null, "but not the address");
-  assert.deepEqual(await detailsFor(stranger), { dropoff: null, kitchen_note: null }, "a stranger reads nothing");
+  assert.deepEqual(await detailsFor(stranger), { dropoff: null, kitchen_note: null, customer_name: null }, "a stranger reads nothing");
   console.log("[PASS] the customer reads everything, the store only its note, a stranger nothing");
 
   await acceptOrder(merchant, order, all);
   const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400 }));
   await sync();
   assert.equal((await detailsFor(driver)).dropoff, null, "a bidding driver doesn't get the address");
+  assert.equal((await detailsFor(driver)).customer_name, null, "or the customer's name");
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
   const driverView = await detailsFor(driver);
-  assert.deepEqual(driverView.dropoff, { point: home, notes: "Gate code 4417" }, "the accepted driver gets the exact drop-off");
+  assert.deepEqual(driverView.dropoff, { point: home, notes: "Gate code 4417", recipient: "Cara" }, "the accepted driver gets the exact drop-off, and who it's for");
+  assert.equal(driverView.customer_name, "Cara");
   assert.equal(driverView.kitchen_note, null, "but not the kitchen note");
   assert.equal((await detailsFor(stranger)).dropoff, null, "a stranger still reads nothing");
   const accepted = publishedBytes(await call(stranger, "dispatch")<HcRecord>("get_order", order));

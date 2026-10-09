@@ -16,6 +16,11 @@ pub enum RoleTag {
 #[hdk_entry_helper]
 #[derive(Clone)]
 pub struct Profile {
+    /// The name everyone sees -- published only for the roles that face the
+    /// public: a store and a driver. A customer publishes none: their name
+    /// is `sealed_name`, shared only with the store and driver of each of
+    /// their orders (sealed into the order), so nobody else can put a name
+    /// to the key their orders carry.
     pub display_name: String,
     pub roles: Vec<RoleTag>,
     pub created_at: Timestamp,
@@ -37,6 +42,17 @@ pub struct Profile {
     /// public, a phone number isn't.
     #[serde(default)]
     pub sealed_phone: Option<XSalsa20Poly1305EncryptedData>,
+    /// The person's name, sealed to themselves.
+    #[serde(default)]
+    pub sealed_name: Option<XSalsa20Poly1305EncryptedData>,
+}
+
+impl Profile {
+    /// Whether this person faces the public -- runs a store or drives --
+    /// and so has a public name.
+    pub fn is_public(&self) -> bool {
+        self.roles.iter().any(|role| matches!(role, RoleTag::Provider | RoleTag::Merchant))
+    }
 }
 
 /// Kept separate from `Profile` because verification status churns independently
@@ -161,9 +177,9 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
 }
 
 fn validate_profile(profile: &Profile) -> ExternResult<ValidateCallbackResult> {
-    if profile.display_name.trim().is_empty() {
+    if profile.is_public() && profile.display_name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid(
-            "display_name must not be empty".into(),
+            "a store or a driver must have a public display_name".into(),
         ));
     }
     if profile.roles.is_empty() {

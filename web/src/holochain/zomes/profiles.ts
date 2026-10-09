@@ -38,6 +38,12 @@ export async function updateProfile(originalAction: ActionHash, updatedProfile: 
 }
 
 /// The caller's own phone number -- only they can read it.
+/// The caller's own name -- sealed in their profile; a customer publishes
+/// none (see `Profile::display_name`).
+export async function getMyName(): Promise<string | null> {
+  return callZome("profiles", "get_my_name", null);
+}
+
 export async function getMyPhone(): Promise<string | null> {
   return callZome("profiles", "get_my_phone", null);
 }

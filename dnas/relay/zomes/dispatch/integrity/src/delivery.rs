@@ -434,6 +434,7 @@ pub(crate) fn validate_order_transition(
         && prior.order_total == order.order_total
         && prior.sealed_dropoff == order.sealed_dropoff
         && prior.kitchen_note == order.kitchen_note
+        && prior.sealed_customer_name == order.sealed_customer_name
         && prior.dropoff_geohash == order.dropoff_geohash
         && prior.max_delivery_fee == order.max_delivery_fee
         && prior.requested_at == order.requested_at

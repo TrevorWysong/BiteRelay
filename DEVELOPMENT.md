@@ -54,9 +54,19 @@ Every entry on the DHT is readable by every peer, forever. So anything personal 
 | --- | --- |
 | A delivery's exact drop-off and drop-off notes | the customer; the driver, once their bid is accepted |
 | An order's note for the kitchen | the customer and the store |
+| A customer's name | the customer; the store of each of their orders; its driver, once assigned |
 | Saved addresses, recurring orders, a delivery claim's drop-off, a profile's phone | their owner |
 
-Public on purpose: a delivery's drop-off *area* (a ~1.2 km geohash cell, for driver discovery), a store's own address and phone. Not hidden: who orders from which store, since an order names both. Validation can't read sealed fields, so rules that need them (the delivery radius) run in the coordinator. A new field holding personal data should be sealed the same way; `privacy.test.ts` checks the published bytes.
+**Customers are pseudonymous.** A customer publishes no name: their profile holds it sealed, and each order carries it sealed to the store (and, inside the drop-off, to the driver). Someone reading the DHT sees an agent key place an order with a store, and nothing that names the person behind it. A store's and a driver's names are public, as their business.
+
+Public on purpose: a delivery's drop-off *area* (a ~1.2 km geohash cell, for driver discovery), a store's own address and phone, a store's and driver's names.
+
+Not hidden, and why:
+- **Which key orders from which store.** Every action's author is public on a DHT, and so is each payment's payer and payee. Hiding the link itself would need a different ledger and authorship model. What's hidden is who the key is.
+- **A key's own history.** One key's orders are linkable to each other.
+- **Someone who's also a store or a driver.** They have one key and a public name, so their orders are attributable. A person who wants to order privately should use a separate identity for it.
+
+Validation can't read sealed fields, so rules that need them (the delivery radius) run in the coordinator. Validation can't read sealed fields, so rules that need them (the delivery radius) run in the coordinator. A new field holding personal data should be sealed the same way; `privacy.test.ts` checks the published bytes.
 
 ## Tests
 
