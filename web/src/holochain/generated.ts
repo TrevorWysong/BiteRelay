@@ -97,7 +97,11 @@ export interface Bid {
   bidder: AgentPubKey;
   eta_seconds: number;
   price_offer: number;
-  collateral_commitment: LedgerCommitmentRef;
+  /**
+   * What the driver will post as collateral when they pick the order up
+   * -- always `settlement::required_collateral` of the order (validated).
+   */
+  collateral: number;
   status: BidStatus;
   created_at: Timestamp;
 }
@@ -279,6 +283,13 @@ export interface DeliveryOrder {
    * and checked against who wrote it. `None` until then.
    */
   cancellation: Cancellation | null;
+  /**
+   * The driver's collateral hold (a `ledger_types::LedgerTransaction`
+   * from them to the customer), posted in the update that picks the
+   * order up -- validation requires it there, and it never changes
+   * after. Returned on delivery (`PaymentLeg::CollateralReturn`).
+   */
+  collateral_hold: ActionHash | null;
 }
 
 export type DeliveryStatus =
@@ -317,6 +328,10 @@ export type DispatchLocalSignal =
    * A new order for one of this agent's stores to accept.
    */
   | { OrderPlaced: ActionHash }
+  /**
+   * An order this agent is party to changed -- re-read it.
+   */
+  | { OrderUpdated: ActionHash }
   | { NewOrderNearby: ActionHash }
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }
@@ -376,6 +391,11 @@ export interface Dispute {
  * `Delivered` or `Cancelled` (see `DeliveryOrder::dispute_ref`'s doc
  * comment). A dispute raised in error is `FavorProvider { forfeit_amount: 0 }`,
  * not a revert to some remembered pre-dispute status.
+ *
+ * `forfeit_amount` is what the losing side pays the winning one -- except a
+ * delivery ruled for the customer, where the forfeit is the collateral the
+ * driver posted at pickup, which the customer already holds; nothing more
+ * moves (the ledger refuses it).
  */
 export type DisputeOutcome =
   | {
@@ -481,19 +501,6 @@ export interface ItemReview {
   created_at: Timestamp;
 }
 
-/**
- * A mutual-credit-shaped reference to a locked amount in the `ledger` zome,
- * not a fixed-escrow-contract reference -- see the ledger zome's doc comment
- * for why that distinction matters (it's what lets a real HoloFuel backing
- * swap in later without touching this shape). Plain data embedded in `Bid`,
- * not a Holochain entry of its own.
- */
-export interface LedgerCommitmentRef {
-  account: string;
-  amount: number;
-  ledger_txn_ref: string;
-}
-
 export interface LedgerTransaction {
   from: AgentPubKey;
   to: AgentPubKey;
@@ -505,7 +512,8 @@ export interface LedgerTransaction {
   related_order: ActionHash;
   /**
    * The record that justifies it: for a payment, the version of the
-   * order that completed it (`Delivered`/`PickedUp`); for a forfeit, the
+   * order that completed it (`Delivered`/`PickedUp`); for a collateral
+   * hold, the version that assigned the driver; for a forfeit, the
    * resolved `Dispute`.
    */
   basis: ActionHash;
@@ -668,7 +676,12 @@ export type PaymentLeg =
   /**
    * The customer's tip, all of it to the driver.
    */
-  | "Tip";
+  | "Tip"
+  /**
+   * The driver's collateral, held by the customer since pickup
+   * (`DeliveryOrder::collateral_hold`), handed back on delivery.
+   */
+  | "CollateralReturn";
 
 /**
  * The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
@@ -1119,7 +1132,14 @@ export type TxnReason =
    */
   | { Payment: PaymentLeg }
   /**
-   * Collateral moved by an arbitrator's dispute ruling.
+   * A driver's collateral, posted to the customer when they pick up the
+   * customer's food -- each holds the other's value until delivery, when
+   * the customer returns it (`PaymentLeg::CollateralReturn`). If an
+   * arbitrator rules for the customer, they keep it.
+   */
+  | "CollateralHold"
+  /**
+   * Moved by an arbitrator's dispute ruling.
    */
   | "CollateralForfeit";
 

@@ -200,6 +200,9 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     // the Resolved content -- which `dispute::get_dispute` returned.
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
     let owed = delivery_payments(&updated_order, &bid);
+    // The driver's collateral, posted at pickup -- the customer's to keep
+    // if the ruling goes their way.
+    let collateral_held = if updated_order.collateral_hold.is_some() { bid.collateral } else { 0 };
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(updated_order))?;
     // Both outcomes (Delivered / Cancelled) are terminal.
     order_queues::retire(&parties)?;
@@ -208,20 +211,23 @@ pub fn apply_dispute_resolution(input: ApplyDisputeResolutionInput) -> ExternRes
     match outcome {
         DisputeOutcome::FavorProvider { forfeit_amount } => {
             // The ruling confirms the delivery happened, so the order is
-            // settled in full -- every leg, by the arbitrator.
+            // settled in full -- every leg, the driver's collateral back
+            // included, by the arbitrator.
             settlement::pay_legs(&input.order_original_action, &updated, &owed, Payer::Arbitrator)?;
             settlement::forfeit(&input.order_original_action, dispute_basis, &requester, &bid.bidder, forfeit_amount)?;
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
-        DisputeOutcome::FavorRequester { forfeit_amount } => {
-            settlement::forfeit(&input.order_original_action, dispute_basis, &bid.bidder, &requester, forfeit_amount)?;
+        // The customer keeps the collateral the driver posted at pickup:
+        // that's the forfeit, and all the driver stood to lose, so nothing
+        // more moves (validation refuses it).
+        DisputeOutcome::FavorRequester { .. } => {
             record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
-            if forfeit_amount > 0 {
+            if collateral_held > 0 {
                 record_reputation_event(
                     &bid.bidder,
                     ReputationTargetWire::Driver(bid.bidder.clone()),
                     input.order_original_action.clone(),
-                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
+                    ReputationEventKindWire::CollateralForfeited { amount: collateral_held },
                 )?;
             }
         }

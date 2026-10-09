@@ -63,7 +63,6 @@ await runScenario(async (scenario) => {
     order_ref: customOrderRef,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
   const accepted = await dispatchOf(customer)<HcRecord>("accept_bid", { order_original_action: customOrderRef, bid_action: actionHash(bidRecord) });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { AlertTriangle, Bike, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Bike, CheckCircle2, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cancelOrder, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
 import { getCatalog } from "../../holochain/zomes/catalog";
@@ -21,6 +21,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
+import { POLL, isOrderSignal } from "../../lib/poll";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -39,7 +40,6 @@ interface DriverStats {
   displayName: string | null;
 }
 
-const POLL_MS = 6000;
 
 /// The customer is the one who accepts a bid, so this is the one place
 /// that choice should actually be informed by the bidder's track record,
@@ -68,7 +68,8 @@ interface BidRow {
   stats: DriverStats | null;
 }
 
-const BID_SIGNALS = (signal: LocalSignal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal;
+/// Bids arriving or settling, or the order changing.
+const ORDER_SIGNALS = (signal: LocalSignal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal || isOrderSignal(signal);
 
 export function OrderDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
@@ -97,7 +98,7 @@ export function OrderDetail() {
       const record = await getOrder(orderRef);
       return { order: decodeEntry<DeliveryOrder>(record), writtenAt: timestampOf(record), now: Date.now() };
     },
-    { pollMs: POLL_MS, refreshOn: BID_SIGNALS },
+    { pollMs: POLL.signalled, refreshOn: ORDER_SIGNALS },
   );
   const order = snapshot?.order;
   const storeHex = order ? bytesToHex(order.catalog_ref) : null;
@@ -114,7 +115,7 @@ export function OrderDetail() {
       const legs = (await getLegsForOrder(orderRef)).map((r) => decodeEntry<Leg>(r));
       return legs.find((leg) => leg.kind === "CustomerHandoff")?.photo_data_uri || null;
     },
-    { pollMs: photoStatus === "PickedUp" ? POLL_MS : undefined },
+    { pollMs: photoStatus === "PickedUp" ? POLL.signalled : undefined, refreshOn: isOrderSignal },
   );
   // What this customer already rated on this order, read back from the
   // conductor rather than kept in memory -- otherwise a reload would offer
@@ -137,7 +138,7 @@ export function OrderDetail() {
         }),
       );
     },
-    { pollMs: POLL_MS, refreshOn: BID_SIGNALS },
+    { pollMs: POLL.signalled, refreshOn: ORDER_SIGNALS },
   );
   // The accepted bid's driver -- found among the order's bids, since bids
   // are only ever read through their order.
@@ -409,6 +410,12 @@ export function OrderDetail() {
             <Bike size={20} className="text-relay-600" />
             <p className="text-sm text-relay-700 dark:text-relay-300">Your driver has picked up your order.</p>
           </div>
+          {order.collateral_hold && (
+            <p className="flex items-start gap-2 text-xs text-relay-700 dark:text-relay-300">
+              <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+              Your driver posted {formatCents(order.order_total)} collateral with you, the value of your food. It goes back to them when you confirm receipt.
+            </p>
+          )}
           <Button loading={completing} onClick={confirmReceipt}>
             Confirm receipt
           </Button>

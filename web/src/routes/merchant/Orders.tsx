@@ -26,8 +26,8 @@ import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Timestamp } from "../../holochain/types";
+import { POLL, isOrderSignal } from "../../lib/poll";
 
-const POLL_MS = 8000;
 
 const TABS = [
   { value: "active", label: "Active" },
@@ -127,8 +127,8 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   // `now` is when this snapshot was read -- what each order's window is
   // judged against, refreshed with every poll.
   const { data, reload } = useResource(`merchant-active:${storesKey(stores)}`, async () => ({ rows: await fetchActiveQueue(stores), now: Date.now() }), {
-    pollMs: POLL_MS,
-    refreshOn: () => true,
+    pollMs: POLL.signalled,
+    refreshOn: isOrderSignal,
   });
   const rows = data?.rows;
   async function advance(row: QueueRow, action: OrderAction) {

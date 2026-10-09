@@ -271,7 +271,6 @@ await runScenario(async (scenario) => {
           order_ref: measuredOrderRef,
           eta_seconds: 900,
           price_offer: 400,
-          collateral_commitment: { account: "stub", amount: 100, ledger_txn_ref: "pending" },
         }).catch(() => null),
       ),
     ),

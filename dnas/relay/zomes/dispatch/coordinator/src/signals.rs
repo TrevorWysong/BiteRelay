@@ -1,9 +1,11 @@
-//! The zome-call capability grant and the local/remote signal types that
-//! Layer 2 of the matching mechanism (see plan §3) is built on. Everything
-//! else in this crate sends `RemoteSignal`s; this module is just where the
-//! wire format and the receiving end live.
+//! The zome-call capability grant, the local/remote signal types that
+//! Layer 2 of the matching mechanism (see plan §3) is built on, and
+//! `post_commit`, which signals every order change to the order's other
+//! parties. This module is where the wire format and both ends live.
 
 use crate::upkeep;
+use dispatch_integrity::*;
+use relay_coordinator_support::{decode_or, original_action_of, resolve_latest_decoded};
 use hdk::prelude::*;
 use std::collections::HashSet;
 
@@ -34,6 +36,8 @@ pub fn init() -> ExternResult<InitCallbackResult> {
 pub enum LocalSignal {
     /// A new order for one of this agent's stores to accept.
     OrderPlaced(ActionHash),
+    /// An order this agent is party to changed -- re-read it.
+    OrderUpdated(ActionHash),
     NewOrderNearby(ActionHash),
     BidPlaced(ActionHash),
     BidAccepted(ActionHash),
@@ -55,6 +59,9 @@ pub enum RemoteSignal {
     /// Sent to a store when an order arrives for it to accept -- its queue
     /// polls too, so this only makes a new order show up at once.
     OrderPlaced { order_hash: ActionHash },
+    /// Sent to an order's other parties whenever it changes (see
+    /// `post_commit`), so their screens refresh without polling fast.
+    OrderUpdated { order_hash: ActionHash },
     NewOrderPosted { order_hash: ActionHash },
     BidPlaced { order_hash: ActionHash, bid_hash: ActionHash },
     BidAccepted { bid_hash: ActionHash },
@@ -83,6 +90,7 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             upkeep::answer_new_orders_soon()?;
             emit_signal(LocalSignal::OrderPlaced(order_hash))
         }
+        RemoteSignal::OrderUpdated { order_hash } => emit_signal(LocalSignal::OrderUpdated(order_hash)),
         RemoteSignal::NewOrderPosted { order_hash } => emit_signal(LocalSignal::NewOrderNearby(order_hash)),
         RemoteSignal::BidPlaced { bid_hash, .. } => emit_signal(LocalSignal::BidPlaced(bid_hash)),
         RemoteSignal::BidAccepted { bid_hash } => emit_signal(LocalSignal::BidAccepted(bid_hash)),
@@ -99,4 +107,53 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
         // so a stray or repeated signal just triggers a sweep.
         RemoteSignal::StoreShareDue { .. } => schedule("settle_store_shares_soon"),
     }
+}
+
+/// After every commit, tells an order's other parties it changed: the store
+/// when an order is placed with it (`OrderPlaced`), everyone else on the
+/// order otherwise (`OrderUpdated`). One place, so every path that changes
+/// an order -- an extern, the conductor's upkeep, a dispute ruling --
+/// signals alike. Best-effort, like every signal: screens still poll, just
+/// slowly.
+#[hdk_extern(infallible)]
+pub fn post_commit(committed: Vec<SignedActionHashed>) {
+    for action in committed {
+        let _ = announce_order_change(&action);
+    }
+}
+
+fn announce_order_change(action: &SignedActionHashed) -> ExternResult<()> {
+    let Some(entry_type) = action.action().entry_type() else { return Ok(()) };
+    let is_order = [UnitEntryTypes::DeliveryOrder, UnitEntryTypes::PickupOrder].into_iter().any(|unit| EntryType::try_from(unit).is_ok_and(|t| &t == entry_type));
+    if !is_order {
+        return Ok(());
+    }
+    let Some(record) = get(action.as_hash().clone(), GetOptions::local())? else { return Ok(()) };
+    let order_hash = original_action_of(action.as_hash().clone())?;
+    let (placed, mut parties) = if let Some(order) = decode_or::<DeliveryOrder>(&record) {
+        let driver = match &order.accepted_bid {
+            Some(bid_ref) => resolve_latest_decoded::<Bid>(bid_ref.clone(), "Bid").ok().map(|(_, bid)| bid.bidder),
+            None => None,
+        };
+        (order.status == DeliveryStatus::Placed, [Some(order.requester), Some(order.merchant), driver].into_iter().flatten().collect::<Vec<_>>())
+    } else if let Some(order) = decode_or::<PickupOrder>(&record) {
+        (order.status == PickupStatus::Placed, vec![order.requester, order.merchant])
+    } else {
+        return Ok(());
+    };
+    let me = agent_info()?.agent_initial_pubkey;
+    if placed {
+        // Only the store has anything to do with a new order: accept it.
+        let merchant = parties.swap_remove(1);
+        if merchant != me {
+            send_remote_signal(RemoteSignal::OrderPlaced { order_hash }, vec![merchant])?;
+        }
+        return Ok(());
+    }
+    parties.retain(|party| party != &me);
+    parties.dedup();
+    if !parties.is_empty() {
+        send_remote_signal(RemoteSignal::OrderUpdated { order_hash }, parties)?;
+    }
+    Ok(())
 }

@@ -18,6 +18,7 @@ import { fetchMenu, groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
 import type { GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import { POLL } from "../../lib/poll";
 
 interface BagRow {
   hash: Uint8Array;
@@ -28,7 +29,6 @@ interface BagRow {
 /// moments ago may not have gossiped to whatever peer answers this read
 /// yet, and a customer already sitting on this page shouldn't need to
 /// navigate away and back for it to show up.
-const MENU_POLL_MS = 8000;
 
 interface StoreMenu {
   catalog: MerchantCatalog;
@@ -65,7 +65,7 @@ function StorePage({ hash }: { hash: string }) {
   const location = useSession((s) => s.location);
   const cart = useCart();
   const catalogHash = useMemo(() => hexToBytes(hash), [hash]);
-  const { data: menu } = useResource(`store-menu:${hash}`, () => fetchStoreMenu(catalogHash), { pollMs: MENU_POLL_MS });
+  const { data: menu } = useResource(`store-menu:${hash}`, () => fetchStoreMenu(catalogHash), { pollMs: POLL.slow });
   const catalog = menu?.catalog ?? routerState?.catalog ?? null;
   const items = menu?.items ?? null;
   const bags = menu?.bags ?? [];

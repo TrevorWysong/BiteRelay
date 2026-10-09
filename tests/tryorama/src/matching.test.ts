@@ -82,13 +82,11 @@ await runScenario(async (scenario) => {
     order_ref: orderRef,
     eta_seconds: 900,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidBRecord = await dispatchOf(providerB)<HcRecord>("submit_bid", {
     order_ref: orderRef,
     eta_seconds: 1200,
     price_offer: 350,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidARef = actionHash(bidARecord);
   const bidBRef = actionHash(bidBRecord);

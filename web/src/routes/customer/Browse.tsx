@@ -16,6 +16,7 @@ import { RestaurantCard } from "../../components/RestaurantCard";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { Chip, ChipRow, EmptyState, Skeleton } from "../../components/ui";
 import { staggerContainer } from "../../lib/motion";
+import { POLL } from "../../lib/poll";
 
 interface Row {
   hash: Uint8Array;
@@ -40,7 +41,6 @@ type Sort = "relevance" | "rating" | "name";
 // empty list forever unless they happened to navigate away and back.
 // Matches the ~8s poll cadence already used in driver Dashboard.tsx and
 // customer OrderDetail.tsx for the same reason.
-const BROWSE_POLL_MS = 8000;
 
 function CardSkeleton() {
   return (
@@ -84,7 +84,7 @@ export function Browse() {
         }),
       );
     },
-    { pollMs: BROWSE_POLL_MS },
+    { pollMs: POLL.slow },
   );
   // Expired bags are already filtered out server-side (and claims after the
   // window are rejected on-chain); filtering again here drops one that
@@ -97,7 +97,7 @@ export function Browse() {
       const now = Date.now() * 1000;
       return views.map((v) => ({ hash: v.original_action, bag: decodeEntry<GoodieBag>(v.record) })).filter((r) => r.bag.pickup_window_end > now);
     },
-    { pollMs: BROWSE_POLL_MS },
+    { pollMs: POLL.slow },
   );
 
   const catalogNameByHex = useMemo(() => {

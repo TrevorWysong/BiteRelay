@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Bike, Link2, MapPin, Power, Route } from "lucide-react";
+import { Bike, Link2, MapPin, Power, Route, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
-import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate, pickUpOrder } from "../../holochain/zomes/dispatch";
 import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
@@ -22,6 +22,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { usePolling, useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
+import { POLL, isOrderSignal } from "../../lib/poll";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -37,13 +38,6 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], stri
 // interval could.
 const TRACKED_STATUSES: DeliveryStatus[] = ["MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 const LOCATION_BROADCAST_MS = 8000;
-
-// A placeholder collateral amount (in cents) -- the ledger is a stub today
-// (architecture plan §4: mutual-credit-shaped, not a real escrow), so this
-// isn't collecting anything real yet. `collateral_commitment` just needs
-// *some* reference value to exercise the field until a driver-set bond
-// amount becomes a real input.
-const PLACEHOLDER_COLLATERAL_CENTS = 100;
 
 /// Records a leg and completes the two-step attestation it needs to ever
 /// count toward delivery completion -- shared by both the "pickup" and
@@ -99,7 +93,6 @@ function dropoffPoint(row: OrderRow): GeoPoint {
   return row.dropoff?.point ?? geohashCenter(row.order.dropoff_geohash);
 }
 
-const POLL_MS = 8000;
 // Nothing in the backend caps concurrent deliveries per driver -- this is a
 // deliberate, modest client-side cap: enough to let a driver already on one
 // or two deliveries pick up another that's on their way, without
@@ -134,7 +127,7 @@ export function DriverDashboard() {
           dropoff: (await getOrderPrivateDetails(order.original_action).catch(() => null))?.dropoff ?? null,
         })),
       ),
-    { pollMs: POLL_MS, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s },
+    { pollMs: POLL.signalled, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s || isOrderSignal(s) },
   );
 
   // Open orders near the driver -- only read while online.
@@ -146,14 +139,16 @@ export function DriverDashboard() {
       // rejects it) -- hidden here so they never see a Bid button for one.
       return rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey));
     },
-    { pollMs: POLL_MS, refreshOn: (s) => "NewOrderNearby" in s },
+    // Another driver taking an order sends this one nothing.
+    { pollMs: POLL.unsignalled, refreshOn: (s) => "NewOrderNearby" in s },
   );
 
   // Presence: re-announced on a cadence while online (beacons expire), and
   // straight away when the driver moves to a new cell.
   usePolling(
     () => announceOnline(location, ["Food"]).catch((err) => setError(describeError(err))),
-    { pollMs: PRESENCE_REFRESH_MS },
+    // Kept up in the background: a driver who's online stays discoverable.
+    { pollMs: PRESENCE_REFRESH_MS, background: true },
     online,
     geohash,
   );
@@ -175,7 +170,6 @@ export function DriverDashboard() {
         order_ref: orderRef,
         eta_seconds: etaMinutes * 60,
         price_offer: feeCents,
-        collateral_commitment: { account: bytesToHex(driverKey), amount: PLACEHOLDER_COLLATERAL_CENTS, ledger_txn_ref: "pending" },
       });
     } catch (err) {
       setError(describeError(err));
@@ -360,7 +354,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
       } else if (action === "pickup") {
         await recordAndAttestLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
-        await setOrderStatus(row.hash, "PickedUp");
+        await pickUpOrder(row.hash);
       } else if (action === "await_dropoff") {
         await recordAndAttestLeg({
           order_ref: row.hash,
@@ -472,6 +466,10 @@ function BidCard({
       <p className="mt-1 text-xs text-ink-400">
         {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
+      </p>
+      {/* The bid commits it; validation requires it at pickup. */}
+      <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
+        <ShieldCheck size={12} /> You'll hold {formatCents(order.order_total)} collateral with the customer from pickup until delivery.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">

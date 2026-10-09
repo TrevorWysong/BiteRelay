@@ -56,7 +56,6 @@ await runScenario(async (scenario) => {
       order_ref: orderRef,
       eta_seconds: 600,
       price_offer: priceOfferCents,
-      collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
     });
     const bidRef = actionHash(bidRecord);
     await dhtSync(both, customer.cells[0].cell_id[0]);
@@ -73,7 +72,7 @@ await runScenario(async (scenario) => {
     const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
     await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
 
-    await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+    await dispatchOf(driver)("pick_up_order", orderRef);
     const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
     const customerLegRef = actionHash(customerLegRecord);
     await dhtSync(both, customer.cells[0].cell_id[0]);

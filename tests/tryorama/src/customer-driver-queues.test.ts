@@ -69,7 +69,7 @@ await runScenario(async (scenario) => {
   await sync();
   await acceptOrder(merchant, scheduled, all);
   const bid = actionHash(
-    await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: scheduled, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }),
+    await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: scheduled, eta_seconds: 600, price_offer: 500 }),
   );
   await sync();
   const bids = await retryUntil(

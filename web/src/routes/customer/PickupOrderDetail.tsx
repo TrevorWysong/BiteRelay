@@ -16,8 +16,8 @@ import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
+import { POLL, isOrderSignal } from "../../lib/poll";
 
-const POLL_MS = 6000;
 
 /// `OrderDetail`'s pickup sibling -- no bids, no driver, no live map, no
 /// chat: the requester and the merchant are the only two parties, and
@@ -46,7 +46,7 @@ export function PickupOrderDetail() {
       const record = await getPickupOrder(orderRef);
       return { order: decodeEntry<PickupOrder>(record), writtenAt: timestampOf(record), now: Date.now() };
     },
-    { pollMs: POLL_MS, refreshOn: (signal) => "PickupReady" in signal },
+    { pollMs: POLL.signalled, refreshOn: (signal) => "PickupReady" in signal || isOrderSignal(signal) },
   );
   const order = snapshot?.order;
   // The kitchen note is sealed to the store; the zome opens it for us.

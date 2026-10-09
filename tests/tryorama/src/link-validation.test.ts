@@ -60,7 +60,7 @@ await runScenario(async (scenario) => {
   await sync();
   await acceptOrder(merchant, deliveryOrder, all);
   const attackerBid = actionHash(
-    await call(attacker, "dispatch")<HcRecord>("submit_bid", { order_ref: deliveryOrder, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }),
+    await call(attacker, "dispatch")<HcRecord>("submit_bid", { order_ref: deliveryOrder, eta_seconds: 600, price_offer: 500 }),
   );
   const beacon = actionHash(await call(attacker, "geo_presence")<HcRecord>("announce_online", { location: ST_PETE, capabilities: ["Food"] }));
   const leg = actionHash(await call(attacker, "attestation")<HcRecord>("record_leg", { order_ref: reviewedOrder, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE }));

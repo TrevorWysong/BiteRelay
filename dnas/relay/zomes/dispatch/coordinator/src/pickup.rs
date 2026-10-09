@@ -52,7 +52,6 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
 
     let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
-    let merchant = input.merchant.clone();
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -71,7 +70,6 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
     upkeep::tend_my_orders_soon()?;
-    let _ = send_remote_signal(RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back pickup order".into())))

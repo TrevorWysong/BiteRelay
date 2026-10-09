@@ -57,13 +57,11 @@ await runScenario(async (scenario) => {
     order_ref: orderRefA,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   const bidRecordB = await dispatchOf(driver)<HcRecord>("submit_bid", {
     order_ref: orderRefB,
     eta_seconds: 600,
     price_offer: 400,
-    collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" },
   });
   await dhtSync(all, driver.cells[0].cell_id[0]);
 

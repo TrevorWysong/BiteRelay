@@ -54,7 +54,6 @@ await runScenario(async (scenario) => {
       order_ref: orderRef,
       eta_seconds: 900,
       price_offer: 400,
-      collateral_commitment: { account: "stub", amount: 100, ledger_txn_ref: "pending" },
     });
     const bidRef = actionHash(bidRecord);
     await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -64,7 +63,7 @@ await runScenario(async (scenario) => {
     await dhtSync(all, customer.cells[0].cell_id[0]);
 
     await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
-    await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "PickedUp" });
+    await dispatchOf(driver)("pick_up_order", orderRef);
     await dhtSync(all, customer.cells[0].cell_id[0]);
     return orderRef;
   }
@@ -137,7 +136,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefB,
-    outcome: { FavorRequester: { forfeit_amount: 50 } },
+    outcome: { FavorRequester: { forfeit_amount: 0 } },
     reasoning: "Driver's own location trace shows they never reached the dropoff",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -148,10 +147,10 @@ await runScenario(async (scenario) => {
 
   const customerBalanceB = await retryUntilOk(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey));
   const driverBalanceB = await retryUntilOk(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey));
-  // No payment for this order (skipped entirely), only the forfeiture moves:
-  // driver -50, customer +50, relative to their balances after scenario 1.
-  assert.equal(driverBalanceB, 400 - 50, "driver should have forfeited the ruled amount, no payment for this order");
-  assert.equal(customerBalanceB, -400 + 50, "customer should have received the forfeited amount");
+  // No payment for this order; the customer keeps the 600 the driver posted
+  // as collateral at pickup -- relative to their balances after scenario 1.
+  assert.equal(driverBalanceB, 400 - 600, "the driver should have forfeited their posted collateral, and been paid nothing");
+  assert.equal(customerBalanceB, -400 + 600, "the customer keeps the driver's collateral");
   assert.equal(customerBalanceB + driverBalanceB, 0, "mutual-credit ledger must always net to zero");
   console.log("[PASS] Collateral forfeited on FavorRequester ruling, net-zero across both parties");
 
@@ -161,9 +160,9 @@ await runScenario(async (scenario) => {
       { Driver: driver.agentPubKey },
     );
     assert.equal(summary.dispute_resolved_against_count, 1, "the driver lost this ruling");
-    assert.equal(summary.total_collateral_forfeited, 50);
+    assert.equal(summary.total_collateral_forfeited, 600);
     return summary;
   });
-  assert.equal(driverReputationB.total_collateral_forfeited, 50);
+  assert.equal(driverReputationB.total_collateral_forfeited, 600);
   console.log("[PASS] Reputation + forfeiture events recorded against the losing provider");
 });

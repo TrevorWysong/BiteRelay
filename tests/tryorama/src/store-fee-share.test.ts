@@ -31,7 +31,7 @@ await runScenario(async (scenario) => {
   assert.equal(decodeEntry<{ delivery_subsidy_percent: number }>(await call(customer, "dispatch")<HcRecord>("get_order", order)).delivery_subsidy_percent, 50, "the order records the split it was placed under");
   await sync();
   await acceptOrder(merchant, order, all);
-  const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 500, collateral_commitment: { account: "stub", amount: 0, ledger_txn_ref: "pending" } }));
+  const bid = actionHash(await call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 500 }));
   await sync();
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
@@ -45,7 +45,7 @@ await runScenario(async (scenario) => {
     await retryUntilOk(() => call(driver, "attestation")("link_leg_to_receipt", { leg, receipt }));
   };
   await handoff(0, "MerchantHandoff", merchant.agentPubKey);
-  await call(driver, "dispatch")("set_order_status", { order_original_action: order, next_status: "PickedUp" });
+  await call(driver, "dispatch")("pick_up_order", order);
   await handoff(1, "CustomerHandoff", customer.agentPubKey);
   await sync();
   await call(customer, "dispatch")("complete_delivery", { order_original_action: order });

@@ -5,26 +5,6 @@
 use hdk::prelude::*;
 use ledger_integrity::*;
 use relay_coordinator_support::next_page_cursor;
-use relay_types::LedgerCommitmentRef;
-
-/// No entry is created here -- there is nothing to "lock" in a mutual-credit
-/// model without a settled transaction (see the integrity crate's doc
-/// comment). This just produces the reference embedded in a `Bid`; the real
-/// transaction is created later by `pay` or `forfeit`.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LockCollateralInput {
-    pub bidder: AgentPubKey,
-    pub amount: u64,
-}
-
-#[hdk_extern]
-pub fn lock_collateral(input: LockCollateralInput) -> ExternResult<LedgerCommitmentRef> {
-    Ok(LedgerCommitmentRef {
-        account: input.bidder.to_string(),
-        amount: input.amount,
-        ledger_txn_ref: "pending".into(),
-    })
-}
 
 /// The payment or forfeit already on the caller's chain for this order and
 /// reason, if any -- what makes `pay`/`forfeit` safe to retry. Payments are
@@ -75,6 +55,32 @@ pub fn pay(input: PayInput) -> ExternResult<Record> {
         to: input.to,
         amount: input.amount,
         reason: TxnReason::Payment(input.leg),
+        related_order: input.related_order,
+        basis: input.basis,
+        created_at: sys_time()?,
+    })
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HoldCollateralInput {
+    /// The order being secured (its original action).
+    pub related_order: ActionHash,
+    /// The version of the order that assigned the caller as its driver.
+    pub basis: ActionHash,
+    /// The customer, who holds it until delivery.
+    pub to: AgentPubKey,
+    pub amount: u64,
+}
+
+/// The caller (a driver) posting their collateral to the customer as they
+/// pick up the order -- see `TxnReason::CollateralHold`. Safe to retry.
+#[hdk_extern]
+pub fn hold_collateral(input: HoldCollateralInput) -> ExternResult<Record> {
+    record_transaction(LedgerTransaction {
+        from: agent_info()?.agent_initial_pubkey,
+        to: input.to,
+        amount: input.amount,
+        reason: TxnReason::CollateralHold,
         related_order: input.related_order,
         basis: input.basis,
         created_at: sys_time()?,

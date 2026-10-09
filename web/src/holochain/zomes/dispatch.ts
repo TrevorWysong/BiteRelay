@@ -156,13 +156,16 @@ export async function getMyActiveDeliveries(): Promise<ActiveDelivery[]> {
 
 // --- bids ---
 
-export async function submitBid(input: {
-  order_ref: ActionHash;
-  eta_seconds: number;
-  price_offer: number;
-  collateral_commitment: { account: string; amount: number; ledger_txn_ref: string };
-}): Promise<HcRecord> {
+/// A driver's bid. It commits the order's required collateral (the value of
+/// its food), which they post to the customer at pickup.
+export async function submitBid(input: { order_ref: ActionHash; eta_seconds: number; price_offer: number }): Promise<HcRecord> {
   return callZome("dispatch", "submit_bid", input);
+}
+
+/// The driver picking the order up: posts their collateral to the customer
+/// and marks it picked up, in one step. Returned on delivery.
+export async function pickUpOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "pick_up_order", orderOriginalAction);
 }
 
 export async function withdrawBid(bidAction: ActionHash): Promise<HcRecord> {

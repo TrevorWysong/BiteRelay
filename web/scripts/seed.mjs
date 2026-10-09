@@ -155,7 +155,7 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "BidPlaced")) return orderRef;
   const bidRef = hash(
     await eventually("submit bid", () =>
-      driver.call("dispatch", "submit_bid", { order_ref: orderRef, eta_seconds: 1200, price_offer: 650, collateral_commitment: { account: "seed", amount: 0, ledger_txn_ref: "pending" } }),
+      driver.call("dispatch", "submit_bid", { order_ref: orderRef, eta_seconds: 1200, price_offer: 650 }),
     ),
   );
   if (!reached(DELIVERY_STEPS, order.until, "BidAccepted")) return orderRef;
@@ -165,7 +165,7 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "PickedUp")) return orderRef;
   await eventually("en route", () => driver.call("dispatch", "set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" }));
   await attestLeg(driver, orderRef, 0, "MerchantHandoff", store.owner, store.location);
-  await eventually("picked up", () => driver.call("dispatch", "set_order_status", { order_original_action: orderRef, next_status: "PickedUp" }));
+  await eventually("picked up", () => driver.call("dispatch", "pick_up_order", orderRef));
   if (!reached(DELIVERY_STEPS, order.until, "Delivered")) return orderRef;
   await attestLeg(driver, orderRef, 1, "CustomerHandoff", customer, dropoff);
   await eventually("complete delivery", () => customer.call("dispatch", "complete_delivery", { order_original_action: orderRef }));

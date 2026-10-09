@@ -34,6 +34,11 @@ pub enum DisputeStatus {
 /// `Delivered` or `Cancelled` (see `DeliveryOrder::dispute_ref`'s doc
 /// comment). A dispute raised in error is `FavorProvider { forfeit_amount: 0 }`,
 /// not a revert to some remembered pre-dispute status.
+///
+/// `forfeit_amount` is what the losing side pays the winning one -- except a
+/// delivery ruled for the customer, where the forfeit is the collateral the
+/// driver posted at pickup, which the customer already holds; nothing more
+/// moves (the ledger refuses it).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum DisputeOutcome {
     FavorProvider { forfeit_amount: u64 },

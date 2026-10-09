@@ -76,14 +76,14 @@ mod test_utils {
 
     /// Writes a `PickupOrder` exactly as given, skipping the coordinator's
     /// pricing -- what a modified client could do -- so a test can prove
-    /// validation refuses a mispriced order on its own. Queued and signalled
-    /// like a real order, as such a client would, so the store sees it.
+    /// validation refuses a mispriced order on its own. Queued like a real
+    /// order, as such a client would, so the store sees it (and signalled,
+    /// by `post_commit`).
     #[hdk_extern]
     pub fn create_raw_pickup_order_for_testing(order: PickupOrder) -> ExternResult<Record> {
-        let (catalog_ref, requester, merchant) = (order.catalog_ref.clone(), order.requester.clone(), order.merchant.clone());
+        let (catalog_ref, requester) = (order.catalog_ref.clone(), order.requester.clone());
         let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
         crate::order_queues::enqueue(&action_hash, &catalog_ref, &requester, sys_time()?)?;
-        let _ = send_remote_signal(crate::signals::RemoteSignal::OrderPlaced { order_hash: action_hash.clone() }, vec![merchant]);
         get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back raw order".into())))
     }
     use relay_coordinator_support::resolve_latest_decoded;

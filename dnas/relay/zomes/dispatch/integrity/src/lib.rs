@@ -7,6 +7,7 @@ use attestation_types::{Leg, LegKind, ReceiptAttestation};
 use catalog_types::{BagClaim, BagClaimFulfillment, MerchantCatalog, PromoCode};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
+use ledger_types::{LedgerTransaction, TxnReason};
 use relay_types::GeoPoint;
 
 mod bids;
@@ -33,7 +34,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{delivery_payments, pickup_payments, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
+pub use dispatch_types::{delivery_payments, pickup_payments, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]

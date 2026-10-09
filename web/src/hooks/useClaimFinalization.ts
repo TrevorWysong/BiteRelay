@@ -12,31 +12,17 @@
 // and validation rejects a second redemption outright (see
 // `dispatch_integrity::checks`), so a race between two devices can't
 // double-spend a claim either.
-import { useRef } from "react";
 import { getMyBagClaims, getGoodieBag, getCatalog } from "../holochain/zomes/catalog";
 import { getMyOrderForClaim, requestPickupOrder, requestDelivery } from "../holochain/zomes/dispatch";
 import { decodeEntry, actionHash } from "../holochain/decode";
+import { POLL } from "../lib/poll";
 import { usePolling } from "../lib/useResource";
 import type { BagClaim, GeoPoint, MerchantCatalog, GoodieBag } from "../holochain/types";
 
-const POLL_MS = 5000;
-
 export function useClaimFinalization() {
-  // A tick that starts while the last is still placing orders would see
-  // the same claims as unredeemed; skip it instead.
-  const running = useRef(false);
-  usePolling(
-    async () => {
-      if (running.current) return;
-      running.current = true;
-      try {
-        await finalizeConfirmedClaims();
-      } finally {
-        running.current = false;
-      }
-    },
-    { pollMs: POLL_MS, refreshOn: (signal) => "ClaimConfirmed" in signal },
-  );
+  // `usePolling` runs one tick at a time, so a tick never sees claims the
+  // last one is still turning into orders.
+  usePolling(finalizeConfirmedClaims, { pollMs: POLL.signalled, refreshOn: (signal) => "ClaimConfirmed" in signal, background: true });
 }
 
 async function finalizeConfirmedClaims() {

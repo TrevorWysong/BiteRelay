@@ -14,6 +14,7 @@ relay_types.workspace = true
 dispatch_types.workspace = true
 attestation_types.workspace = true
 dispute_types.workspace = true
+ledger_types.workspace = true
 catalog_types.workspace = true
 relay_governance.workspace = true
 relay_integrity_support.workspace = true
