@@ -8,7 +8,7 @@ import { useMerchantStores, useMyStores } from "../store/merchantStores";
 import { useResource } from "../lib/useResource";
 import { getBalance } from "../holochain/zomes/ledger";
 import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor } from "../holochain/zomes/reputation";
-import { updateProfile, getMyPhone, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
+import { updateProfile, getMyName, getMyPhone, getProviderCredentialForProfile, registerProviderCredential } from "../holochain/zomes/profiles";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
 import { Button, Card, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
 import { PhotoInput } from "../components/PhotoInput";
@@ -34,6 +34,10 @@ export function ProfilePage() {
   const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!));
   // The phone is sealed to its owner, so it's read through the zome.
   const { data: phone = null, reload: reloadPhone } = useResource(agentHex && `phone:${agentHex}`, getMyPhone);
+  const { data: myName = null, reload: reloadName } = useResource(agentHex && `name:${agentHex}`, getMyName);
+  // A store or driver's name is public; a customer's goes only to the
+  // store and driver of each order.
+  const publicFacing = isDriver || isMerchant;
   // Driver-scoped stats -- `null` key (no read at all) unless this
   // identity actually drives.
   const driverKey = agentHex && isDriver ? `driver:${agentHex}` : null;
@@ -54,7 +58,7 @@ export function ProfilePage() {
   );
   const [editing, setEditing] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState(false);
-  const [draft, setDraft] = useState({ bio: "", phone: "", avatar_data_uri: "" });
+  const [draft, setDraft] = useState({ name: "", bio: "", phone: "", avatar_data_uri: "" });
   const [vehicleDraft, setVehicleDraft] = useState({ vehicle_description: "", license_plate: "", photo_data_uri: "" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -69,7 +73,7 @@ export function ProfilePage() {
   // -- not kept in sync by an effect, which would let a background profile
   // refresh overwrite whatever's mid-edit.
   function toggleEditing() {
-    if (!editing && profile) setDraft({ bio: profile.bio, phone: phone ?? "", avatar_data_uri: profile.avatar_data_uri });
+    if (!editing && profile) setDraft({ name: myName ?? profile.display_name, bio: profile.bio, phone: phone ?? "", avatar_data_uri: profile.avatar_data_uri });
     setEditing((v) => !v);
   }
 
@@ -89,9 +93,10 @@ export function ProfilePage() {
     setSaving(true);
     setSaveError(null);
     try {
-      const { display_name, roles, created_at } = profile;
-      await updateProfile(profileActionHash, { display_name, roles, created_at, ...draft });
-      await Promise.all([refreshProfile(), reloadPhone()]);
+      const { roles, created_at } = profile;
+      const { name, ...rest } = draft;
+      await updateProfile(profileActionHash, { display_name: name.trim(), roles, created_at, ...rest });
+      await Promise.all([refreshProfile(), reloadPhone(), reloadName()]);
       setEditing(false);
     } catch (err) {
       setSaveError(describeError(err));
@@ -138,7 +143,7 @@ export function ProfilePage() {
             </div>
           )}
         </motion.div>
-        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{profile?.display_name}</h1>
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{myName ?? profile?.display_name}</h1>
         {isDriver && avgDriverRating !== null && driverRating && (
           <div className="flex items-center gap-1.5 text-xs text-ink-400">
             <Truck size={12} /> <StarRating value={avgDriverRating} count={driverRating.count} />
@@ -164,6 +169,10 @@ export function ProfilePage() {
         <AnimatePresence mode="wait" initial={false}>
         {editing ? (
           <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
+            <Input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Your name" aria-label="Your name" />
+            <p className="-mt-1 text-[11px] text-ink-400">
+              {publicFacing ? "Shown publicly, as your store or driver name." : "Shared only with the store and driver of each of your orders -- nobody else can see it."}
+            </p>
             <Textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
             <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
             {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}

@@ -190,6 +190,7 @@ pub(crate) fn validate_pickup_order_transition(
         && prior.order_total == order.order_total
         && prior.requested_at == order.requested_at
         && prior.kitchen_note == order.kitchen_note
+        && prior.sealed_customer_name == order.sealed_customer_name
         && prior.promo_code_ref == order.promo_code_ref
         && prior.bag_claim_ref == order.bag_claim_ref;
     if !unchanged {

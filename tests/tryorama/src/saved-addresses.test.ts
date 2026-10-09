@@ -101,6 +101,7 @@ await runScenario(async (scenario) => {
     original_action: customerProfileRef,
     updated_profile: { display_name: "Cara C.", roles: ["Requester"], created_at: now, bio: "updated", avatar_data_uri: "", phone: "" },
   });
-  assert.equal(decodeEntry<{ display_name: string }>(ownUpdate).display_name, "Cara C.");
+  assert.ok(ownUpdate, "the owner's update is accepted");
+  assert.equal(await profilesOf(customer)<string | null>("get_my_name", null), "Cara C.", "and their (sealed) name is updated");
   console.log("[PASS] the real owner can still update their own profile after the authorization fix");
 });

@@ -293,6 +293,9 @@ export interface RecurringTemplateView {
 export interface OrderPrivateDetails {
   dropoff: DropoffDetails | null;
   kitchen_note: string | null;
+  /// The customer's name -- for the customer, the store, and the driver
+  /// once assigned.
+  customer_name: string | null;
 }
 
 export async function getOrderPrivateDetails(orderOriginalAction: ActionHash): Promise<OrderPrivateDetails> {

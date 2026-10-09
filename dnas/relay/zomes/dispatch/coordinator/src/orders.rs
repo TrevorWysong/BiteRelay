@@ -78,6 +78,15 @@ fn publish_to_open_anchor_and_notify(order_ref: &ActionHash, opened: &ActionHash
     Ok(())
 }
 
+/// The caller's own name, from their profile (where it's sealed to them);
+/// empty if they haven't given one.
+pub(crate) fn my_name() -> ExternResult<String> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "profiles", "get_my_name".into(), None, ())? else {
+        return Err(wasm_error!(WasmErrorInner::Guest("reading your name failed".into())));
+    };
+    Ok(io.decode::<Option<String>>().map_err(|e| wasm_error!(e))?.unwrap_or_default())
+}
+
 /// A note sealed to `recipient`, or `None` if there's nothing to say.
 pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Option<XSalsa20Poly1305EncryptedData>> {
     let note = note.trim();
@@ -94,6 +103,9 @@ pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Opt
 pub struct OrderPrivateDetails {
     pub dropoff: Option<DropoffDetails>,
     pub kitchen_note: Option<String>,
+    /// The customer's name -- for the customer, the store, and the driver
+    /// once assigned.
+    pub customer_name: Option<String>,
 }
 
 #[hdk_extern]
@@ -101,7 +113,7 @@ pub fn get_order_private_details(order_original_action: ActionHash) -> ExternRes
     let me = agent_info()?.agent_initial_pubkey;
     let record = resolve_latest(order_original_action)?;
     if let Some(order) = decode_or::<DeliveryOrder>(&record) {
-        let dropoff = if me == order.requester {
+        let dropoff: Option<DropoffDetails> = if me == order.requester {
             open(&me, &order.sealed_dropoff)?
         } else {
             match &order.driver_dropoff {
@@ -110,17 +122,27 @@ pub fn get_order_private_details(order_original_action: ActionHash) -> ExternRes
                 None => None,
             }
         };
-        return Ok(OrderPrivateDetails { dropoff, kitchen_note: open_kitchen_note(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())? });
+        // The store has its own copy; a driver has the one in their drop-off.
+        let customer_name = match open_for_parties(&me, &order.requester, &order.merchant, order.sealed_customer_name.as_ref())? {
+            Some(name) => Some(name),
+            None => dropoff.as_ref().map(|d| d.recipient.clone()).filter(|name| !name.is_empty()),
+        };
+        let kitchen_note = open_for_parties(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())?;
+        return Ok(OrderPrivateDetails { dropoff, kitchen_note, customer_name });
     }
     if let Some(order) = decode_or::<PickupOrder>(&record) {
-        return Ok(OrderPrivateDetails { dropoff: None, kitchen_note: open_kitchen_note(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())? });
+        return Ok(OrderPrivateDetails {
+            dropoff: None,
+            kitchen_note: open_for_parties(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())?,
+            customer_name: open_for_parties(&me, &order.requester, &order.merchant, order.sealed_customer_name.as_ref())?,
+        });
     }
     Ok(OrderPrivateDetails::default())
 }
 
-/// The kitchen note is sealed between the customer and the store; each
-/// opens it with the other as counterpart.
-fn open_kitchen_note(me: &AgentPubKey, requester: &AgentPubKey, merchant: &AgentPubKey, sealed: Option<&XSalsa20Poly1305EncryptedData>) -> ExternResult<Option<String>> {
+/// Something sealed between the customer and the store (the kitchen note,
+/// the customer's name); each opens it with the other as counterpart.
+fn open_for_parties(me: &AgentPubKey, requester: &AgentPubKey, merchant: &AgentPubKey, sealed: Option<&XSalsa20Poly1305EncryptedData>) -> ExternResult<Option<String>> {
     let Some(sealed) = sealed else { return Ok(None) };
     let counterpart = if me == requester { merchant } else if me == merchant { requester } else { return Ok(None) };
     open(counterpart, sealed)
@@ -204,6 +226,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         }
     }
 
+    let customer_name = my_name()?;
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: merchant.clone(),
@@ -211,9 +234,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         lines: priced.lines,
         order_total: priced.order_total,
         dropoff_geohash: dropoff_geohash.clone(),
-        sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes })?,
+        sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes, recipient: customer_name.clone() })?,
         driver_dropoff: None,
         kitchen_note: seal_note(&merchant, &input.kitchen_notes)?,
+        sealed_customer_name: seal_note(&merchant, &customer_name)?,
         max_delivery_fee: input.max_delivery_fee,
         status,
         accepted_bid: None,

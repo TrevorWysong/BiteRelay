@@ -10,6 +10,9 @@ use relay_coordinator_support::{open, resolve_latest, resolve_links_to_records_w
 /// sealed before it's stored (`Profile::sealed_phone`).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProfileInput {
+    /// The person's name. Always kept sealed to themselves; published as
+    /// the profile's `display_name` only for a store or a driver (see
+    /// `Profile::display_name`).
     pub display_name: String,
     pub roles: Vec<RoleTag>,
     pub created_at: Timestamp,
@@ -25,14 +28,20 @@ impl ProfileInput {
     fn into_profile(self) -> ExternResult<Profile> {
         let me = agent_info()?.agent_initial_pubkey;
         let phone = self.phone.trim();
-        Ok(Profile {
+        let name = self.display_name.trim().to_string();
+        let mut profile = Profile {
             sealed_phone: if phone.is_empty() { None } else { Some(seal(&me, &phone.to_string())?) },
-            display_name: self.display_name,
+            sealed_name: if name.is_empty() { None } else { Some(seal(&me, &name)?) },
+            display_name: String::new(),
             roles: self.roles,
             created_at: self.created_at,
             bio: self.bio,
             avatar_data_uri: self.avatar_data_uri,
-        })
+        };
+        if profile.is_public() {
+            profile.display_name = name;
+        }
+        Ok(profile)
     }
 }
 
@@ -75,6 +84,19 @@ pub fn update_profile(input: UpdateProfileInput) -> ExternResult<Record> {
 pub struct UpdateProfileInput {
     pub original_action: ActionHash,
     pub updated_profile: ProfileInput,
+}
+
+/// The caller's own name, opened from their profile -- falling back to its
+/// public name for a profile written before names were sealed.
+#[hdk_extern]
+pub fn get_my_name(_: ()) -> ExternResult<Option<String>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let Some(record) = get_profile_for_agent(me.clone())? else { return Ok(None) };
+    let Some(profile) = record.entry().to_app_option::<Profile>().map_err(|e| wasm_error!(e))? else { return Ok(None) };
+    match profile.sealed_name {
+        Some(sealed) => open(&me, &sealed),
+        None => Ok(Some(profile.display_name).filter(|name| !name.is_empty())),
+    }
 }
 
 /// The caller's own phone number, opened from their profile.

@@ -8,7 +8,7 @@
 
 use crate::upkeep;
 use crate::stores::{closed_reason, current_catalog, ready_by};
-use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
+use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, my_name, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement::{self, Payer};
 use crate::signals::RemoteSignal;
@@ -59,6 +59,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     }
 
     let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
+    let sealed_customer_name = seal_note(&input.merchant, &my_name()?)?;
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -69,6 +70,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         dispute_ref: None,
         requested_at,
         kitchen_note,
+        sealed_customer_name,
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,

@@ -208,8 +208,13 @@ export function Onboarding() {
                   <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
                 </div>
 
-                <Field label="Display name" className="mb-4">
+                <Field label="Your name" className="mb-4">
                   <Input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
+                  <p className="mt-1 text-[11px] text-ink-400">
+                    {roles.some((r) => r !== "Requester")
+                      ? "Shown publicly, as your store or driver name."
+                      : "Shared only with the store and driver of each of your orders -- nobody else can see it."}
+                  </p>
                 </Field>
                 <Field label="Bio (optional)" className="mb-4">
                   <Textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />

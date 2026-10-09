@@ -203,6 +203,11 @@ export interface DeliveryOrder {
    * there isn't one.
    */
   kitchen_note: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * The customer's name, sealed to the store -- see `Profile::display_name`
+   * for why a customer publishes none.
+   */
+  sealed_customer_name: XSalsa20Poly1305EncryptedData | null;
   max_delivery_fee: number | null;
   status: DeliveryStatus;
   accepted_bid: ActionHash | null;
@@ -452,6 +457,10 @@ export interface DropoffDetails {
    * Drop-off instructions for the driver ("gate code 1234").
    */
   notes: string;
+  /**
+   * Who it's for, so the driver can hand it over -- the customer's name.
+   */
+  recipient: string;
 }
 
 /**
@@ -796,6 +805,10 @@ export interface PickupOrder {
    */
   kitchen_note: XSalsa20Poly1305EncryptedData | null;
   /**
+   * The customer's name, sealed to the store.
+   */
+  sealed_customer_name: XSalsa20Poly1305EncryptedData | null;
+  /**
    * Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
    */
   promo_code_ref: ActionHash | null;
@@ -846,6 +859,13 @@ export interface PresenceBeacon {
 }
 
 export interface Profile {
+  /**
+   * The name everyone sees -- published only for the roles that face the
+   * public: a store and a driver. A customer publishes none: their name
+   * is `sealed_name`, shared only with the store and driver of each of
+   * their orders (sealed into the order), so nobody else can put a name
+   * to the key their orders carry.
+   */
   display_name: string;
   roles: RoleTag[];
   created_at: Timestamp;
@@ -870,6 +890,10 @@ export interface Profile {
    * public, a phone number isn't.
    */
   sealed_phone: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * The person's name, sealed to themselves.
+   */
+  sealed_name: XSalsa20Poly1305EncryptedData | null;
 }
 
 /**

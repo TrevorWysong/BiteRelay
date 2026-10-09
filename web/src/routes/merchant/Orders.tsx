@@ -368,15 +368,21 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
         {count} item{count === 1 ? "" : "s"}
         {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · ready by {formatClockTime(order.ready_by)}</span>}
       </p>
-      {order.kitchen_note && <KitchenNote orderHex={row.hex} orderRef={row.ref} />}
+      {(order.kitchen_note || order.sealed_customer_name) && <ForTheStore orderHex={row.hex} orderRef={row.ref} />}
       {children}
     </Card>
   );
 }
 
-/// The customer's note for the kitchen -- sealed to the store, opened by
-/// the zome. Read once per order: it never changes.
-function KitchenNote({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
-  const { data: note } = useResource(`kitchen-note:${orderHex}`, async () => (await getOrderPrivateDetails(orderRef)).kitchen_note);
-  return note ? <p className="mt-1 text-xs italic text-ink-500">"{note}"</p> : null;
+/// Who the order's for and their note for the kitchen -- both sealed to
+/// the store, opened by the zome. Read once per order: they never change.
+function ForTheStore({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+  const { data } = useResource(`for-the-store:${orderHex}`, () => getOrderPrivateDetails(orderRef));
+  if (!data) return null;
+  return (
+    <>
+      {data.customer_name && <p className="mt-1 text-xs font-semibold text-ink-700 dark:text-ink-200">For {data.customer_name}</p>}
+      {data.kitchen_note && <p className="mt-1 text-xs italic text-ink-500">"{data.kitchen_note}"</p>}
+    </>
+  );
 }

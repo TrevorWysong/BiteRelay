@@ -194,6 +194,9 @@ pub struct DropoffDetails {
     pub point: GeoPoint,
     /// Drop-off instructions for the driver ("gate code 1234").
     pub notes: String,
+    /// Who it's for, so the driver can hand it over -- the customer's name.
+    #[serde(default)]
+    pub recipient: String,
 }
 
 /// One line of an order: an item, the exact version of it that was priced
@@ -240,6 +243,10 @@ pub struct DeliveryOrder {
     /// The customer's note for the kitchen, sealed to the store. `None` when
     /// there isn't one.
     pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,
+    /// The customer's name, sealed to the store -- see `Profile::display_name`
+    /// for why a customer publishes none.
+    #[serde(default)]
+    pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
     pub max_delivery_fee: Option<u64>,
     pub status: DeliveryStatus,
     pub accepted_bid: Option<ActionHash>,
@@ -440,6 +447,9 @@ pub struct PickupOrder {
     pub requested_at: Timestamp,
     /// The customer's note for the kitchen, sealed to the store.
     pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,
+    /// The customer's name, sealed to the store.
+    #[serde(default)]
+    pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
     /// Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
