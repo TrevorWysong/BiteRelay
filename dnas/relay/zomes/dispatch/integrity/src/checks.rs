@@ -9,7 +9,7 @@
 //! coordinator pre-checks (`request_delivery`/`request_pickup_order`).
 
 use super::*;
-use catalog_types::{order_total, GoodieBag, MenuItem, PricedLine};
+use catalog_types::{order_total, BagClaimStatus, GoodieBag, MenuItem, PricedLine};
 use relay_integrity_support::{decode, original_creation};
 use std::collections::BTreeSet;
 
@@ -163,19 +163,26 @@ pub(crate) enum ClaimedFor {
     Delivery,
 }
 
-/// The claim must be this customer's own, claimed for this kind of order,
-/// and not already redeemed by an earlier order.
+/// The order must cite the store's confirmation of the claim (validation
+/// reads the record it cites literally, so citing the claim as first made
+/// would prove nothing); the claim must be this customer's own, claimed for
+/// this kind of order, and not already redeemed by an earlier order.
 ///
 /// Single use is checkable deterministically because both the claim and
 /// every order redeeming it live on the customer's own source chain: walk
 /// back from just before this order to the claim (usually a handful of
 /// actions, since finalization follows confirmation), and reject if any
-/// order in between already names the same claim. Skipping that walk would
-/// need a forked chain, which Holochain detects and warrants.
+/// order in between already redeems the same claim -- compared by the
+/// claim's identity, so citing a different version of it doesn't count as
+/// a different claim. Skipping that walk would need a forked chain, which
+/// Holochain detects and warrants.
 pub(crate) fn check_bag_claim(claim_ref: &ActionHash, requester: &AgentPubKey, claimed_for: ClaimedFor, prev_action: Option<&ActionHash>) -> ExternResult<Option<String>> {
     let Some(claim) = decode::<BagClaim>(&must_get_valid_record(claim_ref.clone())?) else {
         return Ok(Some("bag_claim_ref does not point at a BagClaim entry".into()));
     };
+    if claim.status != BagClaimStatus::Confirmed {
+        return Ok(Some("bag_claim_ref must be the store's confirmation of the claim".into()));
+    }
     if &claim.customer != requester {
         return Ok(Some("bag_claim_ref's own customer must match this order's requester".into()));
     }
@@ -189,17 +196,19 @@ pub(crate) fn check_bag_claim(claim_ref: &ActionHash, requester: &AgentPubKey, c
     let Some(prev_action) = prev_action else {
         return Ok(Some("an order redeeming a claim can't be the first action on a chain".into()));
     };
-    if already_redeemed(requester, prev_action, claim_ref)? {
+    let claim_origin = original_creation(claim_ref.clone())?;
+    if already_redeemed(requester, prev_action, &claim_origin)? {
         return Ok(Some("this goodie bag claim has already been redeemed".into()));
     }
     Ok(None)
 }
 
-/// Whether any order between `claim_ref` and `chain_top` (inclusive) on
-/// `requester`'s chain already redeems `claim_ref`.
-fn already_redeemed(requester: &AgentPubKey, chain_top: &ActionHash, claim_ref: &ActionHash) -> ExternResult<bool> {
+/// Whether any order between the claim (`claim_origin`, its creation on
+/// the customer's chain) and `chain_top` (inclusive) on `requester`'s chain
+/// already redeems it, citing any version of it.
+fn already_redeemed(requester: &AgentPubKey, chain_top: &ActionHash, claim_origin: &ActionHash) -> ExternResult<bool> {
     let order_types: [ScopedEntryDefIndex; 2] = [UnitEntryTypes::DeliveryOrder.try_into()?, UnitEntryTypes::PickupOrder.try_into()?];
-    let activity = must_get_agent_activity(requester.clone(), ChainFilter::until_hash(chain_top.clone(), claim_ref.clone()))?;
+    let activity = must_get_agent_activity(requester.clone(), ChainFilter::until_hash(chain_top.clone(), claim_origin.clone()))?;
     for item in activity {
         let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
         let EntryType::App(def) = &create.entry_type else { continue };
@@ -211,12 +220,15 @@ fn already_redeemed(requester: &AgentPubKey, chain_top: &ActionHash, claim_ref: 
             None => must_get_entry(create.entry_hash.clone())?.content,
         };
         let Entry::App(bytes) = entry else { continue };
-        let redeems = |sb: SerializedBytes| -> bool {
-            DeliveryOrder::try_from(sb.clone()).map(|o| o.bag_claim_ref.as_ref() == Some(claim_ref)).unwrap_or(false)
-                || PickupOrder::try_from(sb).map(|o| o.bag_claim_ref.as_ref() == Some(claim_ref)).unwrap_or(false)
-        };
-        if redeems(SerializedBytes::from(bytes)) {
-            return Ok(true);
+        let bytes = SerializedBytes::from(bytes);
+        let cited = DeliveryOrder::try_from(bytes.clone())
+            .ok()
+            .and_then(|o| o.bag_claim_ref)
+            .or_else(|| PickupOrder::try_from(bytes).ok().and_then(|o| o.bag_claim_ref));
+        if let Some(cited) = cited {
+            if &original_creation(cited)? == claim_origin {
+                return Ok(true);
+            }
         }
     }
     Ok(false)

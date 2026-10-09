@@ -8,7 +8,7 @@
 use dispatch_integrity::*;
 use hdi::hash_path::path::Component;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{original_action_of, resolve_latest};
 use std::cmp::Reverse;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,16 +296,20 @@ pub(crate) fn my_completions_at(catalog_ref: &ActionHash) -> ExternResult<Vec<Ac
 /// order is created by its requester, so this is a local chain read.
 #[hdk_extern]
 pub fn get_my_order_for_claim(claim_ref: ActionHash) -> ExternResult<Option<ActionHash>> {
+    // Compared by the claim's identity: an order may cite any version of it.
+    let claim_origin = original_action_of(claim_ref)?;
     for (kind, record) in my_order_actions()? {
         if !matches!(record.action().data, ActionData::Create(_)) {
             continue;
         }
-        let claim = match kind {
+        let cited = match kind {
             OrderKind::Delivery => record.entry().to_app_option::<DeliveryOrder>().ok().flatten().and_then(|o| o.bag_claim_ref),
             OrderKind::Pickup => record.entry().to_app_option::<PickupOrder>().ok().flatten().and_then(|o| o.bag_claim_ref),
         };
-        if claim.as_ref() == Some(&claim_ref) {
-            return Ok(Some(record.action_address().clone()));
+        if let Some(cited) = cited {
+            if original_action_of(cited)? == claim_origin {
+                return Ok(Some(record.action_address().clone()));
+            }
         }
     }
     Ok(None)

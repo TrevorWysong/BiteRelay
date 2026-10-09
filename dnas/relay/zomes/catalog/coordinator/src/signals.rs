@@ -39,6 +39,11 @@ pub enum RemoteSignal {
 #[hdk_extern]
 pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
     match payload {
-        RemoteSignal::ClaimConfirmed { claim_hash } => emit_signal(LocalSignal::ClaimConfirmed(claim_hash)),
+        // The customer's conductor places the order that redeems it
+        // (`dispatch::claims`) -- woken now rather than at the next sweep.
+        RemoteSignal::ClaimConfirmed { claim_hash } => {
+            let _ = call(CallTargetCell::Local, "dispatch", "schedule_order_upkeep".into(), None, ());
+            emit_signal(LocalSignal::ClaimConfirmed(claim_hash))
+        }
     }
 }

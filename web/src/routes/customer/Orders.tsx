@@ -174,8 +174,8 @@ function ReorderButton({ row }: { row: OrderRow }) {
 }
 
 /// Claims the merchant hasn't confirmed yet. Once confirmed, a claim is
-/// turned into a real order automatically (see useClaimFinalization) and
-/// shows up as an order instead.
+/// turned into a real order by the customer's conductor (`dispatch::claims`)
+/// and shows up as an order instead.
 function PendingClaims() {
   const { data: claims } = useResource(
     "customer-pending-claims",

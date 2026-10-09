@@ -29,6 +29,7 @@
 
 mod bids;
 mod chat;
+mod claims;
 mod disputes;
 mod matching;
 mod order_queues;

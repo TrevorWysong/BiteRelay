@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -14,6 +14,8 @@ await runScenario(async (scenario) => {
   const [merchant, customer] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
   const all = [merchant, customer];
   await scenario.shareAllAgents();
+  // The customer can write what a modified client could.
+  await useTestCoordinators(customer, ["dispatch"]);
   const sync = () => dhtSync(all, merchant.cells[0].cell_id[0]);
   const call = (p: typeof merchant, zome: string) => getZomeCaller(p.cells[0], zome);
 
@@ -45,16 +47,30 @@ await runScenario(async (scenario) => {
   // --- A confirmed claim redeems exactly one order. ---
   const claim = actionHash(await call(customer, "catalog")<HcRecord>("claim_goodie_bag", { bag_ref: bag, fulfillment: "Pickup" }));
   await sync();
-  await call(merchant, "catalog")("confirm_claim", claim);
+  const confirmed = actionHash(await call(merchant, "catalog")<HcRecord>("confirm_claim", claim));
   await sync();
-  const redeem = () =>
-    call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: bag, quantity: 1 }], order_total: 500, bag_claim_ref: claim });
-  const firstRedemption = actionHash(await redeem());
-  assert.ok(firstRedemption);
-  const found = await call(customer, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim);
-  assert.ok(found && Buffer.from(found).equals(Buffer.from(firstRedemption)), "get_my_order_for_claim should find the order redeeming the claim");
-  await assert.rejects(redeem(), /already been redeemed/, "a second order on the same claim must be rejected by validation");
-  console.log("[PASS] a goodie-bag claim pays for exactly one order");
+  // The customer's conductor redeems it by itself...
+  const found = await retryUntil(() => call(customer, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim).catch(() => null), (order) => order !== null, 60, 1000);
+  assert.ok(found, "get_my_order_for_claim should find the order redeeming the claim");
+  // ...and validation refuses another, however the claim is cited.
+  const redeemCiting = (cited: Uint8Array) =>
+    call(customer, "dispatch")<HcRecord>("create_raw_pickup_order_for_testing", {
+      requester: customer.agentPubKey,
+      merchant: merchant.agentPubKey,
+      catalog_ref: storeA,
+      lines: [{ item_ref: bag, priced_version: bag, quantity: 1 }],
+      order_total: 500,
+      status: "Placed",
+      dispute_ref: null,
+      requested_at: Date.now() * 1000,
+      kitchen_note: null,
+      promo_code_ref: null,
+      bag_claim_ref: cited,
+      loyalty_proof: [],
+    });
+  await assert.rejects(redeemCiting(confirmed), /already been redeemed/, "a second order on the same claim must be rejected by validation");
+  await assert.rejects(redeemCiting(claim), /must be the store's confirmation of the claim/, "citing the claim as first made proves nothing");
+  console.log("[PASS] a goodie-bag claim pays for exactly one order, however a client cites it");
 
   // --- Pickup orders validate their promo code, like deliveries do. ---
   const promoAt = async (store: Uint8Array, code: string, expiresAt: number | null) =>
