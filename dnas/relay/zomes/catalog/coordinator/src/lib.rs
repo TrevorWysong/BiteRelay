@@ -137,6 +137,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         max_delivery_radius_km: input.max_delivery_radius_km,
         dietary_tags: Vec::new(),
         auto_accept_orders: false,
+        pin_policy: PinPolicy::default(),
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -181,6 +182,23 @@ pub struct SetAutoAcceptOrdersInput {
 pub fn set_auto_accept_orders(input: SetAutoAcceptOrdersInput) -> ExternResult<Record> {
     let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.auto_accept_orders = input.auto_accept_orders;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetPinPolicyInput {
+    pub original_action: ActionHash,
+    pub pin_policy: PinPolicy,
+}
+
+/// When the store's deliveries must be handed over against the customer's
+/// PIN -- see `MerchantCatalog::pin_policy`.
+#[hdk_extern]
+pub fn set_pin_policy(input: SetPinPolicyInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.pin_policy = input.pin_policy;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))

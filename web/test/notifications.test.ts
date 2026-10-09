@@ -29,3 +29,11 @@ test("steps nobody needs telling about stay quiet", () => {
   const change = { Pickup: { status: "ReadyForPickup" as const, cancellation: null } };
   assert.equal(notificationFor({ OrderUpdated: { order_hash: order, change, role: "Store" } }), null);
 });
+
+test("a recorded drop-off asks the customer to confirm it", () => {
+  const order = new Uint8Array([7, 7, 7]);
+  const n = notificationFor({ HandoffRecorded: order });
+  assert.equal(n?.title, "Your order was delivered");
+  assert.equal(n?.route, "/customer/orders/070707");
+  assert.equal(n?.urgent, true);
+});

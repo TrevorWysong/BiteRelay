@@ -8,13 +8,17 @@ import { usePolling } from "../../lib/useResource";
 import { Gavel } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listOpenDisputes, submitResolution } from "../../holochain/zomes/dispute";
-import { getOrder, applyDisputeResolution, applyCancellationDisputeResolution } from "../../holochain/zomes/dispatch";
+import { getOrder, applyDisputeResolution, applyCancellationDisputeResolution, checkDeliveryPin } from "../../holochain/zomes/dispatch";
+import { getLegsForOrder, getSharedEvidence } from "../../holochain/zomes/attestation";
+import { CustomerHistory } from "../../components/CustomerHistory";
+import { useResource } from "../../lib/useResource";
+import { distanceKm, geohashCenter } from "../../lib/geohash";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { Button, Card, Skeleton, EmptyState, Badge, StatNumber, Textarea } from "../../components/ui";
 import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import type { Dispute, DeliveryOrder } from "../../holochain/types";
+import type { Dispute, DeliveryOrder, Leg, PinVerdict } from "../../holochain/types";
 import { POLL } from "../../lib/poll";
 
 interface CaseRow {
@@ -138,6 +142,7 @@ function CaseCard({
         </p>
       )}
       <p className="text-sm text-ink-600 dark:text-ink-300">{dispute.description}</p>
+      {order && <CaseEvidence orderRef={dispute.order_ref} order={order} />}
       <p className="text-xs text-ink-400">
         Raised by {shortAgentId(dispute.raised_by)} against {shortAgentId(dispute.respondent)}
         {dispute.evidence_refs.length > 0 && ` · ${dispute.evidence_refs.length} evidence item${dispute.evidence_refs.length === 1 ? "" : "s"}`}
@@ -167,5 +172,42 @@ function CaseCard({
         </div>
       )}
     </Card>
+  );
+}
+
+const PIN_VERDICT: Record<PinVerdict, { text: string; tone: "success" | "danger" | "warn" | "neutral" }> = {
+  Matches: { text: "The driver collected the customer's PIN: they were there.", tone: "success" },
+  CustomerTampered: { text: "The customer's sealed PIN doesn't match their own commitment: they tampered with it.", tone: "success" },
+  Mismatch: { text: "The PIN the driver recorded isn't the customer's.", tone: "danger" },
+  NotCollected: { text: "No PIN was collected at the door.", tone: "neutral" },
+};
+
+/// What an arbitrator has to go on for a delivery: the PIN check, the
+/// driver's evidence (if a party shared it), and the customer's record.
+function CaseEvidence({ orderRef, order }: { orderRef: Uint8Array; order: DeliveryOrder }) {
+  const hex = bytesToHex(orderRef);
+  const { data: verdict } = useResource(`pin-verdict:${hex}`, () => checkDeliveryPin(orderRef).catch(() => null));
+  const { data: evidence } = useResource(`shared-evidence:${hex}`, async () => {
+    const dropoff = (await getLegsForOrder(orderRef)).find((r) => decodeEntry<Leg>(r).kind === "CustomerHandoff");
+    return dropoff ? getSharedEvidence(actionHash(dropoff)) : null;
+  });
+  const pin = verdict ? PIN_VERDICT[verdict] : null;
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-ink-100 p-3 dark:border-ink-800">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-ink-400">Evidence</p>
+      {pin && <Badge tone={pin.tone}>{pin.text}</Badge>}
+      {evidence ? (
+        <>
+          {evidence.photo_data_uri && <img src={evidence.photo_data_uri} alt="The driver's photo at the drop-off" className="max-h-56 w-full rounded-lg object-cover" />}
+          <p className="text-xs text-ink-400">
+            Recorded {evidence.geo.lat.toFixed(5)}, {evidence.geo.lon.toFixed(5)}
+            {order.dropoff_geohash && ` (${distanceKm(evidence.geo, geohashCenter(order.dropoff_geohash)).toFixed(1)} km from the drop-off area)`}
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-ink-400">Neither party has shared the drop-off's photo or location.</p>
+      )}
+      <CustomerHistory customer={order.requester} />
+    </div>
   );
 }

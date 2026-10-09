@@ -6,6 +6,7 @@
 //! `validate` into the same wasm binary fails to link.
 
 use hdi::prelude::*;
+pub use dispute_types::{ArbitratorSeal, PinSecret};
 use relay_types::GeoPoint;
 
 mod settlement;
@@ -338,7 +339,22 @@ pub struct DeliveryOrder {
     /// The driver's collateral hold (`HoldPurpose::Collateral`), cited by
     /// their update that picks the order up.
     #[serde(default)]
-    pub collateral_hold: Option<ActionHash>,
+    pub collateral_hold: Option<ActionHash>,    /// The delivery PIN's commitment, `sha256(pin || salt)` -- 32 bytes, or
+    /// empty for none. Public, and useless without the salt (see
+    /// `dispute_types::PinSecret`).
+    #[serde(default)]
+    pub pin_commitment: Vec<u8>,
+    /// The PIN and salt, sealed to the customer -- what their app shows.
+    #[serde(default)]
+    pub sealed_pin: Option<XSalsa20Poly1305EncryptedData>,
+    /// The PIN and salt, sealed to each arbitrator on the roster, to check
+    /// a driver's word against in a dispute.
+    #[serde(default)]
+    pub pin_for_arbitrators: Vec<ArbitratorSeal>,
+    /// Whether the driver must collect the PIN at the door -- set by the
+    /// store when it accepts the order (its `PinPolicy`), never changed.
+    #[serde(default)]
+    pub pin_required: bool,
 }
 
 #[hdk_entry_helper]

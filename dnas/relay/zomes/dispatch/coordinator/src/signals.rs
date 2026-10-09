@@ -38,6 +38,9 @@ pub fn init() -> ExternResult<InitCallbackResult> {
     // Each party collects what it's owed from its own conductor -- see
     // `settlement::settle_periodically`.
     schedule("settle_periodically")?;
+    // Unconfirmed deliveries, and the disputes an arbitrator can rule on
+    // its own -- see `arbitration`.
+    schedule("review_disputes_periodically")?;
     // Tending a customer's waiting orders and answering a store's new ones
     // -- see `upkeep`.
     schedule("tend_orders_periodically")?;
@@ -80,6 +83,9 @@ pub enum LocalSignal {
     LocationUpdate { order_ref: ActionHash, lat: f64, lon: f64, sent_at: Timestamp },
     /// See `pickup::mark_ready_for_pickup` -- merchant -> requester only.
     PickupReady(ActionHash),
+    /// The driver says this order reached the customer: confirm it, or
+    /// report a problem, within the window.
+    HandoffRecorded(ActionHash),
 }
 
 /// The longest chat message, in characters.
@@ -108,6 +114,9 @@ pub enum RemoteSignal {
     /// From a party who's given back part of an order's held money, to the
     /// party who paid it: there's something to collect (see `settlement`).
     Returned { order_hash: ActionHash },
+    /// From the driver to the customer: they've recorded handing the order
+    /// over.
+    HandoffRecorded { order_hash: ActionHash },
 }
 
 /// An order's parties and what it is now, from one version of it.
@@ -237,6 +246,13 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             // Settling reads every hold and checks every decision.
             schedule("settle_soon")
         }
+        RemoteSignal::HandoffRecorded { order_hash } => {
+            // Carries a message for the customer, so it must check out.
+            match current_state(&order_hash) {
+                Some(order) if order.requester == me && order.driver.as_ref() == Some(&sender) => emit_signal(LocalSignal::HandoffRecorded(order_hash)),
+                _ => Ok(()),
+            }
+        }
         RemoteSignal::PickupReady { order_hash } => {
             if current_state(&order_hash).is_some_and(|order| order.requester != me || order.merchant != sender) {
                 return Ok(());
@@ -293,4 +309,15 @@ fn announce_order_change(action: &SignedActionHashed) -> ExternResult<()> {
         send_remote_signal(signal, vec![party])?;
     }
     Ok(())
+}
+
+/// Tells an order's customer its driver has recorded handing it over --
+/// called by `attestation::record_leg`, on the driver's conductor.
+#[hdk_extern]
+pub fn notify_handoff(order_hash: ActionHash) -> ExternResult<()> {
+    let Some(order) = current_state(&order_hash) else { return Ok(()) };
+    if order.driver.as_ref() != Some(&agent_info()?.agent_initial_pubkey) {
+        return Ok(());
+    }
+    send_remote_signal(RemoteSignal::HandoffRecorded { order_hash }, vec![order.requester])
 }

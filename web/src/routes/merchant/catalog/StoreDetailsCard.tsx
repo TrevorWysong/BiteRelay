@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, updateCatalogDetails } from "../../../holochain/zomes/catalog";
+import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, setPinPolicy, updateCatalogDetails } from "../../../holochain/zomes/catalog";
 import { formatCatalogAddress } from "../../../lib/format";
-import { Button, Card, Field, Input, Switch, Textarea } from "../../../components/ui";
+import { Button, Card, Field, Input, SegmentedTabs, Switch, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import { SplitAddressFields } from "../../../components/SplitAddressFields";
-import type { MerchantCatalog } from "../../../holochain/types";
+import type { MerchantCatalog, PinPolicy } from "../../../holochain/types";
 
 /// The storefront's details: a read-only summary, or the editor.
 export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; startEditing: boolean; onSaved: () => Promise<void> }) {
@@ -164,6 +164,39 @@ export function AutoAcceptCard({ catalog, catalogRef, onSaved }: { catalog: Merc
         </p>
       </div>
       <Switch checked={catalog.auto_accept_orders} onChange={toggle} disabled={saving} label="Accept orders automatically" />
+    </Card>
+  );
+}
+
+const PIN_POLICIES: readonly { value: PinPolicy; label: string }[] = [
+  { value: "Off", label: "Never" },
+  { value: "CustomersWithHistory", label: "After a dispute" },
+  { value: "Always", label: "Always" },
+];
+
+/// When drivers must collect the customer's delivery PIN at the door --
+/// the store's proof the food arrived, if a customer later says it didn't.
+export function PinPolicyCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  async function choose(policy: PinPolicy) {
+    if (policy === catalog.pin_policy || saving) return;
+    setSaving(true);
+    try {
+      await setPinPolicy(catalogRef, policy);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Require the customer's PIN</p>
+      <p className="mb-3 text-xs text-ink-400">
+        A driver who collects the customer's PIN at the door has proof the order arrived. Without it, a "never arrived" claim is
+        answered only by the driver's photo, like a parcel left without a signature. "After a dispute" asks only customers who've
+        lost one before.
+      </p>
+      <SegmentedTabs tabs={PIN_POLICIES} value={catalog.pin_policy} onChange={choose} />
     </Card>
   );
 }

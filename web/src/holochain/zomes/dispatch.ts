@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, PinVerdict, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -369,4 +369,20 @@ export async function raisePickupDispute(input: {
 
 export async function applyPickupDisputeResolution(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "apply_pickup_dispute_resolution", { order_original_action: orderOriginalAction });
+}
+
+/// The caller's delivery PIN, to show the driver at the door.
+export async function getMyDeliveryPin(orderRef: ActionHash): Promise<string | null> {
+  return callZome("dispatch", "get_my_delivery_pin", orderRef);
+}
+
+/// How long a customer has to confirm a delivery once the driver records
+/// it, in seconds: [without the PIN collected, with it].
+export async function getConfirmWindows(): Promise<[number, number]> {
+  return callZome("dispatch", "get_confirm_windows", null);
+}
+
+/// The caller's (an arbitrator's) check of a delivery's PIN.
+export async function checkDeliveryPin(orderRef: ActionHash): Promise<PinVerdict> {
+  return callZome("dispatch", "check_delivery_pin", orderRef);
 }

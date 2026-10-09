@@ -33,6 +33,11 @@ export function shortAgentId(agent: Uint8Array): string {
 }
 
 /// A Holochain timestamp (microseconds) as a time of day: "6:42 PM".
+/// A deadline that may be a day off, with its weekday: "Fri 6:42 PM".
+export function formatDeadline(microseconds: number): string {
+  return new Date(microseconds / 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+
 export function formatClockTime(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

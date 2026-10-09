@@ -4,7 +4,7 @@
 
 use attestation_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{open, original_action_of, resolve_latest, seal};
+use relay_coordinator_support::{open, open_my_seal, original_action_of, resolve_latest, seal, seal_to_arbitrators};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -21,6 +21,11 @@ pub struct RecordLegInput {
     /// A photo at the door, inline; empty for none.
     #[serde(default)]
     pub photo_data_uri: String,
+    /// The PIN the customer gave at the door, if the driver asked -- which
+    /// they must when the order's store requires it. Sealed to the
+    /// arbitrators; nobody else ever sees it.
+    #[serde(default)]
+    pub pin: Option<String>,
 }
 
 /// The driver recording a handoff as it happens. The other party
@@ -39,6 +44,14 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
     }
     let evidence = HandoffEvidence { geo: input.geo_at_completion, photo_data_uri: input.photo_data_uri };
     let sealed_evidence = seal(&input.to, &evidence)?;
+    let pin = input.pin.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    if pin.as_ref().is_some_and(|p| p.len() != 6 || !p.bytes().all(|b| b.is_ascii_digit())) {
+        return Err(guest("a delivery PIN is 6 digits"));
+    }
+    let sealed_pin_for_arbitrators = match &pin {
+        Some(pin) => seal_to_arbitrators(&relay_governance::arbitrator_roster(), pin)?,
+        None => Vec::new(),
+    };
     let leg = Leg {
         order_ref: current.action_address().clone(),
         sequence: input.sequence,
@@ -47,9 +60,16 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
         to: input.to,
         completed_at: sys_time()?,
         sealed_evidence,
+        sealed_pin_for_arbitrators,
     };
+    let is_dropoff = leg.kind == LegKind::CustomerHandoff;
     let action_hash = create_entry(&EntryTypes::Leg(leg))?;
-    create_link(order, action_hash.clone(), LinkTypes::OrderToLeg, ())?;
+    create_link(order.clone(), action_hash.clone(), LinkTypes::OrderToLeg, ())?;
+    // The customer hears at once: confirm it, or report a problem, within
+    // the network's window.
+    if is_dropoff {
+        let _ = call(CallTargetCell::Local, "dispatch", "notify_handoff".into(), None, order);
+    }
     get(action_hash, GetOptions::local())?.ok_or(guest("could not read back leg"))
 }
 
@@ -90,6 +110,50 @@ pub fn get_handoff_evidence(leg_action: ActionHash) -> ExternResult<Option<Hando
     let evidence: Option<HandoffEvidence> = open(&counterpart, &leg.sealed_evidence)?;
     // Checked again on the way out: a modified client could seal anything.
     Ok(evidence.filter(|e| relay_integrity_support::image_problem(&e.photo_data_uri).is_none()))
+}
+
+/// One of a handoff's two parties sharing its evidence with the
+/// arbitrators, for a dispute. Safe to repeat.
+#[hdk_extern]
+pub fn share_handoff_evidence(leg_action: ActionHash) -> ExternResult<ActionHash> {
+    let me = agent_info()?.agent_initial_pubkey;
+    for link in get_links(LinkQuery::try_new(leg_action.clone(), LinkTypes::LegToEvidenceShare)?, GetStrategy::default())? {
+        if link.author == me {
+            if let Some(hash) = link.target.into_action_hash() {
+                return Ok(hash);
+            }
+        }
+    }
+    let evidence = get_handoff_evidence(leg_action.clone())?.ok_or(guest("only a handoff's two parties can share its evidence"))?;
+    let seals = seal_to_arbitrators(&relay_governance::arbitrator_roster(), &evidence)?;
+    let hash = create_entry(&EntryTypes::EvidenceShare(EvidenceShare { leg: leg_action.clone(), seals }))?;
+    create_link(leg_action, hash.clone(), LinkTypes::LegToEvidenceShare, ())?;
+    Ok(hash)
+}
+
+/// A handoff's evidence as shared with the caller, an arbitrator -- by
+/// either party; the first that opens.
+#[hdk_extern]
+pub fn get_shared_evidence(leg_action: ActionHash) -> ExternResult<Option<HandoffEvidence>> {
+    for link in get_links(LinkQuery::try_new(leg_action, LinkTypes::LegToEvidenceShare)?, GetStrategy::default())? {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        let Some(record) = get(hash, GetOptions::default())? else { continue };
+        let Ok(Some(share)) = record.entry().to_app_option::<EvidenceShare>() else { continue };
+        let opened: Option<HandoffEvidence> = open_my_seal(&share.seals, record.action().author())?;
+        if let Some(evidence) = opened.filter(|e| relay_integrity_support::image_problem(&e.photo_data_uri).is_none()) {
+            return Ok(Some(evidence));
+        }
+    }
+    Ok(None)
+}
+
+/// The PIN the driver collected at a drop-off, for the caller, an
+/// arbitrator -- `None` if none was collected (or the caller isn't one).
+#[hdk_extern]
+pub fn get_collected_pin(leg_action: ActionHash) -> ExternResult<Option<String>> {
+    let record = get(leg_action, GetOptions::default())?.ok_or(guest("handoff not found"))?;
+    let leg: Leg = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
+    open_my_seal(&leg.sealed_pin_for_arbitrators, &leg.from)
 }
 
 /// The caller's own receipt for `leg`, from their chain.

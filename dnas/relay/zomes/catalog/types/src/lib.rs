@@ -69,6 +69,12 @@ pub struct MerchantCatalog {
     /// waiting for someone to tap Accept.
     #[serde(default)]
     pub auto_accept_orders: bool,
+    /// When this store's deliveries must be handed over against the
+    /// customer's PIN -- see `PinPolicy`. A store that waives it carries the
+    /// risk of a "never arrived" claim with only the driver's photo to
+    /// answer it, like a parcel left without a signature.
+    #[serde(default)]
+    pub pin_policy: PinPolicy,
     /// How far from `location` this merchant is willing to deliver, in
     /// kilometers -- a per-merchant business rule, not a single app-wide
     /// constant: a dense-downtown restaurant and a rural one have
@@ -302,4 +308,17 @@ pub struct BagClaim {
     pub fulfillment: BagClaimFulfillment,
     pub status: BagClaimStatus,
     pub claimed_at: Timestamp,
+}
+
+/// When a store's deliveries are handed over against the customer's PIN --
+/// proof only the customer (or someone with their phone) could give that the
+/// food reached them.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PinPolicy {
+    /// Never: drivers may still ask for it.
+    Off,
+    /// For customers who've raised or lost disputes before.
+    #[default]
+    CustomersWithHistory,
+    Always,
 }

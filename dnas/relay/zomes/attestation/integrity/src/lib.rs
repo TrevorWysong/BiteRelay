@@ -9,7 +9,7 @@
 
 use dispatch_types::{Bid, DeliveryOrder};
 use hdi::prelude::*;
-use relay_integrity_support::{classify, decode, invalid, require, Checked};
+use relay_integrity_support::{classify, decode, invalid, require, valid, Checked};
 
 mod links;
 
@@ -19,19 +19,22 @@ mod links;
 // this crate wouldn't work. Re-exported here so nothing else in this crate
 // or the coordinator crate (which imports via `attestation_integrity::*`)
 // needs to change.
-pub use attestation_types::{HandoffEvidence, Leg, LegKind, ReceiptAttestation};
+pub use attestation_types::{ArbitratorSeal, EvidenceShare, HandoffEvidence, Leg, LegKind, ReceiptAttestation};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
     Leg(Leg),
     ReceiptAttestation(ReceiptAttestation),
+    EvidenceShare(EvidenceShare),
 }
 
 #[hdk_link_types]
 pub enum LinkTypes {
     OrderToLeg,
     LegToReceipt,
+    /// A handoff's evidence, shared with the arbitrators for a dispute.
+    LegToEvidenceShare,
 }
 
 #[hdk_extern]
@@ -40,6 +43,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         Checked::Create { entry, action } => match entry {
             EntryTypes::Leg(leg) => validate_leg(&leg, action.author()),
             EntryTypes::ReceiptAttestation(receipt) => validate_receipt(&receipt, action.author()),
+            EntryTypes::EvidenceShare(share) => validate_evidence_share(&share, action.author()),
         },
         // Handoffs and their acknowledgments are a permanent record.
         Checked::Update { .. } => invalid("handoffs and receipts can't be changed"),
@@ -82,7 +86,38 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
         LegKind::MerchantHandoff => &order.merchant,
         LegKind::CustomerHandoff => &order.requester,
     };
-    require(&leg.to == expected_counterparty, "a handoff is with the order's own store or customer")
+    if &leg.to != expected_counterparty {
+        return invalid("a handoff is with the order's own store or customer");
+    }
+    // The PIN, if one was collected: sealed to every arbitrator, so any of
+    // them can check it. A drop-off on an order its store said needs one
+    // can't be recorded without it.
+    let roster = relay_governance::arbitrator_roster();
+    let collected = !leg.sealed_pin_for_arbitrators.is_empty();
+    match leg.kind {
+        LegKind::MerchantHandoff if collected => invalid("a PIN is collected from the customer, not the store"),
+        LegKind::CustomerHandoff if order.pin_required && !collected => invalid("this order's store requires the customer's PIN at the door"),
+        _ if collected && !dispute_types::seals_cover_roster(&leg.sealed_pin_for_arbitrators, &roster) => invalid("a collected PIN is sealed once to each arbitrator"),
+        _ => valid(),
+    }
+}
+
+/// A handoff's evidence shared with the arbitrators: by one of its two
+/// parties, one seal for each arbitrator, each at most one photo's worth.
+fn validate_evidence_share(share: &EvidenceShare, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    let Some(leg) = decode::<Leg>(&must_get_valid_record(share.leg.clone())?) else {
+        return invalid("evidence is shared about a handoff");
+    };
+    if author != &leg.from && author != &leg.to {
+        return invalid("only a handoff's two parties share its evidence");
+    }
+    if !dispute_types::seals_cover_roster(&share.seals, &relay_governance::arbitrator_roster()) {
+        return invalid("shared evidence is sealed once to each arbitrator");
+    }
+    require(
+        share.seals.iter().all(|s| s.sealed.as_encrypted_data_ref().len() <= relay_integrity_support::MAX_IMAGE_URI_BYTES + 1_024),
+        "shared evidence may hold at most one 300KB photo",
+    )
 }
 
 /// A handoff's acknowledgment, signed by the person who received it (or

@@ -15,6 +15,7 @@ relay_coordinator_support.workspace = true
 relay_types.workspace = true
 attestation_integrity = { path = "../integrity" }
 relay_integrity_support.workspace = true
+relay_governance.workspace = true
 
 [features]
 # Raw link externs for validation tests; only ever hot-swapped into test

@@ -45,6 +45,14 @@ Peers choose their own action timestamps. Holochain only requires each agent's t
 
 **Store acceptance.** Validation can't tell an old price or a deactivated promo from a current one, because it sees records as they were. The store's own conductor checks both against its own chain before accepting, and only the store can accept.
 
+**"It never arrived" claims** (`dispatch::pin`, `dispatch::arbitration`).
+- Every delivery has a 6-digit PIN. The order publishes only `sha256(pin || salt)`; the PIN and salt are sealed to the customer and to each arbitrator. Without the salt, nobody (the driver included) can test guesses against the commitment.
+- A store chooses when drivers must collect it at the door: never, after the customer has lost a dispute (the default), or always. Validation refuses a drop-off without it where it's required. Drivers see the requirement, and the customer's record, before bidding.
+- The customer is told the moment the driver records the drop-off, and has a window (`confirm_window_secs`, a day by default; an hour when the PIN was collected) to confirm or report a problem. Their money stays held either way.
+- After the window, the driver's conductor raises the delivery as `NotConfirmed`, sharing its sealed photo and location with the arbitrators. An arbitrator's conductor rules the clear cases on its own: a matching PIN, a customer whose sealed PIN doesn't match their own commitment, or an unconfirmed drop-off with the driver's photo that the customer never disputed. Everything else waits for a person, with the evidence and the customer's record in front of them.
+- A handoff's location and photo are sealed between its two parties, and reach arbitrators only when a party shares them.
+- Drivers publish no presence: they find work by reading the open orders around them.
+
 ## 2026-10 audit: findings and fixes
 
 | Finding | Severity | Fix |
@@ -68,7 +76,7 @@ The tests in `tests/tryorama/src/security-regressions.test.ts` and `ledger-rules
 ## What remains
 
 - **Arbitrators are trusted.** One arbitrator decides a dispute, and two contradictory rulings on one order could pay out twice. The roster is fixed in the DNA and is the network's deliberate trust anchor.
-- **A customer who never confirms a delivery** leaves the store's and driver's payment held, not lost. The customer can't spend it either, so they gain nothing. An arbitrator's ruling releases it.
-- **Who orders from whom** is visible to anyone reading an order's public fields, as is a customer's ~1 km drop-off area. Online drivers' ~1 km presence beacons are public, so they can be tracked while online. See DEVELOPMENT.md, "Personal data".
+- **Without a PIN, a photo is the driver's word.** A driver could photograph the wrong door, or record the drop-off early. The customer is told at once and can dispute within the window; an undisputed, photographed drop-off is ruled for the provider. Stores that don't require the PIN carry this risk, as a sender does for a parcel left without a signature.
+- **Who orders from whom** is visible to anyone reading an order's public fields, as is a customer's ~1 km drop-off area. A driver's reads of the open-order lists for an area are seen by the peers that store those lists. See DEVELOPMENT.md, "Personal data".
 - **Reviews from colluding identities.** A store can buy from itself with a second identity and review itself. It costs real money (the food is paid for), but it isn't detected.
 - **Timestamps** still decide store response windows, scheduled orders and promo expiry. An author can backdate within their own chain's history. The store's acceptance check bounds the promo case.

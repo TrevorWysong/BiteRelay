@@ -85,6 +85,10 @@ export function notificationFor(signal: LocalSignal): AppNotification | null {
   if ("ChatMessage" in signal) {
     return { title: "New message", body: signal.ChatMessage.text, tag: `chat-${bytesToHex(signal.ChatMessage.order_ref)}`, route: "/", urgent: false };
   }
+  if ("HandoffRecorded" in signal) {
+    const hex = bytesToHex(signal.HandoffRecorded);
+    return { title: "Your order was delivered", body: "Confirm you have it, or report a problem.", tag: `order-${hex}`, route: `/customer/orders/${hex}`, urgent: true };
+  }
   if ("ClaimConfirmed" in signal) {
     return { title: "Goodie bag confirmed", body: "The store confirmed your goodie bag.", tag: `claim-${bytesToHex(signal.ClaimConfirmed)}`, route: "/customer/orders", urgent: false };
   }

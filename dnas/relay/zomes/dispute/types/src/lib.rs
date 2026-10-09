@@ -21,6 +21,11 @@ pub enum DisputeReason {
     /// every other `DisputeReason`, since there's no order-status transition
     /// left to gate here, only a ledger forfeiture.
     UnjustCancellation,
+    /// Raised by the driver when a delivery they've recorded handing over
+    /// hasn't been confirmed by the customer within the network's window
+    /// (`relay_governance::confirm_window`) -- with their sealed evidence
+    /// shared to the arbitrators. Unanswered, it's the provider's.
+    NotConfirmed,
     Other,
 }
 
@@ -69,4 +74,29 @@ pub struct Dispute {
     pub reasoning: Option<String>,
     pub raised_at: Timestamp,
     pub resolved_at: Option<Timestamp>,
+}
+
+/// A secret sealed to one arbitrator on the DNA's roster -- evidence only
+/// arbitrators can open: a delivery PIN, a photo at the door.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ArbitratorSeal {
+    pub arbitrator: AgentPubKey,
+    pub sealed: XSalsa20Poly1305EncryptedData,
+}
+
+/// A delivery's PIN, as the customer seals it at checkout -- to
+/// themselves, to show at the door, and to the arbitrators, to check a
+/// driver's word against. The order publishes only a commitment to it
+/// (`sha256(pin || salt)`); without `salt`, which only the customer and
+/// the arbitrators hold, nobody can test PINs against that commitment.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PinSecret {
+    pub pin: String,
+    pub salt: Vec<u8>,
+}
+
+/// Whether `seals` is exactly one seal for each arbitrator on `roster`
+/// (their keys as strings, as `relay_governance` holds them).
+pub fn seals_cover_roster(seals: &[ArbitratorSeal], roster: &[String]) -> bool {
+    seals.len() == roster.len() && roster.iter().all(|key| seals.iter().filter(|s| &s.arbitrator.to_string() == key).count() == 1)
 }
