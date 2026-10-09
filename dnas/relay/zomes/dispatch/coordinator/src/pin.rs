@@ -60,6 +60,17 @@ pub fn get_my_delivery_pin(order_original_action: ActionHash) -> ExternResult<Op
     Ok(secret.map(|s| s.pin))
 }
 
+/// The caller's handover code -- the PIN and salt their app shows as a QR
+/// code for the driver to scan, which proves on its own that they handed
+/// it over. `None` if the order has none or isn't theirs.
+#[hdk_extern]
+pub fn get_my_handover_code(order_original_action: ActionHash) -> ExternResult<Option<PinSecret>> {
+    let (_, order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action, "DeliveryOrder")?;
+    let me = agent_info()?.agent_initial_pubkey;
+    let Some(sealed) = order.sealed_pin.filter(|_| order.requester == me) else { return Ok(None) };
+    open(&me, &sealed)
+}
+
 /// Mirrors `reputation::ReputationSummary` over the zome-call boundary.
 #[derive(Deserialize, Debug, Default)]
 struct ReputationSummaryWire {

@@ -165,5 +165,6 @@ pub fn arbitrate(_: ()) -> ExternResult<u32> {
 pub fn review_disputes_periodically(_: Option<Schedule>) -> Option<Schedule> {
     let _ = escalate_unconfirmed(());
     let _ = arbitrate(());
+    let _ = crate::issues::keep_issue_windows(());
     Some(Schedule::Persisted("0 */5 * * * * *".into()))
 }

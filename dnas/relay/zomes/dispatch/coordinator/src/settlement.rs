@@ -101,6 +101,11 @@ enum Stage {
 }
 
 struct Facts {
+    /// The order's issue window, closed: the close and its refund. Only on a
+    /// network with arbitrators, where the food's payment for a confirmed
+    /// order moves only then.
+    closed: Option<(ActionHash, u64)>,
+    windowed: bool,
     /// The customer's receipt: for a delivery, their acknowledgment of the
     /// drop-off; for a pickup, their update collecting it.
     receipt: Option<ActionHash>,
@@ -133,7 +138,9 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
         (None, Some(o)) => o.requester.clone(),
         _ => return Ok(None),
     };
-    let mut facts = Facts { receipt: None, ruling: None, cancellation: None };
+    let window = crate::issues::get_issue_window(order.clone())?;
+    let closed = window.closed_record.zip(window.closed);
+    let mut facts = Facts { closed, windowed: relay_governance::closing_arbitrator(order).is_some(), receipt: None, ruling: None, cancellation: None };
     for version in &all {
         let author = version.action().author();
         let prior = match &version.action().data {
@@ -142,6 +149,11 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
         };
         let (cancellation, dispute_ref, picked_up, stage) = if delivery.is_some() {
             let Some(o) = decode_or::<DeliveryOrder>(version) else { continue };
+            // Completed on the customer's scanned code: their receipt.
+            if o.status == DeliveryStatus::Delivered && !relay_governance::is_arbitrator(author)? && attestation_types::rests_on_scan(&o.delivery_receipts)? {
+                facts.receipt = Some(version.action_address().clone());
+                continue;
+            }
             let stage = prior.and_then(decode_or::<DeliveryOrder>).map(|p| match p.status {
                 DeliveryStatus::Scheduled | DeliveryStatus::Placed => Stage::Waiting,
                 DeliveryStatus::Open => Stage::Accepted,
@@ -245,6 +257,15 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
             None
         });
     }
+    // The food, once the order's confirmed on a network with arbitrators:
+    // only by its issue window's close -- the store the food less the
+    // refund, the customer the refund. Before confirmation, the usual rules
+    // (a cancellation, a ruling) still apply.
+    if share.portion == Portion::Food && facts.windowed && (receipt_or_ruling.is_some() || facts.closed.is_some()) {
+        let Some((close, refund)) = &facts.closed else { return Ok(None) };
+        let mine = if &share.recipient == me { share.amount.saturating_sub(*refund) } else if &hold.payer == me { *refund } else { 0 };
+        return Ok((mine > 0).then(|| Decision::Collect(close.clone())));
+    }
     if &share.recipient == me {
         if let Some(basis) = receipt_or_ruling {
             return Ok(Some(Decision::Collect(basis)));
@@ -289,6 +310,11 @@ pub(crate) fn settle(order: &ActionHash) -> ExternResult<u32> {
         return Ok(0);
     }
     let Some(facts) = facts(&order)? else { return Ok(0) };
+    // A confirmed order waits on its closing arbitrator: make sure it's
+    // queued there (by its customer or its store).
+    if facts.windowed && facts.closed.is_none() && (facts.receipt.is_some() || facts.ruling.is_some()) {
+        crate::issues::queue_for_window(&order);
+    }
     let mut decided = 0;
     // Payers whose money this gave back, to tell them it's theirs to collect.
     let mut returned: Vec<AgentPubKey> = Vec::new();
@@ -360,8 +386,19 @@ fn candidates(days: i64) -> ExternResult<Vec<ActionHash>> {
 
 /// Settles every recent order the caller has a part in; returns how many
 /// parts it decided.
+/// Settles each candidate in a zome call of its own: a write that doesn't
+/// validate yet (its basis still gossiping here) fails only that order's
+/// call, never the rest of the sweep.
 fn sweep(days: i64) -> u32 {
-    candidates(days).unwrap_or_default().iter().map(|order| settle(order).unwrap_or(0)).sum()
+    let Ok(zome) = zome_info().map(|z| z.name) else { return 0 };
+    candidates(days)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|order| match call(CallTargetCell::Local, zome.clone(), "settle_order".into(), None, order) {
+            Ok(ZomeCallResponse::Ok(io)) => io.decode::<u32>().unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
 }
 
 use crate::order_queues::QueueOwnerExt;
@@ -387,13 +424,15 @@ const LAST_RETRY: core::time::Duration = core::time::Duration::from_secs(160);
 
 /// Scheduled when one of the caller's orders changes (its signal). The
 /// change may not have reached the caller yet, so this retries with backoff
-/// until it's settled something; the regular sweep covers anything later.
+/// -- and progress restarts the backoff, as signals that arrive meanwhile
+/// share this one schedule: a burst of orders is followed until it's quiet.
+/// The regular sweep covers anything later.
 #[hdk_extern(infallible)]
 pub fn settle_soon(previous: Option<Schedule>) -> Option<Schedule> {
     let settled = sweep(SIGNALLED_SWEEP_DAYS) > 0;
     let next = match previous {
-        Some(Schedule::Ephemeral(after)) => after * 2,
+        Some(Schedule::Ephemeral(after)) if !settled => after * 2,
         _ => FIRST_RETRY,
     };
-    (!settled && next <= LAST_RETRY).then_some(Schedule::Ephemeral(next))
+    (next <= LAST_RETRY).then_some(Schedule::Ephemeral(next))
 }

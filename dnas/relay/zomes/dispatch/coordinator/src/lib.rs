@@ -32,6 +32,7 @@ mod bids;
 mod chat;
 mod claims;
 mod disputes;
+mod issues;
 mod matching;
 mod order_queues;
 mod orders;
@@ -51,6 +52,7 @@ pub use arbitration::*;
 pub use bids::*;
 pub use chat::*;
 pub use disputes::*;
+pub use issues::*;
 pub use matching::get_open_orders_near;
 pub use order_queues::*;
 pub use orders::*;
@@ -75,8 +77,49 @@ mod test_utils {
         CustomerToActiveOrder,
         CustomerHistoryPath,
         CustomerHistoryToOrder,
-        DriverToActiveDelivery
+        DriverToActiveDelivery,
+        OrderToIssue,
+        IssueToResponse,
+        OrderToIssueWindow,
+        ArbitratorToClosingQueue
     );
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct RawIssueInput {
+        pub order: ActionHash,
+        pub lines: Vec<dispatch_integrity::IssueLine>,
+    }
+
+    /// An `ItemIssue` as given, with honestly sealed (empty) evidence and
+    /// none of the coordinator's checks -- what a modified client could
+    /// write -- so a test can prove what validation refuses.
+    #[hdk_extern]
+    pub fn create_raw_item_issue_for_testing(input: RawIssueInput) -> ExternResult<ActionHash> {
+        let evidence = dispatch_integrity::IssueEvidence { note: String::new(), photo_data_uri: String::new() };
+        let me = agent_info()?.agent_initial_pubkey;
+        let issue = dispatch_integrity::ItemIssue {
+            order: input.order,
+            lines: input.lines,
+            sealed_for_store: relay_coordinator_support::seal(&me, &evidence)?,
+            sealed_for_arbitrators: relay_coordinator_support::seal_to_arbitrators(&relay_governance::arbitrator_roster(), &evidence)?,
+        };
+        create_entry(&EntryTypes::ItemIssue(issue))
+    }
+
+    #[hdk_extern]
+    pub fn create_raw_issue_response_for_testing(response: dispatch_integrity::IssueResponse) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::IssueResponse(response))
+    }
+
+    #[hdk_extern]
+    pub fn create_raw_window_opened_for_testing(opened: dispatch_integrity::IssueWindowOpened) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::IssueWindowOpened(opened))
+    }
+
+    #[hdk_extern]
+    pub fn create_raw_window_closed_for_testing(closed: dispatch_integrity::IssueWindowClosed) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::IssueWindowClosed(closed))
+    }
 
     use dispatch_integrity::{Bid, Cancellation, DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder, PickupStatus};
 

@@ -18,6 +18,7 @@ import { MerchantCatalog } from "./routes/merchant/Catalog";
 import { NewStore } from "./routes/merchant/NewStore";
 import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
+import { Policies } from "./routes/Policies";
 import { ArbitratorDashboard } from "./routes/arbitrator/Dashboard";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
@@ -138,6 +139,7 @@ export default function App() {
           <Route path="/arbitrator" element={<ArbitratorDashboard />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/transparency" element={<Transparency />} />
+          <Route path="/policies" element={<Policies />} />
           <Route path="*" element={<HomeForMode />} />
         </Route>
       </Routes>

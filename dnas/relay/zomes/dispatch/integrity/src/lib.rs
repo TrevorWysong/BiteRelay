@@ -4,14 +4,15 @@
 //! concrete entry type rather than one generalized "Job".
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
-use catalog_types::{BagClaim, BagClaimFulfillment, MerchantCatalog, PromoCode};
+use catalog_types::{BagClaim, BagClaimFulfillment, MenuItem, MerchantCatalog, PromoCode};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
-use relay_integrity_support::{classify, Checked};
+use relay_integrity_support::{classify, invalid, require, Checked};
 use relay_types::GeoPoint;
 
 mod bids;
 mod holds;
+mod issues;
 mod store_answer;
 mod checks;
 mod delivery;
@@ -35,7 +36,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+pub use dispatch_types::{claimed_value, IssueEvidence, IssueKind, IssueLine, IssueResponse, IssueWindowClosed, IssueWindowOpened, ItemIssue, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -44,6 +45,10 @@ pub enum EntryTypes {
     Bid(Bid),
     RecurringOrderTemplate(RecurringOrderTemplate),
     PickupOrder(PickupOrder),
+    ItemIssue(ItemIssue),
+    IssueResponse(IssueResponse),
+    IssueWindowOpened(IssueWindowOpened),
+    IssueWindowClosed(IssueWindowClosed),
 }
 
 #[hdk_link_types]
@@ -66,6 +71,12 @@ pub enum LinkTypes {
     CustomerHistoryToOrder,
     /// A driver's in-progress deliveries; the tag is the accepted bid.
     DriverToActiveDelivery,
+    /// Missing and wrong items -- see `dispatch_types::issues`.
+    OrderToIssue,
+    IssueToResponse,
+    OrderToIssueWindow,
+    /// Orders waiting on their issue window, under their closing arbitrator.
+    ArbitratorToClosingQueue,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -93,12 +104,19 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author()),
             EntryTypes::RecurringOrderTemplate(template) => validate_new_recurring_template(&template, action.author()),
             EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::ItemIssue(issue) => issues::validate_item_issue(&issue, action.author()),
+            EntryTypes::IssueResponse(response) => issues::validate_issue_response(&response, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::IssueWindowOpened(opened) => issues::validate_window_opened(&opened, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::IssueWindowClosed(closed) => issues::validate_window_closed(&closed, action.author(), action.timestamp(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
             EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author(), &action.original_action_address),
             EntryTypes::RecurringOrderTemplate(template) => validate_recurring_template_update(&template, action.author(), &action.original_action_address),
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
+            EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::IssueWindowOpened(_) | EntryTypes::IssueWindowClosed(_) => {
+                Ok(ValidateCallbackResult::Invalid("issues and their settlement can't be changed".into()))
+            }
         },
         // Orders, bids and templates move by updates; their history is
         // what payments, reviews and disputes cite.

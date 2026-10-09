@@ -2,7 +2,7 @@
 // other party acknowledges it (`acknowledgeLeg`) -- see the attestation
 // zome. Neither needs the other online at the same moment.
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, GeoPoint, HandoffEvidence, HcRecord, LegKind } from "../types";
+import type { ActionHash, AgentPubKey, GeoPoint, HandoffEvidence, HcRecord, LegKind, PinSecret } from "../types";
 
 /// The driver recording a handoff as it happens -- collecting from the
 /// store, or handing over to the customer.
@@ -15,6 +15,9 @@ export async function recordLeg(input: {
   photo_data_uri?: string;
   /// The customer's delivery PIN, if the driver asked for it.
   pin?: string | null;
+  /// The customer's handover code, if the driver scanned it -- proof on its
+  /// own that the customer took the order.
+  scanned?: PinSecret | null;
 }): Promise<HcRecord> {
   return callZome("attestation", "record_leg", { photo_data_uri: "", ...input });
 }

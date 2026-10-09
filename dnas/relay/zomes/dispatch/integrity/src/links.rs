@@ -49,6 +49,7 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
             )
         }
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToIssueWindow | LinkTypes::ArbitratorToClosingQueue => validate_issue_link(&link),
     }
 }
 
@@ -79,6 +80,7 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToIssueWindow | LinkTypes::ArbitratorToClosingQueue => invalid("an order's issues and their settlement are a permanent record"),
         _ => validate_queue_link_delete(link),
     }
 }
@@ -90,4 +92,39 @@ fn target_entry<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(targe
         LinkTarget::Record(record) => decode::<T>(&record),
         LinkTarget::PathNode => None,
     })
+}
+
+/// An issue, a store's answer, and an issue window are each found under the
+/// order (or issue) they're about, linked by whoever wrote them. An order
+/// waiting on its issue window is queued under its closing arbitrator, by
+/// its customer or its store.
+fn validate_issue_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
+    use dispatch_types::{IssueResponse, IssueWindowClosed, IssueWindowOpened, ItemIssue};
+    let LinkTarget::Record(record) = link_target(link.target)? else { return invalid("this link must target a record") };
+    let written_by_author = record.action().author() == link.author;
+    let expected_base: Option<AnyLinkableHash> = match link.link_type {
+        LinkTypes::OrderToIssue => decode::<ItemIssue>(&record).map(|i| i.order.into()),
+        LinkTypes::IssueToResponse => decode::<IssueResponse>(&record).map(|r| r.issue.into()),
+        LinkTypes::OrderToIssueWindow => match (decode::<IssueWindowOpened>(&record), decode::<IssueWindowClosed>(&record)) {
+            (Some(opened), _) => Some(opened.order.into()),
+            (None, Some(closed)) => decode::<IssueWindowOpened>(&must_get_valid_record(closed.opened)?).map(|o| o.order.into()),
+            _ => None,
+        },
+        LinkTypes::ArbitratorToClosingQueue => {
+            let order = record.action_address().clone();
+            let Some(terms) = crate::issues::order_for_issues(&order)? else { return invalid("only an order is queued for its issue window") };
+            if link.author != &terms.requester && link.author != &terms.merchant {
+                return invalid("an order is queued for its issue window by its customer or its store");
+            }
+            return match relay_governance::closing_arbitrator(&order) {
+                Some(arbitrator) => require(link.base == &AnyLinkableHash::from(arbitrator), "an order is queued under its own closing arbitrator"),
+                None => invalid("there's no issue window without arbitrators"),
+            };
+        }
+        _ => None,
+    };
+    match expected_base {
+        Some(base) => require(written_by_author && &base == link.base, "an issue record is linked under what it's about, by whoever wrote it"),
+        None => invalid("this link's target isn't the record its link type indexes"),
+    }
 }

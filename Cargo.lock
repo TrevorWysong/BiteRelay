@@ -22,6 +22,7 @@ name = "attestation_coordinator"
 version = "0.1.0"
 dependencies = [
  "attestation_integrity",
+ "dispatch_types",
  "hdi",
  "hdk",
  "relay_coordinator_support",
@@ -44,6 +45,7 @@ dependencies = [
  "relay_integrity_support",
  "relay_types",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -303,6 +305,7 @@ dependencies = [
  "hdk",
  "relay_coordinator_support",
  "relay_governance",
+ "relay_integrity_support",
  "relay_types",
  "serde",
  "serde_json",
@@ -341,6 +344,7 @@ dependencies = [
 name = "dispute_coordinator"
 version = "0.1.0"
 dependencies = [
+ "attestation_types",
  "dispute_integrity",
  "hdi",
  "hdk",

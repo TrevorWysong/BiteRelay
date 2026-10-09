@@ -97,6 +97,19 @@
     }
   }
 
+  /* The line sweeping a QR viewfinder -- components/QrScanner.tsx. */
+  @keyframes scanline {
+    0%,
+    100% {
+      transform: translateY(-90px);
+      opacity: 0.4;
+    }
+    50% {
+      transform: translateY(90px);
+      opacity: 1;
+    }
+  }
+
   @keyframes shimmer {
     100% {
       transform: translateX(100%);

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { decode } from "@msgpack/msgpack";
 import type { Conductor, PlayerApp, Scenario } from "@holochain-open-dev/tryorama";
-import { dhtSync, enableAndGetAgentApp } from "@holochain-open-dev/tryorama";
+import { dhtSync, enableAndGetAgentApp, getZomeCaller } from "@holochain-open-dev/tryorama";
 import { encodeHashToBase64 } from "@holochain/client";
 import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/client";
 
@@ -128,7 +128,8 @@ export async function setupArbitratedPlayers(scenario: Scenario) {
         membrane_proof: undefined,
         modifiers: {
           network_seed: undefined,
-          properties: { arbitrators: [encodeHashToBase64(arbitratorKey)] },
+          // A short issue window, so a test can wait one out (`closeIssueWindow`).
+          properties: { arbitrators: [encodeHashToBase64(arbitratorKey)], issue_window_secs: 3 },
         },
       },
     },
@@ -284,4 +285,28 @@ export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint
   const page = await player.cells[0].callZome<{ entries: HcRecord[] }>({ zome_name: "ledger", fn_name: "list_my_ledger", payload: { before: null } });
   const latest = page.entries[0];
   return latest ? { hash: actionHash(latest), balance: decodeEntry<{ balance: number }>(latest).balance } : { hash: null, balance: 0 };
+}
+
+/// Runs an order's issue window to its close, doing what its closing
+/// arbitrator's conductor does every five minutes: `queuer` (the order's
+/// customer or store) queues it, the arbitrator opens it, and once it's run
+/// out (the network's `issue_window_secs`, kept short in tests) closes it.
+/// Only for a window with nothing contested.
+export async function closeIssueWindow(arbitrator: PlayerApp, queuer: PlayerApp, order: Uint8Array, all: PlayerApp[]): Promise<void> {
+  const dispatch = (p: PlayerApp) => getZomeCaller(p.cells[0], "dispatch");
+  const sync = () => dhtSync(all, arbitrator.cells[0].cell_id[0]);
+  await dispatch(queuer)("queue_issue_window", order);
+  await sync();
+  await retryUntil(
+    async () => {
+      await dispatch(arbitrator)("keep_issue_window", order);
+      return dispatch(arbitrator)<{ opened_at: number | null }>("get_issue_window", order);
+    },
+    (window) => window.opened_at !== null,
+    40,
+    1000,
+  );
+  await sync();
+  await retryUntil(() => dispatch(arbitrator)<boolean>("keep_issue_window", order), (closed) => closed, 120, 1000);
+  await sync();
 }

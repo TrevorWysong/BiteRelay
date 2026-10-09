@@ -419,6 +419,31 @@ pub fn get_confirm_windows(_: ()) -> ExternResult<(u64, u64)> {
     Ok((relay_governance::confirm_window().as_secs(), relay_governance::pin_confirm_window().as_secs()))
 }
 
+/// The rules this network runs by, as its DNA sets them -- what the policy
+/// page quotes, so it can't drift from what's enforced.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkTerms {
+    pub store_response_secs: u64,
+    pub confirm_window_secs: u64,
+    pub pin_confirm_window_secs: u64,
+    pub issue_window_secs: u64,
+    /// The arbitrators' agent keys, as the DNA lists them.
+    pub arbitrators: Vec<String>,
+    pub credit_limit_cents: u64,
+}
+
+#[hdk_extern]
+pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
+    Ok(NetworkTerms {
+        store_response_secs: relay_governance::store_response_window().as_secs(),
+        confirm_window_secs: relay_governance::confirm_window().as_secs(),
+        pin_confirm_window_secs: relay_governance::pin_confirm_window().as_secs(),
+        issue_window_secs: relay_governance::issue_window().as_secs(),
+        arbitrators: relay_governance::arbitrator_roster(),
+        credit_limit_cents: relay_governance::credit_limit_cents(),
+    })
+}
+
 /// The driver picking the order up from the store: they set aside their
 /// collateral -- the value of the food they now carry -- in the same commit
 /// (validation requires both together). It's theirs again once the customer
@@ -565,6 +590,9 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     order.delivery_receipts = attested_receipts;
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     order_queues::retire(&parties)?;
+    // Its issue window starts now (see `issues`). A driver completing on a
+    // scan can't queue it; the customer's and store's settlement do.
+    crate::issues::queue_for_window(&input.order_original_action);
     // Nothing is paid here: the money was set aside as the order went, and
     // the customer's receipt is what lets the store and driver collect it,
     // each from their own conductor (`settlement`), told by this update's

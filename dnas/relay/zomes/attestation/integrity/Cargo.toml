@@ -16,3 +16,4 @@ dispatch_types.workspace = true
 relay_integrity_support.workspace = true
 dispute_types.workspace = true
 relay_governance.workspace = true
+sha2 = { version = "0.10", default-features = false }

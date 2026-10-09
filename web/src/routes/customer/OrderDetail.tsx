@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cancelOrder, getConfirmWindows, getMyDeliveryPin, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, getConfirmWindows, getMyHandoverCode, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
 import { confirmDeliveryReceived, HandoffNotYetHere } from "../../lib/handoffs";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
@@ -24,6 +24,8 @@ import { useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderIssues } from "../../components/OrderIssues";
+import { HandoverCode } from "../../components/HandoverCode";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -127,7 +129,7 @@ export function OrderDetail() {
   const { data: confirmWindows } = useResource(dropoff ? "confirm-windows" : null, getConfirmWindows);
   // The customer's PIN, while a driver's on the way: read out at the door.
   const awaitingDriver = order && ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"].includes(order.status) && !dropoff;
-  const { data: deliveryPin = null } = useResource(awaitingDriver ? `delivery-pin:${hash}` : null, () => getMyDeliveryPin(orderRef));
+  const { data: handoverCode = null } = useResource(awaitingDriver ? `handover-code:${hash}` : null, () => getMyHandoverCode(orderRef));
   // What this customer already rated on this order, read back from the
   // conductor rather than kept in memory -- otherwise a reload would offer
   // the rating form again and invite a duplicate.
@@ -414,13 +416,9 @@ export function OrderDetail() {
         </motion.div>
       )}
 
-      {deliveryPin && (
-        <motion.div variants={fadeSlideUp} className="mt-4 rounded-2xl border border-ink-100 p-4 text-center dark:border-ink-800">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">Your delivery PIN</p>
-          <p className="mt-1 font-mono text-3xl font-black tracking-[0.3em] text-ink-900 dark:text-ink-50">{deliveryPin}</p>
-          <p className="mt-1 text-xs text-ink-400">
-            {order.pin_required ? "Your driver will ask for this at the door." : "Give this to your driver if they ask."} Only share it once you have your order.
-          </p>
+      {handoverCode && (
+        <motion.div variants={fadeSlideUp} className="mt-4">
+          <HandoverCode orderRef={orderRef} secret={handoverCode} required={order.pin_required} />
         </motion.div>
       )}
 
@@ -444,8 +442,7 @@ export function OrderDetail() {
             </p>
           ) : (
             <p className="text-xs text-relay-700 dark:text-relay-300">
-              Your payment is held until you confirm you have your order; confirming releases it to the store and your driver. If
-              something's wrong, report a problem instead.
+              Your payment is held until you confirm you have your order. Missing an item? Confirm first, then report it: you'll have 2 hours.
             </p>
           )}
           <Button loading={completing} onClick={confirmReceipt}>
@@ -486,6 +483,7 @@ export function OrderDetail() {
 
       {order.status === "Delivered" && (
         <motion.div variants={fadeSlideUp}>
+          <OrderIssues orderRef={orderRef} role="customer" />
           <OrderReceipt orderRef={orderRef} />
         </motion.div>
       )}
@@ -493,7 +491,7 @@ export function OrderDetail() {
       {canDispute && (
         <motion.div variants={fadeSlideUp} className="mt-6">
           <Button variant="ghost" loading={disputing} onClick={fileDispute} className="w-full">
-            {order.status === "Cancelled" ? "This cancellation seems unfair" : "Something went wrong with this order"}
+            {order.status === "Cancelled" ? "This cancellation seems unfair" : order.status === "Delivered" ? "Something else went wrong" : "Something went wrong with this order"}
           </Button>
         </motion.div>
       )}

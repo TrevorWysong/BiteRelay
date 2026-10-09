@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, PinVerdict, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, IssueItems, NetworkTerms, IssueLine, IssueView, IssueWindowView, PinSecret, PinVerdict, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -371,11 +371,6 @@ export async function applyPickupDisputeResolution(orderOriginalAction: ActionHa
   return callZome("dispatch", "apply_pickup_dispute_resolution", { order_original_action: orderOriginalAction });
 }
 
-/// The caller's delivery PIN, to show the driver at the door.
-export async function getMyDeliveryPin(orderRef: ActionHash): Promise<string | null> {
-  return callZome("dispatch", "get_my_delivery_pin", orderRef);
-}
-
 /// How long a customer has to confirm a delivery once the driver records
 /// it, in seconds: [without the PIN collected, with it].
 export async function getConfirmWindows(): Promise<[number, number]> {
@@ -385,4 +380,42 @@ export async function getConfirmWindows(): Promise<[number, number]> {
 /// The caller's (an arbitrator's) check of a delivery's PIN.
 export async function checkDeliveryPin(orderRef: ActionHash): Promise<PinVerdict> {
   return callZome("dispatch", "check_delivery_pin", orderRef);
+}
+
+/// The caller's handover code for a delivery -- shown as a QR code for the
+/// driver to scan at the door.
+export async function getMyHandoverCode(orderRef: ActionHash): Promise<PinSecret | null> {
+  return callZome("dispatch", "get_my_handover_code", orderRef);
+}
+
+// --- missing and wrong items (see the dispatch `issues` module) ---
+
+/// The customer reporting items missing or wrong.
+export async function reportIssue(input: { order: ActionHash; lines: IssueLine[]; note: string; photo_data_uri: string }): Promise<HcRecord> {
+  return callZome("dispatch", "report_issue", input);
+}
+
+/// The store accepting or declining a report -- its answer is final.
+export async function respondToIssue(issue: ActionHash, accept: boolean): Promise<HcRecord> {
+  return callZome("dispatch", "respond_to_issue", { issue, accept });
+}
+
+export async function getIssuesForOrder(orderRef: ActionHash): Promise<IssueView[]> {
+  return callZome("dispatch", "get_issues_for_order", orderRef);
+}
+
+export async function getIssueWindow(orderRef: ActionHash): Promise<IssueWindowView> {
+  return callZome("dispatch", "get_issue_window", orderRef);
+}
+
+/// An order's items as reports are made against them, and what the food
+/// cost -- readable by its store and arbitrators as well as its customer.
+export async function getIssueItems(orderRef: ActionHash): Promise<IssueItems> {
+  return callZome("dispatch", "get_issue_items", orderRef);
+}
+
+/// The rules this network runs by, from its DNA -- what the policies page
+/// quotes.
+export async function getNetworkTerms(): Promise<NetworkTerms> {
+  return callZome("dispatch", "get_network_terms", null);
 }

@@ -237,8 +237,29 @@ pub fn collect(input: CollectInput) -> ExternResult<ActionHash> {
     if let Some(done) = my_decision(&input.hold, input.portion)? {
         return Ok(done);
     }
-    let (_, share) = share_of(&input.hold, input.portion)?;
-    append(LedgerKind::Collect { hold: input.hold, portion: input.portion, basis: input.basis }, share.amount)
+    let (hold, share) = share_of(&input.hold, input.portion)?;
+    let amount = match closed_refund(&input.basis)? {
+        // An issue window's close splits the food: the store the rest, the
+        // customer the refund.
+        Some(refund) if input.portion == Portion::Food => {
+            if agent_info()?.agent_initial_pubkey == hold.payer {
+                refund
+            } else {
+                share.amount.saturating_sub(refund)
+            }
+        }
+        _ => share.amount,
+    };
+    if amount == 0 {
+        return Err(guest("there's nothing to collect"));
+    }
+    append(LedgerKind::Collect { hold: input.hold, portion: input.portion, basis: input.basis }, amount)
+}
+
+/// The refund an issue window's close names, if `basis` is one.
+fn closed_refund(basis: &ActionHash) -> ExternResult<Option<u64>> {
+    let Some(record) = get(basis.clone(), GetOptions::default())? else { return Ok(None) };
+    Ok(record.entry().to_app_option::<dispatch_types::IssueWindowClosed>().ok().flatten().map(|c| c.refund))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

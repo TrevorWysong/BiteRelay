@@ -18,6 +18,7 @@ import { describeError } from "../../lib/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderIssues } from "../../components/OrderIssues";
 
 
 /// `OrderDetail`'s pickup sibling -- no bids, no driver, no live map, no
@@ -199,6 +200,7 @@ export function PickupOrderDetail() {
 
       {order.status === "PickedUp" && (
         <motion.div variants={fadeSlideUp}>
+          <OrderIssues orderRef={orderRef} role="customer" />
           <OrderReceipt orderRef={orderRef} />
         </motion.div>
       )}
@@ -206,7 +208,7 @@ export function PickupOrderDetail() {
       {canDispute && (
         <motion.div variants={fadeSlideUp} className="mt-6">
           <Button variant="ghost" loading={disputing} onClick={fileDispute} className="w-full">
-            Something went wrong with this order
+            Something else went wrong
           </Button>
         </motion.div>
       )}

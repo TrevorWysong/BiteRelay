@@ -13,6 +13,7 @@ hdi.workspace = true
 serde.workspace = true
 dispute_integrity = { path = "../integrity" }
 relay_coordinator_support.workspace = true
+attestation_types.workspace = true
 
 [features]
 # Raw link externs for validation tests; only ever hot-swapped into test

@@ -13,7 +13,7 @@
 
 use hdi::prelude::*;
 use relay_types::GeoPoint;
-pub use dispute_types::ArbitratorSeal;
+pub use dispute_types::{ArbitratorSeal, PinSecret};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum LegKind {
@@ -49,6 +49,12 @@ pub struct Leg {
     /// check against the PIN the customer committed to at checkout.
     #[serde(default)]
     pub sealed_pin_for_arbitrators: Vec<ArbitratorSeal>,
+    /// The PIN and salt from the code the customer let the driver scan --
+    /// checkable by anyone against the order's commitment, so a drop-off
+    /// carrying them is proof the customer handed them over: their receipt.
+    /// Revealed only at the door, once the food is there.
+    #[serde(default)]
+    pub revealed_pin: Option<PinSecret>,
 }
 
 /// A handoff's evidence (`HandoffEvidence`) shared with the arbitrators by
@@ -87,4 +93,20 @@ pub struct HandoffEvidence {
 pub struct ReceiptAttestation {
     pub leg: ActionHash,
     pub attested_at: Timestamp,
+}
+
+/// Whether a delivery's receipts (`DeliveryOrder::delivery_receipts`) rest on
+/// a drop-off against the customer's scanned handover code -- validation
+/// checked the code against the order's commitment when the leg was
+/// written. A scan is a receipt only this way, through the order version
+/// that completes the delivery on it: a scan alone settles nothing, so a
+/// ruling before that completion is the only thing that settles the order.
+pub fn rests_on_scan(receipts: &[ActionHash]) -> ExternResult<bool> {
+    for receipt in receipts {
+        let record = must_get_valid_record(receipt.clone())?;
+        if record.entry().to_app_option::<Leg>().ok().flatten().is_some_and(|leg| leg.kind == LegKind::CustomerHandoff && leg.revealed_pin.is_some()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

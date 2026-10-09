@@ -31,7 +31,7 @@
 //! delivery leaves it held; an arbitrator's ruling releases it).
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
-use dispatch_types::{hold_amount, hold_terms, Bid, Cancellation, DeliveryOrder, DeliveryStatus, OrderTerms, PickupOrder, PickupStatus, Share};
+use dispatch_types::{hold_amount, hold_terms, Bid, Cancellation, DeliveryOrder, DeliveryStatus, IssueWindowClosed, IssueWindowOpened, OrderTerms, PickupOrder, PickupStatus, Share};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 pub use ledger_types::*;
@@ -325,6 +325,9 @@ enum Basis {
     Cancelled { by: Cancellation, from: Stage },
     /// A part waived back to its payer.
     Waived { by: AgentPubKey, hold: ActionHash, portion: Portion },
+    /// The order's issue window closed by its arbitrator, with the refund
+    /// owed for missing or wrong items.
+    Closed { refund: u64 },
 }
 
 /// How far an order had got when it was cancelled.
@@ -363,6 +366,10 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
     if let Some(LedgerEntry { kind: LedgerKind::Waive { hold: waived, portion }, .. }) = decode::<LedgerEntry>(&record) {
         return Ok(Ok(Basis::Waived { by: author, hold: waived, portion }));
     }
+    if let Some(closed) = decode::<IssueWindowClosed>(&record) {
+        let Some(opened) = decode::<IssueWindowOpened>(&must_get_valid_record(closed.opened)?) else { return Ok(Err("a close must cite its window")) };
+        return Ok(if opened.order == hold.order { Ok(Basis::Closed { refund: closed.refund }) } else { Err("that window is another order's") });
+    }
     if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
         let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg.clone())?) else { return Ok(Err("a receipt must acknowledge a handoff")) };
         let ours = leg.kind == LegKind::CustomerHandoff && original_creation(leg.order_ref)? == hold.order && author == hold.terms.requester;
@@ -374,6 +381,11 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
     // The order itself, at a version that settles it.
     let (cancellation, dispute_ref, prior_stage) = if hold.terms.delivery {
         let Some(order) = decode::<DeliveryOrder>(&record) else { return Ok(Err("that isn't a basis for collecting")) };
+        // Completed on the customer's scanned code: their receipt. (Such a
+        // delivery can't then be disputed -- see dispatch validation.)
+        if order.status == DeliveryStatus::Delivered && attestation_types::rests_on_scan(&order.delivery_receipts)? {
+            return Ok(Ok(Basis::Receipt { by: author, at: basis_ref.clone() }));
+        }
         let prior = prior_version::<DeliveryOrder>(&record)?.map(|p| delivery_stage(&p.status));
         (order.cancellation, order.dispute_ref, prior)
     } else {
@@ -458,9 +470,6 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
     let Some(share) = hold.shares.iter().find(|s| s.portion == portion).cloned() else {
         return invalid("that hold has no such part");
     };
-    if entry.amount != share.amount {
-        return invalid("a collection takes exactly its part of the hold");
-    }
     if at < hold.held_at {
         return invalid("a hold is decided after it's made");
     }
@@ -473,7 +482,25 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
     };
     let is_recipient = author == &share.recipient;
     let is_payer = author == &hold.payer;
+    // What this collection takes: the whole part -- except the food at an
+    // issue window's close, split between the store (the food less the
+    // refund) and the customer (the refund).
+    let expected = match (&portion, &basis) {
+        (Portion::Food, Basis::Closed { refund }) if is_recipient => share.amount.checked_sub(*refund),
+        (Portion::Food, Basis::Closed { refund }) if is_payer => Some(*refund),
+        _ => Some(share.amount),
+    };
+    if expected.is_none_or(|amount| amount == 0 || amount != entry.amount) {
+        return invalid("a collection takes exactly its part of the hold");
+    }
+    // On a network with arbitrators, the food's payment for a confirmed
+    // order moves only when its issue window closes -- never on the receipt
+    // or a ruling, which would skip the window.
+    let windowed = relay_governance::closing_arbitrator(&hold.order).is_some();
     let entitled = match (portion, basis) {
+        (Portion::Food, Basis::Closed { .. }) => windowed && (is_recipient || is_payer),
+        (_, Basis::Closed { .. }) => false,
+        (Portion::Food, Basis::Receipt { .. } | Basis::Ruling { outcome: DisputeOutcome::FavorProvider, .. }) if windowed => false,
         // The driver's collateral: theirs again once the food is delivered,
         // the store's if a ruling says it never was.
         (Portion::Collateral, Basis::Receipt { .. }) | (Portion::Collateral, Basis::Ruling { outcome: DisputeOutcome::FavorProvider, .. }) => is_payer,

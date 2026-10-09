@@ -86,6 +86,8 @@ pub enum LocalSignal {
     /// The driver says this order reached the customer: confirm it, or
     /// report a problem, within the window.
     HandoffRecorded(ActionHash),
+    /// The customer reported items missing or wrong on this order.
+    IssueReported(ActionHash),
 }
 
 /// The longest chat message, in characters.
@@ -117,6 +119,9 @@ pub enum RemoteSignal {
     /// From the driver to the customer: they've recorded handing the order
     /// over.
     HandoffRecorded { order_hash: ActionHash },
+    /// From the customer to the store: they've reported items missing or
+    /// wrong.
+    IssueReported { order_hash: ActionHash },
 }
 
 /// An order's parties and what it is now, from one version of it.
@@ -240,7 +245,9 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at: sys_time()? })
         }
         RemoteSignal::Returned { order_hash } => {
-            if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || order.role_of(&sender).is_none()) {
+            // From a party, or the arbitrator closing its issue window.
+            let sender_ok = relay_governance::is_arbitrator(&sender)?;
+            if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || (order.role_of(&sender).is_none() && !sender_ok)) {
                 return Ok(());
             }
             // Settling reads every hold and checks every decision.
@@ -253,6 +260,10 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
                 _ => Ok(()),
             }
         }
+        RemoteSignal::IssueReported { order_hash } => match current_state(&order_hash) {
+            Some(order) if order.merchant == me && order.requester == sender => emit_signal(LocalSignal::IssueReported(order_hash)),
+            _ => Ok(()),
+        },
         RemoteSignal::PickupReady { order_hash } => {
             if current_state(&order_hash).is_some_and(|order| order.requester != me || order.merchant != sender) {
                 return Ok(());
