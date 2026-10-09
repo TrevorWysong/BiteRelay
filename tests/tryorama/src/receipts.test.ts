@@ -1,11 +1,11 @@
 // Proves receipts: a completed order's receipt lists each item at the
 // price it was ordered at (not today's), the promo, the total, and the
-// ledger transaction that paid it -- and only the customer gets one, only
+// ledger entry that paid it -- and only the customer gets one, only
 // once the order is complete.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, retryUntil, retryUntilOk, ST_PETE } from "./helpers.js";
+import { actionHash, appSource, retryUntilOk, ST_PETE } from "./helpers.js";
 
 interface Receipt {
   store_name: string;
@@ -58,15 +58,10 @@ await runScenario(async (scenario) => {
   assert.deepEqual(r.lines, [{ name: "Soup", quantity: 2, unit_price_cents: 1000, total_cents: 2000 }], "each item at the price it was ordered at");
   assert.deepEqual([r.subtotal_cents, r.discount_cents, r.delivery_fee_cents, r.tip_cents, r.total_cents], [2000, 200, 0, 0, 1800]);
   assert.equal(r.payments.length, 1);
-  assert.deepEqual([r.payments[0].leg, r.payments[0].amount_cents], ["OrderTotal", 1800], "the payment that settled it");
-  // The store holds the same transaction: the receipt's citation checks out.
-  const storeLedger = await retryUntil(
-    () => call(merchant, "ledger")<{ transactions: HcRecord[] }>("list_my_transactions", { after: null }),
-    (page) => page.transactions.length > 0,
-    40,
-    500,
-  );
-  assert.ok(storeLedger.transactions.some((t) => Buffer.from(actionHash(t)).equals(Buffer.from(r.payments[0].transaction))), "the cited transaction is the one the store received");
+  assert.deepEqual([r.payments[0].leg, r.payments[0].amount_cents], ["Food", 1800], "the payment that settled it");
+  // The receipt cites the customer's own ledger entry that paid it.
+  const ledger = await call(customer, "ledger")<{ entries: HcRecord[] }>("list_my_ledger", { before: null });
+  assert.ok(ledger.entries.some((e) => Buffer.from(actionHash(e)).equals(Buffer.from(r.payments[0].transaction))), "the cited payment is on the customer's own ledger");
   console.log("[PASS] a completed order's receipt lists what was paid, at the prices paid, and the transaction that paid it");
 
   await assert.rejects(call(merchant, "dispatch")("get_order_receipt", order), /only the customer has a receipt/);

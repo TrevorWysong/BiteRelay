@@ -385,6 +385,13 @@ app state.
 
 ## 5. `Entry::to_app_option()` silently fails to decode a countersigned entry
 
+**This app no longer uses countersigning** (2026-10-09): delivery handoffs
+are now two plain entries -- the driver's record and the other party's
+acknowledgment. One more reason, found while building a desktop runtime: no
+official 0.7.0 binary ships countersigning, not even the
+`holochain-unstable-*` release build (a hApp using it fails to load there
+with the same import error). Sections 5 and 6 are kept as findings.
+
 **Classification:** Bug / real inconsistency — the strongest candidate for
 an actual defect in this whole document. The same crate, via the same
 derive macro (`#[hdk_entry_helper]`), generates a `TryFrom<&Entry>` impl

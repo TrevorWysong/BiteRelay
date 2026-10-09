@@ -320,16 +320,29 @@ pub struct DeliveryOrder {
     /// the order, never changed after. `None` until then.
     #[serde(default)]
     pub ready_by: Option<Timestamp>,
-    /// The driver's collateral hold (a `ledger_types::LedgerTransaction`
-    /// from them to the customer), posted in the update that picks the
-    /// order up -- validation requires it there, and it never changes
-    /// after. Returned on delivery (`PaymentLeg::CollateralReturn`).
+    /// The customer's hold for the food (`settlement::HoldPurpose::Food`),
+    /// cited by the store's update that accepts the order -- validation
+    /// won't let a store accept an order whose food isn't paid for. Never
+    /// changes after.
+    #[serde(default)]
+    pub food_hold: Option<ActionHash>,
+    /// The customer's hold for the driver's pay -- their share of the fee,
+    /// and their tip (`HoldPurpose::DriverPay`) -- cited by their update
+    /// that accepts a bid.
+    #[serde(default)]
+    pub driver_pay_hold: Option<ActionHash>,
+    /// The store's hold for its share of the fee (`HoldPurpose::Subsidy`),
+    /// cited by its update that starts preparing the order.
+    #[serde(default)]
+    pub subsidy_hold: Option<ActionHash>,
+    /// The driver's collateral hold (`HoldPurpose::Collateral`), cited by
+    /// their update that picks the order up.
     #[serde(default)]
     pub collateral_hold: Option<ActionHash>,
 }
 
 #[hdk_entry_helper]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Bid {
     pub order_ref: ActionHash,
     pub bidder: AgentPubKey,
@@ -471,4 +484,8 @@ pub struct PickupOrder {
     /// the order, never changed after. `None` until then.
     #[serde(default)]
     pub ready_by: Option<Timestamp>,
+    /// The customer's hold for the food, cited by the store's update that
+    /// accepts the order -- see `DeliveryOrder::food_hold`.
+    #[serde(default)]
+    pub food_hold: Option<ActionHash>,
 }

@@ -1,13 +1,13 @@
 // Proves cancellation-fairness disputes (architecture plan §11.1) end to
 // end: raising one against an already-Cancelled order, both rulings
-// (compensate the provider; dismiss with zero forfeiture), and the replay
+// (for the provider; dismissed), and the replay
 // gap found and fixed while building this -- applying a resolution twice
 // must fail the second time, and a non-arbitrator must never be able to
 // apply one at all.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, decodeEntry, setupArbitratedPlayers, ST_PETE, acceptOrder } from "./helpers.js";
+import { actionHash, decodeEntry, setupArbitratedPlayers, ST_PETE, acceptOrder, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const { customer, driver, arbitrator, all } = await setupArbitratedPlayers(scenario);
@@ -17,6 +17,8 @@ await runScenario(async (scenario) => {
   const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
   const disputeOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispute");
   const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
+  // Each party's conductor settles the held money on its own.
+  const balanceOnceSettled = (p: typeof customer, expected: number) => retryUntil(() => ledgerOf(p)<number>("get_balance", p.agentPubKey), (b) => b === expected, 120, 1000);
   const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
 
   const now = Date.now() * 1000;
@@ -74,7 +76,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefA,
-    outcome: { FavorProvider: { forfeit_amount: 50 } },
+    outcome: "FavorProvider",
     reasoning: "Driver's own location trace confirms they had already committed",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -82,11 +84,12 @@ await runScenario(async (scenario) => {
   await dispatchOf(arbitrator)("apply_cancellation_dispute_resolution", { order_original_action: orderRefA });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const customerBalanceA = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
-  const driverBalanceA = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
-  assert.equal(driverBalanceA, 50, "driver should have been compensated the ruled amount");
-  assert.equal(customerBalanceA, -50, "customer should have paid the compensation");
-  console.log("[PASS] FavorProvider ruling compensates the driver via ledger::forfeit, net-zero across both parties");
+  // A customer cancelling after accepting a driver owes them their share of
+  // the fee ($2.00 of the $4.00 bid) -- held when they accepted the bid,
+  // collected by the driver's conductor on the cancellation itself.
+  assert.equal(await balanceOnceSettled(driver, 200), 200, "the driver collects the customer's share of the fee");
+  assert.equal(await ledgerOf(customer)<number>("get_balance", customer.agentPubKey), -200, "which is all the customer pays");
+  console.log("[PASS] a late cancellation pays the driver the customer's share of the fee, ruling or not");
 
   await assert.rejects(
     dispatchOf(arbitrator)("apply_cancellation_dispute_resolution", { order_original_action: orderRefA }),
@@ -95,7 +98,7 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] validate() rejects replaying the same cancellation-dispute resolution a second time");
 
-  // --- Scenario 2: FavorRequester -- the cancellation was fine, dismissed with zero forfeiture. ---
+  // --- Scenario 2: FavorRequester -- the cancellation was fine. ---
   const orderRefB = await driveToCancelled();
   const disputedOrderB = await dispatchOf(customer)<HcRecord>("raise_cancellation_dispute", {
     order_original_action: orderRefB,
@@ -109,7 +112,7 @@ await runScenario(async (scenario) => {
   await assert.rejects(
     disputeOf(driver)("submit_resolution", {
       dispute_original_action: disputeRefB,
-      outcome: { FavorRequester: { forfeit_amount: 0 } },
+      outcome: "FavorRequester",
       reasoning: "trying to rule in my own case",
     }),
     "a non-arbitrator must not be able to resolve a cancellation dispute",
@@ -117,7 +120,7 @@ await runScenario(async (scenario) => {
 
   await disputeOf(arbitrator)("submit_resolution", {
     dispute_original_action: disputeRefB,
-    outcome: { FavorRequester: { forfeit_amount: 0 } },
+    outcome: "FavorRequester",
     reasoning: "Cancellation was reasonable given the circumstances",
   });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -133,9 +136,11 @@ await runScenario(async (scenario) => {
   await dispatchOf(arbitrator)("apply_cancellation_dispute_resolution", { order_original_action: orderRefB });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const driverBalanceB = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
-  assert.equal(driverBalanceB, 50, "no additional ledger movement on a zero-forfeit dismissal");
-  console.log("[PASS] FavorRequester (dismissed, zero forfeiture) ruling applies cleanly with no ledger movement");
+  // The customer cancelled this one themselves, so a ruling for them returns
+  // nothing: the driver's fee for it is theirs either way.
+  assert.equal(await balanceOnceSettled(driver, 400), 400, "the driver keeps the fee from the second cancellation too");
+  assert.equal(await ledgerOf(customer)<number>("get_balance", customer.agentPubKey), -400, "a ruling doesn't refund a cancellation the customer made");
+  console.log("[PASS] a ruling for the customer doesn't undo the fee a cancellation they made owes");
 
   const driverReputation = await reputationOf(driver)<{ dispute_resolved_against_count: number }>("get_reputation_summary", { Driver: driver.agentPubKey });
   assert.equal(driverReputation.dispute_resolved_against_count, 1, "driver won scenario 1 but lost scenario 2's FavorRequester ruling");

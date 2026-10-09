@@ -14,10 +14,12 @@
 
 use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus, PickupOrder, PickupStatus};
 use hdi::prelude::*;
+use relay_integrity_support::{first_problem, text_problem};
+use relay_integrity_support::{classify, decode, original_creation, Checked};
 
 mod links;
 
-/// Who a `ReputationEvent` (and its checkpoint) is about.
+/// Who a `ReputationEvent` is about.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ReputationTarget {
     /// A store, by its catalog's *original* creation action -- the same
@@ -31,7 +33,7 @@ pub enum ReputationTarget {
     Customer(AgentPubKey),
 }
 
-/// Who a `Review` (and its rating checkpoint) is about -- the two things a
+/// Who a `Review` is about -- the two things a
 /// customer actually rates after an order, same as the DoorDash/Uber Eats
 /// post-order prompt: the store, and (for a delivery) the driver.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -72,33 +74,14 @@ pub struct ReputationEvent {
     /// `catalog_ref`) is fixed at creation, so the literal as-created record
     /// is exactly the right reference point.
     pub order_ref: ActionHash,
+    /// A version of the order that shows who its parties are -- including
+    /// its driver, which only a version after acceptance names. Validation
+    /// checks the author is one of them (or an arbitrator, for a ruling).
+    pub basis: ActionHash,
     pub kind: ReputationEventKind,
     pub recorded_at: Timestamp,
 }
 
-/// A periodic, append-only "summary as of `related_event`" breadcrumb --
-/// the exact same pattern, for the exact same reasons, as `ledger`'s
-/// `BalanceCheckpoint` (architecture plan §9.4): `get_reputation_summary`
-/// finds the most recent one instead of rescanning a target's *entire*
-/// event history on every read, written *roughly* every
-/// `CHECKPOINT_INTERVAL` events (deterministic, counting-free trigger in
-/// the coordinator), giving O(n/K) reads, not O(1) -- named honestly, not
-/// oversold, same as `ledger`'s. Append-only for the same reason too: a
-/// mutable shared summary entry would reintroduce the exact concurrent-
-/// write race this whole event log was designed to avoid in the first
-/// place (see `ReputationEvent`'s doc comment above).
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct ReputationCheckpoint {
-    pub target: ReputationTarget,
-    pub completed_count: u32,
-    pub cancelled_by_them_count: u32,
-    pub dispute_raised_count: u32,
-    pub dispute_resolved_against_count: u32,
-    pub total_collateral_forfeited: u64,
-    pub related_event: ActionHash,
-    pub recorded_at: Timestamp,
-}
 
 /// A star rating + free-text comment against a real, completed order --
 /// deliberately its own entry type rather than a `ReputationEventKind`
@@ -140,43 +123,14 @@ pub struct ItemReview {
     pub created_at: Timestamp,
 }
 
-/// Same O(n/K) checkpoint pattern as `ReputationCheckpoint`/`BalanceCheckpoint`
-/// (architecture plan §9.4), carrying forward a running `(count, rating_sum)`
-/// pair instead of a single number -- an average can't be folded
-/// incrementally from just the prior average, it needs both the count and
-/// the sum to stay exact.
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct ItemRatingCheckpoint {
-    pub item_ref: ActionHash,
-    pub count: u32,
-    pub rating_sum: u32,
-    pub related_review: ActionHash,
-    pub recorded_at: Timestamp,
-}
 
-/// `ItemRatingCheckpoint`'s sibling for store/driver `Review`s -- what makes
-/// a store's star rating on a Browse card a bounded read instead of
-/// fetching and averaging every review that store has ever received.
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct RatingCheckpoint {
-    pub target: ReviewTarget,
-    pub count: u32,
-    pub rating_sum: u32,
-    pub related_review: ActionHash,
-    pub recorded_at: Timestamp,
-}
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
     ReputationEvent(ReputationEvent),
-    ReputationCheckpoint(ReputationCheckpoint),
     Review(Review),
     ItemReview(ItemReview),
-    ItemRatingCheckpoint(ItemRatingCheckpoint),
-    RatingCheckpoint(RatingCheckpoint),
 }
 
 /// One link type per (target kind, purpose) rather than one shared type
@@ -188,13 +142,8 @@ pub enum LinkTypes {
     StoreToEvent,
     DriverToEvent,
     CustomerToEvent,
-    StoreToReputationCheckpoint,
-    DriverToReputationCheckpoint,
-    CustomerToReputationCheckpoint,
     StoreToReview,
     DriverToReview,
-    StoreToRatingCheckpoint,
-    DriverToRatingCheckpoint,
     /// From an order's *original* action to every store/driver review left
     /// on it -- lets `submit_review` refuse a second review of the same
     /// target for the same order, and lets the customer's own order screen
@@ -202,45 +151,23 @@ pub enum LinkTypes {
     /// exactly once).
     OrderToReview,
     ItemToReview,
-    ItemToRatingCheckpoint,
 }
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
-    match op.flattened::<EntryTypes, LinkTypes>()? {
-        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+    match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
+        Checked::Create { entry, action } => match entry {
             EntryTypes::ReputationEvent(event) => validate_event(&event, action.author()),
-            EntryTypes::ReputationCheckpoint(checkpoint) => validate_checkpoint(&checkpoint, action.author()),
             EntryTypes::Review(review) => validate_review(&review, action.author()),
             EntryTypes::ItemReview(review) => validate_item_review(&review, action.author()),
-            EntryTypes::ItemRatingCheckpoint(checkpoint) => validate_item_rating_checkpoint(&checkpoint, action.author()),
-            EntryTypes::RatingCheckpoint(checkpoint) => validate_rating_checkpoint(&checkpoint, action.author()),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
-        FlatOp::Link(OpLink::DeleteLink { .. }) => links::validate_delete_link(),
-        _ => Ok(ValidateCallbackResult::Valid),
+        // Reputation is an append-only record.
+        Checked::Update { .. } => Ok(ValidateCallbackResult::Invalid("reputation entries can't be changed".into())),
+        Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("reputation entries can't be deleted".into())),
+        Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { .. } => links::validate_delete_link(),
+        Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
-}
-
-/// The creation-time facts every validation here needs from an order,
-/// whichever vertical it is -- all fixed when the order is created, so the
-/// literal record `must_get_valid_record` returns is enough for these.
-struct OrderParties {
-    requester: AgentPubKey,
-    merchant: AgentPubKey,
-    catalog_ref: ActionHash,
-}
-
-/// `Ok(None)` when `order_ref` isn't an order at all.
-fn order_parties(order_ref: &ActionHash) -> ExternResult<Option<OrderParties>> {
-    let record = must_get_valid_record(order_ref.clone())?;
-    if let Ok(Some(order)) = record.entry().to_app_option::<DeliveryOrder>() {
-        return Ok(Some(OrderParties { requester: order.requester, merchant: order.merchant, catalog_ref: order.catalog_ref }));
-    }
-    if let Ok(Some(order)) = record.entry().to_app_option::<PickupOrder>() {
-        return Ok(Some(OrderParties { requester: order.requester, merchant: order.merchant, catalog_ref: order.catalog_ref }));
-    }
-    Ok(None)
 }
 
 /// What `validate_review`/`validate_item_review` both need from whichever
@@ -312,6 +239,9 @@ fn resolve_reviewable_order(
 /// since `order_ref` is already resolved (by the coordinator) to the
 /// order's real, immutable-at-this-point item list.
 fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, 2_000)]) {
+        return Ok(invalid);
+    }
     if review.rating < 1 || review.rating > 5 {
         return Ok(ValidateCallbackResult::Invalid("rating must be between 1 and 5".into()));
     }
@@ -346,44 +276,7 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// Same discipline as `validate_checkpoint`: can't be fabricated
-/// independent of a real, already-validated `ItemReview`.
-fn validate_item_rating_checkpoint(checkpoint: &ItemRatingCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let review_record = must_get_valid_record(checkpoint.related_review.clone())?;
-    let Ok(Some(review)) = review_record.entry().to_app_option::<ItemReview>() else {
-        return Ok(ValidateCallbackResult::Invalid("related_review does not point at an ItemReview entry".into()));
-    };
-    if checkpoint.item_ref != review.item_ref {
-        return Ok(ValidateCallbackResult::Invalid(
-            "checkpoint item_ref must match related_review's own item_ref".into(),
-        ));
-    }
-    if author != &review.author {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a checkpoint can only be authored by related_review's own author".into(),
-        ));
-    }
-    Ok(ValidateCallbackResult::Valid)
-}
 
-/// Same discipline again, for store/driver rating checkpoints.
-fn validate_rating_checkpoint(checkpoint: &RatingCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let review_record = must_get_valid_record(checkpoint.related_review.clone())?;
-    let Ok(Some(review)) = review_record.entry().to_app_option::<Review>() else {
-        return Ok(ValidateCallbackResult::Invalid("related_review does not point at a Review entry".into()));
-    };
-    if checkpoint.target != review.target {
-        return Ok(ValidateCallbackResult::Invalid(
-            "checkpoint target must match related_review's own target".into(),
-        ));
-    }
-    if author != &review.author {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a checkpoint can only be authored by related_review's own author".into(),
-        ));
-    }
-    Ok(ValidateCallbackResult::Valid)
-}
 
 /// Only the order's requester may review, only once the order is genuinely
 /// `Delivered`/`PickedUp`, and only about a target that was actually part
@@ -400,6 +293,9 @@ fn validate_rating_checkpoint(checkpoint: &RatingCheckpoint, author: &AgentPubKe
 /// content-addressed hash), it's just the coordinator's job to have
 /// resolved it to the right one first.
 fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, 2_000)]) {
+        return Ok(invalid);
+    }
     if review.rating < 1 || review.rating > 5 {
         return Ok(ValidateCallbackResult::Invalid("rating must be between 1 and 5".into()));
     }
@@ -446,74 +342,70 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// Same discipline as `ledger`'s `validate_checkpoint`: a checkpoint can't
-/// be fabricated independent of a real, already-validated event -- it must
-/// reference one via `related_event`, name that event's own target, and be
-/// authored by whoever `validate_event` already trusts to author it (the
-/// counterparty), reusing the exact same rule rather than a looser one.
-fn validate_checkpoint(checkpoint: &ReputationCheckpoint, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let event_record = must_get_valid_record(checkpoint.related_event.clone())?;
-    let Ok(Some(event)) = event_record.entry().to_app_option::<ReputationEvent>() else {
-        return Ok(ValidateCallbackResult::Invalid("related_event does not point at a ReputationEvent entry".into()));
-    };
-    if checkpoint.target != event.target {
-        return Ok(ValidateCallbackResult::Invalid(
-            "checkpoint target must match related_event's own target".into(),
-        ));
-    }
+
+/// Only someone who took part in the order records an event about it --
+/// its customer, store or driver, never the subject about themselves -- and
+/// only an arbitrator records a ruling's outcome. `basis` is a version of
+/// the order showing its parties: the driver only appears once a bid is
+/// accepted. Each target must be that order's own store, customer or driver.
+fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if author != &event.counterparty {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a checkpoint can only be authored by related_event's own counterparty".into(),
-        ));
+        return Ok(ValidateCallbackResult::Invalid("a reputation event's counterparty must be its author".into()));
+    }
+    if original_creation(event.basis.clone())? != event.order_ref {
+        return Ok(ValidateCallbackResult::Invalid("an event's basis must be a version of its own order".into()));
+    }
+    let basis = must_get_valid_record(event.basis.clone())?;
+    let (requester, merchant, catalog_ref, driver) = if let Some(order) = decode::<DeliveryOrder>(&basis) {
+        let driver = match &order.accepted_bid {
+            Some(bid_ref) => decode::<Bid>(&must_get_valid_record(bid_ref.clone())?).map(|bid| bid.bidder),
+            None => None,
+        };
+        (order.requester, order.merchant, order.catalog_ref, driver)
+    } else if let Some(order) = decode::<PickupOrder>(&basis) {
+        (order.requester, order.merchant, order.catalog_ref, None)
+    } else {
+        return Ok(ValidateCallbackResult::Invalid("an event's basis must be an order".into()));
+    };
+    let subject = match &event.target {
+        ReputationTarget::Store(store) if store == &catalog_ref => merchant.clone(),
+        ReputationTarget::Customer(customer) if customer == &requester => customer.clone(),
+        ReputationTarget::Driver(agent) if Some(agent) == driver.as_ref() => agent.clone(),
+        _ => return Ok(ValidateCallbackResult::Invalid("an event must be about this order's own store, customer or driver".into())),
+    };
+    if &subject == author {
+        return Ok(ValidateCallbackResult::Invalid("subject and counterparty must be different agents".into()));
+    }
+    let ruling = matches!(event.kind, ReputationEventKind::DisputeResolvedAgainst | ReputationEventKind::CollateralForfeited { .. });
+    let party = author == &requester || author == &merchant || Some(author) == driver.as_ref();
+    let allowed = if ruling { relay_governance::is_arbitrator(author)? } else { party };
+    if !allowed {
+        return Ok(ValidateCallbackResult::Invalid("only the order's own parties record events about it, and only an arbitrator a ruling's outcome".into()));
     }
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// Ties each target to the order it's recorded against: a `Store` event
-/// must name that order's own store, a `Customer` event that order's own
-/// requester. A `Driver` target can't be checked the same way here --
-/// `order_ref` is the order's original action, which never has an
-/// `accepted_bid` yet (see `validate_review`'s doc comment for the
-/// literalness behind that) -- so it gets the same counterparty-only trust
-/// this whole log has always had (see `ReputationEvent`'s doc comment).
-fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    // Only the counterparty may record an event about someone -- never the
-    // subject about themselves. This stops self-flattery but is still just a
-    // single-party claim; see the doc comment above on why it's a cache, not
-    // ground truth.
-    if author != &event.counterparty {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a reputation event can only be authored by the counterparty, not the subject".into(),
-        ));
-    }
-    let Some(order) = order_parties(&event.order_ref)? else {
-        return Ok(ValidateCallbackResult::Invalid(
-            "order_ref does not point at a DeliveryOrder or PickupOrder entry".into(),
-        ));
+/// What a review's link carries, so a rating is one link read summed --
+/// never a summary someone else wrote. Validation checks it matches the
+/// review it points at.
+pub fn review_tag(rating: u8, order_original: &ActionHash) -> LinkTag {
+    let mut bytes = vec![rating];
+    bytes.extend_from_slice(order_original.get_raw_39());
+    LinkTag::new(bytes)
+}
+
+/// The same for a reputation event: its kind, the amount (for a forfeit)
+/// and the order.
+pub fn event_tag(kind: &ReputationEventKind, order_original: &ActionHash) -> LinkTag {
+    let (code, amount) = match kind {
+        ReputationEventKind::OrderCompleted => (0u8, 0u64),
+        ReputationEventKind::OrderCancelledByThem => (1, 0),
+        ReputationEventKind::DisputeRaised => (2, 0),
+        ReputationEventKind::DisputeResolvedAgainst => (3, 0),
+        ReputationEventKind::CollateralForfeited { amount } => (4, *amount),
     };
-    let subject = match &event.target {
-        ReputationTarget::Store(catalog_ref) => {
-            if catalog_ref != &order.catalog_ref {
-                return Ok(ValidateCallbackResult::Invalid(
-                    "a store reputation event must name the store this order was placed with".into(),
-                ));
-            }
-            order.merchant
-        }
-        ReputationTarget::Customer(customer) => {
-            if customer != &order.requester {
-                return Ok(ValidateCallbackResult::Invalid(
-                    "a customer reputation event must name this order's own requester".into(),
-                ));
-            }
-            customer.clone()
-        }
-        ReputationTarget::Driver(driver) => driver.clone(),
-    };
-    if &subject == author {
-        return Ok(ValidateCallbackResult::Invalid(
-            "subject and counterparty must be different agents".into(),
-        ));
-    }
-    Ok(ValidateCallbackResult::Valid)
+    let mut bytes = vec![code];
+    bytes.extend_from_slice(&amount.to_be_bytes());
+    bytes.extend_from_slice(order_original.get_raw_39());
+    LinkTag::new(bytes)
 }

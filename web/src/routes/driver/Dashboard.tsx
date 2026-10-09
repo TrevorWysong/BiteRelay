@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { announceOnline, announceOffline, PRESENCE_REFRESH_MS } from "../../holochain/zomes/geoPresence";
 import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate, pickUpOrder } from "../../holochain/zomes/dispatch";
-import { recordLeg, initiateLegAttestation, linkLegToReceipt } from "../../holochain/zomes/attestation";
+import { recordLeg } from "../../holochain/zomes/attestation";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { planRoute } from "../../lib/route";
@@ -20,7 +19,7 @@ import { averageRating, getRatingSummary } from "../../holochain/zomes/reputatio
 import { formatCents, formatEta, formatClockTime } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import { usePolling, useResource } from "../../lib/useResource";
+import { useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 
@@ -38,21 +37,6 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], stri
 // interval could.
 const TRACKED_STATUSES: DeliveryStatus[] = ["MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 const LOCATION_BROADCAST_MS = 8000;
-
-/// Records a leg and completes the two-step attestation it needs to ever
-/// count toward delivery completion -- shared by both the "pickup" and
-/// "await_dropoff" branches of advance() below, which otherwise each
-/// inlined the identical three-call sequence.
-async function recordAndAttestLeg(input: Parameters<typeof recordLeg>[0]): Promise<void> {
-  const legRecord = await recordLeg(input);
-  const legHash = actionHash(legRecord);
-  const receiptRecord = await initiateLegAttestation(legHash);
-  // Required second step -- see initiateLegAttestation's own doc comment.
-  // Without this, the receipt commits fine but stays permanently
-  // undiscoverable, and completeDelivery later fails with "0 of N
-  // required leg attestations found".
-  await linkLegToReceipt(legHash, actionHash(receiptRecord));
-}
 
 /// Browser geolocation, throttled client-side (there's no way to
 /// deterministically rate-limit a signal on the backend -- see
@@ -139,27 +123,14 @@ export function DriverDashboard() {
       // rejects it) -- hidden here so they never see a Bid button for one.
       return rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey));
     },
-    // Another driver taking an order sends this one nothing.
-    { pollMs: POLL.unsignalled, refreshOn: (s) => "NewOrderNearby" in s },
+    // Drivers find orders by looking, never by announcing where they are
+    // (see dispatch `matching`) -- so while online, look often, and keep
+    // looking in the background so a new order still rings.
+    { pollMs: POLL.driverFeed, background: true },
   );
 
-  // Presence: re-announced on a cadence while online (beacons expire), and
-  // straight away when the driver moves to a new cell.
-  usePolling(
-    () => announceOnline(location, ["Food"]).catch((err) => setError(describeError(err))),
-    // Kept up in the background: a driver who's online stays discoverable.
-    { pollMs: PRESENCE_REFRESH_MS, background: true },
-    online,
-    geohash,
-  );
-
-  async function toggleOnline() {
-    if (online) {
-      await announceOffline().catch(() => {});
-      setOnline(false);
-    } else {
-      setOnline(true);
-    }
+  function toggleOnline() {
+    setOnline(!online);
   }
 
   async function placeBid(orderRef: Uint8Array, etaMinutes: number, feeCents: number) {
@@ -353,10 +324,10 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       if (action === "en_route") {
         await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
       } else if (action === "pickup") {
-        await recordAndAttestLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
+        await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
         await pickUpOrder(row.hash);
       } else if (action === "await_dropoff") {
-        await recordAndAttestLeg({
+        await recordLeg({
           order_ref: row.hash,
           sequence: 1,
           kind: "CustomerHandoff",

@@ -18,11 +18,11 @@ pub struct ReceiptLine {
     pub total_cents: u64,
 }
 
-/// One payment the customer made towards the order, and the transaction
-/// that records it.
+/// One payment the customer made towards the order -- a part of the money
+/// they set aside for it -- and the ledger entry that holds it.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReceiptPayment {
-    pub leg: PaymentLeg,
+    pub leg: Portion,
     pub amount_cents: u64,
     pub transaction: ActionHash,
 }
@@ -120,25 +120,14 @@ fn priced_line(priced_version: &ActionHash, bag: bool) -> ExternResult<(String, 
     Ok((item.name, item.price_cents))
 }
 
-/// Mirrors `ledger::MyPayment` over the zome-call boundary.
-#[derive(Deserialize, Debug)]
-struct MyPaymentWire {
-    transaction: ActionHash,
-    leg: PaymentLeg,
-    amount: u64,
-}
-
-/// The caller's payments towards the order -- charges only, not the
-/// driver's collateral coming back.
+/// What the caller paid towards the order: each part of the money they set
+/// aside for it (the food; a delivery's fee share and tip).
 fn my_payments(order_ref: &ActionHash) -> ExternResult<Vec<ReceiptPayment>> {
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "ledger", "my_payments_for_order".into(), None, order_ref.clone())? else {
-        return Err(guest("reading your payments failed"));
-    };
-    let payments: Vec<MyPaymentWire> = io.decode().map_err(|e| wasm_error!(e))?;
-    Ok(payments
+    let me = agent_info()?.agent_initial_pubkey;
+    Ok(crate::settlement::holds_for_order(order_ref)?
         .into_iter()
-        .filter(|p| p.leg != PaymentLeg::CollateralReturn)
-        .map(|p| ReceiptPayment { leg: p.leg, amount_cents: p.amount, transaction: p.transaction })
+        .filter(|hold| hold.payer == me)
+        .flat_map(|hold| hold.shares.into_iter().map(move |share| ReceiptPayment { leg: share.portion, amount_cents: share.amount, transaction: hold.hold.clone() }))
         .collect())
 }
 

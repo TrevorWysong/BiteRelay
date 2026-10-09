@@ -8,8 +8,6 @@ integrity:
       path: ../../../target/wasm32-unknown-unknown/release/profiles_integrity.wasm
     - name: catalog_integrity
       path: ../../../target/wasm32-unknown-unknown/release/catalog_integrity.wasm
-    - name: geo_presence_integrity
-      path: ../../../target/wasm32-unknown-unknown/release/geo_presence_integrity.wasm
     - name: dispatch_integrity
       path: ../../../target/wasm32-unknown-unknown/release/dispatch_integrity.wasm
     - name: attestation_integrity
@@ -30,10 +28,6 @@ coordinator:
       path: ../../../target/wasm32-unknown-unknown/release/catalog.wasm
       dependencies:
         - name: catalog_integrity
-    - name: geo_presence
-      path: ../../../target/wasm32-unknown-unknown/release/geo_presence.wasm
-      dependencies:
-        - name: geo_presence_integrity
     - name: dispatch
       path: ../../../target/wasm32-unknown-unknown/release/dispatch.wasm
       dependencies:

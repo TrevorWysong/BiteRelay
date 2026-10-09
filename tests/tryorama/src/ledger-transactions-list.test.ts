@@ -1,11 +1,11 @@
 // Proves the "no-skim" transparency dashboard's one real data source:
-// list_my_transactions returns the full, individual LedgerTransaction
-// records a party is actually in (not just get_balance's folded sum), for
+// list_my_ledger returns every entry on a party's own ledger (not just
+// get_balance's figure), for
 // both sides of a settlement, and nothing appears for an uninvolved agent.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, retryUntilOk, ST_PETE, acceptOrder, handOff } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver, stranger] = await scenario.addPlayersWithApps([
@@ -64,46 +64,35 @@ await runScenario(async (scenario) => {
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE });
-  const merchantLegRef = actionHash(merchantLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
+  await handOff(driver, merchant, orderRef, "MerchantHandoff", all);
 
   await dispatchOf(driver)("pick_up_order", orderRef);
-  const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const customerLegRef = actionHash(customerLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: actionHash(customerReceiptRecord) }));
+  await handOff(driver, customer, orderRef, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  // Customer paid both the merchant (order_total) and the driver (delivery
-  // fee + tip, via the subsidy split), and held the driver's collateral from
-  // pickup until handing it back: two payments, plus the hold and its return.
-  const customerTxns = await ledgerOf(customer)<{ transactions: HcRecord[]; next_after: number | null }>("list_my_transactions", { after: null });
-  assert.equal(customerTxns.transactions.length, 4, "the customer should see every transaction they were a party to");
-  type Txn = { from: Uint8Array; to: Uint8Array; amount: number; related_order: Uint8Array; reason: unknown };
-  const customerDecoded = customerTxns.transactions.map((r) => decodeEntry<Txn>(r));
-  assert.ok(customerDecoded.every((t) => bytesEqual(t.related_order, orderRef)), "every transaction should reference the same order");
-  const [hold] = customerDecoded.filter((t) => t.reason === "CollateralHold");
-  assert.ok(hold && bytesEqual(hold.to, customer.agentPubKey), "the driver's collateral was posted to the customer");
-  const returned = customerDecoded.find((t) => JSON.stringify(t.reason) === JSON.stringify({ Payment: "CollateralReturn" }));
-  assert.equal(returned?.amount, hold.amount, "and handed back in full on delivery");
-  assert.ok(customerDecoded.filter((t) => t !== hold).every((t) => bytesEqual(t.from, customer.agentPubKey)), "the customer pays every other one");
-  console.log("[PASS] list_my_transactions shows the customer their payments and the driver's collateral, held and returned");
+  // Every entry is on its author's own chain: the customer's holds for the
+  // food and the driver's pay; the store's collection of the food; the driver's collateral, held and collected
+  // back, and their pay.
+  type Entry = { kind: Record<string, unknown>; amount: number };
+  const ledger = async (p: typeof customer) => (await ledgerOf(p)<{ entries: HcRecord[] }>("list_my_ledger", { before: null })).entries.map((r) => decodeEntry<Entry>(r));
+  const kinds = (entries: Entry[]) => entries.map((e) => Object.keys(e.kind)[0]).sort();
 
-  const merchantTxns = await ledgerOf(merchant)<{ transactions: HcRecord[]; next_after: number | null }>("list_my_transactions", { after: null });
-  assert.equal(merchantTxns.transactions.length, 1, "the merchant should see exactly the one transaction paying them");
-  const merchantTxn = decodeEntry<{ to: Uint8Array; amount: number }>(merchantTxns.transactions[0]);
-  assert.ok(bytesEqual(merchantTxn.to, merchant.agentPubKey));
-  assert.equal(merchantTxn.amount, 1000, "the merchant should have been paid the full order_total");
-  console.log("[PASS] list_my_transactions shows the merchant their own incoming payment, and only that one");
+  const customerEntries = await ledger(customer);
+  assert.deepEqual(kinds(customerEntries), ["Hold", "Hold"], "the customer's ledger holds what they set aside: the food, and their share of the driver's fee");
+  assert.equal(customerEntries.reduce((sum, e) => sum + e.amount, 0), 1000 + 400, "the food, and the whole $4.00 fee (this store covers none of it)");
+  console.log("[PASS] the customer's ledger shows exactly what they set aside");
 
-  const strangerTxns = await ledgerOf(stranger)<{ transactions: HcRecord[]; next_after: number | null }>("list_my_transactions", { after: null });
-  assert.equal(strangerTxns.transactions.length, 0, "an uninvolved agent must see zero transactions");
-  console.log("[PASS] an agent with no transactions sees an empty list, not an error");
+  const merchantEntries = await retryUntil(() => ledger(merchant), (entries) => entries.length === 1, 120, 1000);
+  assert.deepEqual(kinds(merchantEntries), ["Collect"], "the store collected the food, and held nothing (it covers none of the fee)");
+  console.log("[PASS] the store's ledger shows the food collected");
+
+  const driverEntries = await retryUntil(() => ledger(driver), (entries) => entries.filter((e) => "Collect" in e.kind).length === 2, 120, 1000);
+  assert.deepEqual(kinds(driverEntries), ["Collect", "Collect", "Hold"], "the driver held their collateral, then collected it back and the fee");
+  console.log("[PASS] the driver's ledger shows their collateral back and the fee");
+
+  assert.equal((await ledger(stranger)).length, 0, "an uninvolved agent has an empty ledger");
+  console.log("[PASS] an agent with no part in any order has an empty ledger, not an error");
 });

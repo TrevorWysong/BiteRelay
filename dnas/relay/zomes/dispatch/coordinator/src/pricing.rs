@@ -111,9 +111,11 @@ const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
 /// can't be skipped. It runs on the store's own conductor and reads its
 /// menu's history from its own source chain, which holds every version it
 /// wrote -- so, unlike a DHT read, it can't be behind. A goodie bag's line
-/// is the bag itself, never outdated.
-pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>) -> ExternResult<()> {
-    match outdated_item(order_ref, lines, bag_claim_ref)? {
+/// is the bag itself, never outdated. The same goes for the promo: it must
+/// still be live (validation can't tell a deactivated code from a live one
+/// either), or have stopped only after this order was placed, recently.
+pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>, promo_ref: Option<&ActionHash>) -> ExternResult<()> {
+    match outdated_item(order_ref, lines, bag_claim_ref, promo_ref)? {
         Some(name) => Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it"))),
         None => Ok(()),
     }
@@ -121,9 +123,14 @@ pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[O
 
 /// The name of the first item `ensure_priced_from_current_menu` would
 /// refuse the order over, if any.
-pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>) -> ExternResult<Option<String>> {
+pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>, promo_ref: Option<&ActionHash>) -> ExternResult<Option<String>> {
     if bag_claim_ref.is_some() {
         return Ok(None);
+    }
+    if let Some(promo_ref) = promo_ref {
+        if promo_lapsed(order_ref, promo_ref)? {
+            return Ok(Some("The promo code".into()));
+        }
     }
     let histories = my_item_versions(lines.iter().map(|line| line.item_ref.clone()).collect())?;
     // Read only if some line isn't at its current price.
@@ -147,6 +154,39 @@ pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_cla
         }
     }
     Ok(None)
+}
+
+/// Mirrors `catalog::PromoVersion` over the zome-call boundary.
+#[derive(Deserialize, Debug)]
+struct PromoVersionWire {
+    active: bool,
+    expires_at: Option<Timestamp>,
+    written_at: Timestamp,
+}
+
+/// Whether the order's promo can't be honoured: no longer live, and it
+/// stopped before the order was placed or long enough ago that the order
+/// didn't just race it. Read from the store's own chain.
+fn promo_lapsed(order_ref: &ActionHash, promo_ref: &ActionHash) -> ExternResult<bool> {
+    let promo = original_action_of(promo_ref.clone())?;
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_promo_versions".into(), None, promo)? else {
+        return Err(guest("reading your promo codes failed".into()));
+    };
+    let versions: Vec<PromoVersionWire> = io.decode().map_err(|e| wasm_error!(e))?;
+    // Not one of this store's codes at all.
+    let Some(current) = versions.last() else { return Ok(true) };
+    let now = sys_time()?;
+    let expired = |at: Timestamp| current.expires_at.is_some_and(|expires| at >= expires);
+    if current.active && !expired(now) {
+        return Ok(false);
+    }
+    // When it stopped: the start of its latest run of inactive versions, or
+    // its expiry, whichever came first.
+    let deactivated = versions.iter().rev().take_while(|v| !v.active).last().map(|v| v.written_at);
+    let stopped = [deactivated, current.expires_at].into_iter().flatten().min().unwrap_or(now);
+    let placed_at = placement_time(order_ref)?;
+    let recent = now.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= PRICE_CHANGE_GRACE_SECS;
+    Ok(!(placed_at < stopped && recent))
 }
 
 /// Mirrors `catalog::ItemVersions`/`ItemVersion` over the zome-call boundary.

@@ -7,10 +7,11 @@ use attestation_types::{Leg, LegKind, ReceiptAttestation};
 use catalog_types::{BagClaim, BagClaimFulfillment, MerchantCatalog, PromoCode};
 use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
-use ledger_types::{LedgerTransaction, TxnReason};
+use relay_integrity_support::{classify, Checked};
 use relay_types::GeoPoint;
 
 mod bids;
+mod holds;
 mod store_answer;
 mod checks;
 mod delivery;
@@ -34,7 +35,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // for why a direct dependency on this crate wouldn't work. Re-exported here
 // so nothing else in this crate or the coordinator crate (which imports via
 // `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{delivery_payments, pickup_payments, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, LegPayment, OrderLine, PaymentLeg, PickupOrder, PickupStatus, RequiredAuthor};
+pub use dispatch_types::{hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -86,24 +87,23 @@ pub(crate) fn check_merchant_owns_catalog(merchant: &AgentPubKey, catalog_ref: &
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
-    match op.flattened::<EntryTypes, LinkTypes>()? {
-        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+    match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
+        Checked::Create { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author()),
             EntryTypes::RecurringOrderTemplate(template) => validate_new_recurring_template(&template, action.author()),
             EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author(), action.timestamp(), action.prev_action()),
         },
-        FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
-            EntryTypes::DeliveryOrder(order) => {
-                validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp())
-            }
-            EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author()),
-            EntryTypes::RecurringOrderTemplate(template) => {
-                validate_recurring_template_update(&template, action.author(), &action.original_action_address)
-            }
+        Checked::Update { entry, action } => match entry {
+            EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
+            EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author(), &action.original_action_address),
+            EntryTypes::RecurringOrderTemplate(template) => validate_recurring_template_update(&template, action.author(), &action.original_action_address),
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(OpLinkFields {
+        // Orders, bids and templates move by updates; their history is
+        // what payments, reviews and disputes cite.
+        Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("dispatch entries can't be deleted".into())),
+        Checked::CreateLink { link_type, action } => validate_create_link(OpLinkFields {
             link_type: &link_type,
             base: &action.base_address,
             target: &action.target_address,
@@ -111,14 +111,14 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             author: action.author(),
             timestamp: action.timestamp(),
         }),
-        FlatOp::Link(OpLink::DeleteLink { link_type, original_action, action }) => validate_delete_link(OpLinkFields {
+        Checked::DeleteLink { link_type, original, action } => validate_delete_link(OpLinkFields {
             link_type: &link_type,
-            base: &original_action.base_address,
-            target: &original_action.target_address,
-            tag: &original_action.tag,
+            base: &original.base_address,
+            target: &original.target_address,
+            tag: &original.tag,
             author: action.author(),
             timestamp: action.timestamp(),
         }),
-        _ => Ok(ValidateCallbackResult::Valid),
+        Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
 }

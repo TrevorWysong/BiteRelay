@@ -1,10 +1,12 @@
-// Proves the plan's riskiest, most novel mechanism: geohash anchor discovery
-// (Layer 1) + bounded remote_signal fan-out (Layer 2), end to end, against
-// real conductors -- not just "the code compiles."
+// Proves matching end to end against real conductors: an order the store
+// accepts is listed under its drop-off's cell, drivers nearby find it by
+// looking (they never announce where they are -- there's no presence zome
+// at all), a driver far away doesn't, and the customer's bid choice is the
+// one on-DHT commit that matters.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, waitForSignal, ST_PETE, NYC } from "./helpers.js";
+import { appSource, actionHash, bytesEqual, decodeEntry, retryUntil, waitForSignal, ST_PETE } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [requester, providerA, providerB, providerC] = await scenario.addPlayersWithApps([
@@ -21,7 +23,6 @@ await runScenario(async (scenario) => {
 
   const profilesOf = (p: typeof requester) => getZomeCaller(p.cells[0], "profiles");
   const catalogOf = (p: typeof requester) => getZomeCaller(p.cells[0], "catalog");
-  const geoPresenceOf = (p: typeof requester) => getZomeCaller(p.cells[0], "geo_presence");
   const dispatchOf = (p: typeof requester) => getZomeCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
@@ -43,19 +44,6 @@ await runScenario(async (scenario) => {
   });
   const menuItemRef = actionHash(menuItemRecord);
 
-  // Layer 1: providers A and B declare presence in the same neighborhood as
-  // the dropoff; C is far enough away to land in a different geohash cell.
-  await geoPresenceOf(providerA)("announce_online", { location: ST_PETE, capabilities: ["Food"] });
-  await geoPresenceOf(providerB)("announce_online", { location: ST_PETE, capabilities: ["Food"] });
-  await geoPresenceOf(providerC)("announce_online", { location: NYC, capabilities: ["Food"] });
-
-  await dhtSync(allPlayers, requester.cells[0].cell_id[0]);
-
-  // Register signal listeners *before* triggering the fan-out.
-  const signalA = waitForSignal(providerA.appWs, (p) => "NewOrderNearby" in p, 10000);
-  const signalB = waitForSignal(providerB.appWs, (p) => "NewOrderNearby" in p, 10000);
-  const signalC = waitForSignal(providerC.appWs, (p) => "NewOrderNearby" in p, 4000);
-
   const orderRecord = await dispatchOf(requester)<HcRecord>("request_delivery", {
     merchant: requester.agentPubKey,
     catalog_ref: catalogRef,
@@ -68,14 +56,18 @@ await runScenario(async (scenario) => {
   // Drivers hear of it once the store accepts it -- here the requester is the store.
   await dispatchOf(requester)("accept_delivery_order", { order_original_action: orderRef });
 
-  const [gotA, gotB, gotC] = await Promise.all([signalA, signalB, signalC]);
-
-  assert.ok(gotA, "providerA (in-region) should receive a NewOrderNearby signal");
-  assert.ok(gotB, "providerB (in-region) should receive a NewOrderNearby signal");
-  assert.equal(gotC, null, "providerC (out-of-region, negative control) should NOT receive a signal");
-  assert.ok(bytesEqual(gotA.NewOrderNearby, orderRef), "providerA's signal should reference the posted order");
-  assert.ok(bytesEqual(gotB.NewOrderNearby, orderRef), "providerB's signal should reference the posted order");
-  console.log("[PASS] Layer 1+2 matching: in-region providers signaled, out-of-region provider was not");
+  // Drivers A and B are in the drop-off's neighbourhood; C is in New York.
+  const dropoffCell = decodeEntry<{ dropoff_geohash: string }>(orderRecord).dropoff_geohash;
+  const NYC_CELL = "dr5reg";
+  const feed = (p: typeof requester, cell: string) => dispatchOf(p)<HcRecord[]>("get_open_orders_near", cell);
+  const isThisOrder = (records: HcRecord[]) => records.some((r) => decodeEntry<{ requested_at: number }>(r).requested_at === decodeEntry<{ requested_at: number }>(orderRecord).requested_at);
+  for (const p of [providerA, providerB]) {
+    const nearby = await retryUntil(() => feed(p, dropoffCell), isThisOrder, 40, 500);
+    assert.ok(isThisOrder(nearby), "a driver nearby finds the order by looking");
+  }
+  assert.ok(!isThisOrder(await feed(providerC, NYC_CELL)), "a driver far away doesn't see it");
+  await assert.rejects(getZomeCaller(providerA.cells[0], "geo_presence")("announce_online", { location: ST_PETE, capabilities: ["Food"] }), /doesn't exist|not exist|ZomeNotFound|zome/i, "there's no way for a driver to publish where they are");
+  console.log("[PASS] drivers nearby find a new order by looking; drivers far away don't; nobody publishes their location");
 
   // Layer 3: off-DHT bidding, then the one on-DHT commit that matters.
   const bidARecord = await dispatchOf(providerA)<HcRecord>("submit_bid", {

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -66,18 +66,10 @@ await runScenario(async (scenario) => {
     await dhtSync(both, customer.cells[0].cell_id[0]);
     await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
 
-    const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-    const merchantLegRef = actionHash(merchantLegRecord);
-    await dhtSync(both, customer.cells[0].cell_id[0]);
-    const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-    await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
+    await handOff(driver, customer, orderRef, "MerchantHandoff", both);
 
     await dispatchOf(driver)("pick_up_order", orderRef);
-    const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-    const customerLegRef = actionHash(customerLegRecord);
-    await dhtSync(both, customer.cells[0].cell_id[0]);
-    const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-    await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: actionHash(customerReceiptRecord) }));
+    await handOff(driver, customer, orderRef, "CustomerHandoff", both);
     await dhtSync(both, customer.cells[0].cell_id[0]);
 
     await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
@@ -87,9 +79,9 @@ await runScenario(async (scenario) => {
   // Default 50/50 split on a $5.00 bid + $1.00 tip: merchant covers $2.50,
   // customer covers $2.50 + $1.00 tip = $3.50. Driver gets the full $6.00.
   await driveToDelivered(500);
-  const driverBalance1 = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
+  const driverBalance1 = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 600, 120, 1000);
   assert.equal(driverBalance1, 600, "driver should be paid the full $5.00 bid + $1.00 tip regardless of the split");
-  const customerBalance1 = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
+  const customerBalance1 = await retryUntil(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey), (b) => b === -600, 120, 1000);
   // Customer is both requester and merchant here, so both settlement legs
   // hit the same balance: -250 (merchant's half) + -(250+100) (customer's
   // half + tip) = -600.
@@ -102,7 +94,7 @@ await runScenario(async (scenario) => {
   await catalogOf(customer)("set_delivery_subsidy_percent", { original_action: catalogRef, delivery_subsidy_percent: 100 });
   await dhtSync(both, customer.cells[0].cell_id[0]);
   await driveToDelivered(200);
-  const driverBalance2 = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
+  const driverBalance2 = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 600 + 300, 120, 1000);
   assert.equal(driverBalance2, 600 + 300, "driver's second delivery should add exactly $2.00 fee + $1.00 tip = $3.00 to their running balance");
   console.log("[PASS] a merchant raising their share to 100% covers the entire delivery fee, customer pays only the tip");
 });

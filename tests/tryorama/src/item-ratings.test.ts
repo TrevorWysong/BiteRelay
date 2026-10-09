@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, retryUntilOk, ST_PETE, acceptOrder, handOff } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -72,18 +72,10 @@ await runScenario(async (scenario) => {
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE });
-  const merchantLegRef = actionHash(merchantLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
+  await handOff(driver, merchant, orderRef, "MerchantHandoff", all);
 
   await dispatchOf(driver)("pick_up_order", orderRef);
-  const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const customerLegRef = actionHash(customerLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: actionHash(customerReceiptRecord) }));
+  await handOff(driver, customer, orderRef, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
   await dhtSync(all, customer.cells[0].cell_id[0]);
@@ -129,18 +121,10 @@ await runScenario(async (scenario) => {
   await dispatchOf(driver)("set_order_status", { order_original_action: order2Ref, next_status: "DriverEnRouteToMerchant" });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const leg2aRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: order2Ref, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE });
-  const leg2aRef = actionHash(leg2aRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const receipt2a = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", leg2aRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: leg2aRef, receipt: actionHash(receipt2a) }));
+  await handOff(driver, merchant, order2Ref, "MerchantHandoff", all);
 
   await dispatchOf(driver)("pick_up_order", order2Ref);
-  const leg2bRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: order2Ref, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const leg2bRef = actionHash(leg2bRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const receipt2b = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", leg2bRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: leg2bRef, receipt: actionHash(receipt2b) }));
+  await handOff(driver, customer, order2Ref, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("complete_delivery", { order_original_action: order2Ref });
   await dhtSync(all, customer.cells[0].cell_id[0]);

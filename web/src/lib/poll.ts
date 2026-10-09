@@ -10,10 +10,14 @@ export const POLL = {
   /// A screen showing what changes without telling this agent -- another
   /// driver taking a nearby order, a new dispute case.
   unsignalled: 15_000,
+  /// An online driver's view of open orders nearby. Nothing pushes new
+  /// orders to drivers (they'd have to announce where they are), so this is
+  /// how fast a driver hears of one.
+  driverFeed: 5_000,
   /// Slow-moving reads: stores nearby, a menu.
   slow: 60_000,
 } as const;
 
 /// Whether a signal says an order changed -- what every order screen
 /// refreshes on.
-export const isOrderSignal = (signal: object) => "OrderUpdated" in signal || "OrderPlaced" in signal;
+export const isOrderSignal = (signal: object) => "OrderUpdated" in signal || "OrderChanged" in signal || "OrderPlaced" in signal;

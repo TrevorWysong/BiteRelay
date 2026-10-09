@@ -55,20 +55,24 @@ pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey) -> ExternResult<
     Ok(ValidateCallbackResult::Valid)
 }
 
-pub(crate) fn validate_bid_update(bid: &Bid, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    // A bid only ever transitions via the bidder withdrawing it, or the
-    // order's requester accepting/rejecting it as part of accept_bid --
-    // accept_bid updates the *order*, not the bid, so the only self-authored
-    // bid update left is a withdrawal.
-    if &bid.bidder != author {
-        return Ok(ValidateCallbackResult::Invalid(
-            "only the bidder may update their own bid".into(),
-        ));
+/// A bid only ever changes by its bidder withdrawing it -- the order's
+/// requester accepts a bid by updating the *order*, not the bid. So an
+/// update must be the bidder's, of their own Open bid, changing nothing but
+/// its status to Withdrawn.
+pub(crate) fn validate_bid_update(bid: &Bid, author: &AgentPubKey, original: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original.clone())?;
+    let Ok(Some(prior)) = prior_record.entry().to_app_option::<Bid>() else {
+        return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a Bid entry".into()));
+    };
+    if prior_record.action().author() != author || &prior.bidder != author {
+        return Ok(ValidateCallbackResult::Invalid("only the bidder may update their own bid".into()));
     }
-    if bid.status != BidStatus::Withdrawn {
-        return Ok(ValidateCallbackResult::Invalid(
-            "a bidder may only update their bid to Withdrawn".into(),
-        ));
+    if prior.status != BidStatus::Open || bid.status != BidStatus::Withdrawn {
+        return Ok(ValidateCallbackResult::Invalid("a bidder may only withdraw an open bid".into()));
+    }
+    let unchanged = Bid { status: BidStatus::Withdrawn, ..prior } == *bid;
+    if !unchanged {
+        return Ok(ValidateCallbackResult::Invalid("withdrawing a bid may only change its status".into()));
     }
     Ok(ValidateCallbackResult::Valid)
 }

@@ -40,7 +40,7 @@ pub fn send_location_update(input: SendLocationUpdateInput) -> ExternResult<()> 
         )));
     }
     send_remote_signal(
-        RemoteSignal::LocationUpdate { order_hash: input.order_ref, lat: input.lat, lon: input.lon, sent_at: sys_time()? },
+        RemoteSignal::LocationUpdate { order_hash: input.order_ref, lat: input.lat, lon: input.lon },
         vec![order.requester],
     )
 }

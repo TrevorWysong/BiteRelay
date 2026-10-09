@@ -1,5 +1,10 @@
 {
-  "arbitrators": ["uhCAk_replace_with_each_arbitrators_agent_key"],
+  "arbitrators": [
+    "uhCAk_replace_with_each_arbitrators_agent_key"
+  ],
   "store_response_secs": 300,
-  "ledger_settle_secs": 3600
+  "issuers": [
+    "uhCAk_replace_with_each_issuers_agent_key"
+  ],
+  "credit_limit_cents": 0
 }

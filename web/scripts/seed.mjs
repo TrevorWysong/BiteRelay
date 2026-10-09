@@ -132,12 +132,11 @@ async function seedStore(store, owner, center) {
   return { ...store, ref, owner, location, items };
 }
 
-/// Both handoffs of a delivery, each countersigned by the driver and the
-/// receiving party -- exactly what the driver dashboard does.
+/// One handoff of a delivery: the driver records it, the other party
+/// acknowledges it -- what the driver's, store's and customer's screens do.
 async function attestLeg(driver, orderRef, sequence, kind, to, location) {
   const leg = hash(await eventually(`record ${kind}`, () => driver.call("attestation", "record_leg", { order_ref: orderRef, sequence, kind, to: to.key, geo_at_completion: location })));
-  const receipt = hash(await eventually(`attest ${kind}`, () => driver.call("attestation", "initiate_leg_attestation", leg)));
-  await eventually(`link ${kind}`, () => driver.call("attestation", "link_leg_to_receipt", { leg, receipt }));
+  await eventually(`acknowledge ${kind}`, () => to.call("attestation", "acknowledge_leg", leg));
 }
 
 const DELIVERY_STEPS = ["Placed", "Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];

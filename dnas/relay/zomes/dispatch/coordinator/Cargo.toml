@@ -15,6 +15,7 @@ relay_types.workspace = true
 relay_coordinator_support.workspace = true
 dispatch_integrity = { path = "../integrity" }
 dispute_types.workspace = true
+attestation_types.workspace = true
 catalog_types.workspace = true
 relay_governance.workspace = true
 # Time zones, for recurring orders ("9:00 every day" in the customer's zone).

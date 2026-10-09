@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -65,30 +65,22 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
 
-  const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE });
-  const merchantLegRef = actionHash(merchantLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
+  await handOff(driver, merchant, orderRef, "MerchantHandoff", all);
 
   await dispatchOf(driver)("pick_up_order", orderRef);
-  const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const customerLegRef = actionHash(customerLegRecord);
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: actionHash(customerReceiptRecord) }));
+  await handOff(driver, customer, orderRef, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const merchantBalance = await ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey);
+  const merchantBalance = await retryUntil(() => ledgerOf(merchant)<number>("get_balance", merchant.agentPubKey), (b) => b === 600, 120, 1000);
   assert.equal(merchantBalance, 600, "merchant should now actually be paid order_total ($6.00) for the food");
 
-  const driverBalance = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
+  const driverBalance = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 600, 120, 1000);
   assert.equal(driverBalance, 600, "driver should still be paid the full $5.00 bid + $1.00 tip, unaffected by the new order-total settlement");
 
-  const customerBalance = await ledgerOf(customer)<number>("get_balance", customer.agentPubKey);
+  const customerBalance = await retryUntil(() => ledgerOf(customer)<number>("get_balance", customer.agentPubKey), (b) => b === -1200, 120, 1000);
   assert.equal(customerBalance, -1200, "customer should be debited both legs: $6.00 for food + $6.00 for delivery fee/tip");
 
   console.log("[PASS] complete_delivery now settles order_total to a genuinely distinct merchant, alongside the existing delivery-fee/tip settlement to the driver");

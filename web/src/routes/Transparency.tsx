@@ -1,50 +1,34 @@
-import { ArrowDownCircle, ArrowUpCircle, ShieldCheck } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, Lock, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import { useSession } from "../store/session";
-import { listMyTransactions, getBalance } from "../holochain/zomes/ledger";
-import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../holochain/decode";
+import { listMyLedger, getBalance } from "../holochain/zomes/ledger";
+import { decodeEntry, actionHash, bytesToHex, timestampOf } from "../holochain/decode";
 import { Card, Skeleton, StatNumber } from "../components/ui";
 import { formatCents, timeAgo } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { useResource } from "../lib/useResource";
-import type { LedgerTransaction, TxnReason } from "../holochain/types";
-import { PAYMENT_LEG_LABEL } from "../lib/ledger";
+import type { LedgerEntry } from "../holochain/types";
+import { describeLedgerEntry } from "../lib/ledger";
 
 interface Row {
   hash: Uint8Array;
-  txn: LedgerTransaction;
+  entry: LedgerEntry;
+  at: number;
 }
 
-/// The "no-skim" transparency dashboard: every ledger transaction this
-/// agent has ever been a party to, straight from their own cryptographic
-/// chain, grouped by order. Deliberately a *personal* ledger, not a
-/// network-wide one -- Holochain's agent-centric model means there's no
-/// global transaction feed to query in the first place (every discovery
-/// read in this app is already scoped this way, see architecture plan
-/// §9), and a personal "where did my money go" proof is actually the
-/// stronger claim: it's independently verifiable from data this agent
-/// already holds, not something anyone has to trust a dashboard's own
-/// aggregation of. There is no operator account anywhere in this
-/// system's data model for a platform cut to land in -- not hidden, not
-/// omitted from this view, structurally absent from the ledger itself.
-function describeReason(reason: TxnReason): string {
-  switch (reason) {
-    case "CollateralHold":
-      return "Driver's collateral, held until delivery";
-    case "CollateralForfeit":
-      return "Collateral forfeiture";
-    default:
-      return PAYMENT_LEG_LABEL[reason.Payment];
-  }
-}
-
+/// The "no-skim" transparency dashboard: every entry on this agent's own
+/// ledger -- each hold, collection and deposit, with the balance it left
+/// them -- straight from their own signed chain, newest first. Each entry's
+/// balance follows from the one before it (validation checks), so this
+/// page is the whole account, not a report about it. There is no operator
+/// account anywhere in this system for a platform cut to go to.
 export function Transparency() {
   const agentPubKey = useSession((s) => s.agentPubKey);
   const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!).catch(() => 0));
-  const { data: rows } = useResource<Row[]>(agentHex && `transactions:${agentHex}`, () =>
-    listMyTransactions(null)
-      .then((page) => page.transactions.map((r) => ({ hash: actionHash(r), txn: decodeEntry<LedgerTransaction>(r) })))
+  const { data: rows } = useResource<Row[]>(agentHex && `ledger:${agentHex}`, () =>
+    listMyLedger(null)
+      .then((page) => page.entries.map((r) => ({ hash: actionHash(r), entry: decodeEntry<LedgerEntry>(r), at: timestampOf(r) })))
       .catch(() => []),
   );
 
@@ -63,19 +47,10 @@ export function Transparency() {
     );
   }
 
-  const totalReceived = rows.filter((r) => bytesEqual(r.txn.to, agentPubKey)).reduce((s, r) => s + r.txn.amount, 0);
-  const totalPaid = rows.filter((r) => bytesEqual(r.txn.from, agentPubKey)).reduce((s, r) => s + r.txn.amount, 0);
+  const totalReceived = rows.filter((r) => describeLedgerEntry(r.entry).direction === "in").reduce((sum, r) => sum + r.entry.amount, 0);
+  const totalPaid = rows.filter((r) => describeLedgerEntry(r.entry).direction === "out").reduce((sum, r) => sum + r.entry.amount, 0);
   const flowTotal = totalReceived + totalPaid;
   const receivedShare = flowTotal > 0 ? (totalReceived / flowTotal) * 100 : 50;
-
-  const byOrder = new Map<string, Row[]>();
-  for (const row of rows) {
-    const key = bytesToHex(row.txn.related_order);
-    byOrder.set(key, [...(byOrder.get(key) ?? []), row]);
-  }
-  const orderGroups = [...byOrder.entries()].sort(
-    (a, b) => Math.max(...b[1].map((r) => r.txn.created_at)) - Math.max(...a[1].map((r) => r.txn.created_at)),
-  );
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
@@ -108,7 +83,7 @@ export function Transparency() {
           <StatNumber tone="success" className="text-lg">{formatCents(totalReceived)}</StatNumber>
         </Card>
         <Card className="p-3 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Paid</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Set aside</p>
           <StatNumber className="text-lg">{formatCents(totalPaid)}</StatNumber>
         </Card>
         <Card className="p-3 text-center">
@@ -135,43 +110,37 @@ export function Transparency() {
       )}
 
       <motion.h2 variants={fadeSlideUp} className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
-        Every transaction, by order
+        Every entry on your ledger
       </motion.h2>
-      {orderGroups.length === 0 && (
+      {rows.length === 0 && (
         <motion.p variants={fadeSlideUp} className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">
           Nothing here yet. Place or complete an order to see it appear.
         </motion.p>
       )}
-      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3 pb-6">
-        {orderGroups.map(([orderHex, group]) => (
-          <motion.div variants={fadeSlideUp} key={orderHex}>
-            <Card className="p-4">
-              <p className="mb-2 font-mono text-[11px] text-ink-400">Order #{orderHex.slice(0, 10)}</p>
-              <div className="flex flex-col gap-2.5">
-                {group.map((row) => {
-                  const received = bytesEqual(row.txn.to, agentPubKey);
-                  return (
-                    <div key={bytesToHex(row.hash)} className="flex items-center gap-2.5">
-                      {received ? (
-                        <ArrowDownCircle size={18} className="shrink-0 text-presence-600" />
-                      ) : (
-                        <ArrowUpCircle size={18} className="shrink-0 text-ink-400" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="flex items-baseline gap-1 text-sm font-semibold text-ink-900 dark:text-ink-50">
-                          {received ? "Received" : "Paid"} <StatNumber tone={received ? "success" : "default"} className="text-sm">{formatCents(row.txn.amount)}</StatNumber>
-                        </p>
-                        <p className="text-xs text-ink-400">
-                          {describeReason(row.txn.reason)} · {timeAgo(row.txn.created_at)}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          </motion.div>
-        ))}
+      <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-6">
+        <Card className="flex flex-col gap-3 p-4">
+          {rows.map((row) => {
+            const { label, direction } = describeLedgerEntry(row.entry);
+            const Icon = direction === "in" ? ArrowDownCircle : direction === "out" ? Lock : ArrowUpCircle;
+            return (
+              <motion.div variants={fadeSlideUp} key={bytesToHex(row.hash)} className="flex items-center gap-2.5">
+                <Icon size={18} className={direction === "in" ? "shrink-0 text-presence-600" : "shrink-0 text-ink-400"} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{label}</p>
+                  <p className="text-xs text-ink-400">
+                    {timeAgo(row.at)} · balance {formatCents(row.entry.balance)}
+                  </p>
+                </div>
+                {direction !== "none" && (
+                  <StatNumber tone={direction === "in" ? "success" : "default"} className="text-sm">
+                    {direction === "in" ? "+" : "−"}
+                    {formatCents(row.entry.amount)}
+                  </StatNumber>
+                )}
+              </motion.div>
+            );
+          })}
+        </Card>
       </motion.div>
     </motion.div>
   );

@@ -19,14 +19,9 @@ export function actionHash(record: HcRecord): Uint8Array {
 }
 
 export function decodeEntry<T>(record: HcRecord): T {
-  const entry = record.entry as { Present?: { entry_type: string; entry: Uint8Array | [unknown, Uint8Array] } };
+  const entry = record.entry as { Present?: { entry: Uint8Array } };
   assert.ok(entry.Present, "record has no entry data");
-  // A countersigned entry's wire shape is [CounterSigningSessionData, bytes]
-  // -- the app-entry bytes we actually want to decode are the second element.
-  const raw = entry.Present.entry_type === "CounterSign"
-    ? (entry.Present.entry as [unknown, Uint8Array])[1]
-    : (entry.Present.entry as Uint8Array);
-  return decode(raw) as T;
+  return decode(entry.Present.entry) as T;
 }
 
 export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -56,10 +51,9 @@ export function waitForSignal(
 }
 
 /// Retries `fn` until it stops throwing. Used wherever a call can legitimately
-/// fail transiently -- a countersigning chain lock that hasn't cleared yet,
-/// or a cross-agent read racing gossip -- rather than a single call that
-/// assumes the underlying conductor workflow is synchronous with the
-/// zome call that kicked it off.
+/// fail transiently -- a cross-agent read racing gossip -- rather than a
+/// single call that assumes the underlying conductor workflow is
+/// synchronous with the zome call that kicked it off.
 export async function retryUntilOk<T>(fn: () => Promise<T>, maxAttempts = 20, delayMs = 500): Promise<T> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -234,4 +228,60 @@ export async function acceptOrder(store: PlayerApp, orderRef: Uint8Array, player
   const accepted = await retryUntilOk(() => store.cells[0].callZome<HcRecord>({ zome_name: "dispatch", fn_name: "accept_delivery_order", payload: { order_original_action: orderRef } }));
   await dhtSync(players, store.cells[0].cell_id[0]);
   return accepted;
+}
+
+/// One delivery handoff: the driver records it, then the other party (the
+/// store collecting from, the customer handing to) acknowledges it -- once
+/// the driver's record has reached them. Returns the leg.
+export async function handOff(
+  driver: PlayerApp,
+  recipient: PlayerApp,
+  orderRef: Uint8Array,
+  kind: "MerchantHandoff" | "CustomerHandoff",
+  players: PlayerApp[],
+  extra: { geo_at_completion?: { lat: number; lon: number }; photo_data_uri?: string } = {},
+): Promise<Uint8Array> {
+  const leg = await retryUntilOk(() =>
+    driver.cells[0].callZome<HcRecord>({
+      zome_name: "attestation",
+      fn_name: "record_leg",
+      payload: { order_ref: orderRef, sequence: kind === "MerchantHandoff" ? 0 : 1, kind, to: recipient.agentPubKey, geo_at_completion: ST_PETE, photo_data_uri: "", ...extra },
+    }),
+  );
+  await dhtSync(players, driver.cells[0].cell_id[0]);
+  await retryUntilOk(() => recipient.cells[0].callZome({ zome_name: "attestation", fn_name: "acknowledge_leg", payload: actionHash(leg) }));
+  return actionHash(leg);
+}
+
+/// `count` players on their own conductors, with DNA properties that can
+/// name some of them (an issuer, an arbitrator) -- `properties` gets every
+/// player's key, in order, before anything is installed. The same
+/// pre-generated-key dance as `setupArbitratedPlayers`.
+export async function setupPlayersWithProperties(scenario: Scenario, count: number, properties: (keys: string[]) => Record<string, unknown>): Promise<PlayerApp[]> {
+  // One at a time, as `setupArbitratedPlayers` does: conductors started
+  // concurrently didn't find each other.
+  const conductors: Conductor[] = [];
+  for (let i = 0; i < count; i++) conductors.push(await scenario.addConductor());
+  const keys: Uint8Array[] = [];
+  for (const conductor of conductors) keys.push(await conductor.adminWs().generateAgentPubKey());
+  const rolesSettings = {
+    relay: {
+      type: "provisioned" as const,
+      value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: properties(keys.map(encodeHashToBase64)) } },
+    },
+  };
+  const players = await scenario.installAppsForPlayers(
+    conductors.map(() => ({ appBundleSource: appSource, options: { rolesSettings } })),
+    keys.map((agentPubKey, i) => ({ agentPubKey, conductor: conductors[i] })),
+  );
+  await scenario.shareAllAgents();
+  return players;
+}
+
+/// The caller's latest ledger entry and its hash, or nulls before any --
+/// what a hand-built (forged) entry would have to chain from.
+export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint8Array | null; balance: number }> {
+  const page = await player.cells[0].callZome<{ entries: HcRecord[] }>({ zome_name: "ledger", fn_name: "list_my_ledger", payload: { before: null } });
+  const latest = page.entries[0];
+  return latest ? { hash: actionHash(latest), balance: decodeEntry<{ balance: number }>(latest).balance } : { hash: null, balance: 0 };
 }

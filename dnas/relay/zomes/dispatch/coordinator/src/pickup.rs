@@ -10,7 +10,7 @@ use crate::upkeep;
 use crate::stores::{closed_reason, current_catalog, ready_by};
 use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, my_name, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
-use crate::settlement::{self, Payer};
+use crate::settlement;
 use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
 use dispatch_integrity::*;
@@ -76,8 +76,11 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
         ready_by: None,
+        food_hold: None,
     };
     let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
+    // Paid for up front, in this same commit -- see `request_delivery`.
+    settlement::place_hold(&action_hash, HoldPurpose::Food)?;
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
     upkeep::tend_my_orders_soon()?;
 
@@ -104,7 +107,9 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     if order.merchant != agent_info()?.agent_initial_pubkey {
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
-    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref())?;
+    ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
+    let original = relay_coordinator_support::original_action_of(order_original_action.clone())?;
+    order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = PickupStatus::MerchantConfirmed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
@@ -169,12 +174,10 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     let catalog_ref = order.catalog_ref.clone();
     order.status = PickupStatus::PickedUp;
     let parties = OrderParties::pickup(&order_original_action, &order);
-    let owed = pickup_payments(&order);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     order_queues::retire(&parties)?;
-
-    let me = agent_info()?.agent_initial_pubkey;
-    settlement::pay_legs(&order_original_action, &updated, &owed, Payer::Me(&me))?;
+    // This update is the customer's receipt: it lets the store collect the
+    // food's held payment, from its own conductor (`settlement`).
 
     // Best-effort: a reputation bump for the store is valuable but
     // shouldn't block payment or completion if it fails -- same posture as
@@ -319,37 +322,27 @@ pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput)
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
     let target_status = match &outcome {
-        DisputeOutcome::FavorProvider { .. } => PickupStatus::PickedUp,
-        DisputeOutcome::FavorRequester { .. } => PickupStatus::Cancelled,
+        DisputeOutcome::FavorProvider => PickupStatus::PickedUp,
+        DisputeOutcome::FavorRequester => PickupStatus::Cancelled,
     };
     let mut updated_order = order;
     let parties = OrderParties::pickup(&input.order_original_action, &updated_order);
     updated_order.cancellation = (target_status == PickupStatus::Cancelled).then_some(Cancellation::ByArbitrator);
     updated_order.status = target_status;
     updated_order.dispute_ref = Some(dispute_record.action_address().clone());
-    let owed = pickup_payments(&updated_order);
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::PickupOrder(updated_order))?;
     // Both outcomes (PickedUp / Cancelled) are terminal.
     order_queues::retire(&parties)?;
-    let dispute_basis = dispute_record.action_address();
+    // The ruling moves no money itself: this update is the evidence each
+    // party settles the held payment by, from their own conductor -- the
+    // store collects it, or the customer has it back.
 
     match outcome {
-        DisputeOutcome::FavorProvider { forfeit_amount } => {
-            settlement::pay_legs(&input.order_original_action, &updated, &owed, Payer::Arbitrator)?;
-            settlement::forfeit(&input.order_original_action, dispute_basis, &requester, &merchant, forfeit_amount)?;
+        DisputeOutcome::FavorProvider => {
             record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
         }
-        DisputeOutcome::FavorRequester { forfeit_amount } => {
-            settlement::forfeit(&input.order_original_action, dispute_basis, &merchant, &requester, forfeit_amount)?;
+        DisputeOutcome::FavorRequester => {
             record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
-            if forfeit_amount > 0 {
-                record_reputation_event(
-                    &merchant,
-                    ReputationTargetWire::Store(catalog_ref),
-                    input.order_original_action.clone(),
-                    ReputationEventKindWire::CollateralForfeited { amount: forfeit_amount },
-                )?;
-            }
         }
     }
 

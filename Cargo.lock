@@ -25,6 +25,7 @@ dependencies = [
  "hdi",
  "hdk",
  "relay_coordinator_support",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -34,6 +35,7 @@ name = "attestation_integrity"
 version = "0.1.0"
 dependencies = [
  "attestation_types",
+ "dispatch_types",
  "hdi",
  "holochain_serialized_bytes",
  "relay_integrity_support",
@@ -287,6 +289,7 @@ dependencies = [
 name = "dispatch_coordinator"
 version = "0.1.0"
 dependencies = [
+ "attestation_types",
  "catalog_types",
  "chrono",
  "chrono-tz",
@@ -481,29 +484,6 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
-]
-
-[[package]]
-name = "geo_presence_coordinator"
-version = "0.1.0"
-dependencies = [
- "geo_presence_integrity",
- "hdi",
- "hdk",
- "relay_coordinator_support",
- "relay_types",
- "serde",
-]
-
-[[package]]
-name = "geo_presence_integrity"
-version = "0.1.0"
-dependencies = [
- "hdi",
- "holochain_serialized_bytes",
- "relay_integrity_support",
- "relay_types",
- "serde",
 ]
 
 [[package]]
@@ -800,6 +780,7 @@ dependencies = [
 name = "ledger_coordinator"
 version = "0.1.0"
 dependencies = [
+ "dispatch_types",
  "hdk",
  "ledger_integrity",
  "relay_coordinator_support",
@@ -811,6 +792,7 @@ dependencies = [
 name = "ledger_integrity"
 version = "0.1.0"
 dependencies = [
+ "attestation_types",
  "dispatch_types",
  "dispute_types",
  "hdi",
@@ -1030,6 +1012,7 @@ dependencies = [
  "dispatch_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_governance",
  "relay_integrity_support",
  "serde",
 ]

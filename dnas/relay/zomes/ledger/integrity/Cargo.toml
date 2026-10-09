@@ -16,3 +16,4 @@ dispatch_types.workspace = true
 dispute_types.workspace = true
 ledger_types.workspace = true
 relay_integrity_support.workspace = true
+attestation_types.workspace = true

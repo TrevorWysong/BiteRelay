@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -208,24 +208,16 @@ await runScenario(async (scenario) => {
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
 
   const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
-  const merchantLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const merchantLegRef = actionHash(merchantLegRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-  const merchantReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", merchantLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: merchantLegRef, receipt: actionHash(merchantReceiptRecord) }));
+  await handOff(driver, customer, orderRef, "MerchantHandoff", both);
 
   await dispatchOf(driver)("pick_up_order", orderRef);
-  const customerLegRecord = await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE });
-  const customerLegRef = actionHash(customerLegRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-  const customerReceiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", customerLegRef);
-  await retryUntilOk(() => attestationOf(driver)("link_leg_to_receipt", { leg: customerLegRef, receipt: actionHash(customerReceiptRecord) }));
+  await handOff(driver, customer, orderRef, "CustomerHandoff", both);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
   const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  const driverBalance = await ledgerOf(driver)<number>("get_balance", driver.agentPubKey);
+  const driverBalance = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 400 + 150, 120, 1000);
   assert.equal(driverBalance, 400 + 150, "driver's payout must include the tip on top of the bid's price_offer");
   console.log("[PASS] complete_delivery pays the driver price_offer + tip_cents, confirming the tip is real money, not just a stored field");
 

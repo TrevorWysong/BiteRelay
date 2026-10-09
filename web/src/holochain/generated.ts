@@ -294,10 +294,26 @@ export interface DeliveryOrder {
    */
   ready_by: Timestamp | null;
   /**
-   * The driver's collateral hold (a `ledger_types::LedgerTransaction`
-   * from them to the customer), posted in the update that picks the
-   * order up -- validation requires it there, and it never changes
-   * after. Returned on delivery (`PaymentLeg::CollateralReturn`).
+   * The customer's hold for the food (`settlement::HoldPurpose::Food`),
+   * cited by the store's update that accepts the order -- validation
+   * won't let a store accept an order whose food isn't paid for. Never
+   * changes after.
+   */
+  food_hold: ActionHash | null;
+  /**
+   * The customer's hold for the driver's pay -- their share of the fee,
+   * and their tip (`HoldPurpose::DriverPay`) -- cited by their update
+   * that accepts a bid.
+   */
+  driver_pay_hold: ActionHash | null;
+  /**
+   * The store's hold for its share of the fee (`HoldPurpose::Subsidy`),
+   * cited by its update that starts preparing the order.
+   */
+  subsidy_hold: ActionHash | null;
+  /**
+   * The driver's collateral hold (`HoldPurpose::Collateral`), cited by
+   * their update that picks the order up.
    */
   collateral_hold: ActionHash | null;
 }
@@ -331,7 +347,7 @@ export type DeliveryStatus =
 
 /**
  * Local UI-facing signals, emitted from `recv_remote_signal` once a remote
- * signal has been handled.
+ * signal has been checked.
  */
 export type DispatchLocalSignal =
   /**
@@ -339,9 +355,8 @@ export type DispatchLocalSignal =
    */
   | { OrderPlaced: ActionHash }
   /**
-   * An order this agent is party to changed -- what it changed to, and
-   * which side of it this agent is on, so the app can say so without
-   * re-reading it.
+   * An order this agent is party to changed -- what it changed to (read
+   * from the new version itself), and which side of it this agent is on.
    */
   | {
       OrderUpdated: {
@@ -350,10 +365,17 @@ export type DispatchLocalSignal =
         role: OrderRole;
       };
     }
-  | { NewOrderNearby: ActionHash }
+  /**
+   * An order this agent is party to changed, but the new version hasn't
+   * reached this agent yet: refresh, there's nothing verified to say.
+   */
+  | { OrderChanged: ActionHash }
   | { BidPlaced: ActionHash }
   | { BidAccepted: ActionHash }
   | { BidReleased: ActionHash }
+  /**
+   * `from` is the verified sender; `sent_at` is when it arrived here.
+   */
   | {
       ChatMessage: {
         order_ref: ActionHash;
@@ -407,25 +429,15 @@ export interface Dispute {
 /**
  * No `Dismissed`/no-fault outcome -- every dispute resolves to a definitive
  * `Delivered` or `Cancelled` (see `DeliveryOrder::dispute_ref`'s doc
- * comment). A dispute raised in error is `FavorProvider { forfeit_amount: 0 }`,
- * not a revert to some remembered pre-dispute status.
+ * comment). A dispute raised in error is `FavorProvider`.
  *
- * `forfeit_amount` is what the losing side pays the winning one -- except a
- * delivery ruled for the customer, where the forfeit is the collateral the
- * driver posted at pickup, which the customer already holds; nothing more
- * moves (the ledger refuses it).
+ * A ruling moves no money itself: it's the evidence each party's held
+ * money is settled by (see `ledger_integrity`). For the provider, the
+ * order is paid as if delivered and the driver's collateral returned; for
+ * the customer, their holds come back to them and the driver's collateral
+ * goes to the store, which handed over the food.
  */
-export type DisputeOutcome =
-  | {
-      FavorProvider: {
-        forfeit_amount: number;
-      };
-    }
-  | {
-      FavorRequester: {
-        forfeit_amount: number;
-      };
-    };
+export type DisputeOutcome = "FavorProvider" | "FavorRequester";
 
 export type DisputeReason =
   | "NeverDelivered"
@@ -505,6 +517,66 @@ export interface GoodieBag {
 }
 
 /**
+ * What a handoff's sealed evidence holds.
+ */
+export interface HandoffEvidence {
+  geo: GeoPoint;
+  /**
+   * An inline image, or empty for none.
+   */
+  photo_data_uri: string;
+}
+
+/**
+ * What a hold on an order is for. The bid, where there is one, fixes the
+ * driver and the fee.
+ */
+export type HoldPurpose =
+  | "Food"
+  | {
+      DriverPay: {
+        bid: ActionHash;
+      };
+    }
+  | {
+      Subsidy: {
+        bid: ActionHash;
+      };
+    }
+  | {
+      Collateral: {
+        bid: ActionHash;
+      };
+    };
+
+/**
+ * A hold on an order: who paid it, what for, and its parts.
+ */
+export interface HoldView {
+  hold: ActionHash;
+  payer: AgentPubKey;
+  purpose: HoldPurpose;
+  amount: number;
+  held_at: Timestamp;
+  shares: ShareView[];
+}
+
+/**
+ * Funds issued to an agent by an issuer on the DNA's roster
+ * (`relay_governance::is_issuer`) -- the stand-in for a payment processor
+ * crediting an account against a real payment. The agent collects it into
+ * their balance with a `Deposit`.
+ */
+export interface IssuerGrant {
+  to: AgentPubKey;
+  amount: number;
+  /**
+   * The issuer's own reference (a payment id), so a grant is unique.
+   */
+  reference: string;
+}
+
+/**
  * A star rating + comment against a specific *menu item* (not an agent) --
  * same posture as `Review`: self-authored by the customer, a UI-display
  * feature rather than a cryptographically-enforced fact, except there's no
@@ -523,24 +595,61 @@ export interface ItemReview {
   created_at: Timestamp;
 }
 
-export interface LedgerTransaction {
-  from: AgentPubKey;
-  to: AgentPubKey;
+export interface LedgerEntry {
+  kind: LedgerKind;
   amount: number;
-  reason: TxnReason;
   /**
-   * The order this settles (its original action).
+   * The author's balance after this entry.
    */
-  related_order: ActionHash;
+  balance: number;
   /**
-   * The record that justifies it: for a payment, the version of the
-   * order that completed it (`Delivered`/`PickedUp`); for a collateral
-   * hold, the version that assigned the driver; for a forfeit, the
-   * resolved `Dispute`.
+   * The author's previous ledger entry -- `None` only for their first.
    */
-  basis: ActionHash;
-  created_at: Timestamp;
+  previous: ActionHash | null;
 }
+
+export type LedgerKind =
+  /**
+   * Funds issued to the author by an issuer (`IssuerGrant`). Credit.
+   */
+  | {
+      Deposit: {
+        grant: ActionHash;
+      };
+    }
+  /**
+   * The author setting money aside for an order (its original action).
+   * Debit. See `dispatch_types::settlement`.
+   */
+  | {
+      Hold: {
+        order: ActionHash;
+        purpose: HoldPurpose;
+      };
+    }
+  /**
+   * The author taking a part of a hold they're owed -- or, as its payer,
+   * a part returned to them -- with `basis`, the record that entitles
+   * them. Credit.
+   */
+  | {
+      Collect: {
+        hold: ActionHash;
+        portion: Portion;
+        basis: ActionHash;
+      };
+    }
+  /**
+   * The author, a part's recipient, giving it back to the hold's payer
+   * (an order cancelled before they were owed it). No change to the
+   * author's balance; the payer collects it.
+   */
+  | {
+      Waive: {
+        hold: ActionHash;
+        portion: Portion;
+      };
+    };
 
 /**
  * A single leg of a delivery's completion chain. A delivery is a 3-party
@@ -555,23 +664,17 @@ export interface Leg {
   kind: LegKind;
   from: AgentPubKey;
   to: AgentPubKey;
-  geo_at_completion: GeoPoint;
   completed_at: Timestamp;
   /**
-   * An optional data URI, captured by `from` at handoff time (typically
-   * the driver, on `CustomerHandoff` -- "photo at the door," the
-   * DoorDash-style delivery-confirmation convention). Empty string means
-   * no photo. Deliberately informal evidence, *not* part of the
-   * dual-signed `ReceiptAttestation` payload -- that payload is just
-   * `{leg, attested_at}` and stays that way, so adding this field here
-   * never touches the countersigning session's content or its own
-   * documented fragility (see `ReceiptAttestation`'s doc comment on the
-   * "isolated spike" this app's countersigning already needed). A
-   * customer gets reassurance from a photo; the actual completion gate
-   * (`dispatch_integrity`'s `delivery_receipts` check) still runs on the
-   * real dual-signed receipt, same as before, regardless of this field.
+   * Where the handoff happened, and (on `CustomerHandoff`, typically) a
+   * photo at the door -- a `HandoffEvidence`, sealed from `from` to
+   * `to`. A drop-off's location is the customer's door, so it's never
+   * published: only the two parties to the handoff can open it, and it
+   * reaches an arbitrator only if one of them shares it in a dispute.
+   * Evidence, not part of what completes a delivery: that's the other
+   * party's `ReceiptAttestation`.
    */
-  photo_data_uri: string;
+  sealed_evidence: XSalsa20Poly1305EncryptedData;
 }
 
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
@@ -667,11 +770,6 @@ export interface MerchantCatalog {
   dietary_tags: string[];
 }
 
-export interface NearbyProvider {
-  provider: AgentPubKey;
-  capabilities: DeliveryCapability[];
-}
-
 /**
  * One period a store is open: from `opens` to `closes` on `weekday`
  * (0 = Sunday), in minutes after local midnight. A `closes` at or before
@@ -723,34 +821,6 @@ export interface OrderLine {
  * Which side of an order a signal's recipient is on.
  */
 export type OrderRole = "Customer" | "Store" | "Driver";
-
-/**
- * One part of settling a completed order. Each is paid by its own payer
- * (see `ledger_integrity`), so each is a separate transaction.
- */
-export type PaymentLeg =
-  /**
-   * The customer pays the store for the food.
-   */
-  | "OrderTotal"
-  /**
-   * The customer's share of the driver's delivery fee.
-   */
-  | "DeliveryFeeCustomerShare"
-  /**
-   * The store's share of the driver's delivery fee
-   * (`DeliveryOrder::delivery_subsidy_percent`).
-   */
-  | "DeliveryFeeStoreShare"
-  /**
-   * The customer's tip, all of it to the driver.
-   */
-  | "Tip"
-  /**
-   * The driver's collateral, held by the customer since pickup
-   * (`DeliveryOrder::collateral_hold`), handed back on delivery.
-   */
-  | "CollateralReturn";
 
 /**
  * The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
@@ -834,6 +904,11 @@ export interface PickupOrder {
    * the order, never changed after. `None` until then.
    */
   ready_by: Timestamp | null;
+  /**
+   * The customer's hold for the food, cited by the store's update that
+   * accepts the order -- see `DeliveryOrder::food_hold`.
+   */
+  food_hold: ActionHash | null;
 }
 
 /**
@@ -845,18 +920,26 @@ export interface PickupOrder {
 export type PickupStatus = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "PickedUp" | "Cancelled" | "Disputed";
 
 /**
- * Beacons are refreshed by the client every 45-60s and are read with a
- * client-side `expires_at` filter -- Holochain doesn't expire DHT entries on
- * its own, and going faster than this doesn't help: Kitsune2's own gossip
- * floor is roughly a minute, so a faster refresh can't propagate any faster
- * than the network already does.
+ * One part of a hold, collected or waived on its own.
  */
-export interface PresenceBeacon {
-  provider: AgentPubKey;
-  geohash: string;
-  capabilities: DeliveryCapability[];
-  expires_at: Timestamp;
-}
+export type Portion =
+  /**
+   * The food, to the store.
+   */
+  | "Food"
+  /**
+   * A share of the delivery fee, to the driver.
+   */
+  | "Fee"
+  /**
+   * The customer's tip, to the driver.
+   */
+  | "Tip"
+  /**
+   * The driver's collateral: back to the driver once the food is
+   * delivered, to the store if an arbitrator rules it never was.
+   */
+  | "Collateral";
 
 export interface Profile {
   /**
@@ -1063,21 +1146,19 @@ export interface Receipt {
 }
 
 /**
- * The dual-signed proof that a `Leg` actually happened. Intended to be
- * created via a native Holochain countersigning session between `leg.from`
- * and `leg.to`, not hand-rolled signature fields -- see the attestation
- * coordinator's `initiate_leg_attestation` for the session setup.
+ * The other party to a `Leg` acknowledging it happened -- the store that
+ * handed the order to the driver, or the customer it reached -- authored
+ * on their own chain. Validation holds it to that party
+ * (`attestation_integrity::validate_receipt`), so a driver can record a
+ * handoff alone but can't acknowledge it for anyone. A delivery completes
+ * on the driver's pickup `Leg` plus the customer's acknowledgment of the
+ * drop-off (`dispatch_integrity`'s completion gate).
  *
- * NOTE: fully verifying countersigning-session membership from inside a
- * deterministic `validate` callback is one of the trickier corners of the
- * HDK (session timeout/abandonment edge cases). The check in
- * `attestation_integrity::validate_receipt` is a best-effort placeholder
- * (author must be one of the leg's two parties) -- full session-membership
- * verification is flagged in the architecture plan as needing its own
- * isolated spike, not solved here. `dispatch_integrity`'s completion gate
- * (below, via this crate) checks that a `ReceiptAttestation` exists and is
- * well-formed for each required leg -- it does not re-verify countersigning
- * membership beyond what `attestation_integrity` already enforces.
+ * Two plain entries rather than one countersigned one: neither party has
+ * to be online at the same moment as the other, the acknowledgment is a
+ * deliberate act by the person (not something their conductor signs
+ * automatically), and it runs on any Holochain build -- countersigning is
+ * still behind an unstable feature that release runtimes don't ship.
  */
 export interface ReceiptAttestation {
   leg: ActionHash;
@@ -1092,11 +1173,11 @@ export interface ReceiptLine {
 }
 
 /**
- * One payment the customer made towards the order, and the transaction
- * that records it.
+ * One payment the customer made towards the order -- a part of the money
+ * they set aside for it -- and the ledger entry that holds it.
  */
 export interface ReceiptPayment {
-  leg: PaymentLeg;
+  leg: Portion;
   amount_cents: number;
   transaction: ActionHash;
 }
@@ -1177,7 +1258,7 @@ export interface ReputationSummary {
 }
 
 /**
- * Who a `ReputationEvent` (and its checkpoint) is about.
+ * Who a `ReputationEvent` is about.
  */
 export type ReputationTarget =
   /**
@@ -1218,7 +1299,7 @@ export interface Review {
 }
 
 /**
- * Who a `Review` (and its rating checkpoint) is about -- the two things a
+ * Who a `Review` is about -- the two things a
  * customer actually rates after an order, same as the DoorDash/Uber Eats
  * post-order prompt: the store, and (for a delivery) the driver.
  */
@@ -1238,6 +1319,15 @@ export interface SavedAddress {
 }
 
 /**
+ * One part of a hold, over the zome-call boundary.
+ */
+export interface ShareView {
+  portion: Portion;
+  recipient: AgentPubKey;
+  amount: number;
+}
+
+/**
  * A customer's own saved "repeat this order" recipe. Deliberately a plain
  * entry with **no DHT link at all** -- nobody but the owner ever needs to
  * discover these, so `list_my_recurring_templates` is a local chain
@@ -1254,22 +1344,14 @@ export interface TemplateDetails {
   kitchen_notes: string;
 }
 
-export type TxnReason =
-  /**
-   * One leg of settling a completed order.
-   */
-  | { Payment: PaymentLeg }
-  /**
-   * A driver's collateral, posted to the customer when they pick up the
-   * customer's food -- each holds the other's value until delivery, when
-   * the customer returns it (`PaymentLeg::CollateralReturn`). If an
-   * arbitrator rules for the customer, they keep it.
-   */
-  | "CollateralHold"
-  /**
-   * Moved by an arbitrator's dispute ruling.
-   */
-  | "CollateralForfeit";
+/**
+ * A part waived back to its payer.
+ */
+export interface WaiverView {
+  waiver: ActionHash;
+  portion: Portion;
+  by: AgentPubKey;
+}
 
 /**
  * Contested warrants (architecture plan §11.2). Warrant-checking cannot be

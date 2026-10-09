@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { listOpenDisputes, submitResolution } from "../../holochain/zomes/dispute";
 import { getOrder, applyDisputeResolution, applyCancellationDisputeResolution } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
-import { Button, Card, Skeleton, EmptyState, Badge, Input, StatNumber, Textarea } from "../../components/ui";
+import { Button, Card, Skeleton, EmptyState, Badge, StatNumber, Textarea } from "../../components/ui";
 import { formatCents, shortAgentId, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
@@ -49,10 +49,10 @@ export function ArbitratorDashboard() {
   // Nothing signals an arbitrator about a new case.
   usePolling(refresh, { pollMs: POLL.unsignalled });
 
-  async function resolve(row: CaseRow, favor: "provider" | "requester", forfeitAmount: number, reasoning: string) {
+  async function resolve(row: CaseRow, favor: "provider" | "requester", reasoning: string) {
     setError(null);
     try {
-      const outcome = favor === "provider" ? { FavorProvider: { forfeit_amount: forfeitAmount } } : { FavorRequester: { forfeit_amount: forfeitAmount } };
+      const outcome = favor === "provider" ? "FavorProvider" : "FavorRequester";
       await submitResolution({ dispute_original_action: row.hash, outcome, reasoning });
       // Which apply-fn depends on whether this was a normal completion
       // dispute (order still `Disputed`) or a cancellation-fairness one
@@ -93,7 +93,7 @@ export function ArbitratorDashboard() {
         <AnimatePresence initial={false}>
           {cases.map((row) => (
             <motion.div key={bytesToHex(row.hash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-              <CaseCard row={row} onResolve={(favor, amount, reasoning) => resolve(row, favor, amount, reasoning)} />
+              <CaseCard row={row} onResolve={(favor, reasoning) => resolve(row, favor, reasoning)} />
             </motion.div>
           ))}
         </AnimatePresence>
@@ -108,20 +108,17 @@ function CaseCard({
   onResolve,
 }: {
   row: CaseRow;
-  onResolve: (favor: "provider" | "requester", forfeitAmount: number, reasoning: string) => Promise<void>;
+  onResolve: (favor: "provider" | "requester", reasoning: string) => Promise<void>;
 }) {
   const { dispute, order } = row;
   const isCancellation = dispute.reason === "UnjustCancellation";
-  const [forfeitAmount, setForfeitAmount] = useState(0);
   const [reasoning, setReasoning] = useState("");
   const [resolving, setResolving] = useState(false);
 
   async function handle(favor: "provider" | "requester") {
     setResolving(true);
     try {
-      // Ruling for the customer over a delivery, the forfeit is the driver's
-      // posted collateral, which the customer already holds; nothing else moves.
-      await onResolve(favor, favor === "requester" && !isCancellation ? 0 : forfeitAmount, reasoning.trim());
+      await onResolve(favor, reasoning.trim());
     } catch {
       // error already surfaced by the parent's own error state
     } finally {
@@ -152,20 +149,11 @@ function CaseCard({
         </p>
       ) : (
         <div className="mt-1 flex flex-col gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/60 p-3">
-          <label className="text-xs font-semibold text-ink-500">Forfeit amount (charged to the losing party)</label>
-          <Input
-            type="number"
-            min={0}
-            step={0.5}
-            value={forfeitAmount / 100}
-            onChange={(e) => setForfeitAmount(Math.max(0, Math.round(Number(e.target.value) * 100) || 0))}
-            prefix="$"
-          />
-          {!isCancellation && (
-            <p className="text-[11px] text-ink-400">
-              Charged to the customer if you favor the provider. If you favor the customer, they keep the driver's posted collateral ({formatCents(order.order_total)}) instead.
-            </p>
-          )}
+          {/* A ruling moves no money itself: it settles what was set aside as the order went. */}
+          <p className="text-[11px] leading-relaxed text-ink-400">
+            Favoring the provider pays the order as if it were delivered, and returns the driver's collateral. Favoring the
+            customer returns everything they set aside{isCancellation ? "" : `, and gives the store the driver's collateral (${formatCents(order.order_total)}) for the food it handed over`}.
+          </p>
           <label className="text-xs font-semibold text-ink-500">Reasoning</label>
           <Textarea value={reasoning} onChange={(e) => setReasoning(e.target.value)} rows={2} placeholder="Why you're ruling this way. This is recorded permanently." />
           <div className="mt-1 flex gap-2">

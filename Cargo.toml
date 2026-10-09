@@ -10,8 +10,6 @@ members = [
     "dnas/relay/zomes/catalog/types",
     "dnas/relay/zomes/catalog/integrity",
     "dnas/relay/zomes/catalog/coordinator",
-    "dnas/relay/zomes/geo_presence/integrity",
-    "dnas/relay/zomes/geo_presence/coordinator",
     "dnas/relay/zomes/dispatch/types",
     "dnas/relay/zomes/dispatch/integrity",
     "dnas/relay/zomes/dispatch/coordinator",

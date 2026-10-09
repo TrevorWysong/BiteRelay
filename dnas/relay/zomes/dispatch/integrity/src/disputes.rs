@@ -79,8 +79,8 @@ pub(crate) fn validate_dispute_resolution_matches(dispute_ref: &ActionHash, targ
         return Ok(Err("the order update's author must be the same arbitrator who ruled on the dispute".into()));
     }
     let outcome_matches = match dispute.outcome {
-        Some(DisputeOutcome::FavorProvider { .. }) => *target_status == DeliveryStatus::Delivered,
-        Some(DisputeOutcome::FavorRequester { .. }) => *target_status == DeliveryStatus::Cancelled,
+        Some(DisputeOutcome::FavorProvider) => *target_status == DeliveryStatus::Delivered,
+        Some(DisputeOutcome::FavorRequester) => *target_status == DeliveryStatus::Cancelled,
         None => false,
     };
     if !outcome_matches {

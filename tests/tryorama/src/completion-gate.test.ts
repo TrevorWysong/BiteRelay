@@ -82,7 +82,7 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] validate() rejects a forged completion with zero attested legs");
 
-  // Attempt 2: a real entry, but not a ReceiptAttestation -- validate()
+  // Attempt 2: a real entry, but not a handoff or a receipt -- validate()
   // must actually check the entry's type, not just its presence.
   await assert.rejects(
     dispatchOf(customer)("force_order_update_for_testing", {
@@ -94,30 +94,27 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] validate() rejects a delivery_receipts entry of the wrong entry type");
 
-  // Attempt 3: one genuinely attested leg, but only one of the two required
-  // kinds -- proves the check is kind-aware, not just a length check.
-  const legRecord = await attestationOf(driver)<HcRecord>("record_leg", {
-    order_ref: orderRef,
-    sequence: 0,
-    kind: "MerchantHandoff",
-    to: customer.agentPubKey,
-    geo_at_completion: ST_PETE,
-  });
-  const legRef = actionHash(legRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  const receiptRecord = await attestationOf(driver)<HcRecord>("initiate_leg_attestation", legRef);
-  const receiptRef = actionHash(receiptRecord);
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  await assert.rejects(
-    dispatchOf(customer)("force_order_update_for_testing", {
-      order_original_action: orderRef,
-      next_status: "Delivered",
-      delivery_receipts: [receiptRef],
-    }),
-    /CustomerHandoff/,
-    "one attested leg of only one required kind must not satisfy the completion gate",
+  // Attempt 3: the driver's record of collecting the order, alone.
+  const pickupLeg = actionHash(
+    await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
   );
-  console.log("[PASS] validate() rejects partial leg-kind coverage (MerchantHandoff attested, CustomerHandoff missing)");
+  await dhtSync(both, customer.cells[0].cell_id[0]);
+  const forge = (proof: Uint8Array[]) =>
+    dispatchOf(customer)("force_order_update_for_testing", { order_original_action: orderRef, next_status: "Delivered", delivery_receipts: proof });
+  await assert.rejects(forge([pickupLeg]), /needs the customer's acknowledgment/, "the pickup alone doesn't complete a delivery");
+  console.log("[PASS] validate() rejects a completion with only the pickup recorded");
+
+  // Attempt 4: the driver's drop-off record too, but not acknowledged --
+  // the driver's word alone isn't proof the customer got it.
+  const dropoffLeg = actionHash(
+    await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
+  );
+  await dhtSync(both, customer.cells[0].cell_id[0]);
+  await assert.rejects(forge([pickupLeg, dropoffLeg]), /needs the customer's acknowledgment/, "an unacknowledged drop-off doesn't complete a delivery");
+  console.log("[PASS] validate() rejects a completion on the driver's word alone");
+
+  // With the customer's own acknowledgment, the same proof completes it.
+  const receipt = actionHash(await attestationOf(customer)<HcRecord>("acknowledge_leg", dropoffLeg));
+  await forge([pickupLeg, receipt]);
+  console.log("[PASS] validate() accepts the pickup and the customer's acknowledgment as proof of delivery");
 });

@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cancelOrder, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, completeDelivery, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
+import { confirmDeliveryReceived, HandoffNotYetHere } from "../../lib/handoffs";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
-import { getLegsForOrder } from "../../holochain/zomes/attestation";
+import { getHandoffEvidence, getLegsForOrder } from "../../holochain/zomes/attestation";
 import { averageRating, getMyReviewsForOrder, getRatingSummary, getReputationSummary, submitItemReview, submitReview } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
@@ -113,8 +114,10 @@ export function OrderDetail() {
   const { data: dropoffPhoto = null } = useResource(
     photoStatus && `order-photo:${hash}:${photoStatus}`,
     async () => {
-      const legs = (await getLegsForOrder(orderRef)).map((r) => decodeEntry<Leg>(r));
-      return legs.find((leg) => leg.kind === "CustomerHandoff")?.photo_data_uri || null;
+      const dropoff = (await getLegsForOrder(orderRef)).find((r) => decodeEntry<Leg>(r).kind === "CustomerHandoff");
+      if (!dropoff) return null;
+      // Sealed to this customer; only they and the driver can open it.
+      return (await getHandoffEvidence(actionHash(dropoff)))?.photo_data_uri || null;
     },
     { pollMs: photoStatus === "PickedUp" ? POLL.signalled : undefined, refreshOn: isOrderSignal },
   );
@@ -239,27 +242,21 @@ export function OrderDetail() {
   async function confirmReceipt() {
     setCompleting(true);
     setError(null);
-    // The two leg attestations are countersigned on the driver's chain and
-    // gossip to us from there, not written to our own chain -- so there's a
-    // real window right after the driver hands off where the network hasn't
-    // caught up yet and this call legitimately isn't satisfiable. Retry a
-    // few times with backoff before giving up, rather than surfacing a raw
-    // "0 of 2 attestations found" error for something that resolves itself
-    // within a few seconds to ~a minute.
-    const RETRY_DELAYS_MS = [1500, 3000, 6000, 10000, 15000];
+    // The driver's drop-off record is written on their chain and gossips
+    // here; right after the handoff it may not have arrived yet. Retry a
+    // few times before saying so.
+    const RETRY_DELAYS_MS = [1500, 3000, 6000, 10000];
     for (let attempt = 0; ; attempt++) {
       try {
-        await completeDelivery(orderRef);
+        await confirmDeliveryReceived(orderRef);
         await reloadOrder();
         break;
       } catch (err) {
-        const message = describeError(err);
-        const isGossipDelay = message.includes("required leg attestations found");
-        if (isGossipDelay && attempt < RETRY_DELAYS_MS.length) {
+        if (err instanceof HandoffNotYetHere && attempt < RETRY_DELAYS_MS.length) {
           await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
           continue;
         }
-        setError(isGossipDelay ? "Still confirming with your driver's device. Please try again in a moment." : message);
+        setError(describeError(err));
         break;
       }
     }
@@ -419,9 +416,13 @@ export function OrderDetail() {
           {order.collateral_hold && (
             <p className="flex items-start gap-2 text-xs text-relay-700 dark:text-relay-300">
               <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-              Your driver posted {formatCents(order.order_total)} collateral with you, the value of your food. It goes back to them when you confirm receipt.
+              Your driver has set aside {formatCents(order.order_total)}, the value of your food, until it reaches you.
             </p>
           )}
+          <p className="text-xs text-relay-700 dark:text-relay-300">
+            Your payment is held until you confirm you have your order; confirming releases it to the store and your driver. If
+            something's wrong, report a problem instead.
+          </p>
           <Button loading={completing} onClick={confirmReceipt}>
             Confirm receipt
           </Button>

@@ -9,6 +9,7 @@
 
 use dispatch_types::{DeliveryOrder, PickupOrder};
 use hdi::prelude::*;
+use relay_integrity_support::{classify, Checked};
 
 pub use dispute_types::{Dispute, DisputeOutcome, DisputeReason, DisputeStatus};
 
@@ -26,16 +27,17 @@ pub enum LinkTypes {
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
-    match op.flattened::<EntryTypes, LinkTypes>()? {
-        FlatOp::CreateEntry(OpEntry::CreateEntry { app_entry, action }) => match app_entry {
+    match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
+        Checked::Create { entry, action } => match entry {
             EntryTypes::Dispute(dispute) => validate_new_dispute(&dispute, action.author()),
         },
-        FlatOp::CreateEntry(OpEntry::UpdateEntry { app_entry, action }) => match app_entry {
+        Checked::Update { entry, action } => match entry {
             EntryTypes::Dispute(dispute) => validate_resolution(&dispute, action.author(), &action.original_action_address),
         },
-        FlatOp::Link(OpLink::CreateLink { link_type, action }) => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
-        FlatOp::Link(OpLink::DeleteLink { link_type, action, .. }) => validate_delete_link(link_type, action.author()),
-        _ => Ok(ValidateCallbackResult::Valid),
+        Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("disputes can't be deleted".into())),
+        Checked::CreateLink { link_type, action } => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        Checked::DeleteLink { link_type, action, .. } => validate_delete_link(link_type, action.author()),
+        Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
 }
 
@@ -73,6 +75,12 @@ fn validate_delete_link(link_type: LinkTypes, author: &AgentPubKey) -> ExternRes
 }
 
 fn validate_new_dispute(dispute: &Dispute, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = relay_integrity_support::first_problem([
+        relay_integrity_support::text_problem("description", &dispute.description, 4_000),
+        (dispute.evidence_refs.len() > 20).then(|| "a dispute may cite at most 20 pieces of evidence".to_string()),
+    ]) {
+        return Ok(invalid);
+    }
     if &dispute.raised_by != author {
         return Ok(ValidateCallbackResult::Invalid(
             "a dispute can only be authored by its own raised_by agent".into(),
@@ -132,6 +140,9 @@ fn validate_resolution(
     author: &AgentPubKey,
     original_action_hash: &ActionHash,
 ) -> ExternResult<ValidateCallbackResult> {
+    if let Some(invalid) = relay_integrity_support::first_problem([relay_integrity_support::text_problem("reasoning", dispute.reasoning.as_deref().unwrap_or(""), 4_000)]) {
+        return Ok(invalid);
+    }
     let prior_record = must_get_valid_record(original_action_hash.clone())?;
     let Ok(Some(prior)) = prior_record.entry().to_app_option::<Dispute>() else {
         return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a Dispute entry".into()));

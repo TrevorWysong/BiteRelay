@@ -27,6 +27,8 @@ import { formatCents, formatClockTime, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
+import { acknowledgeLeg } from "../../holochain/zomes/attestation";
+import { unconfirmedPickup } from "../../lib/handoffs";
 
 
 const TABS = [
@@ -276,7 +278,12 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
       case "DriverEnRouteToMerchant":
         return note("Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.");
       case "PickedUp":
-        return note("Out for delivery.");
+        return (
+          <>
+            {note("Out for delivery.")}
+            <ConfirmHandoff orderHex={row.hex} orderRef={row.ref} />
+          </>
+        );
       default:
         return null;
     }
@@ -371,6 +378,29 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
       {(order.kitchen_note || order.sealed_customer_name) && <ForTheStore orderHex={row.hex} orderRef={row.ref} />}
       {children}
     </Card>
+  );
+}
+
+/// The store confirming it handed an order to the driver -- its own signed
+/// acknowledgment of the driver's pickup, kept as evidence of who had the
+/// food when. Optional: a delivery completes without it.
+function ConfirmHandoff({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+  const [confirming, setConfirming] = useState(false);
+  const { data: pickup, reload } = useResource(`unconfirmed-pickup:${orderHex}`, () => unconfirmedPickup(orderRef));
+  if (!pickup) return null;
+  async function confirm() {
+    setConfirming(true);
+    try {
+      await acknowledgeLeg(pickup!);
+      await reload();
+    } finally {
+      setConfirming(false);
+    }
+  }
+  return (
+    <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={confirming} onClick={confirm}>
+      Confirm handed to driver
+    </Button>
   );
 }
 

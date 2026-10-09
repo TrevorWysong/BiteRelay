@@ -9,7 +9,7 @@ import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryoram
 import type { Record as HcRecord } from "@holochain/client";
 import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder } from "./helpers.js";
 
-const ALL_ZOMES = ["attestation", "catalog", "dispatch", "dispute", "geo_presence", "ledger", "profiles", "reputation"];
+const ALL_ZOMES = ["attestation", "catalog", "dispatch", "dispute", "ledger", "profiles", "reputation"];
 
 await runScenario(async (scenario) => {
   const [customer, merchant, attacker] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
@@ -62,12 +62,17 @@ await runScenario(async (scenario) => {
   const attackerBid = actionHash(
     await call(attacker, "dispatch")<HcRecord>("submit_bid", { order_ref: deliveryOrder, eta_seconds: 600, price_offer: 500 }),
   );
-  const beacon = actionHash(await call(attacker, "geo_presence")<HcRecord>("announce_online", { location: ST_PETE, capabilities: ["Food"] }));
-  const leg = actionHash(await call(attacker, "attestation")<HcRecord>("record_leg", { order_ref: reviewedOrder, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE }));
+  // The attacker drives this order (a handoff is only ever the assigned
+  // driver's), so their pickup record is real -- what they then try to
+  // file under another order.
   await sync();
-  const [txn] = (await call(customer, "ledger")<{ transactions: HcRecord[] }>("list_my_transactions", { after: null })).transactions;
-  assert.ok(txn, "the completed pickup should have settled a ledger transaction");
-  console.log("[PASS] set up two stores, a reviewed order, a disputed order, an active order, a beacon, a leg and a payment");
+  await call(customer, "dispatch")("accept_bid", { order_original_action: deliveryOrder, bid_action: attackerBid });
+  await sync();
+  const leg = actionHash(await call(attacker, "attestation")<HcRecord>("record_leg", { order_ref: deliveryOrder, sequence: 0, kind: "MerchantHandoff", to: merchant.agentPubKey, geo_at_completion: ST_PETE }));
+  await sync();
+  const [hold] = await call(customer, "ledger")<{ hold: Uint8Array }[]>("holds_for_order", reviewedOrder);
+  assert.ok(hold, "the pickup's food should have been held");
+  console.log("[PASS] set up two stores, a reviewed order, a disputed order, an active order, a leg and a payment");
 
   const rejects = (attempt: Promise<unknown>, reason: RegExp, what: string) => assert.rejects(attempt, reason, what);
 
@@ -96,10 +101,10 @@ await runScenario(async (scenario) => {
   await rejects(rawDelete(attacker, "dispatch", "StoreToActiveOrder", storeA), /may retire it from an active queue/, "a stranger can't pull an order out of a store's active queue");
   console.log("[PASS] dispatch: orders can't be attached to strangers or other stores' queues, or pulled from them");
 
-  // --- Ledger: balances only fold a party's own transactions. ---
-  await rejects(rawLink(attacker, "ledger", "AgentToTransaction", agentAsLinkBase(attacker.agentPubKey), actionHash(txn)), /authored by the author of the entry|one of its own two parties/, "a stranger can't attach someone else's payment to their balance");
-  await rejects(rawLink(customer, "ledger", "AgentToTransaction", agentAsLinkBase(attacker.agentPubKey), actionHash(txn)), /one of its own two parties/, "a payment can't be filed under an agent who isn't a party to it");
-  console.log("[PASS] ledger: transactions can only be linked under their own parties");
+  // --- Ledger: a hold is found under its own order. ---
+  await rejects(rawLink(attacker, "ledger", "OrderToHold", activeOrder, hold.hold), /authored by the author of the entry/, "a stranger can't file someone else's hold");
+  await rejects(rawLink(customer, "ledger", "OrderToHold", activeOrder, hold.hold), /must sit under the order, hold or agent its entry is about/, "a hold can't be filed under an order it isn't for");
+  console.log("[PASS] ledger: a hold can only be linked under its own order, by its payer");
 
   // --- Dispute: only an arbitrator closes a case out of the open queue. ---
   const openDisputes = await call(customer, "dispute")<Uint8Array[]>("test_get_link_hashes", { link_type: "OpenDisputeAnchor", base: await call(customer, "dispute")<Uint8Array>("test_path_hash", "open_disputes") });
@@ -107,8 +112,7 @@ await runScenario(async (scenario) => {
   await rejects(call(customer, "dispute")("test_delete_link", openDisputes[openDisputes.length - 1]), /only an arbitrator may close a dispute/, "even the raiser can't close their own case");
   console.log("[PASS] dispute: a case can't be removed from the open queue by a non-arbitrator");
 
-  // --- Presence, attestation, profiles. ---
-  await rejects(rawLink(customer, "geo_presence", "AgentToBeacon", agentAsLinkBase(customer.agentPubKey), beacon), /only be linked by its own provider/, "nobody else can claim a provider's beacon");
+  // --- Attestation, profiles. ---
   await rejects(rawLink(attacker, "attestation", "OrderToLeg", activeOrder, leg), /under its own order/, "a leg can't be attached to a different order");
   await rejects(rawLink(attacker, "profiles", "AgentToProfile", agentAsLinkBase(attacker.agentPubKey), merchantProfile), /authored by the author of the entry/, "nobody can adopt someone else's profile");
   console.log("[PASS] presence, attestation and profile links can't be forged");
