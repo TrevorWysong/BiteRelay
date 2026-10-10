@@ -5,7 +5,7 @@
 //! into a menu or attach a fake claim to someone's bag.
 
 use crate::*;
-use relay_integrity_support::{decode, invalid, link_target, path_hash, require, valid, LinkTarget};
+use relay_integrity_support::{decode, invalid, linked_record, path_hash, require, valid};
 
 /// Mirrors each coordinator anchor path (catalog/coordinator lib.rs, bags.rs).
 pub fn catalog_geohash_path(geohash: &str) -> String {
@@ -22,16 +22,9 @@ pub fn claim_path(bag_ref: &ActionHash) -> String {
 }
 
 pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let record = match link_target(target)? {
-        LinkTarget::Record(record) => record,
-        // Anchor path tree links: only these link types are built from paths.
-        LinkTarget::PathNode => {
-            return require(
-                matches!(link_type, LinkTypes::GeohashToCatalog | LinkTypes::CatalogToPromoCode | LinkTypes::CatalogToBag | LinkTypes::BagToClaim),
-                "this link type must target a record",
-            )
-        }
-    };
+    // Anchors are computed, never walked: every catalog link targets a
+    // record, so nobody can clutter an anchor with links to nowhere.
+    let Some(record) = linked_record(target)? else { return invalid("catalog links must target a record") };
     let entry_author = record.action().author();
     match link_type {
         LinkTypes::OwnerToCatalog | LinkTypes::GeohashToCatalog => {

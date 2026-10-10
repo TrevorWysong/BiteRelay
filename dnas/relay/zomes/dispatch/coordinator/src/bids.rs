@@ -147,7 +147,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     // real current chain tip -- see resolve_latest's doc comment for why
     // that matters (a plain get() would not give this).
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    crate::order_queues::enqueue_for_driver(&input.order_original_action, &input.bid_action, &winning_bid.bidder)?;
+    crate::order_queues::enqueue_for_driver(&input.order_original_action, &updated, &winning_bid.bidder)?;
 
     let _ = send_remote_signal(
         RemoteSignal::BidAccepted { bid_hash: input.bid_action.clone() },

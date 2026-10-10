@@ -1,7 +1,7 @@
 //! The ledger's entries, factored out of `ledger_integrity` so other zomes'
 //! validation (an order citing its holds) can decode them without linking in
 //! `ledger_integrity`'s own wasm exports -- same reasoning as
-//! `dispatch_types`/`dispute_types`.
+//! `dispatch_types`.
 //!
 //! Every change to an agent's balance is an entry on *their own* chain,
 //! carrying the balance it leaves them with and pointing at their previous

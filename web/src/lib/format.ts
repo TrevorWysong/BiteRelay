@@ -1,5 +1,47 @@
-export function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+import { useNetwork } from "../store/network";
+
+const formatters = new Map<string, Intl.NumberFormat>();
+
+/// The network's currency formatter -- `null` before connecting. The
+/// currency is the network's own setting; everything about how it's written
+/// (its symbol, how many minor units make one) is the currency's.
+function currencyFormat(): Intl.NumberFormat | null {
+  const currency = useNetwork.getState().terms?.currency;
+  if (!currency) return null;
+  let formatter = formatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(undefined, { style: "currency", currency });
+    formatters.set(currency, formatter);
+  }
+  return formatter;
+}
+
+/// How many minor units (cents, for USD) make one of the currency's units.
+function minorUnitsPerUnit(): number {
+  return 10 ** (currencyFormat()?.resolvedOptions().maximumFractionDigits ?? 2);
+}
+
+/// An amount given in minor units -- as every amount in Relay is -- written
+/// in the network's currency: "$12.50".
+export function formatCents(minorUnits: number): string {
+  const formatter = currencyFormat();
+  return formatter ? formatter.format(minorUnits / minorUnitsPerUnit()) : (minorUnits / minorUnitsPerUnit()).toFixed(2);
+}
+
+/// A typed amount ("12.5") in minor units (1250) -- what a money field
+/// sends.
+export function toMinorUnits(amount: number): number {
+  return Math.round(amount * minorUnitsPerUnit());
+}
+
+/// Minor units as a typed amount -- what a money field shows.
+export function fromMinorUnits(minorUnits: number): number {
+  return minorUnits / minorUnitsPerUnit();
+}
+
+/// The currency's symbol, for a money field's prefix: "$".
+export function currencySymbol(): string {
+  return currencyFormat()?.formatToParts(0).find((part) => part.type === "currency")?.value ?? "";
 }
 
 /// Composes `MerchantCatalog`'s own split address fields (street/city/

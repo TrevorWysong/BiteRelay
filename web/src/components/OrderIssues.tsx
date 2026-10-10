@@ -1,14 +1,14 @@
-// Missing and wrong items, after an order is confirmed: the customer
-// reports them, the store accepts or declines each report (its answer is
-// final), and when the order's issue window closes the customer is refunded
-// what the store accepted or never answered -- see the dispatch `issues`
-// module. Shown on both sides of the order.
+// Missing and wrong items, once the customer has their order: they report
+// them, the store accepts or declines each report (its answer is final),
+// and when their report window has run the store's app settles the food --
+// refunding what it accepted or never answered (see the dispatch `issues`
+// module). Shown on both sides of the order.
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Clock3, Minus, PackageX, Plus, Repeat2, ShieldCheck, XCircle } from "lucide-react";
-import { getIssueItems, getIssueWindow, getIssuesForOrder, reportIssue, respondToIssue } from "../holochain/zomes/dispatch";
+import { getIssueItems, getIssuesForOrder, getOrderDecisions, reportIssue, respondToIssue } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
-import type { IssueItems, IssueKind, IssueLine, IssueView, IssueWindowView } from "../holochain/types";
+import { MAX_NOTE_CHARS, type IssueItems, type IssueKind, type IssueLine, type IssueView, type OrderDecisions } from "../holochain/types";
 import { claimedValue } from "../lib/issues";
 import { describeError } from "../lib/errors";
 import { formatCents, formatDeadline, timeAgo } from "../lib/format";
@@ -26,18 +26,18 @@ const KIND_LABEL: Record<IssueKind, string> = { Missing: "Missing", Wrong: "Wron
 export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Role }) {
   const hex = bytesToHex(orderRef);
   const refresh = { pollMs: POLL.unsignalled, refreshOn: (s: object) => "IssueReported" in s || "OrderUpdated" in s || "OrderChanged" in s };
-  const { data: window } = useResource(`issue-window:${hex}`, () => getIssueWindow(orderRef), refresh);
-  const { data: issues, reload } = useResource(window?.available ? `issues:${hex}` : null, () => getIssuesForOrder(orderRef), refresh);
-  const { data: items } = useResource(window?.available ? `issue-items:${hex}` : null, () => getIssueItems(orderRef));
+  const { data: decisions } = useResource(`order-decisions:${hex}`, () => getOrderDecisions(orderRef), refresh);
+  const { data: issues, reload } = useResource(`issues:${hex}`, () => getIssuesForOrder(orderRef), refresh);
+  const { data: items } = useResource(`issue-items:${hex}`, () => getIssueItems(orderRef));
   const [reporting, setReporting] = useState(false);
   const now = useClock(30_000).getTime() * 1000;
 
-  if (!window?.available || !issues || !items) return null;
-  const open = window.closed === null;
-  // The window's run its course, and its arbitrator is about to close it.
-  const settling = open && window.closes_at !== null && now >= window.closes_at;
+  if (!decisions || !issues || !items || decisions.not_delivered) return null;
+  const open = decisions.refund === null;
+  // The report window's run its course; the store's app is settling it.
+  const settling = open && decisions.reports_until !== null && now >= decisions.reports_until;
   if (!open && issues.length === 0) return null;
-  if (role === "store" && issues.length === 0) return <StorePayoutNote window={window} orderTotal={items.order_total} />;
+  if (role === "store" && issues.length === 0) return <StorePayoutNote decisions={decisions} orderTotal={items.order_total} />;
 
   return (
     <Card className="mt-4 overflow-hidden">
@@ -46,8 +46,8 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
           <PackageX size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-bold text-ink-900 dark:text-ink-50">{headline(role, window, issues.length, settling)}</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-500 dark:text-ink-400">{subline(role, window, settling)}</p>
+          <p className="font-bold text-ink-900 dark:text-ink-50">{headline(role, decisions, issues.length, settling)}</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-500 dark:text-ink-400">{subline(role, decisions, settling)}</p>
         </div>
       </div>
 
@@ -84,27 +84,30 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
   );
 }
 
-function headline(role: Role, window: IssueWindowView, count: number, settling: boolean): string {
-  if (window.closed !== null) return window.closed > 0 ? `${formatCents(window.closed)} refunded for missing or wrong items` : role === "store" ? "Closed: no refund" : "The store declined your report";
+function headline(role: Role, decisions: OrderDecisions, count: number, settling: boolean): string {
+  const refund = decisions.refund;
+  if (refund !== null) return refund > 0 ? `${formatCents(refund)} refunded for missing or wrong items` : role === "store" ? "Settled: no refund" : "The store declined your report";
   if (settling) return "Settling reports";
   if (role === "store") return count === 1 ? "The customer reported a problem" : `The customer reported ${count} problems`;
   return count ? "Your report is in" : "Missing or wrong items?";
 }
 
-function subline(role: Role, window: IssueWindowView, settling: boolean): string {
-  if (window.closed !== null) return role === "customer" ? "Returned to your balance." : "The rest of the food's payment is yours.";
-  if (settling) return "The window has closed. Refunds are issued within a few minutes.";
-  const until = window.closes_at !== null ? formatDeadline(window.closes_at) : null;
+function subline(role: Role, decisions: OrderDecisions, settling: boolean): string {
+  if (decisions.refund !== null) return role === "customer" ? "Returned to your balance." : "The rest of the food's payment is yours.";
+  if (settling) return "The report window has closed. Refunds are issued within a few minutes.";
+  const until = decisions.reports_until !== null ? formatDeadline(decisions.reports_until) : null;
   if (role === "store") return `Accept or decline each report${until ? ` by ${until}` : ""}. Your answer is final; reports you don't answer are refunded.`;
-  return until ? `You can report problems until ${until}. The store reviews each report, and refunds are issued when that window closes.` : "You have 2 hours from delivery to report problems. The store reviews each report, and refunds are issued when that window closes.";
+  return until
+    ? `You can report problems until ${until}. The store reviews each report and has the final say; refunds are issued when that window closes.`
+    : "You can report problems for a while after your order arrives. The store reviews each report and has the final say.";
 }
 
-function StorePayoutNote({ window, orderTotal }: { window: IssueWindowView; orderTotal: number }) {
-  if (window.closed !== null || window.closes_at === null) return null;
+function StorePayoutNote({ decisions, orderTotal }: { decisions: OrderDecisions; orderTotal: number }) {
+  if (decisions.refund !== null || decisions.reports_until === null) return null;
   return (
     <p className="mt-4 flex items-center gap-2 rounded-2xl bg-ink-50 px-4 py-3 text-xs text-ink-600 dark:bg-ink-800/60 dark:text-ink-300">
       <Clock3 size={14} className="shrink-0 text-ink-400" />
-      {formatCents(orderTotal)} for the food is released at {formatDeadline(window.closes_at)}, once the customer's window to report problems closes.
+      {formatCents(orderTotal)} for the food is released at {formatDeadline(decisions.reports_until)}, once the customer's window to report problems closes.
     </p>
   );
 }
@@ -323,7 +326,7 @@ function ReportIssueSheet({
 
       <div className="mt-5">
         <p className="mb-2 text-xs font-semibold text-ink-500">Tell the store more (optional)</p>
-        <Textarea value={note} maxLength={1000} rows={3} placeholder="e.g. Got a chicken sandwich instead of the veggie one." onChange={(e) => setNote(e.target.value)} />
+        <Textarea value={note} maxLength={MAX_NOTE_CHARS} rows={3} placeholder="e.g. Got a chicken sandwich instead of the veggie one." onChange={(e) => setNote(e.target.value)} />
       </div>
       <div className="mt-4">
         <p className="mb-2 text-xs font-semibold text-ink-500">Add a photo (optional, helps if the store disagrees)</p>
@@ -331,7 +334,7 @@ function ReportIssueSheet({
       </div>
       <p className="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-ink-400">
         <ShieldCheck size={13} className="mt-0.5 shrink-0" />
-        Only the store and the network's arbitrators can see your note and photo. The store reviews your report; if it accepts or doesn't answer, the refund is issued when your window closes.
+        Only the store can see your note and photo. If it accepts your report or doesn't answer, the refund is issued when your window closes.
       </p>
     </Sheet>
   );

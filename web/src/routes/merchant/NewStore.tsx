@@ -9,6 +9,7 @@ import { useMerchantStores } from "../../store/merchantStores";
 import { Button, Card, Field, Input } from "../../components/ui";
 import { SplitAddressFields } from "../../components/SplitAddressFields";
 import { describeError } from "../../lib/errors";
+import { MAX_NAME_CHARS } from "../../holochain/types";
 
 /// Publishing a storefront -- the same form whether it's a merchant's very
 /// first store (rendered inline by Catalog.tsx when they have none yet) or
@@ -76,7 +77,7 @@ export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
       </div>
       <Card className="flex flex-col gap-3 p-5">
         <Field label="Business name">
-          <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder={firstStore ? "Cara's Kitchen" : "Cara's Kitchen – Downtown"} />
+          <Input maxLength={MAX_NAME_CHARS} value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder={firstStore ? "Cara's Kitchen" : "Cara's Kitchen – Downtown"} />
         </Field>
         <SplitAddressFields
           point={pickupLocation}

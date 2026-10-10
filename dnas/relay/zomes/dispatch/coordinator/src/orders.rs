@@ -4,11 +4,11 @@
 //! bidding steps in between, and `matching.rs`/`signals.rs` for how a new
 //! order actually reaches nearby providers.
 
-use crate::matching::{dropoff_geohash_precision, open_order_anchor_path};
+use crate::matching::open_order_anchor_path;
 use crate::order_queues::{self, OrderParties};
 use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
 use crate::settlement;
-use crate::stores::{closed_reason, current_catalog, ready_by};
+use crate::stores::{closed_reason, current_catalog, current_catalog_version, ready_by};
 use crate::upkeep;
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -50,6 +50,10 @@ pub struct RequestDeliveryInput {
     /// comment.
     #[serde(default)]
     pub dropoff_preference: DropoffPreference,
+    /// The customer accepting that an order left at their door is
+    /// delivered once it's left -- required to choose `LeaveAtDoor`.
+    #[serde(default)]
+    pub door_risk_accepted: bool,
     /// `None` means this is a normal order, not a claimed goodie bag's
     /// delivery. `Some` is set by the customer's own client immediately
     /// after their `BagClaim` is confirmed (see `catalog::confirm_claim`'s
@@ -66,9 +70,7 @@ pub struct RequestDeliveryInput {
 /// accepting version (validation checks it's Open).
 fn publish_to_open_anchor(opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
     let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
-    let path = open_order_anchor_path(dropoff_geohash, bucket)?;
-    path.ensure()?;
-    create_link(path.path_entry_hash()?, opened.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
+    create_link(open_order_anchor_path(dropoff_geohash, bucket)?.path_entry_hash()?, opened.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
     Ok(())
 }
 
@@ -87,7 +89,19 @@ pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Opt
     if note.is_empty() {
         return Ok(None);
     }
+    check_note(note)?;
     Ok(Some(seal(recipient, &note.to_string())?))
+}
+
+/// A note (for the kitchen, the driver, the store) within the longest a note
+/// may be -- checked before it's sealed, as validation can only bound the
+/// ciphertext.
+pub(crate) fn check_note(note: &str) -> ExternResult<()> {
+    let max = relay_integrity_support::limits::MAX_NOTE_CHARS;
+    if note.chars().count() > max {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!("a note may be at most {max} characters"))));
+    }
+    Ok(())
 }
 
 /// What the caller may read of an order's sealed details: the drop-off
@@ -187,7 +201,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
-    let dropoff_geohash = relay_types::encode(input.dropoff, dropoff_geohash_precision());
+    if !input.dropoff.is_valid() {
+        return Err(wasm_error!(WasmErrorInner::Guest("that drop-off isn't a real place".into())));
+    }
+    check_note(&input.dropoff_notes)?;
+    let dropoff_geohash = relay_types::encode(input.dropoff, DROPOFF_GEOHASH_PRECISION);
     let status = if input.requested_delivery_time.is_some() { DeliveryStatus::Scheduled } else { DeliveryStatus::Placed };
 
     if let Some(promo_ref) = &input.promo_code_ref {
@@ -203,7 +221,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // `ensure_promo_active` for why current settings can't be validated)
     // and its share of the delivery fee, which this order records as the
     // split it was placed under.
-    let catalog = current_catalog(&input.catalog_ref)?;
+    let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
     let distance = relay_types::distance_km(catalog.location, input.dropoff);
     if distance > catalog.max_delivery_radius_km {
         return Err(wasm_error!(WasmErrorInner::Guest(format!(
@@ -223,11 +241,15 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let customer_name = my_name()?;
     // Every delivery gets a PIN; whether the driver must collect it is the
     // store's call, when it accepts (see `pin`).
-    let pin = crate::pin::new_pin()?;
+    if input.dropoff_preference == DropoffPreference::LeaveAtDoor && !input.door_risk_accepted {
+        return Err(wasm_error!(WasmErrorInner::Guest("To have it left at your door, accept that it's delivered once it's left there.".into())));
+    }
+    let code = crate::pin::new_code()?;
     let order = DeliveryOrder {
         requester: requester.clone(),
         merchant: merchant.clone(),
         catalog_ref: input.catalog_ref,
+        catalog_version,
         lines: priced.lines,
         order_total: priced.order_total,
         dropoff_geohash: dropoff_geohash.clone(),
@@ -239,13 +261,13 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         status,
         accepted_bid: None,
         delivery_receipts: Vec::new(),
-        dispute_ref: None,
         requested_at: now,
         tip_cents: input.tip_cents,
         delivery_subsidy_percent: catalog.delivery_subsidy_percent,
         requested_delivery_time: input.requested_delivery_time,
         promo_code_ref: input.promo_code_ref,
         dropoff_preference: input.dropoff_preference,
+        door_risk_accepted: input.dropoff_preference == DropoffPreference::LeaveAtDoor,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
@@ -254,10 +276,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         driver_pay_hold: None,
         subsidy_hold: None,
         collateral_hold: None,
-        pin_commitment: pin.commitment,
-        sealed_pin: Some(pin.sealed_pin),
-        pin_for_arbitrators: pin.for_arbitrators,
-        pin_required: false,
+        pin_commitment: code.commitment,
+        sealed_pin: code.sealed,
+        pickup_commitment: Vec::new(),
+        sealed_pickup_code: None,
+        pickup_proof: None,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The food is paid for up front, in this same commit: the store can't
@@ -329,7 +352,15 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
     let original = original_action_of(order_original_action.clone())?;
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
-    order.pin_required = crate::pin::pin_required(current_catalog(&order.catalog_ref)?.pin_policy, &order)?;
+    // The store's own limit on what may be left at a door.
+    let limit = current_catalog(&order.catalog_ref)?.leave_at_door_max_cents;
+    if order.dropoff_preference == DropoffPreference::LeaveAtDoor && limit.is_some_and(|max| order.order_total > max) {
+        return Err(wasm_error!(WasmErrorInner::Guest("This order is over your limit for leaving at the door -- decline it, or ask the customer to have it handed over.".into())));
+    }
+    // The store's pickup code, for the driver collecting it.
+    let code = crate::pin::new_code()?;
+    order.pickup_commitment = code.commitment;
+    order.sealed_pickup_code = Some(code.sealed);
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
@@ -403,51 +434,56 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated order".into())))
 }
 
-/// How long a store has to accept an order, in seconds -- the DNA's
-/// `store_response_secs` (see `relay_governance::store_response_window`),
-/// for the app's countdowns.
-#[hdk_extern]
-pub fn get_store_response_secs(_: ()) -> ExternResult<u64> {
-    Ok(relay_governance::store_response_window().as_secs())
-}
-
-/// How long a customer has to confirm a delivery or report a problem once
-/// the driver records it, in seconds -- with and without the PIN collected
-/// (see `relay_governance::confirm_window`).
-#[hdk_extern]
-pub fn get_confirm_windows(_: ()) -> ExternResult<(u64, u64)> {
-    Ok((relay_governance::confirm_window().as_secs(), relay_governance::pin_confirm_window().as_secs()))
-}
-
-/// The rules this network runs by, as its DNA sets them -- what the policy
-/// page quotes, so it can't drift from what's enforced.
+/// The rules this network runs by, as its DNA sets them. The app reads them
+/// once while connecting, and every screen that quotes or applies one
+/// (countdowns, limits, the policies page) reads it from there -- so none
+/// can drift from what's enforced.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NetworkTerms {
-    pub store_response_secs: u64,
-    pub confirm_window_secs: u64,
-    pub pin_confirm_window_secs: u64,
-    pub issue_window_secs: u64,
-    /// The arbitrators' agent keys, as the DNA lists them.
-    pub arbitrators: Vec<String>,
+    /// The ISO 4217 code every amount is in, in its minor units.
+    pub currency: String,
     pub credit_limit_cents: u64,
+    pub store_response_secs: u64,
+    /// How long a customer has to report items missing or wrong.
+    pub report_window_secs: u64,
+    /// However late a report comes, how long the store has to answer it.
+    pub answer_grace_secs: u64,
+    /// How long a customer's "never arrived" stands before the store's app
+    /// decides it.
+    pub claim_grace_secs: u64,
+    /// Wrong handoff codes a giver's app answers per order before it stops.
+    pub max_code_attempts: u32,
+    pub default_prep_minutes: u16,
+    pub max_prep_minutes: u16,
+    pub max_delivery_radius_km: f64,
+    /// The most an inline image may take, in bytes of its data URI.
+    pub max_image_bytes: u64,
+    pub goodie_bag_max_days: u64,
 }
 
 #[hdk_extern]
 pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
     Ok(NetworkTerms {
-        store_response_secs: relay_governance::store_response_window().as_secs(),
-        confirm_window_secs: relay_governance::confirm_window().as_secs(),
-        pin_confirm_window_secs: relay_governance::pin_confirm_window().as_secs(),
-        issue_window_secs: relay_governance::issue_window().as_secs(),
-        arbitrators: relay_governance::arbitrator_roster(),
+        currency: relay_governance::currency(),
         credit_limit_cents: relay_governance::credit_limit_cents(),
+        store_response_secs: relay_governance::store_response_window().as_secs(),
+        report_window_secs: relay_governance::report_window().as_secs(),
+        answer_grace_secs: relay_governance::answer_grace().as_secs(),
+        claim_grace_secs: relay_governance::claim_grace().as_secs(),
+        max_code_attempts: relay_governance::max_code_attempts(),
+        default_prep_minutes: relay_governance::default_prep_minutes(),
+        max_prep_minutes: relay_governance::max_prep_minutes(),
+        max_delivery_radius_km: relay_governance::max_delivery_radius_km(),
+        max_image_bytes: relay_governance::max_image_bytes() as u64,
+        goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
     })
 }
 
 /// The driver picking the order up from the store: they set aside their
 /// collateral -- the value of the food they now carry -- in the same commit
-/// (validation requires both together). It's theirs again once the customer
-/// confirms the delivery, the store's if an arbitrator rules it never came.
+/// (validation requires both together), on proof the store handed it over.
+/// It's theirs again once the store decides it was delivered, the store's
+/// if it decides it never was.
 #[hdk_extern]
 pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
@@ -455,6 +491,12 @@ pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> 
         return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once its driver is at the store".into())));
     }
     let bid = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
+    let proof = call(CallTargetCell::Local, "attestation", "pickup_proof_for_order".into(), None, order_original_action.clone())?;
+    let proof: Option<ActionHash> = match proof {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
+        _ => None,
+    };
+    order.pickup_proof = Some(proof.ok_or(wasm_error!(WasmErrorInner::Guest("Scan the store's code, or have them confirm they've handed it over.".into())))?);
     order.collateral_hold = settlement::place_hold(&order_original_action, HoldPurpose::Collateral { bid })?;
     order.status = DeliveryStatus::PickedUp;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
@@ -510,6 +552,7 @@ pub(crate) struct RecordEventInputWire {
     pub(crate) target: ReputationTargetWire,
     pub(crate) order_ref: ActionHash,
     pub(crate) kind: ReputationEventKindWire,
+    pub(crate) basis: ActionHash,
 }
 
 /// Mirrors `reputation_integrity::ReputationTarget` -- an event is about a
@@ -530,7 +573,9 @@ pub(crate) enum ReputationEventKindWire {
 }
 
 /// Best-effort reputation bookkeeping shared by every completion/dispute
-/// path in this crate. Skips an event whose subject would be the caller
+/// path in this crate, resting on `basis` -- the order version or store
+/// decision the event records (see `reputation_integrity::validate_event`).
+/// Skips an event whose subject would be the caller
 /// themselves -- `reputation_integrity::validate_event` rejects
 /// subject == counterparty, which happens legitimately when a merchant
 /// orders from their own store (see `settle_order_total`). That skip
@@ -538,11 +583,11 @@ pub(crate) enum ReputationEventKindWire {
 /// commit fails validation was observed to fail *this* call's whole commit
 /// too (pinned by `pickup-self-order.test.ts`), so an event that's certain
 /// to be rejected must never be attempted.
-pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationTargetWire, order_ref: ActionHash, kind: ReputationEventKindWire) -> ExternResult<()> {
+pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationTargetWire, order_ref: ActionHash, kind: ReputationEventKindWire, basis: ActionHash) -> ExternResult<()> {
     if subject == &agent_info()?.agent_initial_pubkey {
         return Ok(());
     }
-    let _ = call(CallTargetCell::Local, "reputation", "record_event".into(), None, RecordEventInputWire { target, order_ref, kind });
+    let _ = call(CallTargetCell::Local, "reputation", "record_event".into(), None, RecordEventInputWire { target, order_ref, kind, basis });
     Ok(())
 }
 
@@ -563,47 +608,40 @@ pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationT
 pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
 
-    if order.status != DeliveryStatus::PickedUp {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "an order can only be completed from the PickedUp status".into()
-        )));
+    if !matches!(order.status, DeliveryStatus::PickedUp | DeliveryStatus::Disputed) {
+        return Err(wasm_error!(WasmErrorInner::Guest("an order is completed once it's picked up".into())));
     }
-    let accepted_bid_ref = order
-        .accepted_bid
-        .clone()
-        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())))?;
-    let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
+    if order.accepted_bid.is_none() {
+        return Err(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())));
+    }
 
-    // The driver's pickup record and the customer's acknowledgment of
-    // receipt -- see `attestation::delivery_proof_for_order`.
+    // Proof the customer has it -- see `attestation::delivery_proof_for_order`.
     let proof_response = call(CallTargetCell::Local, "attestation", "delivery_proof_for_order".into(), None, input.order_original_action.clone())?;
-    let attested_receipts: Vec<ActionHash> = match proof_response {
+    let proof: Option<ActionHash> = match proof_response {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
-        // Says what's missing ("the customer hasn't acknowledged ...").
         other => return Err(wasm_error!(WasmErrorInner::Guest(format!("cannot complete this delivery yet: {other:?}")))),
     };
+    let proof = proof.ok_or(wasm_error!(WasmErrorInner::Guest("There's no proof yet that the customer has it: scan their code, or have them confirm.".into())))?;
 
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
     order.status = DeliveryStatus::Delivered;
-    order.delivery_receipts = attested_receipts;
+    order.delivery_receipts = vec![proof];
     let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     order_queues::retire(&parties)?;
-    // Its issue window starts now (see `issues`). A driver completing on a
-    // scan can't queue it; the customer's and store's settlement do.
-    crate::issues::queue_for_window(&input.order_original_action);
-    // Nothing is paid here: the money was set aside as the order went, and
-    // the customer's receipt is what lets the store and driver collect it,
-    // each from their own conductor (`settlement`), told by this update's
-    // signal.
+    // Nothing is paid here: the money was set aside as the order went. The
+    // store's conductor decides the order delivered on this update, and
+    // each party collects from their own (`settlement`), told by its signal.
 
     // Best-effort: reputation bumps are valuable but shouldn't block
     // delivery completion if they fail. One per role this order
     // actually involved -- the driver's completed delivery, and the store's
     // completed order -- each counted only toward its own target.
-    record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted)?;
-    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted)?;
+    // The store's completed order, recorded by whoever completed it, on the
+    // version completing it. The driver's is the store's to record, on its
+    // decision that it was delivered (`issues::decide_order`).
+    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed order".into())))

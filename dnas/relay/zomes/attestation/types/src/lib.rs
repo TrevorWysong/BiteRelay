@@ -12,8 +12,9 @@
 //! and `dispatch_integrity` (which only ever reads them) to depend on.
 
 use hdi::prelude::*;
+pub use relay_types::PinSecret;
 use relay_types::GeoPoint;
-pub use dispute_types::{ArbitratorSeal, PinSecret};
+use relay_integrity_support::SealedChunks;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum LegKind {
@@ -35,36 +36,21 @@ pub struct Leg {
     pub from: AgentPubKey,
     pub to: AgentPubKey,
     pub completed_at: Timestamp,
-    /// Where the handoff happened, and (on `CustomerHandoff`, typically) a
-    /// photo at the door -- a `HandoffEvidence`, sealed from `from` to
-    /// `to`. A drop-off's location is the customer's door, so it's never
-    /// published: only the two parties to the handoff can open it, and it
-    /// reaches an arbitrator only if one of them shares it in a dispute.
-    /// Evidence, not part of what completes a delivery: that's the other
-    /// party's `ReceiptAttestation`.
-    pub sealed_evidence: XSalsa20Poly1305EncryptedData,
-    /// The PIN the customer gave the driver at the door, sealed to each
-    /// arbitrator -- empty if none was collected. Required on a drop-off
-    /// whose order says `pin_required`. Only an arbitrator can open it, to
-    /// check against the PIN the customer committed to at checkout.
-    #[serde(default)]
-    pub sealed_pin_for_arbitrators: Vec<ArbitratorSeal>,
-    /// The PIN and salt from the code the customer let the driver scan --
-    /// checkable by anyone against the order's commitment, so a drop-off
-    /// carrying them is proof the customer handed them over: their receipt.
-    /// Revealed only at the door, once the food is there.
+    /// Where the handoff happened, and a photo -- a `HandoffEvidence`,
+    /// sealed from `from` to `to`. A drop-off's location is the customer's
+    /// door, so it's never published: only the two parties to the handoff
+    /// can open it.
+    pub sealed_evidence: SealedChunks,
+    /// The giver's handoff code, as the driver scanned it -- the store's at
+    /// pickup, the customer's at the door. Checkable by anyone against the
+    /// order's commitment, so a handoff carrying it is proof the giver
+    /// handed the order over.
     #[serde(default)]
     pub revealed_pin: Option<PinSecret>,
-}
-
-/// A handoff's evidence (`HandoffEvidence`) shared with the arbitrators by
-/// one of its two parties, for a dispute -- each seal opens to it for one
-/// arbitrator. Nobody else can read it.
-#[hdk_entry_helper]
-#[derive(Clone)]
-pub struct EvidenceShare {
-    pub leg: ActionHash,
-    pub seals: Vec<ArbitratorSeal>,
+    /// A drop-off left at the door, on an order whose customer chose that
+    /// and accepted the risk: the delivery is complete once it's recorded.
+    #[serde(default)]
+    pub left_at_door: bool,
 }
 
 /// What a handoff's sealed evidence holds.
@@ -95,18 +81,40 @@ pub struct ReceiptAttestation {
     pub attested_at: Timestamp,
 }
 
-/// Whether a delivery's receipts (`DeliveryOrder::delivery_receipts`) rest on
-/// a drop-off against the customer's scanned handover code -- validation
-/// checked the code against the order's commitment when the leg was
-/// written. A scan is a receipt only this way, through the order version
-/// that completes the delivery on it: a scan alone settles nothing, so a
-/// ruling before that completion is the only thing that settles the order.
-pub fn rests_on_scan(receipts: &[ActionHash]) -> ExternResult<bool> {
+/// What a delivery's drop-off rests on: the driver's `CustomerHandoff` leg
+/// in its receipts (`DeliveryOrder::delivery_receipts`), and the proof the
+/// customer has the order -- `None` if there's none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropoffProof {
+    /// The customer let the driver scan their code.
+    Scanned,
+    /// The customer confirmed it themselves (`ReceiptAttestation`).
+    Confirmed,
+    /// Left at the door, as the customer chose.
+    LeftAtDoor,
+}
+
+/// The proof among `receipts` that the order reached its customer, with
+/// the drop-off leg it's about. Validation of each receipt checked it
+/// against its order (the scanned code against the commitment; a receipt
+/// against its author); this only classifies them.
+pub fn dropoff_proof(receipts: &[ActionHash]) -> ExternResult<Option<DropoffProof>> {
     for receipt in receipts {
         let record = must_get_valid_record(receipt.clone())?;
-        if record.entry().to_app_option::<Leg>().ok().flatten().is_some_and(|leg| leg.kind == LegKind::CustomerHandoff && leg.revealed_pin.is_some()) {
-            return Ok(true);
+        if let Some(leg) = record.entry().to_app_option::<Leg>().ok().flatten().filter(|leg| leg.kind == LegKind::CustomerHandoff) {
+            if leg.revealed_pin.is_some() {
+                return Ok(Some(DropoffProof::Scanned));
+            }
+            if leg.left_at_door {
+                return Ok(Some(DropoffProof::LeftAtDoor));
+            }
+        }
+        if let Some(attestation) = record.entry().to_app_option::<ReceiptAttestation>().ok().flatten() {
+            let leg = must_get_valid_record(attestation.leg)?;
+            if leg.entry().to_app_option::<Leg>().ok().flatten().is_some_and(|leg| leg.kind == LegKind::CustomerHandoff) {
+                return Ok(Some(DropoffProof::Confirmed));
+            }
         }
     }
-    Ok(false)
+    Ok(None)
 }

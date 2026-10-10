@@ -11,6 +11,14 @@ import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/cli
 export const HAPP_PATH = fileURLToPath(new URL("../../../workdir/relay.happ", import.meta.url));
 export const appSource: AppBundleSource = { type: "path", value: HAPP_PATH };
 
+/// The protocol's limits, generated from the Rust (`integrity_support::limits`)
+/// for the app -- the same numbers validation enforces.
+export * as limits from "../../../web/src/holochain/generated.js";
+
+/// A photo the size a phone's resized 640px JPEG really is (~150KB) --
+/// many times what one sealed box holds, so it proves sealing in chunks.
+export const FULL_SIZE_PHOTO = `data:image/jpeg;base64,${"AAAA".repeat(37_500)}`;
+
 export const ST_PETE = { lat: 27.7676, lon: -82.6403 };
 export const NYC = { lat: 40.7128, lon: -74.006 };
 
@@ -78,79 +86,32 @@ export async function retryUntil<T>(fn: () => Promise<T>, done: (value: T) => bo
   return value;
 }
 
+/// DNA properties every test network runs with, beneath any a test sets: a
+/// report window short enough to wait out, so a store's payment for the
+/// food settles within a test.
+export const TEST_PROPERTIES = { report_window_secs: 2 };
+
+/// The `RoleSettings` installing with `properties` (merged over
+/// `TEST_PROPERTIES`). Discovered against the real admin API: it's tagged
+/// `{type, value}`, every field is a required map key despite being an
+/// `Option`, and agent keys inside `properties` must be base64 strings
+/// (`encodeHashToBase64`) -- raw bytes don't round-trip through this
+/// request's encoder.
+export function rolesSettingsWith(properties: Record<string, unknown> = {}) {
+  return {
+    relay: { type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: { ...TEST_PROPERTIES, ...properties } } } },
+  };
+}
+
 /// An app to install with custom DNA properties (see `RelayDnaProperties`),
 /// for `scenario.addPlayersWithApps`. Properties are part of the DNA hash,
-/// so every player that should share a network needs the same ones. The
-/// `RoleSettings` shape is explained on `setupArbitratedPlayers` below.
+/// so every player that should share a network needs the same ones.
 export function appWithProperties(properties: Record<string, unknown>) {
-  return {
-    appBundleSource: appSource,
-    options: {
-      rolesSettings: {
-        relay: { type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties } } },
-      },
-    },
-  };
+  return { appBundleSource: appSource, options: { rolesSettings: rolesSettingsWith(properties) } };
 }
 
-/// The dispute/arbitration subsystem (plan §8) needs an arbitrator roster
-/// baked into DNA properties -- a value every player must install with
-/// *identically*, since `properties` is part of the DNA hash. That pubkey
-/// doesn't exist until runtime, so unlike every other test's player setup,
-/// this pre-generates it via each conductor's own admin websocket
-/// (`addConductor` + `generateAgentPubKey`) before installing anything, then
-/// installs all three players with a matching `rolesSettings` override.
-///
-/// Two format quirks here were only discovered by testing against the real
-/// admin API, not documented anywhere obvious: `RoleSettings` is tagged
-/// `{type, value}` (`#[serde(tag = "type", content = "value", rename_all =
-/// "snake_case")]` in holochain_types 0.6.3), and every field on it and on
-/// `modifiers` is a required map key despite being an `Option`. And a raw
-/// `Uint8Array` (an `AgentPubKey`'s native JS form) nested inside the
-/// `properties` value doesn't round-trip through this specific request's
-/// encoder, even though AgentPubKeys pass through fine as top-level zome-call
-/// arguments elsewhere -- so the roster is base64 hash strings
-/// (`encodeHashToBase64`, matching `AgentPubKey::to_string()` on the Rust
-/// side), not raw bytes.
-export async function setupArbitratedPlayers(scenario: Scenario) {
-  const customerConductor = await scenario.addConductor();
-  const driverConductor = await scenario.addConductor();
-  const arbitratorConductor = await scenario.addConductor();
-
-  const customerKey = await customerConductor.adminWs().generateAgentPubKey();
-  const driverKey = await driverConductor.adminWs().generateAgentPubKey();
-  const arbitratorKey = await arbitratorConductor.adminWs().generateAgentPubKey();
-
-  const rolesSettings = {
-    relay: {
-      type: "provisioned" as const,
-      value: {
-        membrane_proof: undefined,
-        modifiers: {
-          network_seed: undefined,
-          // A short issue window, so a test can wait one out (`closeIssueWindow`).
-          properties: { arbitrators: [encodeHashToBase64(arbitratorKey)], issue_window_secs: 3 },
-        },
-      },
-    },
-  };
-
-  const [customer, driver, arbitrator] = await scenario.installAppsForPlayers(
-    [
-      { appBundleSource: appSource, options: { rolesSettings } },
-      { appBundleSource: appSource, options: { rolesSettings } },
-      { appBundleSource: appSource, options: { rolesSettings } },
-    ],
-    [
-      { agentPubKey: customerKey, conductor: customerConductor },
-      { agentPubKey: driverKey, conductor: driverConductor },
-      { agentPubKey: arbitratorKey, conductor: arbitratorConductor },
-    ],
-  );
-  await scenario.shareAllAgents();
-
-  return { customer, driver, arbitrator, all: [customer, driver, arbitrator] };
-}
+/// The app as every test installs it, on the test network's properties.
+export const testApp = appWithProperties({});
 
 /// Installs `count` separate agent-cells on one already-running conductor,
 /// for the load-test harness (`load-test.ts`) -- N real, independent
@@ -181,7 +142,7 @@ export async function installManyAgents(conductor: Conductor, count: number, lab
   for (let i = 0; i < count; i++) {
     const agentPubKey = await adminWs.generateAgentPubKey();
     const installedAppId = `${labelPrefix}-${i}`;
-    const appInfo = await conductor.installApp({ appBundleSource: appSource, options: { agentPubKey, installedAppId } });
+    const appInfo = await conductor.installApp({ appBundleSource: appSource, options: { agentPubKey, installedAppId, rolesSettings: rolesSettingsWith() } });
     const issued = await adminWs.issueAppAuthenticationToken({ installed_app_id: appInfo.installed_app_id });
     const appWs = await conductor.connectAppWs(issued.token, port);
     const agentApp = await enableAndGetAgentApp(adminWs, appWs, appInfo);
@@ -232,8 +193,10 @@ export async function acceptOrder(store: PlayerApp, orderRef: Uint8Array, player
 }
 
 /// One delivery handoff: the driver records it, then the other party (the
-/// store collecting from, the customer handing to) acknowledges it -- once
-/// the driver's record has reached them. Returns the leg.
+/// store collecting from, the customer handing to) confirms it -- once the
+/// driver's record has reached them -- and the confirmation reaches
+/// everyone, so the driver can pick up (or anyone complete) on it. Returns
+/// the leg.
 export async function handOff(
   driver: PlayerApp,
   recipient: PlayerApp,
@@ -251,13 +214,13 @@ export async function handOff(
   );
   await dhtSync(players, driver.cells[0].cell_id[0]);
   await retryUntilOk(() => recipient.cells[0].callZome({ zome_name: "attestation", fn_name: "acknowledge_leg", payload: actionHash(leg) }));
+  await dhtSync(players, recipient.cells[0].cell_id[0]);
   return actionHash(leg);
 }
 
 /// `count` players on their own conductors, with DNA properties that can
-/// name some of them (an issuer, an arbitrator) -- `properties` gets every
-/// player's key, in order, before anything is installed. The same
-/// pre-generated-key dance as `setupArbitratedPlayers`.
+/// name some of them (an issuer) -- `properties` gets every player's key, in
+/// order, before anything is installed.
 export async function setupPlayersWithProperties(scenario: Scenario, count: number, properties: (keys: string[]) => Record<string, unknown>): Promise<PlayerApp[]> {
   // One at a time, as `setupArbitratedPlayers` does: conductors started
   // concurrently didn't find each other.
@@ -265,12 +228,7 @@ export async function setupPlayersWithProperties(scenario: Scenario, count: numb
   for (let i = 0; i < count; i++) conductors.push(await scenario.addConductor());
   const keys: Uint8Array[] = [];
   for (const conductor of conductors) keys.push(await conductor.adminWs().generateAgentPubKey());
-  const rolesSettings = {
-    relay: {
-      type: "provisioned" as const,
-      value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: properties(keys.map(encodeHashToBase64)) } },
-    },
-  };
+  const rolesSettings = rolesSettingsWith(properties(keys.map(encodeHashToBase64)));
   const players = await scenario.installAppsForPlayers(
     conductors.map(() => ({ appBundleSource: appSource, options: { rolesSettings } })),
     keys.map((agentPubKey, i) => ({ agentPubKey, conductor: conductors[i] })),
@@ -285,28 +243,4 @@ export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint
   const page = await player.cells[0].callZome<{ entries: HcRecord[] }>({ zome_name: "ledger", fn_name: "list_my_ledger", payload: { before: null } });
   const latest = page.entries[0];
   return latest ? { hash: actionHash(latest), balance: decodeEntry<{ balance: number }>(latest).balance } : { hash: null, balance: 0 };
-}
-
-/// Runs an order's issue window to its close, doing what its closing
-/// arbitrator's conductor does every five minutes: `queuer` (the order's
-/// customer or store) queues it, the arbitrator opens it, and once it's run
-/// out (the network's `issue_window_secs`, kept short in tests) closes it.
-/// Only for a window with nothing contested.
-export async function closeIssueWindow(arbitrator: PlayerApp, queuer: PlayerApp, order: Uint8Array, all: PlayerApp[]): Promise<void> {
-  const dispatch = (p: PlayerApp) => getZomeCaller(p.cells[0], "dispatch");
-  const sync = () => dhtSync(all, arbitrator.cells[0].cell_id[0]);
-  await dispatch(queuer)("queue_issue_window", order);
-  await sync();
-  await retryUntil(
-    async () => {
-      await dispatch(arbitrator)("keep_issue_window", order);
-      return dispatch(arbitrator)<{ opened_at: number | null }>("get_issue_window", order);
-    },
-    (window) => window.opened_at !== null,
-    40,
-    1000,
-  );
-  await sync();
-  await retryUntil(() => dispatch(arbitrator)<boolean>("keep_issue_window", order), (closed) => closed, 120, 1000);
-  await sync();
 }

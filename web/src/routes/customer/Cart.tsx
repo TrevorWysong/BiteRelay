@@ -11,7 +11,7 @@ import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
-import { formatCents } from "../../lib/format";
+import { formatCents, toMinorUnits, currencySymbol } from "../../lib/format";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
 import { fetchMenu } from "../../lib/menu";
 import { WEEKDAYS } from "../../lib/recurrence";
@@ -21,12 +21,13 @@ import { useResource } from "../../lib/useResource";
 import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
+import { MAX_NOTE_CHARS, MAX_PROMO_CODE_CHARS } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
 const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] = [
-  { value: "LeaveAtDoor", label: "Leave at door" },
   { value: "HandToMe", label: "Hand to me" },
   { value: "MeetOutside", label: "Meet outside" },
+  { value: "LeaveAtDoor", label: "Leave at door" },
 ];
 // A driver's bid can be anywhere up to this cap (validate_new_bid rejects
 // anything higher) -- letting the customer set it, rather than hardcoding
@@ -96,6 +97,9 @@ interface CartStoreInfo {
   /// When the store takes orders -- checkout says so up front; the zome
   /// refuses a closed store regardless. `null` until the catalog loads.
   hours: Pick<MerchantCatalog, "is_open" | "weekly_hours" | "time_zone"> | null;
+  /// The most an order may cost to be left at the door, if the store sets
+  /// a limit -- above it, the option isn't offered.
+  leaveAtDoorMaxCents: number | null;
   promoCodes: PromoRow[];
   menuItems: { hash: ActionHash; item: MenuItem }[];
   completedOrderCount: number;
@@ -128,6 +132,7 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
     merchantLocation: catalog?.location ?? null,
     merchantRadiusKm: catalog?.max_delivery_radius_km ?? null,
     hours: catalog,
+    leaveAtDoorMaxCents: catalog?.leave_at_door_max_cents ?? null,
     promoCodes,
     menuItems,
     completedOrderCount,
@@ -172,7 +177,10 @@ export function Cart() {
   // moving.
   const [dropoff, setDropoff] = useState<GeoPoint>(location);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
-  const [dropoffPreference, setDropoffPreference] = useState<DropoffPreference>("LeaveAtDoor");
+  const [chosenPreference, setDropoffPreference] = useState<DropoffPreference>("HandToMe");
+  // Leaving it at the door means accepting it's delivered once it's left --
+  // asked each time it's chosen.
+  const [doorRiskAccepted, setDoorRiskAccepted] = useState(false);
   const [showRecurring, setShowRecurring] = useState(false);
   const [recurrenceKind, setRecurrenceKind] = useState<"Daily" | "Weekly">("Weekly");
   const [recurrenceWeekday, setRecurrenceWeekday] = useState(1); // Monday
@@ -230,8 +238,8 @@ export function Cart() {
     setManualPromo(match);
   }
 
-  const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : Math.round(Number(customTip || 0) * 100);
-  const maxFeeCents = feePreset !== null ? feePreset : Math.round(Number(customFee || 0) * 100);
+  const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : toMinorUnits(Number(customTip || 0));
+  const maxFeeCents = feePreset !== null ? feePreset : toMinorUnits(Number(customFee || 0));
   // Worst case (a winning bid right at the cap): mirrors the settlement
   // formula in dispatch::settle_delivery_fee exactly (architecture plan
   // §12) -- merchant_share floor-rounded, customer absorbs the remainder.
@@ -247,6 +255,10 @@ export function Cart() {
   const promoRewardNeedsItem = appliedPromo ? "FreeItem" in appliedPromo.promo.reward || "PercentOffItem" in appliedPromo.promo.reward : false;
   const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
+  // The store's limit on what may be left at a door; above it, the order is
+  // handed over whatever was chosen.
+  const doorAllowed = storeInfo?.leaveAtDoorMaxCents == null || discountedSubtotalCents <= storeInfo.leaveAtDoorMaxCents;
+  const dropoffPreference: DropoffPreference = chosenPreference === "LeaveAtDoor" && !doorAllowed ? "HandToMe" : chosenPreference;
   const estimatedTotalCents = discountedSubtotalCents + tipCents + customerFeeShareCents;
 
   if (cart.lines.length === 0) {
@@ -304,6 +316,7 @@ export function Cart() {
         requested_delivery_time: requestedDeliveryTime,
         promo_code_ref: appliedPromo?.hash ?? null,
         dropoff_preference: dropoffPreference,
+        door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
       });
       const orderRef = actionHash(record);
       if (saveAsDefault) setSessionLocation(dropoff);
@@ -335,6 +348,7 @@ export function Cart() {
         dropoff_notes: dropoffNotes.trim(),
         tip_cents: tipCents,
         dropoff_preference: dropoffPreference,
+        door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
         promo_code_ref: appliedPromo?.hash ?? null,
         recurrence,
         time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -409,12 +423,32 @@ export function Cart() {
           </label>
           <p className="mb-2 mt-3 text-xs font-bold uppercase tracking-wide text-ink-400">Drop-off</p>
           <div className="flex gap-2">
-            {DROPOFF_PREFERENCE_OPTIONS.map(({ value, label }) => (
-              <ToggleChip key={value} active={dropoffPreference === value} onClick={() => setDropoffPreference(value)} className="flex-1">
+            {DROPOFF_PREFERENCE_OPTIONS.filter(({ value }) => value !== "LeaveAtDoor" || doorAllowed).map(({ value, label }) => (
+              <ToggleChip
+                key={value}
+                active={dropoffPreference === value}
+                onClick={() => {
+                  setDropoffPreference(value);
+                  setDoorRiskAccepted(false);
+                }}
+                className="flex-1"
+              >
                 {label}
               </ToggleChip>
             ))}
           </div>
+          {dropoffPreference === "LeaveAtDoor" ? (
+            <label className="mt-3 flex items-start gap-2.5 rounded-xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:bg-amber-900/20 dark:text-amber-100">
+              <Checkbox checked={doorRiskAccepted} onChange={(e) => setDoorRiskAccepted(e.target.checked)} className="mt-0.5" />
+              <span>
+                <span className="font-semibold">Your order is delivered once your driver leaves it.</span> They'll photograph where. If it's taken after that, it
+                won't be refunded.
+              </span>
+            </label>
+          ) : (
+            <p className="mt-2 text-xs text-ink-400">You'll show your driver a code when they hand it over. That's how you both know it reached you.</p>
+          )}
+          {!doorAllowed && <p className="mt-1 text-xs text-ink-400">This store hands over orders of this size in person.</p>}
         </Section>
       )}
 
@@ -486,12 +520,12 @@ export function Cart() {
       )}
 
       <Section title="Note for the store">
-        <Textarea value={kitchenNotes} onChange={(e) => setKitchenNotes(e.target.value)} rows={2} placeholder="No onions, extra napkins…" />
+        <Textarea maxLength={MAX_NOTE_CHARS} value={kitchenNotes} onChange={(e) => setKitchenNotes(e.target.value)} rows={2} placeholder="No onions, extra napkins…" />
       </Section>
 
       {fulfillment === "Delivery" && (
         <Section title="Drop-off instructions">
-          <Textarea value={dropoffNotes} onChange={(e) => setDropoffNotes(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
+          <Textarea maxLength={MAX_NOTE_CHARS} value={dropoffNotes} onChange={(e) => setDropoffNotes(e.target.value)} rows={2} placeholder="Leave at the door, gate code, etc." />
           <p className="mt-1.5 text-[11px] text-ink-400">Only your driver sees your exact address and these instructions, once you've accepted their bid.</p>
         </Section>
       )}
@@ -522,7 +556,7 @@ export function Cart() {
                 setFeePreset(null);
               }}
               placeholder="Custom"
-              prefix="$"
+              prefix={currencySymbol()}
               className="w-24 rounded-full py-1.5 text-xs"
             />
           </div>
@@ -554,7 +588,7 @@ export function Cart() {
                 setTipPercent(null);
               }}
               placeholder="Custom"
-              prefix="$"
+              prefix={currencySymbol()}
               className="w-24 rounded-full py-1.5 text-xs"
             />
           </div>
@@ -593,7 +627,7 @@ export function Cart() {
             </motion.div>
           ) : (
             <motion.div key="unapplied" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex gap-2">
-              <Input value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Enter code" className="flex-1 font-mono" />
+              <Input maxLength={MAX_PROMO_CODE_CHARS} value={promoInput} onChange={(e) => setPromoInput(e.target.value)} placeholder="Enter code" className="flex-1 font-mono" />
               <Button variant="ghost" className="px-4 py-2 text-xs" onClick={applyPromo}>
                 Apply
               </Button>
@@ -652,7 +686,7 @@ export function Cart() {
         <Button
           className="w-full"
           loading={placing}
-          disabled={storeClosed || (fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid))}
+          disabled={storeClosed || (fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
           onClick={placeOrder}
         >
           {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}

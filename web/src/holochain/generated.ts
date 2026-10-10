@@ -45,15 +45,6 @@ export interface AddressDetails {
 }
 
 /**
- * A secret sealed to one arbitrator on the DNA's roster -- evidence only
- * arbitrators can open: a delivery PIN, a photo at the door.
- */
-export interface ArbitratorSeal {
-  arbitrator: AgentPubKey;
-  sealed: XSalsa20Poly1305EncryptedData;
-}
-
-/**
  * A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
  * this feature's scarcity resolution (see the architecture doc's own
  * reasoning: a scarce resource on a DHT with no distributed locks is
@@ -135,11 +126,7 @@ export type Cancellation =
    * (`relay_governance::store_response_window`). Written by the
    * customer's conductor, and only once the window has passed.
    */
-  | "StoreDidNotRespond"
-  /**
-   * An arbitrator ruled for the customer.
-   */
-  | "ByArbitrator";
+  | "StoreDidNotRespond";
 
 /**
  * Local UI-facing signal, emitted from `recv_remote_signal` once a remote
@@ -185,15 +172,23 @@ export interface DeliveryOrder {
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
   /**
+   * The version of the store the order was placed against -- whose
+   * delivery radius and fee split it was placed under. Validation checks
+   * both against it.
+   */
+  catalog_version: ActionHash;
+  /**
    * What was ordered, each line priced at a specific version of its item
    * -- validation recomputes `order_total` from these.
    */
   lines: OrderLine[];
   order_total: number;
   /**
-   * The drop-off's area (a geohash cell, about 1.2 x 0.6 km) -- all that's
-   * public about where the order goes: enough for drivers nearby to find
-   * it and judge the trip. The exact point is in `sealed_dropoff`.
+   * The drop-off's area (a geohash cell of `DROPOFF_GEOHASH_PRECISION`,
+   * about 1.2 x 0.6 km) -- all that's public about where the order goes:
+   * enough for drivers nearby to find it and judge the trip, and for
+   * validation to check it's within the store's radius. The exact point
+   * is in `sealed_dropoff`.
    */
   dropoff_geohash: string;
   /**
@@ -221,29 +216,22 @@ export interface DeliveryOrder {
   status: DeliveryStatus;
   accepted_bid: ActionHash | null;
   /**
-   * Empty until the `PickedUp -> Delivered` transition, at which point it
-   * must reference a `ReceiptAttestation` for every required leg kind
-   * (`MerchantHandoff`, `CustomerHandoff`) belonging to this exact order.
-   * Carrying the references on the entry is what lets validation check
-   * them deterministically (`must_get_valid_record`, unlike a link query),
-   * so the gate holds for every peer, not just honest callers of
-   * `complete_delivery`.
+   * Empty until the order is delivered, then the proof it reached the
+   * customer: the driver's drop-off leg and, unless that leg carries the
+   * customer's scanned code or was left at the door as they chose, the
+   * customer's own `ReceiptAttestation` of it (see
+   * `attestation_types::dropoff_proof`). Carried on the entry so
+   * validation checks it deterministically, for every peer.
    */
   delivery_receipts: ActionHash[];
-  /**
-   * Empty until a dispute is raised (`PickedUp`/`Delivered -> Disputed`),
-   * at which point it references the one `Dispute` entry (`dispute`
-   * zome) covering this order -- set once, then immutable, same pattern
-   * as `accepted_bid` and `delivery_receipts`. See architecture plan §8.
-   */
-  dispute_ref: ActionHash | null;
   requested_at: Timestamp;
   tip_cents: number;
   /**
    * The store's share of the delivery fee, in percent -- the split in
-   * force when the order was placed (the store's `delivery_subsidy_percent`
-   * then), fixed for this order. The store accepts it by confirming the
-   * order; settlement and ledger validation both read it from here.
+   * force when the order was placed (`catalog_version`'s
+   * `delivery_subsidy_percent`, which validation checks), fixed for this
+   * order. The store accepts it by confirming the order; settlement and
+   * ledger validation both read it from here.
    */
   delivery_subsidy_percent: number;
   /**
@@ -271,10 +259,15 @@ export interface DeliveryOrder {
   promo_code_ref: ActionHash | null;
   /**
    * Set once at request_delivery time, immutable thereafter, same
-   * treatment as the other per-order fields above. Defaults to
-   * `LeaveAtDoor` on decode for orders written before this field existed.
+   * treatment as the other per-order fields above.
    */
   dropoff_preference: DropoffPreference;
+  /**
+   * The customer accepting that an order left at their door is
+   * delivered once it's left -- required for `LeaveAtDoor`, and only for
+   * it. Fixed when the order is placed.
+   */
+  door_risk_accepted: boolean;
   /**
    * `None` for an ordinary menu order (the default, and every order
    * written before this field existed). `Some` means this delivery
@@ -326,25 +319,29 @@ export interface DeliveryOrder {
    */
   collateral_hold: ActionHash | null;
   /**
-   * The delivery PIN's commitment, `sha256(pin || salt)` -- 32 bytes, or
-   * empty for none. Public, and useless without the salt (see
-   * `dispute_types::PinSecret`).
+   * The customer's handoff code's commitment, `sha256(pin || salt)` (see
+   * `PinSecret`) -- 32 bytes. Fixed when the order is placed.
    */
   pin_commitment: Uint8Array;
   /**
-   * The PIN and salt, sealed to the customer -- what their app shows.
+   * The customer's code, sealed to themselves -- what their app shows.
    */
-  sealed_pin: XSalsa20Poly1305EncryptedData | null;
+  sealed_pin: XSalsa20Poly1305EncryptedData;
   /**
-   * The PIN and salt, sealed to each arbitrator on the roster, to check
-   * a driver's word against in a dispute.
+   * The store's pickup code's commitment -- set when it accepts the
+   * order, never changed after. Empty until then.
    */
-  pin_for_arbitrators: ArbitratorSeal[];
+  pickup_commitment: Uint8Array;
   /**
-   * Whether the driver must collect the PIN at the door -- set by the
-   * store when it accepts the order (its `PinPolicy`), never changed.
+   * The store's pickup code, sealed to the store.
    */
-  pin_required: boolean;
+  sealed_pickup_code: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * Proof the driver has the food, cited by their update picking it up:
+   * their pickup leg carrying the store's scanned code, or the store's
+   * own `ReceiptAttestation` of that leg. Never changes after.
+   */
+  pickup_proof: ActionHash | null;
 }
 
 export type DeliveryStatus =
@@ -439,72 +436,6 @@ export type DispatchLocalSignal =
   | { IssueReported: ActionHash };
 
 /**
- * A dispute case, either over whether a delivery was actually completed
- * properly (raised from `DeliveryOrder`'s `PickedUp`/`Delivered` statuses,
- * resolved to a terminal `Delivered`/`Cancelled` -- architecture plan §8)
- * or, for `DisputeReason::UnjustCancellation`, over whether an *already*
- * `Cancelled` order's cancellation was fair and who owes compensation
- * (§11.1 -- the order's status never changes for this kind, there's
- * nothing left to transition). Resolved unilaterally by a single listed
- * arbitrator (`relay_governance`) either way -- a deliberate, named
- * centralization point, not a decentralized jury.
- */
-export interface Dispute {
-  order_ref: ActionHash;
-  raised_by: AgentPubKey;
-  respondent: AgentPubKey;
-  reason: DisputeReason;
-  description: string;
-  evidence_refs: ActionHash[];
-  status: DisputeStatus;
-  outcome: DisputeOutcome | null;
-  arbitrator: AgentPubKey | null;
-  reasoning: string | null;
-  raised_at: Timestamp;
-  resolved_at: Timestamp | null;
-}
-
-/**
- * No `Dismissed`/no-fault outcome -- every dispute resolves to a definitive
- * `Delivered` or `Cancelled` (see `DeliveryOrder::dispute_ref`'s doc
- * comment). A dispute raised in error is `FavorProvider`.
- *
- * A ruling moves no money itself: it's the evidence each party's held
- * money is settled by (see `ledger_integrity`). For the provider, the
- * order is paid as if delivered and the driver's collateral returned; for
- * the customer, their holds come back to them and the driver's collateral
- * goes to the store, which handed over the food.
- */
-export type DisputeOutcome = "FavorProvider" | "FavorRequester";
-
-export type DisputeReason =
-  | "NeverDelivered"
-  | "WrongOrIncompleteItems"
-  | "ProviderAbandoned"
-  /**
-   * The order is already `Cancelled` (a terminal state) and this dispute
-   * is *not* trying to change that -- it's adjudicating whether the
-   * cancellation was fair and who, if anyone, should be compensated from
-   * forfeited collateral (architecture plan §11.1). Raised via
-   * `dispatch::raise_cancellation_dispute`, resolved via
-   * `dispatch::apply_cancellation_dispute_resolution` -- both distinct
-   * from the `raise_dispute`/`apply_dispute_resolution` pair used for
-   * every other `DisputeReason`, since there's no order-status transition
-   * left to gate here, only a ledger forfeiture.
-   */
-  | "UnjustCancellation"
-  /**
-   * Raised by the driver when a delivery they've recorded handing over
-   * hasn't been confirmed by the customer within the network's window
-   * (`relay_governance::confirm_window`) -- with their sealed evidence
-   * shared to the arbitrators. Unanswered, it's the provider's.
-   */
-  | "NotConfirmed"
-  | "Other";
-
-export type DisputeStatus = "Open" | "Resolved";
-
-/**
  * Where a delivery goes, in full -- only ever stored sealed (see
  * `DeliveryOrder::sealed_dropoff`).
  */
@@ -528,17 +459,18 @@ export interface DropoffDetails {
  * a gate code) -- this field is specifically the one DoorDash-style
  * choice drivers act on differently (knock-and-wait vs. leave-and-go).
  */
-export type DropoffPreference = "LeaveAtDoor" | "HandToMe" | "MeetOutside";
-
-/**
- * A handoff's evidence (`HandoffEvidence`) shared with the arbitrators by
- * one of its two parties, for a dispute -- each seal opens to it for one
- * arbitrator. Nobody else can read it.
- */
-export interface EvidenceShare {
-  leg: ActionHash;
-  seals: ArbitratorSeal[];
-}
+export type DropoffPreference =
+  /**
+   * Left at the door: delivered once it's left there, at the customer's
+   * risk (`DeliveryOrder::door_risk_accepted`).
+   */
+  | "LeaveAtDoor"
+  /**
+   * Handed over -- the default: proved by the customer's code or their
+   * own confirmation.
+   */
+  | "HandToMe"
+  | "MeetOutside";
 
 export interface GeoPoint {
   lat: number;
@@ -570,6 +502,11 @@ export interface GoodieBag {
   supports_delivery: boolean;
   created_at: Timestamp;
 }
+
+/**
+ * Digits in a handoff code -- what a giver reads out, and a driver types.
+ */
+export const HANDOFF_CODE_DIGITS = 6;
 
 /**
  * What a handoff's sealed evidence holds.
@@ -617,8 +554,8 @@ export interface HoldView {
 }
 
 /**
- * What a customer can say about an issue, sealed to the store and the
- * arbitrators: a note, and a photo.
+ * What a customer can say about an issue, sealed to the store: a note, and
+ * a photo.
  */
 export interface IssueEvidence {
   note: string;
@@ -670,7 +607,7 @@ export interface IssueLine {
 }
 
 /**
- * One report, as its order's parties and arbitrators see it.
+ * One report, as its order's parties see it.
  */
 export interface IssueView {
   issue: ActionHash;
@@ -685,29 +622,9 @@ export interface IssueView {
    */
   accepted: boolean | null;
   /**
-   * The note and photo, for whoever can open them (the customer, the
-   * store, an arbitrator).
+   * The note and photo, for the customer and the store.
    */
   evidence: IssueEvidence | null;
-}
-
-/**
- * An order's issue window, as the arbitrator keeping it has recorded it.
- */
-export interface IssueWindowView {
-  /**
-   * Whether the order has an issue window at all: only on a network with
-   * arbitrators, for an order whose food was paid for.
-   */
-  available: boolean;
-  opened_at: Timestamp | null;
-  closes_at: Timestamp | null;
-  /**
-   * The refund named at the close, once closed.
-   */
-  closed: number | null;
-  closed_record: ActionHash | null;
-  opened_record: ActionHash | null;
 }
 
 /**
@@ -737,11 +654,7 @@ export interface ItemIssue {
   /**
    * The customer's `IssueEvidence`, sealed to the store.
    */
-  sealed_for_store: XSalsa20Poly1305EncryptedData;
-  /**
-   * The same, sealed to each arbitrator.
-   */
-  sealed_for_arbitrators: ArbitratorSeal[];
+  sealed_for_store: SealedChunks;
 }
 
 /**
@@ -761,6 +674,25 @@ export interface ItemReview {
   rating: number;
   comment: string;
   created_at: Timestamp;
+}
+
+/**
+ * What an order's food payment comes to, written once by its store: the
+ * customer is refunded `refund` for the `issues` it cites, the store
+ * collects the rest.
+ */
+export interface ItemSettlement {
+  /**
+   * The order's original action.
+   */
+  order: ActionHash;
+  /**
+   * That the customer has the order: the store's `Delivered` outcome for
+   * a delivery, the customer's own update collecting a pickup.
+   */
+  basis: ActionHash;
+  issues: ActionHash[];
+  refund: number;
 }
 
 export interface LedgerEntry {
@@ -834,32 +766,102 @@ export interface Leg {
   to: AgentPubKey;
   completed_at: Timestamp;
   /**
-   * Where the handoff happened, and (on `CustomerHandoff`, typically) a
-   * photo at the door -- a `HandoffEvidence`, sealed from `from` to
-   * `to`. A drop-off's location is the customer's door, so it's never
-   * published: only the two parties to the handoff can open it, and it
-   * reaches an arbitrator only if one of them shares it in a dispute.
-   * Evidence, not part of what completes a delivery: that's the other
-   * party's `ReceiptAttestation`.
+   * Where the handoff happened, and a photo -- a `HandoffEvidence`,
+   * sealed from `from` to `to`. A drop-off's location is the customer's
+   * door, so it's never published: only the two parties to the handoff
+   * can open it.
    */
-  sealed_evidence: XSalsa20Poly1305EncryptedData;
+  sealed_evidence: SealedChunks;
   /**
-   * The PIN the customer gave the driver at the door, sealed to each
-   * arbitrator -- empty if none was collected. Required on a drop-off
-   * whose order says `pin_required`. Only an arbitrator can open it, to
-   * check against the PIN the customer committed to at checkout.
-   */
-  sealed_pin_for_arbitrators: ArbitratorSeal[];
-  /**
-   * The PIN and salt from the code the customer let the driver scan --
-   * checkable by anyone against the order's commitment, so a drop-off
-   * carrying them is proof the customer handed them over: their receipt.
-   * Revealed only at the door, once the food is there.
+   * The giver's handoff code, as the driver scanned it -- the store's at
+   * pickup, the customer's at the door. Checkable by anyone against the
+   * order's commitment, so a handoff carrying it is proof the giver
+   * handed the order over.
    */
   revealed_pin: PinSecret | null;
+  /**
+   * A drop-off left at the door, on an order whose customer chose that
+   * and accepted the risk: the delivery is complete once it's recorded.
+   */
+  left_at_door: boolean;
 }
 
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
+
+/**
+ * A long description: a store's, an item's, a bag's, a review.
+ */
+export const MAX_DESCRIPTION_CHARS = 2000;
+
+/**
+ * Dietary tags a store's menu sums to.
+ */
+export const MAX_DIETARY_TAGS = 32;
+
+/**
+ * A short label: a cuisine, a menu category, a person's display name.
+ */
+export const MAX_LABEL_CHARS = 60;
+
+export const MAX_LICENSE_PLATE_CHARS = 20;
+
+/**
+ * A name or title: a store's, a menu item's, a goodie bag's.
+ */
+export const MAX_NAME_CHARS = 100;
+
+/**
+ * A note: a profile's bio, a report of missing items, a chat message, a
+ * kitchen or drop-off note.
+ */
+export const MAX_NOTE_CHARS = 1000;
+
+/**
+ * Opening periods in a store's week: split shifts every day.
+ */
+export const MAX_OPENING_PERIODS = 28;
+
+/**
+ * Lines on one order -- distinct items.
+ */
+export const MAX_ORDER_LINES = 100;
+
+export const MAX_PHONE_CHARS = 30;
+
+/**
+ * A city or a state.
+ */
+export const MAX_PLACE_CHARS = 100;
+
+export const MAX_POSTAL_CODE_CHARS = 20;
+
+export const MAX_PROMO_CODE_CHARS = 40;
+
+/**
+ * An issuer's reference for a grant (its payment's id).
+ */
+export const MAX_REFERENCE_CHARS = 100;
+
+/**
+ * A small sealed field -- a note, a name, an address, a phone number, a
+ * handoff code -- is one box: at most a chunk, sealed
+ * (`SEAL_CHUNK_BYTES + SEAL_TAG_BYTES`).
+ */
+export const MAX_SEALED_BYTES = 7184;
+
+export const MAX_STREET_CHARS = 200;
+
+/**
+ * Units a recurring order places each time.
+ */
+export const MAX_TEMPLATE_ITEMS = 500;
+
+/**
+ * An IANA time zone name.
+ */
+export const MAX_TIME_ZONE_CHARS = 64;
+
+export const MAX_VEHICLE_CHARS = 100;
 
 export interface MenuItem {
   catalog_ref: ActionHash;
@@ -911,8 +913,8 @@ export interface MerchantCatalog {
   prep_minutes: number;
   /**
    * What share (0-100) of a winning bid's delivery fee this merchant
-   * covers -- see architecture plan §12 (2026-10-01 revision) for why
-   * this defaults to 50, not 0.
+   * covers. A new store starts at the network's default
+   * (`relay_governance::default_delivery_subsidy_percent`).
    */
   delivery_subsidy_percent: number;
   /**
@@ -922,23 +924,23 @@ export interface MerchantCatalog {
    */
   auto_accept_orders: boolean;
   /**
-   * When this store's deliveries must be handed over against the
-   * customer's PIN -- see `PinPolicy`. A store that waives it carries the
-   * risk of a "never arrived" claim with only the driver's photo to
-   * answer it, like a parcel left without a signature.
+   * The most an order may cost to be left at the door, in cents -- above
+   * it, the store's deliveries are always handed over. A customer who
+   * chooses the door accepts the risk once it's left there; a store sets
+   * this to keep its expensive orders out of that. `None`: no limit.
    */
-  pin_policy: PinPolicy;
+  leave_at_door_max_cents: number | null;
   /**
    * How far from `location` this merchant is willing to deliver, in
    * kilometers -- a per-merchant business rule, not a single app-wide
    * constant: a dense-downtown restaurant and a rural one have
    * genuinely different realistic delivery ranges, so this has to be
    * each merchant's own call, not something the app hardcodes for
-   * everyone. Enforced for real in `dispatch_integrity::validate_new_order`
-   * via `relay_types::distance_km` (deterministic, so every peer agrees
-   * on the same reject/accept outcome) -- not just an advisory UI hint.
-   * Defaults to a conservative 8km for every catalog published before
-   * this field existed.
+   * everyone. Enforced by `dispatch_integrity::validate_new_order`
+   * against the order's public drop-off cell (deterministic, so every
+   * peer agrees), and bounded by the network
+   * (`relay_governance::max_delivery_radius_km`). A new store starts at
+   * the network's default.
    */
   max_delivery_radius_km: number;
   /**
@@ -960,19 +962,43 @@ export interface MerchantCatalog {
 }
 
 /**
- * The rules this network runs by, as its DNA sets them -- what the policy
- * page quotes, so it can't drift from what's enforced.
+ * The rules this network runs by, as its DNA sets them. The app reads them
+ * once while connecting, and every screen that quotes or applies one
+ * (countdowns, limits, the policies page) reads it from there -- so none
+ * can drift from what's enforced.
  */
 export interface NetworkTerms {
-  store_response_secs: number;
-  confirm_window_secs: number;
-  pin_confirm_window_secs: number;
-  issue_window_secs: number;
   /**
-   * The arbitrators' agent keys, as the DNA lists them.
+   * The ISO 4217 code every amount is in, in its minor units.
    */
-  arbitrators: string[];
+  currency: string;
   credit_limit_cents: number;
+  store_response_secs: number;
+  /**
+   * How long a customer has to report items missing or wrong.
+   */
+  report_window_secs: number;
+  /**
+   * However late a report comes, how long the store has to answer it.
+   */
+  answer_grace_secs: number;
+  /**
+   * How long a customer's "never arrived" stands before the store's app
+   * decides it.
+   */
+  claim_grace_secs: number;
+  /**
+   * Wrong handoff codes a giver's app answers per order before it stops.
+   */
+  max_code_attempts: number;
+  default_prep_minutes: number;
+  max_prep_minutes: number;
+  max_delivery_radius_km: number;
+  /**
+   * The most an inline image may take, in bytes of its data URI.
+   */
+  max_image_bytes: number;
+  goodie_bag_max_days: number;
 }
 
 /**
@@ -1005,6 +1031,33 @@ export type OrderChange =
     };
 
 /**
+ * How an order stands with its store, for its screens.
+ */
+export interface OrderDecisions {
+  /**
+   * The store decided it was delivered.
+   */
+  delivered: boolean;
+  /**
+   * The store decided it never was: the customer is refunded.
+   */
+  not_delivered: boolean;
+  /**
+   * The store has settled the food: the refund it named.
+   */
+  refund: number | null;
+  /**
+   * When the customer's report window ends, once they have the order --
+   * when the store's app settles it.
+   */
+  reports_until: Timestamp | null;
+  /**
+   * When the store's app decides an unanswered claim, if there is one.
+   */
+  claim_decided_after: Timestamp | null;
+}
+
+/**
  * One line of an order: an item, the exact version of it that was priced
  * (the item as the customer saw it -- validation reads its price from
  * there), and how many.
@@ -1023,9 +1076,43 @@ export interface OrderLine {
 }
 
 /**
+ * A delivery's outcome, written once by its store.
+ */
+export interface OrderOutcome {
+  /**
+   * The order's original action.
+   */
+  order: ActionHash;
+  outcome: Outcome;
+}
+
+/**
  * Which side of an order a signal's recipient is on.
  */
 export type OrderRole = "Customer" | "Store" | "Driver";
+
+/**
+ * Where a delivery's food went, as its store decides -- see the module
+ * docs.
+ */
+export type Outcome =
+  /**
+   * It reached the customer. `proof`: a `Delivered` version of the order.
+   */
+  | {
+      Delivered: {
+        proof: ActionHash;
+      };
+    }
+  /**
+   * It never did. `claim`: the customer's update claiming so, made after
+   * the driver's proven pickup.
+   */
+  | {
+      NotDelivered: {
+        claim: ActionHash;
+      };
+    };
 
 /**
  * The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
@@ -1073,7 +1160,6 @@ export interface PickupOrder {
   lines: OrderLine[];
   order_total: number;
   status: PickupStatus;
-  dispute_ref: ActionHash | null;
   requested_at: Timestamp;
   /**
    * The customer's note for the kitchen, sealed to the store.
@@ -1125,54 +1211,17 @@ export interface PickupOrder {
 export type PickupStatus = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "PickedUp" | "Cancelled" | "Disputed";
 
 /**
- * When a store's deliveries are handed over against the customer's PIN --
- * proof only the customer (or someone with their phone) could give that the
- * food reached them.
- */
-export type PinPolicy =
-  /**
-   * Never: drivers may still ask for it.
-   */
-  | "Off"
-  /**
-   * For customers who've raised or lost disputes before.
-   */
-  | "CustomersWithHistory"
-  | "Always";
-
-/**
- * A delivery's PIN, as the customer seals it at checkout -- to
- * themselves, to show at the door, and to the arbitrators, to check a
- * driver's word against. The order publishes only a commitment to it
- * (`sha256(pin || salt)`); without `salt`, which only the customer and
- * the arbitrators hold, nobody can test PINs against that commitment.
+ * A handoff code: what the giving party's app shows as a QR code (and, as
+ * six digits, to read out) at a handoff -- the store's to the driver at
+ * pickup, the customer's to the driver at the door. The order publishes
+ * only `sha256(pin || salt)`; without the salt, nobody can test guesses
+ * against it. Revealed (scanned), it proves the giver handed the order
+ * over.
  */
 export interface PinSecret {
   pin: string;
   salt: Uint8Array;
 }
-
-/**
- * What an arbitrator finds checking a delivery's PIN.
- */
-export type PinVerdict =
-  /**
-   * The order has no PIN, or the driver didn't collect it.
-   */
-  | "NotCollected"
-  /**
-   * The driver's PIN is the customer's: the customer was there.
-   */
-  | "Matches"
-  /**
-   * The driver's PIN isn't the customer's.
-   */
-  | "Mismatch"
-  /**
-   * What the customer sealed at checkout doesn't match what they
-   * committed to -- they tampered with their own PIN.
-   */
-  | "CustomerTampered";
 
 /**
  * One part of a hold, collected or waived on its own.
@@ -1192,7 +1241,7 @@ export type Portion =
   | "Tip"
   /**
    * The driver's collateral: back to the driver once the food is
-   * delivered, to the store if an arbitrator rules it never was.
+   * delivered, to the store if it never was (`OrderOutcome`).
    */
   | "Collateral";
 
@@ -1217,10 +1266,8 @@ export interface Profile {
   bio: string;
   /**
    * A data URI (`data:image/...;base64,...`), not a hosted URL -- there's
-   * no image host in this system, so a photo genuinely has to live in the
-   * entry itself. Client-side code is responsible for downscaling before
-   * upload; nothing here enforces a size cap, named as a real, accepted
-   * gap rather than silently unbounded.
+   * no image host in this system, so a photo lives in the entry itself,
+   * within the network's image limit (`relay_governance::max_image_bytes`).
    */
   avatar_data_uri: string;
   /**
@@ -1471,7 +1518,7 @@ export interface RecurringOrderTemplate {
    * Where it goes and the notes for it (`TemplateDetails`), sealed to the
    * requester -- a standing order shouldn't publish a home address.
    */
-  sealed_details: XSalsa20Poly1305EncryptedData;
+  sealed_details: SealedChunks;
   max_delivery_fee: number | null;
   tip_cents: number;
   dropoff_preference: DropoffPreference;
@@ -1568,6 +1615,25 @@ export type ReviewTarget =
 
 export type RoleTag = "Requester" | "Provider" | "Merchant";
 
+/**
+ * What a sealed field holding an image may add, beyond the image itself:
+ * a note, and its encoding.
+ */
+export const SEALED_IMAGE_OVERHEAD_BYTES = 4096;
+
+/**
+ * The most sealed in one box, in bytes: a larger value is sealed in chunks
+ * of this (`SealedChunks`). The conductor refuses a sealing request over
+ * 8,192 bytes *including its framing* (~230 bytes), so a chunk leaves
+ * room for that.
+ */
+export const SEAL_CHUNK_BYTES = 7168;
+
+/**
+ * What sealing adds to each box: its authentication tag.
+ */
+export const SEAL_TAG_BYTES = 16;
+
 export interface SavedAddress {
   /**
    * The address (`AddressDetails`), sealed to its owner -- nobody else
@@ -1576,6 +1642,13 @@ export interface SavedAddress {
   sealed: XSalsa20Poly1305EncryptedData;
   created_at: Timestamp;
 }
+
+/**
+ * A value sealed between two agents in order, a box per
+ * `SEAL_CHUNK_BYTES` of it -- for anything that may be larger than one box
+ * holds (a photo). Sealed with `relay_coordinator_support::seal_chunked`.
+ */
+export type SealedChunks = XSalsa20Poly1305EncryptedData[];
 
 /**
  * One part of a hold, over the zome-call boundary.

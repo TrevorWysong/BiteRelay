@@ -4,7 +4,8 @@
 
 use catalog_types::MerchantCatalog;
 use hdi::prelude::*;
-use relay_integrity_support::{first_problem, image_problem, text_problem};
+use relay_integrity_support::limits::*;
+use relay_integrity_support::{first_problem, image_problem, sealed_problem, text_problem};
 use relay_integrity_support::{classify, Checked};
 pub use relay_types::{DeliveryCapability, GeoPoint};
 
@@ -34,10 +35,8 @@ pub struct Profile {
     #[serde(default)]
     pub bio: String,
     /// A data URI (`data:image/...;base64,...`), not a hosted URL -- there's
-    /// no image host in this system, so a photo genuinely has to live in the
-    /// entry itself. Client-side code is responsible for downscaling before
-    /// upload; nothing here enforces a size cap, named as a real, accepted
-    /// gap rather than silently unbounded.
+    /// no image host in this system, so a photo lives in the entry itself,
+    /// within the network's image limit (`relay_governance::max_image_bytes`).
     #[serde(default)]
     pub avatar_data_uri: String,
     /// The person's phone number, sealed to themselves -- a profile is
@@ -178,10 +177,15 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
 fn validate_profile(profile: &Profile) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([
         image_problem(&profile.avatar_data_uri).map(String::from),
-        text_problem("display_name", &profile.display_name, 60),
-        text_problem("bio", &profile.bio, 1_000),
+        text_problem("display_name", &profile.display_name, MAX_LABEL_CHARS),
+        text_problem("bio", &profile.bio, MAX_NOTE_CHARS),
+        profile.sealed_phone.as_ref().and_then(|sealed| sealed_problem("sealed_phone", sealed, MAX_SEALED_BYTES)),
+        profile.sealed_name.as_ref().and_then(|sealed| sealed_problem("sealed_name", sealed, MAX_SEALED_BYTES)),
     ]) {
         return Ok(invalid);
+    }
+    if profile.roles.iter().enumerate().any(|(i, role)| profile.roles[..i].contains(role)) {
+        return Ok(ValidateCallbackResult::Invalid("a profile lists each role once".into()));
     }
     if profile.is_public() && profile.display_name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid(
@@ -273,8 +277,8 @@ fn validate_favorite_removal(
 fn validate_provider_credential(credential: &ProviderCredential, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([
         image_problem(&credential.photo_data_uri).map(String::from),
-        text_problem("vehicle_description", &credential.vehicle_description, 100),
-        text_problem("license_plate", &credential.license_plate, 20),
+        text_problem("vehicle_description", &credential.vehicle_description, MAX_VEHICLE_CHARS),
+        text_problem("license_plate", &credential.license_plate, MAX_LICENSE_PLATE_CHARS),
     ]) {
         return Ok(invalid);
     }
@@ -320,8 +324,9 @@ fn validate_provider_credential_update(credential: &ProviderCredential, author: 
 
 /// The content is sealed, so there's nothing validation can read; the
 /// coordinator checks the label before sealing.
-fn validate_saved_address(_address: &SavedAddress, _author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    Ok(ValidateCallbackResult::Valid)
+/// A saved address is sealed to its owner, so only its size can be checked.
+fn validate_saved_address(address: &SavedAddress, _author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    Ok(first_problem([sealed_problem("sealed", &address.sealed, MAX_SEALED_BYTES)]).unwrap_or(ValidateCallbackResult::Valid))
 }
 
 /// Same shape as `validate_profile_update` -- `SavedAddress` has no
@@ -377,8 +382,8 @@ fn validate_saved_address_removal(
 /// (or profile) they actually belong to -- otherwise anyone could attach a
 /// fake profile to someone's key, or a fake credential to their profile.
 fn validate_identity_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    use relay_integrity_support::{decode, invalid, link_target, require, LinkTarget};
-    let LinkTarget::Record(record) = link_target(target)? else {
+    use relay_integrity_support::{decode, invalid, linked_record, require};
+    let Some(record) = linked_record(target)? else {
         return invalid("profile links must target a record");
     };
     if author != record.action().author() {

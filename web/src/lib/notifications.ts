@@ -24,19 +24,19 @@ const deliveryText: Record<OrderRole, Partial<Record<DeliveryStatus, string>>> =
     MerchantConfirmed: "The store is preparing your order.",
     DriverEnRouteToMerchant: "Your driver is heading to the store.",
     PickedUp: "Your driver picked up your order and is on the way.",
-    Disputed: "Your order is being reviewed.",
+    Disputed: "You've told the store your order never arrived.",
   },
   Store: {
     BidAccepted: "A driver is assigned. Start preparing the order.",
     DriverEnRouteToMerchant: "The driver is on the way to pick up an order.",
     PickedUp: "The driver picked up an order.",
     Delivered: "An order was delivered.",
-    Disputed: "An order is being reviewed.",
+    Disputed: "A customer says their order never arrived.",
   },
   Driver: {
     MerchantConfirmed: "The store is preparing your delivery.",
-    Delivered: "Delivery confirmed. You've been paid.",
-    Disputed: "A delivery is being reviewed.",
+    Delivered: "Delivery complete. You're paid once the store's app records it.",
+    Disputed: "The customer says their order never arrived. Deliver it with their code, or the store refunds them.",
   },
 };
 
@@ -44,11 +44,11 @@ const pickupText: Record<OrderRole, Partial<Record<PickupStatus, string>>> = {
   Customer: {
     MerchantConfirmed: "The store accepted your order and is preparing it.",
     ReadyForPickup: "Your order is ready for pickup.",
-    Disputed: "Your order is being reviewed.",
+    Disputed: "You've told the store you can't get your order.",
   },
   Store: {
     PickedUp: "An order was collected.",
-    Disputed: "An order is being reviewed.",
+    Disputed: "A customer says they can't get their order.",
   },
   Driver: {},
 };

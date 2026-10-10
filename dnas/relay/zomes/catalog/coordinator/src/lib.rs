@@ -55,22 +55,18 @@ pub struct PublishCatalogInput {
     /// left out.
     #[serde(default = "utc")]
     pub time_zone: String,
-    #[serde(default = "default_prep_minutes")]
-    pub prep_minutes: u16,
-    #[serde(default = "default_max_delivery_radius_km")]
-    pub max_delivery_radius_km: f64,
+    /// The network's default (`relay_governance::default_prep_minutes`) if
+    /// left out.
+    #[serde(default)]
+    pub prep_minutes: Option<u16>,
+    /// The network's default (`relay_governance::default_delivery_radius_km`)
+    /// if left out.
+    #[serde(default)]
+    pub max_delivery_radius_km: Option<f64>,
 }
 
 fn utc() -> String {
     "UTC".into()
-}
-
-fn default_prep_minutes() -> u16 {
-    DEFAULT_PREP_MINUTES
-}
-
-fn default_max_delivery_radius_km() -> f64 {
-    8.0
 }
 
 /// A catalog's stable identity alongside its current content. Everything
@@ -132,20 +128,18 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         address_zip: input.address_zip,
         weekly_hours: input.weekly_hours,
         time_zone: input.time_zone,
-        prep_minutes: input.prep_minutes,
-        delivery_subsidy_percent: 50,
-        max_delivery_radius_km: input.max_delivery_radius_km,
+        prep_minutes: input.prep_minutes.unwrap_or_else(relay_governance::default_prep_minutes),
+        delivery_subsidy_percent: relay_governance::default_delivery_subsidy_percent(),
+        max_delivery_radius_km: input.max_delivery_radius_km.unwrap_or_else(relay_governance::default_delivery_radius_km),
         dietary_tags: Vec::new(),
         auto_accept_orders: false,
-        pin_policy: PinPolicy::default(),
+        leave_at_door_max_cents: None,
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
 
-    let path = geohash_anchor_path(&geohash)?;
-    path.ensure()?;
     create_link(
-        path.path_entry_hash()?,
+        geohash_anchor_path(&geohash)?.path_entry_hash()?,
         action_hash.clone(),
         LinkTypes::GeohashToCatalog,
         (),
@@ -188,17 +182,18 @@ pub fn set_auto_accept_orders(input: SetAutoAcceptOrdersInput) -> ExternResult<R
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SetPinPolicyInput {
+pub struct SetLeaveAtDoorLimitInput {
     pub original_action: ActionHash,
-    pub pin_policy: PinPolicy,
+    /// `None` for no limit.
+    pub max_cents: Option<u64>,
 }
 
-/// When the store's deliveries must be handed over against the customer's
-/// PIN -- see `MerchantCatalog::pin_policy`.
+/// The most an order may cost to be left at the door -- see
+/// `MerchantCatalog::leave_at_door_max_cents`.
 #[hdk_extern]
-pub fn set_pin_policy(input: SetPinPolicyInput) -> ExternResult<Record> {
+pub fn set_leave_at_door_limit(input: SetLeaveAtDoorLimitInput) -> ExternResult<Record> {
     let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
-    catalog.pin_policy = input.pin_policy;
+    catalog.leave_at_door_max_cents = input.max_cents;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
@@ -425,7 +420,7 @@ fn item_versions(item_ref: &ActionHash, records: &[Record]) -> Vec<Record> {
     let Some(first) = records.iter().find(|r| r.action_address() == item_ref) else { return Vec::new() };
     let mut versions = vec![first.clone()];
     let mut latest = first.action_address();
-    while let Some(next) = records.iter().filter(|r| matches!(&r.action().data, ActionData::Update(update) if &update.original_action_address == latest)).last() {
+    while let Some(next) = records.iter().rfind(|r| matches!(&r.action().data, ActionData::Update(update) if &update.original_action_address == latest)) {
         versions.push(next.clone());
         latest = next.action_address();
     }
@@ -570,9 +565,7 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
         auto_apply: input.auto_apply,
     };
     let action_hash = create_entry(&EntryTypes::PromoCode(promo))?;
-    let path = promo_anchor_path(&input.catalog_ref)?;
-    path.ensure()?;
-    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
+    create_link(promo_anchor_path(&input.catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
     create_link(input.catalog_ref, action_hash.clone(), LinkTypes::CatalogToLivePromo, ())?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back promo code".into())))

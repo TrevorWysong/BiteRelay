@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { AlertTriangle, Bike, CheckCircle2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Bike, CheckCircle2, DoorOpen, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cancelOrder, getConfirmWindows, getMyHandoverCode, getOrder, getOrderPrivateDetails, listBidsForOrder, acceptBid, raiseDispute, raiseCancellationDispute, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, claimNeverArrived, getMyHandoverCode, getOrder, getOrderDecisions, getOrderPrivateDetails, listBidsForOrder, acceptBid, checkWarrants } from "../../holochain/zomes/dispatch";
 import { confirmDeliveryReceived, HandoffNotYetHere } from "../../lib/handoffs";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
@@ -26,6 +26,7 @@ import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderIssues } from "../../components/OrderIssues";
 import { HandoverCode } from "../../components/HandoverCode";
+import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 
 // Chat is only valid once a driver is assigned (send_chat_message requires
 // order.accepted_bid to exist) and before the delivery's own terminal state.
@@ -80,6 +81,7 @@ export function OrderDetail() {
   const orderRef = hexToBytes(hash);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [disputing, setDisputing] = useState(false);
+  const [confirmingClaim, setConfirmingClaim] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,15 +122,17 @@ export function OrderDetail() {
       if (!record) return null;
       // Sealed to this customer; only they and the driver can open it.
       const evidence = await getHandoffEvidence(actionHash(record));
-      const pinCollected = decodeEntry<Leg>(record).sealed_pin_for_arbitrators.length > 0;
-      return { at: timestampOf(record), photo: evidence?.photo_data_uri || null, pinCollected };
+      return { at: timestampOf(record), photo: evidence?.photo_data_uri || null };
     },
     { pollMs: photoStatus === "PickedUp" ? POLL.signalled : undefined, refreshOn: (s) => "HandoffRecorded" in s || isOrderSignal(s) },
   );
   const dropoffPhoto = dropoff?.photo ?? null;
-  const { data: confirmWindows } = useResource(dropoff ? "confirm-windows" : null, getConfirmWindows);
-  // The customer's PIN, while a driver's on the way: read out at the door.
-  const awaitingDriver = order && ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"].includes(order.status) && !dropoff;
+  // Where a claim that it never arrived stands with the store.
+  const { data: decisions } = useResource(order?.status === "Disputed" ? `order-decisions:${hash}` : null, () => getOrderDecisions(orderRef), { pollMs: POLL.signalled, refreshOn: ORDER_SIGNALS });
+  // The customer's handover code, while a driver's on the way: shown at the
+  // door. An order left at the door has no handover.
+  const handedOver = order?.dropoff_preference !== "LeaveAtDoor";
+  const awaitingDriver = order && handedOver && ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"].includes(order.status) && !dropoff;
   const { data: handoverCode = null } = useResource(awaitingDriver ? `handover-code:${hash}` : null, () => getMyHandoverCode(orderRef));
   // What this customer already rated on this order, read back from the
   // conductor rather than kept in memory -- otherwise a reload would offer
@@ -231,15 +235,12 @@ export function OrderDetail() {
     }
   }
 
-  async function fileDispute() {
+  async function claimItNeverArrived() {
     setDisputing(true);
     setError(null);
     try {
-      if (order!.status === "Cancelled") {
-        await raiseCancellationDispute({ order_original_action: orderRef, description: "Requester believes this cancellation was unjust.", evidence_refs: [] });
-      } else {
-        await raiseDispute({ order_original_action: orderRef, reason: "NeverDelivered", description: "Order never arrived.", evidence_refs: [] });
-      }
+      await claimNeverArrived(orderRef);
+      setConfirmingClaim(false);
       await reloadOrder();
     } catch (err) {
       setError(describeError(err));
@@ -272,10 +273,6 @@ export function OrderDetail() {
     setCompleting(false);
   }
 
-  // A cancellation is only worth disputing if a driver was involved and the
-  // customer didn't cancel it themselves.
-  const unfairCancellation = order.status === "Cancelled" && order.accepted_bid !== null && order.cancellation !== "ByCustomer" && order.cancellation !== "ByArbitrator";
-  const canDispute = order.status === "Delivered" || order.status === "PickedUp" || unfairCancellation;
 
   async function cancel() {
     setCancelling(true);
@@ -418,7 +415,17 @@ export function OrderDetail() {
 
       {handoverCode && (
         <motion.div variants={fadeSlideUp} className="mt-4">
-          <HandoverCode orderRef={orderRef} secret={handoverCode} required={order.pin_required} />
+          <HandoverCode orderRef={orderRef} secret={handoverCode} />
+        </motion.div>
+      )}
+
+      {!handedOver && ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"].includes(order.status) && (
+        <motion.div variants={fadeSlideUp} className="mt-4 flex items-start gap-3 rounded-2xl border border-ink-100 p-4 dark:border-ink-800">
+          <DoorOpen size={20} className="mt-0.5 shrink-0 text-ink-400" />
+          <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">
+            <span className="font-semibold text-ink-900 dark:text-ink-50">Leaving it at your door.</span> Your driver will photograph where. As you chose, it's
+            delivered once it's left there.
+          </p>
         </motion.div>
       )}
 
@@ -435,19 +442,39 @@ export function OrderDetail() {
             </p>
           )}
           {dropoff ? (
-            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">
-              Your driver says your order was delivered at {formatClockTime(dropoff.at)}. Confirm you have it, or report a problem
-              {confirmWindows && ` by ${formatDeadline(dropoff.at + (dropoff.pinCollected ? confirmWindows[1] : confirmWindows[0]) * 1_000_000)}`}
-              {" "}-- after that, it goes to an arbitrator with your driver's evidence.
-            </p>
-          ) : (
+            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">Your driver says they handed it over at {formatClockTime(dropoff.at)}. Confirm you have it.</p>
+          ) : handedOver ? (
             <p className="text-xs text-relay-700 dark:text-relay-300">
-              Your payment is held until you confirm you have your order. Missing an item? Confirm first, then report it: you'll have 2 hours.
+              When it's in your hands, let your driver scan your code, or confirm here. Missing an item? Confirm first, then report it.
             </p>
+          ) : null}
+          {handedOver && (
+            <Button loading={completing} onClick={confirmReceipt}>
+              I have my order
+            </Button>
           )}
-          <Button loading={completing} onClick={confirmReceipt}>
-            Confirm receipt
-          </Button>
+          <AnimatePresence mode="wait" initial={false}>
+            {confirmingClaim ? (
+              <motion.div key="claim" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-xl bg-white p-3 dark:bg-ink-900">
+                <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">
+                  We'll tell the store. If your driver doesn't deliver it, the store refunds you in full, and your driver pays for the food. Only say so if it's
+                  true: it goes on your record if it arrives.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <Button variant="ghost" className="flex-1 py-2" onClick={() => setConfirmingClaim(false)}>
+                    Back
+                  </Button>
+                  <Button variant="danger" className="flex-1 py-2" loading={disputing} onClick={claimItNeverArrived}>
+                    It never arrived
+                  </Button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.button key="ask" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setConfirmingClaim(true)} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline dark:text-relay-300">
+                It never arrived?
+              </motion.button>
+            )}
+          </AnimatePresence>
         </motion.div>
       )}
 
@@ -488,18 +515,19 @@ export function OrderDetail() {
         </motion.div>
       )}
 
-      {canDispute && (
-        <motion.div variants={fadeSlideUp} className="mt-6">
-          <Button variant="ghost" loading={disputing} onClick={fileDispute} className="w-full">
-            {order.status === "Cancelled" ? "This cancellation seems unfair" : order.status === "Delivered" ? "Something else went wrong" : "Something went wrong with this order"}
-          </Button>
-        </motion.div>
-      )}
-
       {order.status === "Disputed" && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-300">
-          <AlertTriangle size={20} />
-          <p className="text-sm">An arbitrator is reviewing this case. You'll see the outcome here once resolved.</p>
+        <motion.div variants={fadeSlideUp} className="mt-5 flex items-start gap-3 rounded-2xl bg-amber-50 p-4 text-amber-900 dark:bg-amber-900/20 dark:text-amber-100">
+          <AlertTriangle size={20} className="mt-0.5 shrink-0" />
+          {decisions?.not_delivered ? (
+            <p className="text-sm">
+              <span className="font-semibold">Refunded.</span> The store confirmed it never arrived. Your payment is back in your balance.
+            </p>
+          ) : (
+            <p className="text-sm">
+              You've told the store it never arrived. If your driver still turns up, let them hand it over as usual. Otherwise the store refunds you
+              {decisions?.claim_decided_after ? ` by ${formatDeadline(decisions.claim_decided_after)}` : " shortly"}.
+            </p>
+          )}
         </motion.div>
       )}
 
@@ -511,14 +539,14 @@ export function OrderDetail() {
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-              {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
+              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
             </div>
           )}
           {canRateDriver && (
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Your driver</p>
               <StarRatingInput value={driverRating} onChange={setDriverRating} />
-              {driverRating > 0 && <Textarea value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
+              {driverRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
             </div>
           )}
           {/* A goodie bag isn't itemized -- its one line is the bag, not a menu item -- so there's nothing per-item to rate. */}

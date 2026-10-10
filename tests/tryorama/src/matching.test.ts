@@ -6,14 +6,14 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, decodeEntry, retryUntil, waitForSignal, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, bytesEqual, decodeEntry, retryUntil, waitForSignal, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [requester, providerA, providerB, providerC] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
+    testApp,
   ]);
   const allPlayers = [requester, providerA, providerB, providerC];
   // DHT gossip sync (dhtSync) proves data has propagated, but remote_signal

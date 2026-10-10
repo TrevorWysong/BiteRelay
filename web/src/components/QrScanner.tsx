@@ -71,7 +71,7 @@ export function QrScanner({ onScan }: { onScan: (text: string) => void }) {
         } catch (err) {
           if (stopped) return;
           const denied = err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError");
-          setProblem(denied ? "Camera access is off for Relay. Allow it in your settings, or enter the PIN instead." : "This device's camera isn't available. Enter the PIN instead.");
+          setProblem(denied ? "Camera access is off for Relay. Allow it in your settings, or type the code instead." : "This device's camera isn't available. Type the code instead.");
         }
       }
       void start();

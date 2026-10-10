@@ -5,7 +5,7 @@
 //! down -- every entry would still be valid, only the links would lie.
 
 use crate::*;
-use relay_integrity_support::{decode, invalid, link_target, original_creation, require, LinkTarget};
+use relay_integrity_support::{decode, invalid, linked_record, original_creation, require};
 
 /// The link type and base an event about `target` is indexed under.
 fn event_link(target: &ReputationTarget) -> (LinkTypes, AnyLinkableHash) {
@@ -28,7 +28,7 @@ fn review_link(target: &ReviewTarget) -> (LinkTypes, AnyLinkableHash) {
 /// for the links ratings and summaries are summed from -- its tag carries
 /// exactly what the entry says (see `review_tag`/`event_tag`).
 pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, tag: &LinkTag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let LinkTarget::Record(record) = link_target(target)? else {
+    let Some(record) = linked_record(target)? else {
         return invalid("reputation links must target a record");
     };
     if record.action().author() != author {

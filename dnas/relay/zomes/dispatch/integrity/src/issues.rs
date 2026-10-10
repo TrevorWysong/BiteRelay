@@ -1,18 +1,21 @@
-//! Validation for missing and wrong items -- see `dispatch_types::issues`
-//! for the flow. What it guarantees:
+//! Validation for how an order settles -- see `dispatch_types::issues` for
+//! the flow. What it guarantees:
 //!
 //! - only an order's own customer reports issues with it, only for items on
-//!   it, never more units than were ordered;
-//! - only its store answers each issue, once;
-//! - only the order's closing arbitrator (`relay_governance::
-//!   closing_arbitrator`) opens its issue window, once, on a real
-//!   confirmation -- and closes it, once, no sooner than the window after
-//!   opening it, on its own clock;
-//! - a close's refund is never more than the issues it cites are worth of
-//!   what the customer paid.
+//!   it, never more units than were ordered; only its store answers each,
+//!   once;
+//! - only the order's store decides its outcome and its settlement, once
+//!   each -- so every payment cites the same decision, and none can
+//!   contradict another;
+//! - *Delivered* only on the order completed with proof; *not delivered*
+//!   only on the customer's claim, made after the driver's proven pickup,
+//!   and never by a store that cancelled the order;
+//! - a settlement's refund is never more than the issues it cites are worth
+//!   of what the customer paid.
 
 use super::*;
-use dispatch_types::{claimed_value, IssueResponse, IssueWindowClosed, IssueWindowOpened, ItemIssue};
+use crate::claims::wrote_update_of;
+use dispatch_types::{claimed_value, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome};
 use relay_integrity_support::{decode, original_creation};
 
 /// An order's terms an issue is judged against: its parties, and each line
@@ -54,48 +57,6 @@ pub(crate) fn order_for_issues(order: &ActionHash) -> ExternResult<Option<OrderF
     Ok(Some(OrderForIssues { requester, merchant, order_total, lines: priced, delivery }))
 }
 
-/// Whether `confirmation` confirms `order` reached its customer: their
-/// receipt for the drop-off, the delivery completed on their scanned code,
-/// their own update collecting a pickup, or an arbitrator's ruling that it
-/// was delivered or collected.
-pub(crate) fn confirms(order: &ActionHash, terms: &OrderForIssues, confirmation: &ActionHash) -> ExternResult<bool> {
-    let record = must_get_valid_record(confirmation.clone())?;
-    let author = record.action().author().clone();
-    let leg_of_order = |leg: &Leg| -> ExternResult<bool> { Ok(leg.kind == LegKind::CustomerHandoff && &original_creation(leg.order_ref.clone())? == order) };
-    if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
-        let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg)?) else { return Ok(false) };
-        return Ok(author == terms.requester && leg_of_order(&leg)?);
-    }
-    if &original_creation(confirmation.clone())? != order {
-        return Ok(false);
-    }
-    let (completed, dispute_ref) = if terms.delivery {
-        match decode::<DeliveryOrder>(&record) {
-            // Completed on the customer's scanned code.
-            Some(o) if o.status == DeliveryStatus::Delivered && attestation_types::rests_on_scan(&o.delivery_receipts)? => return Ok(true),
-            Some(o) => (o.status == DeliveryStatus::Delivered, o.dispute_ref),
-            None => return Ok(false),
-        }
-    } else {
-        match decode::<PickupOrder>(&record) {
-            Some(o) => (o.status == PickupStatus::PickedUp, o.dispute_ref),
-            None => return Ok(false),
-        }
-    };
-    if !completed {
-        return Ok(false);
-    }
-    if !terms.delivery && author == terms.requester {
-        return Ok(true);
-    }
-    // An arbitrator's ruling that it arrived.
-    if !relay_governance::is_arbitrator(&author)? {
-        return Ok(false);
-    }
-    let Some(dispute_ref) = dispute_ref else { return Ok(false) };
-    Ok(decode::<Dispute>(&must_get_valid_record(dispute_ref)?).is_some_and(|d| d.status == DisputeStatus::Resolved && d.outcome == Some(DisputeOutcome::FavorProvider)))
-}
-
 pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let Some(terms) = order_for_issues(&issue.order)? else {
         return invalid("an issue is reported about an order, by its original action");
@@ -117,12 +78,8 @@ pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey) -> Ex
             return invalid("an issue claims between one and the number ordered of each item");
         }
     }
-    if !dispute_types::seals_cover_roster(&issue.sealed_for_arbitrators, &relay_governance::arbitrator_roster()) {
-        return invalid("an issue's evidence is sealed once to each arbitrator");
-    }
-    let bound = relay_integrity_support::MAX_IMAGE_URI_BYTES + 4_096;
-    let sizes_ok = issue.sealed_for_store.as_encrypted_data_ref().len() <= bound && issue.sealed_for_arbitrators.iter().all(|s| s.sealed.as_encrypted_data_ref().len() <= bound);
-    require(sizes_ok, "an issue's evidence may hold a note and at most one 300KB photo")
+    let bounded = relay_integrity_support::sealed_chunks_problem("an issue's evidence", &issue.sealed_for_store, relay_integrity_support::max_sealed_image_bytes()).is_none();
+    require(bounded, "an issue's evidence may hold a note and at most one photo, within the network's image limit")
 }
 
 /// Whether `author` already wrote an entry of `entry_type` on their chain
@@ -172,57 +129,96 @@ pub(crate) fn validate_issue_response(response: &IssueResponse, author: &AgentPu
     require(!answered, "a store answers each issue once")
 }
 
-pub(crate) fn validate_window_opened(opened: &IssueWindowOpened, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
-    let Some(terms) = order_for_issues(&opened.order)? else { return invalid("an issue window is opened on an order, by its original action") };
-    if relay_governance::closing_arbitrator(&opened.order).as_ref() != Some(author) {
-        return invalid("only the order's closing arbitrator keeps its issue window");
-    }
-    if !confirms(&opened.order, &terms, &opened.confirmation)? {
-        return invalid("an issue window opens on the order's confirmation");
-    }
-    // Every opening of this order's window is dated after the order, so the
-    // walk back to the order sees all of them -- whatever confirmation each
-    // cites. (Two openings would mean two closes, and the store and the
-    // customer each collecting by a different one.)
-    let placed = must_get_action(opened.order.clone())?.hashed.content.header.timestamp;
-    if at < placed {
-        return invalid("an issue window opens after its order was placed");
-    }
-    let Some(prev) = prev_action else { return invalid("a window can't open a chain") };
-    let again = already_wrote::<IssueWindowOpened>(author, prev, placed, UnitEntryTypes::IssueWindowOpened, |o| o.order == opened.order)?;
-    require(!again, "an order's issue window opens once")
+/// When `order` was placed: every decision about it is dated after, so a
+/// walk of the store's chain back to it sees all of them.
+fn placed_at(order: &ActionHash) -> ExternResult<Timestamp> {
+    Ok(must_get_action(order.clone())?.hashed.content.header.timestamp)
 }
 
-pub(crate) fn validate_window_closed(closed: &IssueWindowClosed, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
-    let opened_record = must_get_valid_record(closed.opened.clone())?;
-    let Some(opened) = decode::<IssueWindowOpened>(&opened_record) else { return invalid("a close cites the window's opening") };
-    if opened_record.action().author() != author {
-        return invalid("the arbitrator who opened a window closes it");
+/// A version of `order`, decoded -- `None` if it isn't one.
+fn version_of<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(order: &ActionHash, version: &ActionHash) -> ExternResult<Option<(Record, T)>> {
+    if &original_creation(version.clone())? != order {
+        return Ok(None);
     }
-    let opened_at = opened_record.action().timestamp();
-    if at.as_micros() < opened_at.as_micros() + relay_governance::issue_window().as_micros() as i64 {
-        return invalid("an issue window closes no sooner than the window after it opened");
+    let record = must_get_valid_record(version.clone())?;
+    Ok(decode::<T>(&record).map(|v| (record, v)))
+}
+
+pub(crate) fn validate_outcome(outcome: &OrderOutcome, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(terms) = order_for_issues(&outcome.order)? else { return invalid("an outcome is decided for an order, by its original action") };
+    if !terms.delivery {
+        return invalid("only a delivery has an outcome to decide");
     }
-    let Some(terms) = order_for_issues(&opened.order)? else { return invalid("the window's order is gone") };
+    if author != &terms.merchant {
+        return invalid("only the order's store decides its outcome");
+    }
+    let placed = placed_at(&outcome.order)?;
+    if at < placed {
+        return invalid("an outcome is decided after its order was placed");
+    }
+    let Some(prev) = prev_action else { return invalid("an outcome can't open a chain") };
+    let decided = already_wrote::<OrderOutcome>(author, prev, placed, UnitEntryTypes::OrderOutcome, |o| o.order == outcome.order)?;
+    if decided {
+        return invalid("an order's outcome is decided once");
+    }
+    match &outcome.outcome {
+        Outcome::Delivered { proof } => {
+            let delivered = version_of::<DeliveryOrder>(&outcome.order, proof)?.is_some_and(|(_, v)| v.status == DeliveryStatus::Delivered);
+            require(delivered, "a delivered outcome cites the order completed on proof the customer has it")
+        }
+        Outcome::NotDelivered { claim } => {
+            let Some((record, version)) = version_of::<DeliveryOrder>(&outcome.order, claim)? else { return invalid("a claim is a version of its order") };
+            // The only way into Disputed is the customer's claim from
+            // PickedUp, which the driver reached on proof of the pickup.
+            if version.status != DeliveryStatus::Disputed || record.action().author() != &terms.requester {
+                return invalid("not delivered cites the customer's claim that it never arrived");
+            }
+            // A store that cancelled the order (refunding the customer) can't
+            // also take the driver's collateral for it.
+            let cancelled = wrote_update_of(author, prev, &outcome.order, |v| v.status == DeliveryStatus::Cancelled)?;
+            require(!cancelled, "a store that cancelled an order can't decide it went undelivered")
+        }
+    }
+}
+
+pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(terms) = order_for_issues(&settlement.order)? else { return invalid("a settlement is for an order, by its original action") };
+    if author != &terms.merchant {
+        return invalid("only the order's store settles it");
+    }
+    let placed = placed_at(&settlement.order)?;
+    if at < placed {
+        return invalid("a settlement comes after its order was placed");
+    }
+    // That the customer has the order.
+    let has_it = if terms.delivery {
+        let record = must_get_valid_record(settlement.basis.clone())?;
+        decode::<OrderOutcome>(&record).is_some_and(|o| o.order == settlement.order && matches!(o.outcome, Outcome::Delivered { .. }))
+    } else {
+        version_of::<PickupOrder>(&settlement.order, &settlement.basis)?.is_some_and(|(record, v)| v.status == PickupStatus::PickedUp && record.action().author() == &terms.requester)
+    };
+    if !has_it {
+        return invalid("a settlement cites that the customer has the order: its delivered outcome, or their collecting it");
+    }
     let mut claimed: Vec<(ActionHash, u32)> = Vec::new();
-    for (i, issue_ref) in closed.issues.iter().enumerate() {
-        if closed.issues[..i].contains(issue_ref) {
-            return invalid("a close cites each issue once");
+    for (i, issue_ref) in settlement.issues.iter().enumerate() {
+        if settlement.issues[..i].contains(issue_ref) {
+            return invalid("a settlement cites each issue once");
         }
         let issue_record = must_get_valid_record(issue_ref.clone())?;
-        let Some(issue) = decode::<ItemIssue>(&issue_record) else { return invalid("a close cites issues") };
-        if issue.order != opened.order {
-            return invalid("a close cites only its own order's issues");
+        let Some(issue) = decode::<ItemIssue>(&issue_record) else { return invalid("a settlement cites issues") };
+        if issue.order != settlement.order {
+            return invalid("a settlement cites only its own order's issues");
         }
         if issue_record.action().timestamp() > at {
-            return invalid("a close cites only issues reported before it");
+            return invalid("a settlement cites only issues reported before it");
         }
         claimed.extend(issue.lines.iter().map(|l| (l.item_ref.clone(), l.quantity)));
     }
-    if closed.refund > claimed_value(&terms.lines, terms.order_total, &claimed) {
+    if settlement.refund > claimed_value(&terms.lines, terms.order_total, &claimed) {
         return invalid("a refund can't exceed what the cited issues are worth");
     }
-    let Some(prev) = prev_action else { return invalid("a close can't open a chain") };
-    let again = already_wrote::<IssueWindowClosed>(author, prev, opened_at, UnitEntryTypes::IssueWindowClosed, |c| c.opened == closed.opened)?;
-    require(!again, "an issue window closes once")
+    let Some(prev) = prev_action else { return invalid("a settlement can't open a chain") };
+    let again = already_wrote::<ItemSettlement>(author, prev, placed, UnitEntryTypes::ItemSettlement, |s| s.order == settlement.order)?;
+    require(!again, "an order is settled once")
 }

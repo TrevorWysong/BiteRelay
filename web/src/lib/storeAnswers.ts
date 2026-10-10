@@ -38,7 +38,5 @@ export function cancellationText(cancellation: Cancellation | null): string {
       return "You cancelled this order.";
     case "StoreDidNotRespond":
       return "The store didn't respond in time, so this order was cancelled. You weren't charged.";
-    case "ByArbitrator":
-      return "This order was cancelled when its dispute was resolved in your favor.";
   }
 }

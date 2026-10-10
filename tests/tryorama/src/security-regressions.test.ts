@@ -5,14 +5,14 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer, attacker, driver] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
+    testApp,
   ]);
   const all = [merchant, customer, attacker, driver];
   await scenario.shareAllAgents();
@@ -105,13 +105,13 @@ await runScenario(async (scenario) => {
 
   // --- Nobody records reputation about an order they weren't part of. ---
   await assert.rejects(
-    call(attacker, "reputation")("record_event", { target: { Store: store }, order_ref: pickup, kind: "OrderCancelledByThem" }),
+    call(attacker, "reputation")("record_event", { target: { Store: store }, order_ref: pickup, kind: "OrderCancelledByThem", basis: pickup }),
     /only the order's own parties record events about it/,
   );
   await assert.rejects(
-    call(customer, "reputation")("record_event", { target: { Store: store }, order_ref: pickup, kind: "DisputeResolvedAgainst" }),
-    /only an arbitrator a ruling's outcome/,
-    "nor a ruling's outcome without being an arbitrator",
+    call(customer, "reputation")("record_event", { target: { Store: store }, order_ref: pickup, kind: "DisputeResolvedAgainst", basis: pickup }),
+    /only its store an outcome/,
+    "nor an outcome the store didn't decide",
   );
-  console.log("[PASS] only an order's parties record events about it, and only an arbitrator a ruling's outcome");
+  console.log("[PASS] only an order's parties record events about it, and only its store an outcome");
 });

@@ -4,7 +4,7 @@ import { BellRing, ClipboardList, Store } from "lucide-react";
 import { useMyStores } from "../store/merchantStores";
 import { awaitsAnswer, fetchActiveQueue, storesKey } from "../store/merchantQueue";
 import { useResource } from "../lib/useResource";
-import { useStoreResponseSecs } from "../lib/useStoreResponseSecs";
+import { useTerms } from "../store/network";
 import { BottomNavLink } from "./BottomNavLink";
 import { POLL, isOrderSignal } from "../lib/poll";
 
@@ -14,14 +14,14 @@ import { POLL, isOrderSignal } from "../lib/poll";
 /// every new-order signal, and polled in case one was missed.
 export function MerchantNav() {
   const stores = useMyStores();
-  const windowSecs = useStoreResponseSecs();
+  const windowSecs = useTerms().store_response_secs;
   const { pathname } = useLocation();
   const { data } = useResource(
     stores && stores.length > 0 ? `merchant-waiting:${storesKey(stores)}` : null,
     async () => ({ rows: await fetchActiveQueue(stores ?? []), now: Date.now() }),
     { pollMs: POLL.signalled, refreshOn: isOrderSignal },
   );
-  const waiting = data && windowSecs !== undefined ? data.rows.filter((row) => awaitsAnswer(row, windowSecs, data.now)).length : 0;
+  const waiting = data ? data.rows.filter((row) => awaitsAnswer(row, windowSecs, data.now)).length : 0;
   const onQueue = pathname === "/merchant";
 
   return (

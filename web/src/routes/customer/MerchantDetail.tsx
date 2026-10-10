@@ -8,7 +8,7 @@ import { useResource } from "../../lib/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
-import { formatCatalogAddress, formatCents } from "../../lib/format";
+import { formatCatalogAddress, formatCents, toMinorUnits, currencySymbol } from "../../lib/format";
 import { describeError } from "../../lib/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { AddressSearch } from "../../components/AddressSearch";
@@ -129,7 +129,7 @@ function StorePage({ hash }: { hash: string }) {
     setClaimError(null);
     try {
       const fulfillment: FulfillmentInput =
-        claimFulfillment === "Pickup" ? "Pickup" : { Delivery: { dropoff: claimDropoff, max_delivery_fee: Math.round(claimFee * 100) } };
+        claimFulfillment === "Pickup" ? "Pickup" : { Delivery: { dropoff: claimDropoff, max_delivery_fee: toMinorUnits(claimFee) } };
       await claimGoodieBag(row.hash, fulfillment);
       setClaimedBagHexes((prev) => new Set(prev).add(bytesToHex(row.hash)));
       setClaimingBagHex(null);
@@ -277,7 +277,7 @@ function StorePage({ hash }: { hash: string }) {
                             {claimFulfillment === "Delivery" && (
                               <>
                                 <AddressSearch value={claimDropoff} onChange={setClaimDropoff} label="Delivery location" />
-                                <Input type="number" min={0} step={0.5} value={claimFee} onChange={(e) => setClaimFee(Number(e.target.value))} placeholder="Max delivery fee" prefix="$" />
+                                <Input type="number" min={0} step={0.5} value={claimFee} onChange={(e) => setClaimFee(Number(e.target.value))} placeholder="Max delivery fee" prefix={currencySymbol()} />
                               </>
                             )}
                             {claimError && <p className="text-xs text-red-500">{claimError}</p>}

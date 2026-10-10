@@ -4,10 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { addMenuItem, updateMenuItem } from "../../../holochain/zomes/catalog";
 import { bytesToHex } from "../../../holochain/decode";
 import { groupByCategory, type ItemRow } from "../../../lib/menu";
-import { formatCents } from "../../../lib/format";
+import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
 import { Button, Card, Input, StatNumber, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
+import { MAX_DESCRIPTION_CHARS, MAX_LABEL_CHARS, MAX_NAME_CHARS } from "../../../holochain/types";
 
 /// What the editor is open for: a new item, an existing one, or nothing.
 type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
@@ -90,7 +91,7 @@ export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint
 function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; onSaved: () => Promise<void> }) {
   const [form, setForm] = useState(() => ({
     name: row?.item.name ?? "",
-    price: row ? row.item.price_cents / 100 : 10,
+    price: row ? fromMinorUnits(row.item.price_cents) : 0,
     description: row?.item.description ?? "",
     photo_data_uri: row?.item.photo_data_uri ?? "",
     category: row?.item.category ?? "",
@@ -105,7 +106,7 @@ function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: I
     try {
       const fields = {
         name: form.name.trim(),
-        price_cents: Math.round(form.price * 100),
+        price_cents: toMinorUnits(form.price),
         description: form.description,
         photo_data_uri: form.photo_data_uri,
         category: form.category,
@@ -124,12 +125,12 @@ function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: I
       <div className="flex gap-3">
         <PhotoInput value={form.photo_data_uri} onChange={(v) => set({ photo_data_uri: v })} shape="circle" className="shrink-0" />
         <div className="flex flex-1 flex-col gap-2">
-          <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Item name" />
-          <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} placeholder="0.00" prefix="$" />
+          <Input maxLength={MAX_NAME_CHARS} value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Item name" />
+          <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} placeholder="0.00" prefix={currencySymbol()} />
         </div>
       </div>
-      <Textarea value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
-      <Input value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
+      <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
+      <Input maxLength={MAX_LABEL_CHARS} value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
       <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder="Dietary tags, comma separated (Vegetarian, Spicy)" />
       <Button loading={saving} disabled={!form.name.trim()} onClick={save} className="py-2 text-xs">
         {row ? "Save changes" : "Add to menu"}

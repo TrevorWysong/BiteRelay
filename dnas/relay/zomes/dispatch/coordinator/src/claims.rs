@@ -99,6 +99,7 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 requested_delivery_time: None,
                 promo_code_ref: None,
                 dropoff_preference: Default::default(),
+                door_risk_accepted: false,
                 bag_claim_ref: Some(claim_ref),
             })?;
         }

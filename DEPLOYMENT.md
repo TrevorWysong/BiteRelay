@@ -20,12 +20,30 @@ Development is different on purpose. `npm run dev` runs the UI in a browser agai
 These values are part of the DNA hash. Everyone on a network must install a bundle built with exactly the same values; a different value is a separate network that can't see this one.
 
 - **Network seed.** A name for the network, such as `relay-2026`. Change it to start a fresh network.
-- **Arbitrators** (`arbitrators`). The agent keys allowed to rule on disputes. Without at least one, no dispute can be resolved, and packaging refuses to run. Because the roster is fixed in the DNA, the keys must exist before the bundle does. Arbitrators should run a conductor you operate, with keys generated in its keystore ahead of time, and install the bundle with those keys. Changing the roster later means shipping a new DNA (see Upgrades).
 - **Store response window** (`store_response_secs`, default 300). How long a store has to accept an order before the customer's conductor cancels it.
 - **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order on credit and walk away. Packaging refuses to run without it.
-- **Confirmation window** (`confirm_window_secs`, default 86400). How long a customer has to confirm a delivery or report a problem once the driver records it (an hour at most when the PIN was collected). After that, the driver's app raises it with the arbitrators. Arbitrators should run a conductor that's always online: it rules the clear cases (a matching PIN; an unconfirmed, photographed drop-off) every five minutes, and leaves the rest for a person on the arbitrator screen.
-- **Issue window** (`issue_window_secs`, default 7200). How long a customer has, once an order is confirmed, to report missing or wrong items. The store's payment for the food is held until it closes; the driver is paid at once. Each order's window is kept by one arbitrator (chosen from the order's hash), whose conductor opens and closes it on its own clock every five minutes. The store has the final say on each report: those it accepts or never answers are refunded at the close, those it declines aren't. Nobody needs to review them. A network with no arbitrators has no window, and the store is paid on the customer's receipt.
-- **Issuers** (`issuers`). The agent keys allowed to put money into the network: the stand-in for a payment processor crediting an account against a real card payment. With a credit limit of 0, nobody can pay for anything until an issuer credits them, so packaging requires at least one. Like arbitrators, they need keys generated on a conductor you operate before the bundle is built. An issuer calls `ledger::issue_grant` once a payment clears; the recipient's app collects it.
+- **Report window** (`report_window_secs`, default 7200). How long a customer has, once they have their order, to report missing or wrong items. The store's payment for the food waits until it ends; the driver is paid as soon as the store's app records the delivery. The store has the final say on each report: its app refunds those it accepts or never answers and settles the rest. Nobody else reviews them.
+- **Issuers** (`issuers`). The agent keys allowed to put money into the network: the stand-in for a payment processor crediting an account against a real card payment. With a credit limit of 0, nobody can pay for anything until an issuer credits them, so packaging requires at least one. They need keys generated on a conductor you operate before the bundle is built. An issuer calls `ledger::issue_grant` once a payment clears; the recipient's app collects it.
+
+Every other setting is optional, and the defaults suit most networks. Set only the ones you change:
+
+| Setting | Default | What it governs |
+| --- | --- | --- |
+| `currency` | `"USD"` | The ISO 4217 currency every amount is in, in its minor units. Display only: the ledger is unit-agnostic. |
+| `answer_grace_secs` | 1800 | However late a report of missing items comes, the store has at least this long to answer it (never longer than the report window). |
+| `claim_grace_secs` | 1800 | How long a customer's "never arrived" stands before the store's app decides it. The store can decide sooner. |
+| `max_code_attempts` | 5 | Wrong handoff codes a giver's app answers for one order before it stops. |
+| `default_prep_minutes` | 15 | A new store's usual prep time. |
+| `max_prep_minutes` | 240 | The longest a store may say an order will take. |
+| `default_delivery_radius_km` | 8 | A new store's delivery radius. |
+| `max_delivery_radius_km` | 50 | The furthest any store may deliver. Validation checks every order's drop-off area against its store's radius. |
+| `default_delivery_subsidy_percent` | 50 | A new store's share of each delivery fee. |
+| `max_image_bytes` | 300000 | The largest photo, in bytes of its data URI. Every peer that stores an entry stores its photos. |
+| `goodie_bag_max_days` | 7 | The longest a goodie bag may stay listed. |
+| `clock_tolerance_secs` | 600 | How far an author's clock may be from a time it claims, where a rule compares them. |
+| `price_change_grace_secs` | 900 | How long after a price changes a store still accepts an order priced from the old one. |
+
+The app reads these from the network itself (`get_network_terms`), so its screens and its policies page always quote what's enforced.
 
 Copy `deploy/properties.example.json` to `deploy/properties.json` (gitignored) and fill it in.
 

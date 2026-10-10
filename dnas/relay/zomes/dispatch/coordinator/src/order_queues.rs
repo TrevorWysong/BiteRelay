@@ -6,9 +6,8 @@
 //! history (read on demand).
 
 use dispatch_integrity::*;
-use hdi::hash_path::path::Component;
 use hdk::prelude::*;
-use relay_coordinator_support::{original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
 use std::cmp::Reverse;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +36,7 @@ pub(crate) trait QueueOwnerExt {
 
 impl QueueOwnerExt for QueueOwner<'_> {
     fn orders_on_day(&self, day: i64) -> ExternResult<Vec<ActionHash>> {
-        let links = get_links(LinkQuery::try_new(self.history_day(day)?.path_entry_hash()?, self.history_link_type())?, GetStrategy::default())?;
+        let links = get_links(LinkQuery::try_new(self.history_day(day)?, self.history_link_type())?, GetStrategy::default())?;
         Ok(links.into_iter().filter_map(|l| l.target.into_action_hash()).collect())
     }
 }
@@ -73,19 +72,21 @@ impl OrderParties {
 pub(crate) fn enqueue(order_ref: &ActionHash, catalog_ref: &ActionHash, requester: &AgentPubKey, requested_at: Timestamp) -> ExternResult<()> {
     let day = history_day(requested_at);
     for owner in [QueueOwner::Store(catalog_ref), QueueOwner::Customer(requester)] {
-        let bucket = owner.history_day(day)?;
-        bucket.ensure()?;
-        create_link(bucket.path_entry_hash()?, order_ref.clone(), owner.history_link_type(), ())?;
+        // Index the day (the order's own -- validation checks it), then
+        // file the order under it.
+        create_link(owner.history_root()?, owner.history_day(day)?, owner.history_index_link_type(), history_index_tag(day, order_ref))?;
+        create_link(owner.history_day(day)?, order_ref.clone(), owner.history_link_type(), ())?;
         create_link(owner.active_base(), order_ref.clone(), owner.active_link_type(), ())?;
     }
     Ok(())
 }
 
-/// Called by the requester when they accept `bid_ref`: the delivery joins
-/// its driver's active queue. The tag names the bid, which is what lets
-/// validation check the link sits under that bid's own bidder.
-pub(crate) fn enqueue_for_driver(order_ref: &ActionHash, bid_ref: &ActionHash, driver: &AgentPubKey) -> ExternResult<()> {
-    create_link(driver.clone(), order_ref.clone(), LinkTypes::DriverToActiveDelivery, LinkTag::new(bid_ref.get_raw_39().to_vec()))?;
+/// Called by the requester when they accept a bid: the delivery joins its
+/// driver's active queue. The tag is the order version accepting the bid,
+/// which is what lets validation check the link sits under the driver it
+/// accepted.
+pub(crate) fn enqueue_for_driver(order_ref: &ActionHash, accepting_version: &ActionHash, driver: &AgentPubKey) -> ExternResult<()> {
+    create_link(driver.clone(), order_ref.clone(), LinkTypes::DriverToActiveDelivery, LinkTag::new(accepting_version.get_raw_39().to_vec()))?;
     Ok(())
 }
 
@@ -98,7 +99,7 @@ pub(crate) fn enqueue_for_driver(order_ref: &ActionHash, bid_ref: &ActionHash, d
 /// screen.
 pub(crate) fn retire(order: &OrderParties) -> ExternResult<()> {
     let me = agent_info()?.agent_initial_pubkey;
-    let is_party = me == order.requester || me == order.merchant || relay_governance::is_arbitrator(&me)?;
+    let is_party = me == order.requester || me == order.merchant;
     let mut queues: Vec<(AnyLinkableHash, LinkTypes)> = Vec::new();
     if is_party {
         for owner in [QueueOwner::Store(&order.catalog_ref), QueueOwner::Customer(&order.requester)] {
@@ -158,23 +159,15 @@ pub struct OrderHistoryPage {
     pub next_before: Option<Timestamp>,
 }
 
-/// A day bucket's number, from the tag of the path link that indexes it
-/// (the tag is the child path component). Read directly rather than via
-/// `TypedPath::children_paths`, which calls `ensure()` -- a write -- first.
-fn day_from_tag(tag: &LinkTag) -> Option<i64> {
-    let component: Component = SerializedBytes::from(UnsafeBytes::from(tag.0.clone())).try_into().ok()?;
-    String::try_from(&component).ok()?.parse().ok()
-}
 
 /// Every order in `owner`'s history, newest first, a page at a time. Walks
 /// day buckets back from the cursor and stops as soon as it has a full
 /// page, so a page costs the days it covers, not the whole history.
 fn history_page(owner: QueueOwner<'_>, before: Option<Timestamp>, limit: Option<u32>) -> ExternResult<OrderHistoryPage> {
     let limit = limit.map_or(DEFAULT_HISTORY_PAGE, |l| (l as usize).clamp(1, MAX_HISTORY_PAGE));
-    let root = owner.history_root()?;
-    let mut days: Vec<i64> = get_links(LinkQuery::try_new(root.path_entry_hash()?, owner.history_path_link_type())?, GetStrategy::default())?
+    let mut days: Vec<i64> = get_links(LinkQuery::try_new(owner.history_root()?, owner.history_index_link_type())?, GetStrategy::default())?
         .iter()
-        .filter_map(|link| day_from_tag(&link.tag))
+        .filter_map(|link| parse_history_index_tag(&link.tag).map(|(day, _)| day))
         .collect();
     days.sort_unstable_by_key(|day| Reverse(*day));
     days.dedup();
@@ -186,7 +179,7 @@ fn history_page(owner: QueueOwner<'_>, before: Option<Timestamp>, limit: Option<
     let mut links = Vec::new();
     let mut oldest_day_read = None;
     for &day in days.iter().take(MAX_DAYS_PER_PAGE) {
-        let mut query = LinkQuery::try_new(owner.history_day(day)?.path_entry_hash()?, owner.history_link_type())?;
+        let mut query = LinkQuery::try_new(owner.history_day(day)?, owner.history_link_type())?;
         query.before = before;
         links.extend(get_links(query, GetStrategy::default())?);
         oldest_day_read = Some(day);
@@ -265,30 +258,42 @@ fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
 
 /// How many of the caller's orders at `catalog_ref` they've completed --
 /// what loyalty rewards ("your 6th order is 15% off") count, both kinds.
-/// The customer authors completion (`complete_delivery`/`complete_pickup`),
-/// so each one is on their own chain: a local count, not a network read of
-/// every order they've ever placed. (An order an arbitrator closed in the
-/// store's favor isn't counted -- a disputed order shouldn't earn rewards.)
 #[hdk_extern]
 pub fn count_my_completed_orders(catalog_ref: ActionHash) -> ExternResult<u32> {
     Ok(my_completions_at(&catalog_ref)?.len() as u32)
 }
 
-/// The caller's own completions (`Delivered`/`PickedUp` updates) of orders
-/// at `catalog_ref`, oldest first -- exactly what a loyalty promo's
-/// `loyalty_proof` lists.
+/// The versions completing the caller's orders at `catalog_ref`, oldest
+/// first -- exactly what a loyalty promo's `loyalty_proof` lists. The
+/// caller placed each of their orders, so which are at this store is a
+/// local read; who completed each varies (a delivery's driver, a pickup's
+/// customer), so its completion is read from the network -- one read per
+/// order at this store, never their whole history.
 pub(crate) fn my_completions_at(catalog_ref: &ActionHash) -> ExternResult<Vec<ActionHash>> {
-    let mut completions: Vec<(Timestamp, ActionHash)> = my_order_actions()?
-        .into_iter()
-        .filter(|(_, record)| matches!(record.action().data, ActionData::Update(_)))
-        .filter(|(kind, record)| match kind {
-            OrderKind::Delivery => record.entry().to_app_option::<DeliveryOrder>().ok().flatten().is_some_and(|o| o.status == DeliveryStatus::Delivered && &o.catalog_ref == catalog_ref),
-            OrderKind::Pickup => record.entry().to_app_option::<PickupOrder>().ok().flatten().is_some_and(|o| o.status == PickupStatus::PickedUp && &o.catalog_ref == catalog_ref),
-        })
-        .map(|(_, record)| (record.action().timestamp(), record.action_address().clone()))
-        .collect();
+    let mut completions: Vec<(Timestamp, ActionHash)> = Vec::new();
+    for (kind, record) in my_order_actions()? {
+        if !matches!(record.action().data, ActionData::Create(_)) || order_store(kind, &record).as_ref() != Some(catalog_ref) {
+            continue;
+        }
+        let Ok(latest) = resolve_latest(record.action_address().clone()) else { continue };
+        let completed = match kind {
+            OrderKind::Delivery => decode_or::<DeliveryOrder>(&latest).is_some_and(|o| o.status == DeliveryStatus::Delivered),
+            OrderKind::Pickup => decode_or::<PickupOrder>(&latest).is_some_and(|o| o.status == PickupStatus::PickedUp),
+        };
+        if completed {
+            completions.push((latest.action().timestamp(), latest.action_address().clone()));
+        }
+    }
     completions.sort();
     Ok(completions.into_iter().map(|(_, hash)| hash).collect())
+}
+
+/// The store an order record of `kind` is placed with.
+fn order_store(kind: OrderKind, record: &Record) -> Option<ActionHash> {
+    match kind {
+        OrderKind::Delivery => decode_or::<DeliveryOrder>(record).map(|o| o.catalog_ref),
+        OrderKind::Pickup => decode_or::<PickupOrder>(record).map(|o| o.catalog_ref),
+    }
 }
 
 /// The order (if any) the caller already placed redeeming `claim_ref` --
@@ -333,8 +338,10 @@ pub fn get_my_active_deliveries(_: ()) -> ExternResult<Vec<ActiveDelivery>> {
     let links = get_links(LinkQuery::try_new(me, LinkTypes::DriverToActiveDelivery)?, GetStrategy::default())?;
     let mut deliveries = Vec::new();
     for link in links {
-        let (Some(order_ref), Ok(bid_ref)) = (link.target.into_action_hash(), ActionHash::try_from_raw_39(link.tag.0.clone())) else { continue };
+        // The tag is the version accepting this driver's bid -- which bid.
+        let (Some(order_ref), Ok(accepting)) = (link.target.into_action_hash(), ActionHash::try_from_raw_39(link.tag.0.clone())) else { continue };
         let Some((order, requested_at, true)) = classify(order_ref) else { continue };
+        let Some(bid_ref) = get(accepting, GetOptions::default())?.and_then(|r| decode_or::<DeliveryOrder>(&r)).and_then(|o| o.accepted_bid) else { continue };
         let Ok(bid) = resolve_latest(bid_ref) else { continue };
         deliveries.push((ActiveDelivery { order, bid }, requested_at));
     }

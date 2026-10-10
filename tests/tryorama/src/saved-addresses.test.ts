@@ -8,13 +8,13 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, bytesEqual, testApp } from "./helpers.js";
 
 const HOME = { lat: 41.9035, lon: -71.0898 };
 const WORK = { lat: 42.3601, lon: -71.0589 };
 
 await runScenario(async (scenario) => {
-  const [customer, other] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [customer, other] = await scenario.addPlayersWithApps([testApp, testApp]);
   const both = [customer, other];
   await scenario.shareAllAgents();
 

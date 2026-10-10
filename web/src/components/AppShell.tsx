@@ -1,8 +1,8 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Gavel } from "lucide-react";
-import { useSession } from "../store/session";
+import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign } from "lucide-react";
+import { useSession, type Mode } from "../store/session";
 import { useCart } from "../store/cart";
 import { pageVariants } from "../lib/motion";
 import { PresenceDot } from "./ui";
@@ -28,7 +28,7 @@ function AnimatedOutlet() {
 }
 
 export function AppShell() {
-  const { mode, setMode, profile, agentPubKey, isArbitrator } = useSession();
+  const { mode, setMode, profile, agentPubKey } = useSession();
   const cartCount = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const navigate = useNavigate();
   const roles = profile?.roles ?? [];
@@ -37,10 +37,9 @@ export function AppShell() {
     roles.includes("Requester") && ("customer" as const),
     roles.includes("Provider") && ("driver" as const),
     roles.includes("Merchant") && ("merchant" as const),
-    isArbitrator && ("arbitrator" as const),
-  ].filter(Boolean) as ("customer" | "driver" | "merchant" | "arbitrator")[];
+  ].filter(Boolean) as Mode[];
 
-  function switchMode(next: "customer" | "driver" | "merchant" | "arbitrator") {
+  function switchMode(next: Mode) {
     setMode(next);
     navigate(`/${next}`);
   }
@@ -64,7 +63,7 @@ export function AppShell() {
                     mode === m ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400"
                   )}
                 >
-                  {m === "customer" ? "Order" : m === "driver" ? "Drive" : m === "merchant" ? "Sell" : "Arbitrate"}
+                  {m === "customer" ? "Order" : m === "driver" ? "Drive" : "Sell"}
                 </button>
               ))}
             </div>
@@ -95,7 +94,6 @@ export function AppShell() {
           </>
         )}
         {mode === "merchant" && <MerchantNav />}
-        {mode === "arbitrator" && <BottomNavLink to="/arbitrator" icon={Gavel} label="Cases" />}
       </nav>
 
       {agentPubKey && (

@@ -238,8 +238,8 @@ pub fn collect(input: CollectInput) -> ExternResult<ActionHash> {
         return Ok(done);
     }
     let (hold, share) = share_of(&input.hold, input.portion)?;
-    let amount = match closed_refund(&input.basis)? {
-        // An issue window's close splits the food: the store the rest, the
+    let amount = match settled_refund(&input.basis)? {
+        // The store's settlement splits the food: the store the rest, the
         // customer the refund.
         Some(refund) if input.portion == Portion::Food => {
             if agent_info()?.agent_initial_pubkey == hold.payer {
@@ -256,10 +256,10 @@ pub fn collect(input: CollectInput) -> ExternResult<ActionHash> {
     append(LedgerKind::Collect { hold: input.hold, portion: input.portion, basis: input.basis }, amount)
 }
 
-/// The refund an issue window's close names, if `basis` is one.
-fn closed_refund(basis: &ActionHash) -> ExternResult<Option<u64>> {
+/// The refund the store's settlement names, if `basis` is one.
+fn settled_refund(basis: &ActionHash) -> ExternResult<Option<u64>> {
     let Some(record) = get(basis.clone(), GetOptions::default())? else { return Ok(None) };
-    Ok(record.entry().to_app_option::<dispatch_types::IssueWindowClosed>().ok().flatten().map(|c| c.refund))
+    Ok(record.entry().to_app_option::<dispatch_types::ItemSettlement>().ok().flatten().map(|c| c.refund))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

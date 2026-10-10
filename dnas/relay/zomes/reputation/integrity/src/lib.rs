@@ -12,7 +12,7 @@
 //! `LinkTypes`), so every read below only ever walks that one target's own
 //! links.
 
-use dispatch_types::{Bid, DeliveryOrder, DeliveryStatus, PickupOrder, PickupStatus};
+use dispatch_types::{Bid, Cancellation, DeliveryOrder, DeliveryStatus, OrderOutcome, Outcome, PickupOrder, PickupStatus};
 use hdi::prelude::*;
 use relay_integrity_support::{first_problem, text_problem};
 use relay_integrity_support::{classify, decode, original_creation, Checked};
@@ -75,8 +75,9 @@ pub struct ReputationEvent {
     /// is exactly the right reference point.
     pub order_ref: ActionHash,
     /// A version of the order that shows who its parties are -- including
-    /// its driver, which only a version after acceptance names. Validation
-    /// checks the author is one of them (or an arbitrator, for a ruling).
+    /// its driver, which only a version after acceptance names -- or, for
+    /// an outcome only the store records, its `OrderOutcome`. Validation
+    /// checks the author is one of them.
     pub basis: ActionHash,
     pub kind: ReputationEventKind,
     pub recorded_at: Timestamp,
@@ -172,8 +173,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
 
 /// What `validate_review`/`validate_item_review` both need from whichever
 /// order type `order_ref` actually resolves to -- a `Review`/`ItemReview`
-/// is generic over which vertical it's about (see `Dispute`'s own doc
-/// comment in `dispute_integrity` for the identical reasoning), so this
+/// is generic over which vertical it's about, so this
 /// resolves either `DeliveryOrder` or `PickupOrder` to the same shape
 /// rather than duplicating both review functions once per order type.
 struct ReviewableOrder {
@@ -239,7 +239,7 @@ fn resolve_reviewable_order(
 /// since `order_ref` is already resolved (by the coordinator) to the
 /// order's real, immutable-at-this-point item list.
 fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, 2_000)]) {
+    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, relay_integrity_support::limits::MAX_DESCRIPTION_CHARS)]) {
         return Ok(invalid);
     }
     if review.rating < 1 || review.rating > 5 {
@@ -293,7 +293,7 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
 /// content-addressed hash), it's just the coordinator's job to have
 /// resolved it to the right one first.
 fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, 2_000)]) {
+    if let Some(invalid) = first_problem([text_problem("comment", &review.comment, relay_integrity_support::limits::MAX_DESCRIPTION_CHARS)]) {
         return Ok(invalid);
     }
     if review.rating < 1 || review.rating > 5 {
@@ -343,46 +343,160 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
 }
 
 
-/// Only someone who took part in the order records an event about it --
-/// its customer, store or driver, never the subject about themselves -- and
-/// only an arbitrator records a ruling's outcome. `basis` is a version of
-/// the order showing its parties: the driver only appears once a bid is
-/// accepted. Each target must be that order's own store, customer or driver.
+/// Every event must match what happened, as a record shows it -- its
+/// `basis`, either a version of the order or its store's decision
+/// (`OrderOutcome`):
+///
+/// - **OrderCompleted** -- for a store, recorded by whoever completed the
+///   order, citing the version that completed it; for a driver, recorded by
+///   the store, citing its decision that the order was delivered.
+/// - **OrderCancelledByThem** -- recorded by another of the order's parties,
+///   citing the update that cancelled it, against whoever cancelled.
+/// - **DisputeRaised** -- recorded by the customer, citing their claim that
+///   a delivery never arrived, against its driver.
+/// - **DisputeResolvedAgainst** -- recorded by the store, citing its
+///   decision: against the driver of an order that never arrived, or the
+///   customer who claimed one never arrived that had.
+/// - **CollateralForfeited** -- recorded by the store, citing its decision
+///   that an order never arrived, for exactly the driver's collateral.
+///
+/// Never by the subject about themselves.
 fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if author != &event.counterparty {
         return Ok(ValidateCallbackResult::Invalid("a reputation event's counterparty must be its author".into()));
     }
-    if original_creation(event.basis.clone())? != event.order_ref {
-        return Ok(ValidateCallbackResult::Invalid("an event's basis must be a version of its own order".into()));
-    }
     let basis = must_get_valid_record(event.basis.clone())?;
-    let (requester, merchant, catalog_ref, driver) = if let Some(order) = decode::<DeliveryOrder>(&basis) {
-        let driver = match &order.accepted_bid {
-            Some(bid_ref) => decode::<Bid>(&must_get_valid_record(bid_ref.clone())?).map(|bid| bid.bidder),
-            None => None,
-        };
-        (order.requester, order.merchant, order.catalog_ref, driver)
-    } else if let Some(order) = decode::<PickupOrder>(&basis) {
-        (order.requester, order.merchant, order.catalog_ref, None)
-    } else {
+    // The order version showing the parties, and the store's decision when
+    // the event rests on one.
+    let (version, outcome) = match decode::<OrderOutcome>(&basis) {
+        Some(outcome) => {
+            if outcome.order != event.order_ref {
+                return Ok(ValidateCallbackResult::Invalid("an event's basis must be about its own order".into()));
+            }
+            let cited = match &outcome.outcome {
+                Outcome::Delivered { proof } => proof.clone(),
+                Outcome::NotDelivered { claim } => claim.clone(),
+            };
+            (must_get_valid_record(cited)?, Some(outcome.outcome))
+        }
+        None => {
+            if original_creation(event.basis.clone())? != event.order_ref {
+                return Ok(ValidateCallbackResult::Invalid("an event's basis must be a version of its own order".into()));
+            }
+            (basis, None)
+        }
+    };
+    let Some(order) = Parties::of(&version)? else {
         return Ok(ValidateCallbackResult::Invalid("an event's basis must be an order".into()));
     };
     let subject = match &event.target {
-        ReputationTarget::Store(store) if store == &catalog_ref => merchant.clone(),
-        ReputationTarget::Customer(customer) if customer == &requester => customer.clone(),
-        ReputationTarget::Driver(agent) if Some(agent) == driver.as_ref() => agent.clone(),
+        ReputationTarget::Store(store) if store == &order.catalog_ref => order.merchant.clone(),
+        ReputationTarget::Customer(customer) if customer == &order.requester => customer.clone(),
+        ReputationTarget::Driver(agent) if order.driver.as_ref() == Some(agent) => agent.clone(),
         _ => return Ok(ValidateCallbackResult::Invalid("an event must be about this order's own store, customer or driver".into())),
     };
     if &subject == author {
         return Ok(ValidateCallbackResult::Invalid("subject and counterparty must be different agents".into()));
     }
-    let ruling = matches!(event.kind, ReputationEventKind::DisputeResolvedAgainst | ReputationEventKind::CollateralForfeited { .. });
-    let party = author == &requester || author == &merchant || Some(author) == driver.as_ref();
-    let allowed = if ruling { relay_governance::is_arbitrator(author)? } else { party };
+    let by_store = author == &order.merchant;
+    let at_driver = matches!(event.target, ReputationTarget::Driver(_));
+    let at_store = matches!(event.target, ReputationTarget::Store(_));
+    let at_customer = matches!(event.target, ReputationTarget::Customer(_));
+    let allowed = match (&event.kind, &outcome) {
+        (ReputationEventKind::OrderCompleted, None) => at_store && order.completed && version.action().author() == author,
+        (ReputationEventKind::OrderCompleted, Some(Outcome::Delivered { .. })) => at_driver && by_store,
+        (ReputationEventKind::OrderCancelledByThem, None) => order.cancelled_by.as_ref() == Some(&subject) && cancelled_here(&version)? && order.is_party(author),
+        (ReputationEventKind::DisputeRaised, None) => at_driver && order.claimed && version.action().author() == author && author == &order.requester,
+        (ReputationEventKind::DisputeResolvedAgainst, Some(Outcome::NotDelivered { .. })) => at_driver && by_store,
+        (ReputationEventKind::DisputeResolvedAgainst, Some(Outcome::Delivered { proof })) => at_customer && by_store && claimed_before(proof)?,
+        (ReputationEventKind::CollateralForfeited { amount }, Some(Outcome::NotDelivered { .. })) => at_driver && by_store && Some(*amount) == order.collateral,
+        _ => false,
+    };
     if !allowed {
-        return Ok(ValidateCallbackResult::Invalid("only the order's own parties record events about it, and only an arbitrator a ruling's outcome".into()));
+        return Ok(ValidateCallbackResult::Invalid("only the order's own parties record events about it, as its records show them, and only its store an outcome".into()));
     }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// An order's parties and state, as one version of it shows them.
+struct Parties {
+    requester: AgentPubKey,
+    merchant: AgentPubKey,
+    catalog_ref: ActionHash,
+    /// The accepted driver, once there is one.
+    driver: Option<AgentPubKey>,
+    /// What the driver posts as collateral, once there is one.
+    collateral: Option<u64>,
+    /// Delivered, or (for a pickup) collected.
+    completed: bool,
+    /// The customer's claim that a delivery never arrived.
+    claimed: bool,
+    /// Who cancelled it, if this version is cancelled.
+    cancelled_by: Option<AgentPubKey>,
+}
+
+impl Parties {
+    fn of(version: &Record) -> ExternResult<Option<Self>> {
+        if let Some(order) = decode::<DeliveryOrder>(version) {
+            let bid = match &order.accepted_bid {
+                Some(bid_ref) => decode::<Bid>(&must_get_valid_record(bid_ref.clone())?),
+                None => None,
+            };
+            let cancelled_by = canceller(&order.cancellation, &order.requester, &order.merchant);
+            return Ok(Some(Self {
+                driver: bid.as_ref().map(|b| b.bidder.clone()),
+                collateral: bid.map(|b| b.collateral),
+                completed: order.status == DeliveryStatus::Delivered,
+                claimed: order.status == DeliveryStatus::Disputed,
+                cancelled_by: (order.status == DeliveryStatus::Cancelled).then_some(cancelled_by).flatten(),
+                requester: order.requester,
+                merchant: order.merchant,
+                catalog_ref: order.catalog_ref,
+            }));
+        }
+        if let Some(order) = decode::<PickupOrder>(version) {
+            let cancelled_by = canceller(&order.cancellation, &order.requester, &order.merchant);
+            return Ok(Some(Self {
+                driver: None,
+                collateral: None,
+                completed: order.status == PickupStatus::PickedUp,
+                claimed: false,
+                cancelled_by: (order.status == PickupStatus::Cancelled).then_some(cancelled_by).flatten(),
+                requester: order.requester,
+                merchant: order.merchant,
+                catalog_ref: order.catalog_ref,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn is_party(&self, agent: &AgentPubKey) -> bool {
+        agent == &self.requester || agent == &self.merchant || self.driver.as_ref() == Some(agent)
+    }
+}
+
+/// Who a cancellation says cancelled the order.
+fn canceller(cancellation: &Option<Cancellation>, requester: &AgentPubKey, merchant: &AgentPubKey) -> Option<AgentPubKey> {
+    match cancellation.as_ref()? {
+        Cancellation::ByCustomer => Some(requester.clone()),
+        Cancellation::ByStore(_) | Cancellation::StoreDidNotRespond => Some(merchant.clone()),
+    }
+}
+
+/// Whether `version` is the update that cancelled its order -- not a later
+/// version carrying the cancellation forward.
+fn cancelled_here(version: &Record) -> ExternResult<bool> {
+    let ActionData::Update(update) = &version.action().data else { return Ok(false) };
+    let prior = must_get_valid_record(update.original_action_address.clone())?;
+    Ok(Parties::of(&prior)?.is_some_and(|p| p.cancelled_by.is_none()))
+}
+
+/// Whether the delivered version `proof` came out of the customer's claim
+/// that it never arrived.
+fn claimed_before(proof: &ActionHash) -> ExternResult<bool> {
+    let record = must_get_valid_record(proof.clone())?;
+    let ActionData::Update(update) = &record.action().data else { return Ok(false) };
+    Ok(decode::<DeliveryOrder>(&must_get_valid_record(update.original_action_address.clone())?).is_some_and(|prior| prior.status == DeliveryStatus::Disputed))
 }
 
 /// What a review's link carries, so a rating is one link read summed --

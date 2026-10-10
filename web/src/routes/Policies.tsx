@@ -6,13 +6,11 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowUpRight, Bike, ChevronDown, Info, ShoppingBag, Store, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { getNetworkTerms } from "../holochain/zomes/dispatch";
 import type { NetworkTerms } from "../holochain/types";
 import { POLICY_CHANGES, POLICY_UPDATED, POLICY_VERSION, policyRisks, policySections, spoken, type Audience, type PolicySection } from "../lib/policies";
 import { formatCents } from "../lib/format";
 import { fadeSlideUp, staggerContainer } from "../lib/motion";
-import { useResource } from "../lib/useResource";
-import { Skeleton } from "../components/ui";
+import { useTerms } from "../store/network";
 
 const AUDIENCE: Record<Audience, { label: string; Icon: typeof Bike }> = {
   customers: { label: "Customers", Icon: ShoppingBag },
@@ -22,7 +20,7 @@ const AUDIENCE: Record<Audience, { label: string; Icon: typeof Bike }> = {
 
 export function Policies() {
   const navigate = useNavigate();
-  const { data: terms } = useResource("network-terms", getNetworkTerms);
+  const terms = useTerms();
   const updated = new Date(`${POLICY_UPDATED}T12:00:00`).toLocaleDateString([], { dateStyle: "long" });
 
   return (
@@ -42,15 +40,7 @@ export function Policies() {
         </p>
       </motion.header>
 
-      {!terms ? (
-        <div className="flex flex-col gap-4">
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      ) : (
-        <PolicyBody terms={terms} />
-      )}
+      <PolicyBody terms={terms} />
     </motion.article>
   );
 }
@@ -81,7 +71,7 @@ function PolicyBody({ terms }: { terms: NetworkTerms }) {
           <Section key={section.id} index={i + 1} section={section} />
         ))}
         <Terms index={sections.length + 1} terms={terms} />
-        <Risks index={sections.length + 2} terms={terms} />
+        <Risks index={sections.length + 2} />
         <Changes index={sections.length + 3} />
       </div>
 
@@ -166,9 +156,8 @@ function Effects({ effects }: { effects: NonNullable<PolicySection["effects"]> }
 function Terms({ index, terms }: { index: number; terms: NetworkTerms }) {
   const rows: [string, string][] = [
     ["A store has to answer a new order within", spoken(terms.store_response_secs)],
-    ["To confirm a delivery", spoken(terms.confirm_window_secs)],
-    ["To confirm one where you gave your PIN", spoken(terms.pin_confirm_window_secs)],
-    ["To report missing or wrong items", terms.arbitrators.length ? spoken(terms.issue_window_secs) : "No window on this network"],
+    ["To report missing or wrong items", spoken(terms.report_window_secs)],
+    ["Before a store's app decides an order never arrived", spoken(terms.claim_grace_secs)],
     ["A balance can go below zero by", terms.credit_limit_cents ? formatCents(terms.credit_limit_cents) : "Nothing"],
     ["Platform fee", "None"],
   ];
@@ -183,26 +172,11 @@ function Terms({ index, terms }: { index: number; terms: NetworkTerms }) {
           </div>
         ))}
       </dl>
-      <div className="mt-5">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">Arbitrators</p>
-        {terms.arbitrators.length ? (
-          <ul className="flex flex-col gap-1.5">
-            {terms.arbitrators.map((key) => (
-              <li key={key} className="truncate rounded-lg bg-ink-50 px-3 py-2 font-mono text-[11px] text-ink-600 dark:bg-ink-900 dark:text-ink-300" title={key}>
-                {key}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-ink-500">None. Disputes and item reports can't be settled on this network.</p>
-        )}
-        <p className="mt-2 text-xs leading-relaxed text-ink-400">Chosen by whoever runs this network. Changing them means a new version of the network that everyone moves to.</p>
-      </div>
     </motion.section>
   );
 }
 
-function Risks({ index, terms }: { index: number; terms: NetworkTerms }) {
+function Risks({ index }: { index: number }) {
   return (
     <motion.section variants={fadeSlideUp}>
       <Heading index={index} id="risks" title="Risks and disclaimers" />
@@ -212,7 +186,7 @@ function Risks({ index, terms }: { index: number; terms: NetworkTerms }) {
           Please read these before you rely on Relay for anything that matters to you.
         </p>
         <ol className="flex flex-col gap-3">
-          {policyRisks(terms).map((risk, i) => (
+          {policyRisks().map((risk, i) => (
             <li key={risk} className="flex gap-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
               <span className="w-4 shrink-0 text-right text-xs tabular-nums leading-relaxed text-ink-400">{i + 1}.</span>
               {risk}

@@ -9,6 +9,8 @@ import { itemNamesByHex, type ItemRow } from "../../../lib/menu";
 import { Button, Card, Checkbox, Input, Select } from "../../../components/ui";
 import { buildRequirement, buildReward, EMPTY_PROMO_FORM, type PromoForm, type RequirementKind, type RewardKind } from "./promoForm";
 import type { PromoCode, Timestamp } from "../../../holochain/types";
+import { MAX_PROMO_CODE_CHARS } from "../../../holochain/types";
+import { currencySymbol } from "../../../lib/format";
 
 interface PromoRow {
   /// The code's identity (its original action) -- what orders reference.
@@ -161,7 +163,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
       exit={{ opacity: 0, height: 0 }}
       className="mb-3 flex flex-col gap-3 rounded-2xl border border-ink-200/70 dark:border-ink-700/70 bg-white dark:bg-ink-900/40 p-4 shadow-sm"
     >
-      <Input value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder="CODE (e.g. WELCOME10)" className="font-mono uppercase tracking-wide" />
+      <Input maxLength={MAX_PROMO_CODE_CHARS} value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder="CODE (e.g. WELCOME10)" className="font-mono uppercase tracking-wide" />
 
       <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
         <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
@@ -175,7 +177,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
             <option value="loyalty">Order count at this restaurant</option>
           </Select>
           {form.requirementKind === "minSpend" && (
-            <Input type="number" min={0.01} step={0.5} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} prefix="$" className="w-24" />
+            <Input type="number" min={0.01} step={0.5} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} prefix={currencySymbol()} className="w-24" />
           )}
           {form.requirementKind === "loyalty" && (
             <Input type="number" min={1} step={1} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} placeholder="Prior orders" className="w-28" />
@@ -214,7 +216,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
               step={percentReward ? 1 : 0.5}
               value={form.rewardAmount}
               onChange={(e) => set({ rewardAmount: Number(e.target.value) })}
-              prefix={percentReward ? undefined : "$"}
+              prefix={percentReward ? undefined : currencySymbol()}
               suffix={percentReward ? "%" : undefined}
               className="w-24"
             />

@@ -8,8 +8,8 @@ import { HOST } from "../holochain/host";
 import { forgetStoredIdentity, loadStoredIdentity } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
-import { isArbitrator as checkIsArbitrator } from "../holochain/governance";
 import { describeError } from "../lib/errors";
+import { useNetwork } from "./network";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
 
 /// The development host's identity code (Admin API, passkeys), loaded only
@@ -20,6 +20,11 @@ async function devHost() {
 }
 
 const LOCATION_STORAGE_KEY = "relay.location.v1";
+
+/// Where the app starts when nothing has been chosen yet (St. Petersburg,
+/// FL -- also where the backend tests place their stores). Onboarding shows
+/// it and asks for the real address.
+export const DEFAULT_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
 
 /// `location` drives every geohash-anchored discovery read in the app
 /// (Browse's "restaurants near me", goodie bags, driver/order matching).
@@ -40,7 +45,7 @@ function saveStoredLocation(location: GeoPoint) {
   localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(location));
 }
 
-export type Mode = "customer" | "driver" | "merchant" | "arbitrator";
+export type Mode = "customer" | "driver" | "merchant";
 
 /// The single source of truth for "which mode does a freshly-signed-up,
 /// possibly-multi-role agent land on first." Previously duplicated (once
@@ -63,11 +68,6 @@ interface SessionState {
   agentPubKey: Uint8Array | null;
   profile: Profile | null;
   profileActionHash: ActionHash | null;
-  /// Independent of `profile.roles` -- arbitrators are a DNA-properties
-  /// roster (architecture plan §8.1), not a RoleTag, so any agent whose
-  /// pubkey happens to be on that roster gets the extra "arbitrator" mode
-  /// alongside whatever normal roles they picked at onboarding.
-  isArbitrator: boolean;
   /// Whether this identity has a device passkey gating `reconnect()` -- see
   /// `lib/webauthn.ts`'s own doc comment for exactly what this does and
   /// doesn't protect against. Surfaced so the Profile screen can show real
@@ -110,10 +110,9 @@ export const useSession = create<SessionState>((set, get) => ({
   agentPubKey: null,
   profile: null,
   profileActionHash: null,
-  isArbitrator: false,
   hasDeviceLock: false,
   mode: "customer",
-  location: loadStoredLocation() ?? { lat: 27.7676, lon: -82.6403 }, // St. Petersburg, FL -- matches the backend test suite's own default, used only when nothing's been saved yet
+  location: loadStoredLocation() ?? DEFAULT_LOCATION,
 
   hasStoredIdentity: () => HOST === "launcher" || loadStoredIdentity() !== null,
 
@@ -123,10 +122,10 @@ export const useSession = create<SessionState>((set, get) => ({
       let hasDeviceLock = false;
       if (HOST === "launcher") await connectLauncher();
       else hasDeviceLock = await (await devHost()).reconnectStoredIdentity();
-      // One call: decode the record here rather than fetching it twice.
-      const profileRecord = await getProfileForAgent(myAgentPubKey());
+      // One call: decode the record here rather than fetching it twice. The
+      // network's terms load alongside -- every screen past here quotes them.
+      const [profileRecord] = await Promise.all([getProfileForAgent(myAgentPubKey()), useNetwork.getState().load()]);
       const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
-      const arbitrator = await checkIsArbitrator(myAgentPubKey());
       set({
         status: "connected",
         agentPubKey: myAgentPubKey(),
@@ -136,7 +135,6 @@ export const useSession = create<SessionState>((set, get) => ({
         // profile, or a driver or merchant reloading lands on their route
         // with the customer nav.
         mode: profile ? primaryModeForRoles(profile.roles) : "customer",
-        isArbitrator: arbitrator,
         hasDeviceLock,
       });
     } catch (err) {
@@ -158,6 +156,7 @@ export const useSession = create<SessionState>((set, get) => ({
         devIdentity = await (await devHost()).provisionAndConnect(devAdminUrl ?? "");
       }
 
+      await useNetwork.getState().load();
       const profileRecord = await createProfile({
         display_name: displayName,
         roles,
@@ -167,7 +166,6 @@ export const useSession = create<SessionState>((set, get) => ({
         phone: extras?.phone,
       });
       const profile = decodeEntry<Profile>(profileRecord);
-      const arbitrator = await checkIsArbitrator(myAgentPubKey());
       const hasDeviceLock = devIdentity ? await (await devHost()).rememberIdentity(devAdminUrl ?? "", devIdentity.installedAppId, devIdentity.agentPubKey, displayName) : false;
       set({
         status: "connected",
@@ -175,7 +173,6 @@ export const useSession = create<SessionState>((set, get) => ({
         profile,
         profileActionHash: actionHash(profileRecord),
         mode: primaryModeForRoles(roles),
-        isArbitrator: arbitrator,
         hasDeviceLock,
       });
     } catch (err) {

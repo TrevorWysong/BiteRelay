@@ -10,13 +10,13 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, otherMerchant] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
   ]);
   const all = [customer, merchant, otherMerchant];
   await scenario.shareAllAgents();

@@ -9,8 +9,9 @@
 //! - `bids` -- placing, withdrawing, and accepting bids.
 //! - `orders` -- the order itself: creation, status transitions, and the
 //!   gated completion path that settles payment and reputation.
-//! - `disputes` -- raising a dispute and applying an arbitrator's
-//!   resolution (plan §8).
+//! - `never_arrived` -- the customer's claim that a delivery never arrived.
+//! - `issues` -- missing and wrong items, and the store's decisions: each
+//!   order's outcome and its settlement of the food.
 //! - `chat` -- direct, signal-only messaging between an order's two active
 //!   parties once a bid is accepted. Deliberately not persisted on the DHT
 //!   (see that module's own doc comment).
@@ -22,18 +23,17 @@
 //! - `recurring` -- "same order every Monday" templates, client-fired
 //!   (no p2p cron), link-free (local chain query only).
 //! - `pickup` -- the pickup vertical's full lifecycle (creation, status,
-//!   completion, and its own dispute path) -- no bid/driver/leg-attestation
+//!   completion, and a customer's report they can't get it) -- no bid/driver/leg-attestation
 //!   concept at all, so unlike delivery this stays one file.
 //! - `store_queue` -- each store's active queue and day-bucketed history,
 //!   shared by both verticals.
 
-mod arbitration;
 mod bids;
 mod chat;
 mod claims;
-mod disputes;
 mod issues;
 mod matching;
+mod never_arrived;
 mod order_queues;
 mod orders;
 mod parties;
@@ -48,12 +48,11 @@ mod stores;
 mod tracking;
 mod upkeep;
 
-pub use arbitration::*;
 pub use bids::*;
 pub use chat::*;
-pub use disputes::*;
 pub use issues::*;
 pub use matching::get_open_orders_near;
+pub use never_arrived::*;
 pub use order_queues::*;
 pub use orders::*;
 pub use pickup::*;
@@ -80,8 +79,7 @@ mod test_utils {
         DriverToActiveDelivery,
         OrderToIssue,
         IssueToResponse,
-        OrderToIssueWindow,
-        ArbitratorToClosingQueue
+        OrderToDecision
     );
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -100,8 +98,7 @@ mod test_utils {
         let issue = dispatch_integrity::ItemIssue {
             order: input.order,
             lines: input.lines,
-            sealed_for_store: relay_coordinator_support::seal(&me, &evidence)?,
-            sealed_for_arbitrators: relay_coordinator_support::seal_to_arbitrators(&relay_governance::arbitrator_roster(), &evidence)?,
+            sealed_for_store: relay_coordinator_support::seal_chunked(&me, &evidence)?,
         };
         create_entry(&EntryTypes::ItemIssue(issue))
     }
@@ -111,14 +108,15 @@ mod test_utils {
         create_entry(&EntryTypes::IssueResponse(response))
     }
 
+    /// A store decision as given -- what a modified client could write.
     #[hdk_extern]
-    pub fn create_raw_window_opened_for_testing(opened: dispatch_integrity::IssueWindowOpened) -> ExternResult<ActionHash> {
-        create_entry(&EntryTypes::IssueWindowOpened(opened))
+    pub fn create_raw_outcome_for_testing(outcome: dispatch_integrity::OrderOutcome) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::OrderOutcome(outcome))
     }
 
     #[hdk_extern]
-    pub fn create_raw_window_closed_for_testing(closed: dispatch_integrity::IssueWindowClosed) -> ExternResult<ActionHash> {
-        create_entry(&EntryTypes::IssueWindowClosed(closed))
+    pub fn create_raw_settlement_for_testing(settlement: dispatch_integrity::ItemSettlement) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::ItemSettlement(settlement))
     }
 
     use dispatch_integrity::{Bid, Cancellation, DeliveryOrder, DeliveryStatus, EntryTypes, PickupOrder, PickupStatus};
@@ -138,12 +136,52 @@ mod test_utils {
     use relay_coordinator_support::resolve_latest_decoded;
 
     #[derive(Serialize, Deserialize, Debug)]
+    pub struct RawDeliveryInput {
+        /// One of the caller's orders, placed honestly, to copy.
+        pub template: ActionHash,
+        #[serde(default)]
+        pub catalog_version: Option<ActionHash>,
+        #[serde(default)]
+        pub dropoff_geohash: Option<String>,
+        #[serde(default)]
+        pub delivery_subsidy_percent: Option<u8>,
+        /// A "sealed" kitchen note of this many bytes -- forged ciphertext,
+        /// as only a modified client could write: the conductor won't seal
+        /// more than a box holds.
+        #[serde(default)]
+        pub kitchen_note_bytes: Option<usize>,
+    }
+
+    /// A copy of an honest delivery order with the fields given changed --
+    /// what a modified client could write -- so a test can prove which
+    /// terms validation holds an order to.
+    #[hdk_extern]
+    pub fn create_raw_delivery_order_for_testing(input: RawDeliveryInput) -> ExternResult<ActionHash> {
+        let record = get(input.template, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("no such order of yours".into())))?;
+        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(wasm_error!(WasmErrorInner::Guest("not a delivery order".into())))?;
+        if let Some(version) = input.catalog_version {
+            order.catalog_version = version;
+        }
+        if let Some(geohash) = input.dropoff_geohash {
+            order.dropoff_geohash = geohash;
+        }
+        if let Some(percent) = input.delivery_subsidy_percent {
+            order.delivery_subsidy_percent = percent;
+        }
+        if let Some(bytes) = input.kitchen_note_bytes {
+            let real = relay_coordinator_support::seal(&order.merchant, &String::new())?;
+            order.kitchen_note = Some(XSalsa20Poly1305EncryptedData::new(*real.as_nonce_ref(), vec![0; bytes]));
+        }
+        create_entry(&EntryTypes::DeliveryOrder(order))
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct ForceOrderUpdateInput {
         pub order_original_action: ActionHash,
         pub next_status: DeliveryStatus,
         pub delivery_receipts: Vec<ActionHash>,
         #[serde(default)]
-        pub dispute_ref: Option<ActionHash>,
+        pub pickup_proof: Option<ActionHash>,
         #[serde(default)]
         pub cancellation: Option<Cancellation>,
     }
@@ -162,17 +200,27 @@ mod test_utils {
     }
 
     /// Updates a `DeliveryOrder` with caller-chosen `status`/`delivery_receipts`/
-    /// `dispute_ref`, skipping every check the real externs make first --
-    /// what a peer running its own coordinator could do, since coordinators
-    /// aren't part of the DNA. Lets a test prove validation, not the honest
-    /// coordinator, enforces the completion gate, dispute gate and field
+    /// `pickup_proof`/`cancellation`, skipping every check the real externs
+    /// make first -- what a peer running its own coordinator could do, since
+    /// coordinators aren't part of the DNA. Lets a test prove validation,
+    /// not the honest coordinator, enforces the proof gates and field
     /// immutability.
     #[hdk_extern]
     pub fn force_order_update_for_testing(input: ForceOrderUpdateInput) -> ExternResult<Record> {
-        let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
+        let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+        // Picking up posts the driver's collateral, as the real pickup does --
+        // these tests are about the other rules.
+        if input.next_status == DeliveryStatus::PickedUp && order.collateral_hold.is_none() {
+            if let Some(bid) = order.accepted_bid.clone() {
+                let original = relay_coordinator_support::original_action_of(input.order_original_action)?;
+                order.collateral_hold = crate::settlement::place_hold(&original, dispatch_integrity::HoldPurpose::Collateral { bid })?;
+            }
+        }
         order.status = input.next_status;
         order.delivery_receipts = input.delivery_receipts;
-        order.dispute_ref = input.dispute_ref;
+        if input.pickup_proof.is_some() {
+            order.pickup_proof = input.pickup_proof;
+        }
         order.cancellation = input.cancellation;
         let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
         get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced order update".into())))

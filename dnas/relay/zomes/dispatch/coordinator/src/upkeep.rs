@@ -212,7 +212,7 @@ impl WaitingOrder {
                 (order.lines, order.bag_claim_ref, order.promo_code_ref)
             }
         };
-        Some(Self { kind: entry.kind.clone(), bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref })
+        Some(Self { kind: entry.kind, bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref })
     }
 
     /// Accepts it, with the store's usual prep time -- or declines it if

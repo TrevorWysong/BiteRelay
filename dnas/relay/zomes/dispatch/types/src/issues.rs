@@ -1,22 +1,26 @@
-//! Missing and wrong items, after a customer has their order.
+//! How an order settles once it's out of the kitchen: the store decides.
 //!
-//! Once a delivery or pickup is confirmed, the driver is paid at once (the
-//! contents of a sealed bag aren't theirs to answer for), but the store's
-//! payment for the food waits out an issue window (`relay_governance::
-//! issue_window`). Within it, the customer can report items missing or
-//! wrong (`ItemIssue`); the store accepts or declines each report
-//! (`IssueResponse`), and has the final say, as it would ordering from it
-//! directly. Holding the payment is what makes it answer: a report it
-//! never answers is refunded. The window is kept by the order's closing
-//! arbitrator -- on its own clock, since a party's timestamps are its own
-//! to choose -- which opens it when it sees the order confirmed
-//! (`IssueWindowOpened`) and closes it once the window has passed
-//! (`IssueWindowClosed`), naming the refund: what the store accepted or
-//! let stand. The store then collects the food less the refund, and the
-//! customer the refund -- and neither can collect the food any other way
-//! once the order is confirmed.
+//! There's no referee. Two people can't settle conflicting claims without
+//! one, so for each order one party writes the single decision every
+//! payment then cites, and validation lets it write only one: the store. It
+//! has nothing to gain either way -- it's paid for the food by the customer
+//! if the order arrived, and by the driver's collateral if it didn't.
+//!
+//! - `OrderOutcome` (deliveries): where the food went. *Delivered*, citing
+//!   the order completed on proof the customer has it -- the driver is then
+//!   paid. *Not delivered*, citing the customer's claim after a proven
+//!   pickup -- the customer and the store get back what they paid, and the
+//!   store takes the driver's collateral for the food.
+//! - `ItemSettlement`: what the food's payment comes to. The customer
+//!   reports items missing or wrong (`ItemIssue`), the store accepts or
+//!   declines each (`IssueResponse`) and has the final say, as it would if
+//!   you ordered from it directly; the settlement names the refund.
+//!
+//! Its app waits out a report window before settling, and refunds what the
+//! store accepted or never answered -- a store's own choice, made visible.
 
 use hdi::prelude::*;
+use relay_integrity_support::SealedChunks;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssueKind {
@@ -35,8 +39,8 @@ pub struct IssueLine {
     pub kind: IssueKind,
 }
 
-/// What a customer can say about an issue, sealed to the store and the
-/// arbitrators: a note, and a photo.
+/// What a customer can say about an issue, sealed to the store: a note, and
+/// a photo.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IssueEvidence {
     pub note: String,
@@ -52,15 +56,11 @@ pub struct ItemIssue {
     pub order: ActionHash,
     pub lines: Vec<IssueLine>,
     /// The customer's `IssueEvidence`, sealed to the store.
-    pub sealed_for_store: XSalsa20Poly1305EncryptedData,
-    /// The same, sealed to each arbitrator.
-    pub sealed_for_arbitrators: Vec<dispute_types::ArbitratorSeal>,
+    pub sealed_for_store: SealedChunks,
 }
 
 /// The store's answer to an `ItemIssue`: accept it (the customer is
-/// refunded what it's worth when the window closes), or decline it (they
-/// aren't). One per issue. A store that says nothing by the close has let
-/// it stand.
+/// refunded what it's worth) or decline it (they aren't). One per issue.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
 pub struct IssueResponse {
@@ -68,29 +68,38 @@ pub struct IssueResponse {
     pub accept: bool,
 }
 
-/// The order's closing arbitrator seeing it confirmed: the issue window
-/// runs from this action's own timestamp.
-#[hdk_entry_helper]
-#[derive(Clone, PartialEq, Eq)]
-pub struct IssueWindowOpened {
-    /// The order's original action.
-    pub order: ActionHash,
-    /// What confirmed it: the customer's receipt, a scanned handover, the
-    /// customer collecting a pickup, or a ruling that it was delivered.
-    pub confirmation: ActionHash,
+/// Where a delivery's food went, as its store decides -- see the module
+/// docs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// It reached the customer. `proof`: a `Delivered` version of the order.
+    Delivered { proof: ActionHash },
+    /// It never did. `claim`: the customer's update claiming so, made after
+    /// the driver's proven pickup.
+    NotDelivered { claim: ActionHash },
 }
 
-/// The order's closing arbitrator closing its issue window, no sooner than
-/// the window after it opened: the refund owed for the issues reported
-/// before it closed.
+/// A delivery's outcome, written once by its store.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
-pub struct IssueWindowClosed {
-    pub opened: ActionHash,
-    /// Every issue the refund accounts for.
+pub struct OrderOutcome {
+    /// The order's original action.
+    pub order: ActionHash,
+    pub outcome: Outcome,
+}
+
+/// What an order's food payment comes to, written once by its store: the
+/// customer is refunded `refund` for the `issues` it cites, the store
+/// collects the rest.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+pub struct ItemSettlement {
+    /// The order's original action.
+    pub order: ActionHash,
+    /// That the customer has the order: the store's `Delivered` outcome for
+    /// a delivery, the customer's own update collecting a pickup.
+    pub basis: ActionHash,
     pub issues: Vec<ActionHash>,
-    /// Owed to the customer, from the food's held payment; the store
-    /// collects the rest.
     pub refund: u64,
 }
 

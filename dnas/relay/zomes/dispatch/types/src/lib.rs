@@ -1,16 +1,20 @@
 //! `DeliveryOrder`/`Bid` struct definitions, factored out of `dispatch_integrity`
-//! so `dispute_integrity` can decode a `DeliveryOrder` (to check who its real
-//! parties are before accepting a dispute) without linking in
-//! `dispatch_integrity`'s own wasm exports -- same reasoning as
+//! so other integrity zomes (the ledger, reputation) can decode orders without
+//! linking in `dispatch_integrity`'s own wasm exports -- same reasoning as
 //! `attestation_types`: two integrity zomes both exporting a symbol named
 //! `validate` into the same wasm binary fails to link.
 
 use hdi::prelude::*;
-pub use dispute_types::{ArbitratorSeal, PinSecret};
+pub use relay_types::PinSecret;
 use relay_types::GeoPoint;
 
 mod issues;
 mod settlement;
+
+/// How precisely a delivery's drop-off is published (`dropoff_geohash`): a
+/// geohash cell of about 1.2 x 0.6 km -- enough for drivers to see it's
+/// nearby, never the address itself.
+pub const DROPOFF_GEOHASH_PRECISION: usize = 6;
 pub use issues::*;
 pub use settlement::*;
 
@@ -57,14 +61,9 @@ pub enum RequiredAuthor {
     RequesterOrMerchant,
     /// Specifically the agent behind `accepted_bid`, once one exists.
     AcceptedProvider,
-    /// Any of the three -- used only for raising a dispute, where whoever
-    /// noticed the problem should be able to flag it.
-    Any,
-    /// An agent on the DNA's arbitrator roster (`relay_governance::is_arbitrator`)
-    /// -- used only for resolving a dispute back to a terminal status. See
-    /// architecture plan §8 for why this is a deliberate, named
-    /// centralization point rather than a decentralized jury.
-    Arbitrator,
+    /// The requester or the accepted provider -- completing a delivery, on
+    /// proof the customer has it.
+    RequesterOrProvider,
 }
 
 impl DeliveryStatus {
@@ -109,32 +108,16 @@ impl DeliveryStatus {
             // Once accepted, the provider reports their own physical progress.
             (MerchantConfirmed, DriverEnRouteToMerchant) => Some(AcceptedProvider),
             (DriverEnRouteToMerchant, PickedUp) => Some(AcceptedProvider),
-            // complete_delivery (dispatch coordinator) is always called by
-            // the requester confirming receipt -- not reachable via the
-            // generic set_order_status path at all (that's blocked at the
-            // coordinator), but still validated here since validation must
-            // hold regardless of which coordinator function got here.
-            (PickedUp, Delivered) => Some(Requester),
-            // Disputes: whoever notices the problem should be able to raise one.
-            (PickedUp, Disputed) => Some(Any),
-            (Delivered, Disputed) => Some(Any),
-            // Resolution: only a listed arbitrator, and only via
-            // dispatch::apply_dispute_resolution -- see architecture plan §8.
-            // The outcome/target polarity match (FavorProvider <-> Delivered,
-            // FavorRequester <-> Cancelled) is checked separately in
-            // dispatch_integrity's validate_order_transition, since that
-            // requires cross-referencing the Dispute entry itself, not just
-            // the author's role.
-            (Disputed, Delivered) => Some(Arbitrator),
-            (Disputed, Cancelled) => Some(Arbitrator),
-            // Cancellation-fairness disputes (architecture plan §11.1): a
-            // same-status "transition" whose only effect is populating
-            // dispute_ref -- the order is already correctly Cancelled (a
-            // terminal state) and stays that way; there's no status left to
-            // decide between, only compensation to adjudicate. Whoever
-            // notices the unfairness (either side) can raise one, same as
-            // the PickedUp/Delivered dispute-raising transitions above.
-            (Cancelled, Cancelled) => Some(Any),
+            // Completing it, on proof the customer has it (see
+            // `attestation_types::dropoff_proof`) -- by the customer, or by
+            // the driver holding that proof. Final: a delivered order can't
+            // be claimed undelivered.
+            (PickedUp, Delivered) => Some(RequesterOrProvider),
+            // The customer's claim that it never arrived. The store decides
+            // what follows (`OrderOutcome`); until it has, a driver who turns
+            // up late can still complete it with proof.
+            (PickedUp, Disputed) => Some(Requester),
+            (Disputed, Delivered) => Some(RequesterOrProvider),
             _ => None,
         }
     }
@@ -152,8 +135,6 @@ pub enum Cancellation {
     /// (`relay_governance::store_response_window`). Written by the
     /// customer's conductor, and only once the window has passed.
     StoreDidNotRespond,
-    /// An arbitrator ruled for the customer.
-    ByArbitrator,
 }
 
 /// What a store tells the customer when it turns an order down.
@@ -184,8 +165,12 @@ pub enum BidStatus {
 /// choice drivers act on differently (knock-and-wait vs. leave-and-go).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DropoffPreference {
-    #[default]
+    /// Left at the door: delivered once it's left there, at the customer's
+    /// risk (`DeliveryOrder::door_risk_accepted`).
     LeaveAtDoor,
+    /// Handed over -- the default: proved by the customer's code or their
+    /// own confirmation.
+    #[default]
     HandToMe,
     MeetOutside,
 }
@@ -228,13 +213,19 @@ pub struct DeliveryOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
+    /// The version of the store the order was placed against -- whose
+    /// delivery radius and fee split it was placed under. Validation checks
+    /// both against it.
+    pub catalog_version: ActionHash,
     /// What was ordered, each line priced at a specific version of its item
     /// -- validation recomputes `order_total` from these.
     pub lines: Vec<OrderLine>,
     pub order_total: u64,
-    /// The drop-off's area (a geohash cell, about 1.2 x 0.6 km) -- all that's
-    /// public about where the order goes: enough for drivers nearby to find
-    /// it and judge the trip. The exact point is in `sealed_dropoff`.
+    /// The drop-off's area (a geohash cell of `DROPOFF_GEOHASH_PRECISION`,
+    /// about 1.2 x 0.6 km) -- all that's public about where the order goes:
+    /// enough for drivers nearby to find it and judge the trip, and for
+    /// validation to check it's within the store's radius. The exact point
+    /// is in `sealed_dropoff`.
     pub dropoff_geohash: String,
     /// The exact drop-off and the customer's drop-off notes
     /// (`DropoffDetails`), sealed to the customer themselves.
@@ -253,26 +244,21 @@ pub struct DeliveryOrder {
     pub max_delivery_fee: Option<u64>,
     pub status: DeliveryStatus,
     pub accepted_bid: Option<ActionHash>,
-    /// Empty until the `PickedUp -> Delivered` transition, at which point it
-    /// must reference a `ReceiptAttestation` for every required leg kind
-    /// (`MerchantHandoff`, `CustomerHandoff`) belonging to this exact order.
-    /// Carrying the references on the entry is what lets validation check
-    /// them deterministically (`must_get_valid_record`, unlike a link query),
-    /// so the gate holds for every peer, not just honest callers of
-    /// `complete_delivery`.
+    /// Empty until the order is delivered, then the proof it reached the
+    /// customer: the driver's drop-off leg and, unless that leg carries the
+    /// customer's scanned code or was left at the door as they chose, the
+    /// customer's own `ReceiptAttestation` of it (see
+    /// `attestation_types::dropoff_proof`). Carried on the entry so
+    /// validation checks it deterministically, for every peer.
     pub delivery_receipts: Vec<ActionHash>,
-    /// Empty until a dispute is raised (`PickedUp`/`Delivered -> Disputed`),
-    /// at which point it references the one `Dispute` entry (`dispute`
-    /// zome) covering this order -- set once, then immutable, same pattern
-    /// as `accepted_bid` and `delivery_receipts`. See architecture plan §8.
-    pub dispute_ref: Option<ActionHash>,
     pub requested_at: Timestamp,
     #[serde(default)]
     pub tip_cents: u64,
     /// The store's share of the delivery fee, in percent -- the split in
-    /// force when the order was placed (the store's `delivery_subsidy_percent`
-    /// then), fixed for this order. The store accepts it by confirming the
-    /// order; settlement and ledger validation both read it from here.
+    /// force when the order was placed (`catalog_version`'s
+    /// `delivery_subsidy_percent`, which validation checks), fixed for this
+    /// order. The store accepts it by confirming the order; settlement and
+    /// ledger validation both read it from here.
     pub delivery_subsidy_percent: u8,
     /// `None` means "order now," the original and still-default behavior.
     /// `Some(t)` means this order was created in `Scheduled` status instead
@@ -296,10 +282,14 @@ pub struct DeliveryOrder {
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
     /// Set once at request_delivery time, immutable thereafter, same
-    /// treatment as the other per-order fields above. Defaults to
-    /// `LeaveAtDoor` on decode for orders written before this field existed.
+    /// treatment as the other per-order fields above.
     #[serde(default)]
     pub dropoff_preference: DropoffPreference,
+    /// The customer accepting that an order left at their door is
+    /// delivered once it's left -- required for `LeaveAtDoor`, and only for
+    /// it. Fixed when the order is placed.
+    #[serde(default)]
+    pub door_risk_accepted: bool,
     /// `None` for an ordinary menu order (the default, and every order
     /// written before this field existed). `Some` means this delivery
     /// originated from a confirmed `catalog::BagClaim` (a goodie bag
@@ -341,22 +331,24 @@ pub struct DeliveryOrder {
     /// The driver's collateral hold (`HoldPurpose::Collateral`), cited by
     /// their update that picks the order up.
     #[serde(default)]
-    pub collateral_hold: Option<ActionHash>,    /// The delivery PIN's commitment, `sha256(pin || salt)` -- 32 bytes, or
-    /// empty for none. Public, and useless without the salt (see
-    /// `dispute_types::PinSecret`).
-    #[serde(default)]
+    pub collateral_hold: Option<ActionHash>,
+    /// The customer's handoff code's commitment, `sha256(pin || salt)` (see
+    /// `PinSecret`) -- 32 bytes. Fixed when the order is placed.
     pub pin_commitment: Vec<u8>,
-    /// The PIN and salt, sealed to the customer -- what their app shows.
+    /// The customer's code, sealed to themselves -- what their app shows.
+    pub sealed_pin: XSalsa20Poly1305EncryptedData,
+    /// The store's pickup code's commitment -- set when it accepts the
+    /// order, never changed after. Empty until then.
     #[serde(default)]
-    pub sealed_pin: Option<XSalsa20Poly1305EncryptedData>,
-    /// The PIN and salt, sealed to each arbitrator on the roster, to check
-    /// a driver's word against in a dispute.
+    pub pickup_commitment: Vec<u8>,
+    /// The store's pickup code, sealed to the store.
     #[serde(default)]
-    pub pin_for_arbitrators: Vec<ArbitratorSeal>,
-    /// Whether the driver must collect the PIN at the door -- set by the
-    /// store when it accepts the order (its `PinPolicy`), never changed.
+    pub sealed_pickup_code: Option<XSalsa20Poly1305EncryptedData>,
+    /// Proof the driver has the food, cited by their update picking it up:
+    /// their pickup leg carrying the store's scanned code, or the store's
+    /// own `ReceiptAttestation` of that leg. Never changes after.
     #[serde(default)]
-    pub pin_required: bool,
+    pub pickup_proof: Option<ActionHash>,
 }
 
 #[hdk_entry_helper]
@@ -416,15 +408,12 @@ impl PickupStatus {
             // of which coordinator function got here, same posture as
             // DeliveryOrder's (PickedUp, Delivered) arm.
             (ReadyForPickup, PickedUp) => Some(Requester),
-            // Disputes: whoever notices the problem should be able to raise
-            // one -- same as DeliveryOrder's dispute-raising arms.
-            (ReadyForPickup, Disputed) => Some(Any),
-            (PickedUp, Disputed) => Some(Any),
-            // Resolution: only a listed arbitrator, via
-            // dispatch::apply_pickup_dispute_resolution -- same posture as
-            // DeliveryOrder's own resolution arms.
-            (Disputed, PickedUp) => Some(Arbitrator),
-            (Disputed, Cancelled) => Some(Arbitrator),
+            // The customer saying they can't get their order. The store
+            // either hands it over (the customer then collects it) or
+            // cancels it, returning their money.
+            (ReadyForPickup, Disputed) => Some(Requester),
+            (Disputed, PickedUp) => Some(Requester),
+            (Disputed, Cancelled) => Some(Merchant),
             _ => None,
         }
     }
@@ -474,7 +463,6 @@ pub struct PickupOrder {
     pub lines: Vec<OrderLine>,
     pub order_total: u64,
     pub status: PickupStatus,
-    pub dispute_ref: Option<ActionHash>,
     pub requested_at: Timestamp,
     /// The customer's note for the kitchen, sealed to the store.
     pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,

@@ -14,6 +14,7 @@ import { describeError } from "../lib/errors";
 import { DEV_ADMIN_URL } from "../lib/devNode";
 import { HOST } from "../holochain/host";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
+import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
   { role: "Requester", label: "Order food", icon: ShoppingBag, blurb: "Browse nearby restaurants and get food delivered." },
@@ -22,11 +23,6 @@ const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bi
 ];
 
 const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
-
-// Last-resort fallback only -- shown and overridable via the address
-// search below, never silently relied on. Previously this was the only
-// location every identity ever got, with no UI at all.
-const FALLBACK_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
 
 type Step = "roles" | "details" | "vehicle";
 const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
@@ -42,7 +38,7 @@ export function Onboarding() {
   const [bio, setBio] = useState("");
   const [phone, setPhone] = useState("");
   const [avatarDataUri, setAvatarDataUri] = useState("");
-  const [location, setLocation] = useState<GeoPoint>(FALLBACK_LOCATION);
+  const [location, setLocation] = useState<GeoPoint>(() => useSession.getState().location);
   // Presentation-only right now -- `Profile` (profiles_integrity) has no
   // address fields today, only `location` itself ever gets used (as the
   // session's default browse/dropoff point). Captured here anyway so this
@@ -209,7 +205,7 @@ export function Onboarding() {
                 </div>
 
                 <Field label="Your name" className="mb-4">
-                  <Input autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
+                  <Input maxLength={MAX_LABEL_CHARS} autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
                   <p className="mt-1 text-[11px] text-ink-400">
                     {roles.some((r) => r !== "Requester")
                       ? "Shown publicly, as your store or driver name."
@@ -217,10 +213,10 @@ export function Onboarding() {
                   </p>
                 </Field>
                 <Field label="Bio (optional)" className="mb-4">
-                  <Textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />
+                  <Textarea maxLength={MAX_NOTE_CHARS} value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />
                 </Field>
                 <Field label="Phone (optional)" className="mb-4">
-                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
+                  <Input maxLength={MAX_PHONE_CHARS} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
                 </Field>
                 {/* Same shared SplitAddressFields every other "enter an
                     address" moment in the app uses (merchant storefront
@@ -292,11 +288,11 @@ export function Onboarding() {
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
-                  <Input value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" />
+                  <Input maxLength={MAX_VEHICLE_CHARS} value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" />
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
-                  <Input value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} placeholder="ABC-1234" className="font-mono" />
+                  <Input maxLength={MAX_LICENSE_PLATE_CHARS} value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} placeholder="ABC-1234" className="font-mono" />
                 </div>
 
                 {showError && (

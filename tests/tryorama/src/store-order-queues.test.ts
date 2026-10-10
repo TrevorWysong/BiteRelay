@@ -7,13 +7,13 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE } from "./helpers.js";
+import { appSource, actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
 type StoreOrder = { kind: "Delivery" | "Pickup"; original_action: Uint8Array; record: HcRecord };
 type HistoryPage = { orders: StoreOrder[]; next_before: number | null };
 
 await runScenario(async (scenario) => {
-  const [customer, merchant] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
   const all = [customer, merchant];
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);

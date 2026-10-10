@@ -7,9 +7,10 @@
 // conductor, and refuses outright past a hard ceiling rather than silently
 // uploading something huge.
 
+import { currentTerms } from "../store/network";
+
 const MAX_DIMENSION = 640;
 const JPEG_QUALITY = 0.72;
-const MAX_DATA_URI_BYTES = 300_000; // ~300KB, generous for a 640px JPEG but a real ceiling
 
 export async function fileToResizedDataUri(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file);
@@ -25,7 +26,8 @@ export async function fileToResizedDataUri(file: File): Promise<string> {
   ctx.drawImage(bitmap, 0, 0, width, height);
 
   const dataUri = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-  if (dataUri.length > MAX_DATA_URI_BYTES) {
+  // The network's ceiling (`max_image_bytes`) -- validation refuses more.
+  if (dataUri.length > currentTerms().max_image_bytes) {
     throw new Error(`Image is still too large after resizing (${Math.round(dataUri.length / 1024)}KB) -- try a smaller or simpler photo.`);
   }
   return dataUri;

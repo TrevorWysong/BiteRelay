@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, testApp } from "./helpers.js";
 
 // Real coordinates near Taunton, MA (the address mentioned in the bug
 // report), ~20m apart -- a genuine "next house over" delta, not a loose
@@ -18,7 +18,7 @@ const RESTAURANT = { lat: 41.9035, lon: -71.0898 };
 const ONE_HOUSE_AWAY = { lat: 41.90368, lon: -71.08992 }; // ~20m north
 
 await runScenario(async (scenario) => {
-  const [merchant, customer] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [merchant, customer] = await scenario.addPlayersWithApps([testApp, testApp]);
   const all = [merchant, customer];
   await scenario.shareAllAgents();
 

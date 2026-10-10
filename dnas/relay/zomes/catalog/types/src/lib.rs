@@ -57,35 +57,32 @@ pub struct MerchantCatalog {
     pub time_zone: String,
     /// How long the kitchen usually takes, in minutes -- the default when
     /// the store accepts an order, which records when it'll be ready.
-    #[serde(default = "default_prep_minutes")]
     pub prep_minutes: u16,
     /// What share (0-100) of a winning bid's delivery fee this merchant
-    /// covers -- see architecture plan §12 (2026-10-01 revision) for why
-    /// this defaults to 50, not 0.
-    #[serde(default = "default_delivery_subsidy_percent")]
+    /// covers. A new store starts at the network's default
+    /// (`relay_governance::default_delivery_subsidy_percent`).
     pub delivery_subsidy_percent: u8,
     /// Whether the store's conductor accepts new orders as they arrive
     /// (still declining any priced from an outdated menu), rather than
     /// waiting for someone to tap Accept.
     #[serde(default)]
     pub auto_accept_orders: bool,
-    /// When this store's deliveries must be handed over against the
-    /// customer's PIN -- see `PinPolicy`. A store that waives it carries the
-    /// risk of a "never arrived" claim with only the driver's photo to
-    /// answer it, like a parcel left without a signature.
+    /// The most an order may cost to be left at the door, in cents -- above
+    /// it, the store's deliveries are always handed over. A customer who
+    /// chooses the door accepts the risk once it's left there; a store sets
+    /// this to keep its expensive orders out of that. `None`: no limit.
     #[serde(default)]
-    pub pin_policy: PinPolicy,
+    pub leave_at_door_max_cents: Option<u64>,
     /// How far from `location` this merchant is willing to deliver, in
     /// kilometers -- a per-merchant business rule, not a single app-wide
     /// constant: a dense-downtown restaurant and a rural one have
     /// genuinely different realistic delivery ranges, so this has to be
     /// each merchant's own call, not something the app hardcodes for
-    /// everyone. Enforced for real in `dispatch_integrity::validate_new_order`
-    /// via `relay_types::distance_km` (deterministic, so every peer agrees
-    /// on the same reject/accept outcome) -- not just an advisory UI hint.
-    /// Defaults to a conservative 8km for every catalog published before
-    /// this field existed.
-    #[serde(default = "default_max_delivery_radius_km")]
+    /// everyone. Enforced by `dispatch_integrity::validate_new_order`
+    /// against the order's public drop-off cell (deterministic, so every
+    /// peer agrees), and bounded by the network
+    /// (`relay_governance::max_delivery_radius_km`). A new store starts at
+    /// the network's default.
     pub max_delivery_radius_km: f64,
     /// A sorted, deduplicated union of every available menu item's
     /// `dietary_tags`, maintained by `catalog_coordinator::add_menu_item`/
@@ -106,22 +103,6 @@ pub struct MerchantCatalog {
 
 pub fn utc() -> String {
     "UTC".into()
-}
-
-pub const DEFAULT_PREP_MINUTES: u16 = 15;
-/// No kitchen promises further out than this.
-pub const MAX_PREP_MINUTES: u16 = 240;
-
-fn default_prep_minutes() -> u16 {
-    DEFAULT_PREP_MINUTES
-}
-
-fn default_delivery_subsidy_percent() -> u8 {
-    50
-}
-
-pub fn default_max_delivery_radius_km() -> f64 {
-    8.0
 }
 
 #[hdk_entry_helper]
@@ -226,17 +207,6 @@ pub struct PromoCode {
     pub auto_apply: bool,
 }
 
-/// The longest a goodie bag may stay listed, creation to the end of its
-/// pickup window. Bounding it is what lets every bag read query only the
-/// last week of links instead of every bag a store has ever listed.
-pub const MAX_GOODIE_BAG_LIFETIME_MICROS: i64 = 7 * 86_400 * 1_000_000;
-
-/// How far a self-reported `created_at`/`claimed_at` may sit from its own
-/// action's timestamp -- generous enough for clock skew, tight enough that
-/// a bag can't be backdated out of (or forward-dated into) the listing
-/// window above.
-pub const CLOCK_SKEW_TOLERANCE_MICROS: i64 = 10 * 60 * 1_000_000;
-
 /// A goodie bag: a quantity-limited, time-windowed, discounted mystery bag
 /// of surplus food. Deliberately not itemized the
 /// way a `MenuItem`-based order is -- the contents are the merchant's own
@@ -310,15 +280,3 @@ pub struct BagClaim {
     pub claimed_at: Timestamp,
 }
 
-/// When a store's deliveries are handed over against the customer's PIN --
-/// proof only the customer (or someone with their phone) could give that the
-/// food reached them.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PinPolicy {
-    /// Never: drivers may still ask for it.
-    Off,
-    /// For customers who've raised or lost disputes before.
-    #[default]
-    CustomersWithHistory,
-    Always,
-}

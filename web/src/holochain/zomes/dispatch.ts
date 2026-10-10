@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, IssueItems, NetworkTerms, IssueLine, IssueView, IssueWindowView, PinSecret, PinVerdict, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, PinSecret, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -27,6 +27,9 @@ export async function requestDelivery(input: {
   requested_delivery_time?: Timestamp | null;
   promo_code_ref?: ActionHash | null;
   dropoff_preference?: DropoffPreference;
+  /// The customer accepting that an order left at their door is delivered
+  /// once it's left -- required for `LeaveAtDoor`.
+  door_risk_accepted?: boolean;
   /// `null` for a normal cart order. Set only when this delivery redeems a
   /// confirmed goodie-bag claim -- which the customer's conductor does on
   /// its own (`dispatch::claims`).
@@ -38,7 +41,8 @@ export async function requestDelivery(input: {
     tip_cents: 0,
     requested_delivery_time: null,
     promo_code_ref: null,
-    dropoff_preference: "LeaveAtDoor",
+    dropoff_preference: "HandToMe",
+    door_risk_accepted: false,
     bag_claim_ref: null,
     ...input,
   });
@@ -68,14 +72,9 @@ export async function cancelOrder(orderOriginalAction: ActionHash): Promise<HcRe
   return callZome("dispatch", "cancel_order", orderOriginalAction);
 }
 
-/// How long a store has to accept an order, in seconds (the DNA's setting).
-export async function getStoreResponseSecs(): Promise<number> {
-  return callZome("dispatch", "get_store_response_secs", null);
-}
-
-/// Every forward transition *except* Delivered (that one's gated -- see
-/// `completeDelivery`) and Disputed-resolution (see `dispute.ts`'s
-/// apply-resolution calls).
+/// Every forward transition *except* Delivered and PickedUp (gated on
+/// proof -- see `completeDelivery`, `pickUpOrder`) and the customer's claim
+/// (`claimNeverArrived`).
 export async function setOrderStatus(orderOriginalAction: ActionHash, nextStatus: DeliveryStatus): Promise<HcRecord> {
   return callZome("dispatch", "set_order_status", { order_original_action: orderOriginalAction, next_status: nextStatus });
 }
@@ -201,36 +200,6 @@ export async function listBidsForOrder(orderRef: ActionHash, after: Timestamp | 
   return callZome("dispatch", "list_bids_for_order", { order_ref: orderRef, after });
 }
 
-// --- disputes (raised/applied through dispatch, resolved through the
-// dispute zome -- see zomes/dispute.ts for submit_resolution/get_dispute) ---
-
-export type DisputeReasonWire = "NeverDelivered" | "WrongOrIncompleteItems" | "ProviderAbandoned" | "Other";
-
-export async function raiseDispute(input: {
-  order_original_action: ActionHash;
-  reason: DisputeReasonWire;
-  description: string;
-  evidence_refs: ActionHash[];
-}): Promise<HcRecord> {
-  return callZome("dispatch", "raise_dispute", input);
-}
-
-export async function applyDisputeResolution(orderOriginalAction: ActionHash): Promise<HcRecord> {
-  return callZome("dispatch", "apply_dispute_resolution", { order_original_action: orderOriginalAction });
-}
-
-export async function raiseCancellationDispute(input: {
-  order_original_action: ActionHash;
-  description: string;
-  evidence_refs: ActionHash[];
-}): Promise<HcRecord> {
-  return callZome("dispatch", "raise_cancellation_dispute", input);
-}
-
-export async function applyCancellationDisputeResolution(orderOriginalAction: ActionHash): Promise<void> {
-  return callZome("dispatch", "apply_cancellation_dispute_resolution", { order_original_action: orderOriginalAction });
-}
-
 // --- chat (signal-only, never persisted -- see chat.rs's own doc comment) ---
 
 export async function sendChatMessage(orderRef: ActionHash, text: string): Promise<void> {
@@ -259,6 +228,8 @@ export async function createRecurringTemplate(input: {
   dropoff_notes?: string;
   tip_cents?: number;
   dropoff_preference?: DropoffPreference;
+  /// Required for `LeaveAtDoor` -- see `requestDelivery`.
+  door_risk_accepted?: boolean;
   promo_code_ref?: ActionHash | null;
   recurrence: RecurrenceRule;
   /// The IANA zone `recurrence` is in -- the device's own.
@@ -356,30 +327,31 @@ export async function completePickup(orderOriginalAction: ActionHash): Promise<H
   return callZome("dispatch", "complete_pickup", orderOriginalAction);
 }
 
-export type PickupDisputeReasonWire = "NeverDelivered" | "WrongOrIncompleteItems" | "ProviderAbandoned" | "UnjustCancellation" | "Other";
-
-export async function raisePickupDispute(input: {
-  order_original_action: ActionHash;
-  reason: PickupDisputeReasonWire;
-  description: string;
-  evidence_refs: ActionHash[];
-}): Promise<HcRecord> {
-  return callZome("dispatch", "raise_pickup_dispute", input);
+/// The customer telling the store they can't get their pickup order. The
+/// store then hands it over, or cancels it and returns their money.
+export async function reportPickupProblem(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "report_pickup_problem", orderOriginalAction);
 }
 
-export async function applyPickupDisputeResolution(orderOriginalAction: ActionHash): Promise<HcRecord> {
-  return callZome("dispatch", "apply_pickup_dispute_resolution", { order_original_action: orderOriginalAction });
+/// The customer saying their delivery never arrived. The store decides.
+export async function claimNeverArrived(orderOriginalAction: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "claim_never_arrived", orderOriginalAction);
 }
 
-/// How long a customer has to confirm a delivery once the driver records
-/// it, in seconds: [without the PIN collected, with it].
-export async function getConfirmWindows(): Promise<[number, number]> {
-  return callZome("dispatch", "get_confirm_windows", null);
+/// The store deciding now that a claimed delivery never arrived.
+export async function decideNotDelivered(orderOriginalAction: ActionHash): Promise<ActionHash> {
+  return callZome("dispatch", "decide_not_delivered", orderOriginalAction);
 }
 
-/// The caller's (an arbitrator's) check of a delivery's PIN.
-export async function checkDeliveryPin(orderRef: ActionHash): Promise<PinVerdict> {
-  return callZome("dispatch", "check_delivery_pin", orderRef);
+/// How an order stands with its store: its outcome, its settlement, and
+/// when each is due.
+export async function getOrderDecisions(orderRef: ActionHash): Promise<OrderDecisions> {
+  return callZome("dispatch", "get_order_decisions", orderRef);
+}
+
+/// The store's pickup code for a delivery, to show the driver collecting it.
+export async function getMyPickupCode(orderRef: ActionHash): Promise<PinSecret | null> {
+  return callZome("dispatch", "get_my_pickup_code", orderRef);
 }
 
 /// The caller's handover code for a delivery -- shown as a QR code for the
@@ -404,18 +376,14 @@ export async function getIssuesForOrder(orderRef: ActionHash): Promise<IssueView
   return callZome("dispatch", "get_issues_for_order", orderRef);
 }
 
-export async function getIssueWindow(orderRef: ActionHash): Promise<IssueWindowView> {
-  return callZome("dispatch", "get_issue_window", orderRef);
-}
-
 /// An order's items as reports are made against them, and what the food
-/// cost -- readable by its store and arbitrators as well as its customer.
+/// cost -- readable by its store as well as its customer.
 export async function getIssueItems(orderRef: ActionHash): Promise<IssueItems> {
   return callZome("dispatch", "get_issue_items", orderRef);
 }
 
-/// The rules this network runs by, from its DNA -- what the policies page
-/// quotes.
+/// The rules this network runs by, from its DNA -- read once while
+/// connecting (`store/network`).
 export async function getNetworkTerms(): Promise<NetworkTerms> {
   return callZome("dispatch", "get_network_terms", null);
 }

@@ -5,15 +5,14 @@
 //! (`place_hold`), in the same call as the step, so the two commit together
 //! and validation won't accept the step without it. Settling is then each
 //! party's own business, done from their own conductor: for every part of
-//! an order's holds that's theirs to decide, collect it with the proof
-//! that entitles them (the customer's receipt, a ruling, a cancellation),
-//! or waive it back to its payer; and as a payer, collect what's come back.
-//! Nobody pays anybody else's way -- so nobody can skip paying.
+//! an order's holds that's theirs to decide, collect it on the decision that
+//! entitles them (the store's outcome or settlement, a cancellation), or
+//! waive it back to its payer; and as a payer, collect what's come back.
+//! The store's conductor makes its decisions first (`issues`). Nobody pays
+//! anybody else's way -- so nobody can skip paying.
 
-use attestation_types::{Leg, LegKind};
 use dispatch_integrity::*;
 use crate::stores::my_stores;
-use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdk::prelude::*;
 use relay_coordinator_support::{decode_or, original_action_of};
 
@@ -101,17 +100,8 @@ enum Stage {
 }
 
 struct Facts {
-    /// The order's issue window, closed: the close and its refund. Only on a
-    /// network with arbitrators, where the food's payment for a confirmed
-    /// order moves only then.
-    closed: Option<(ActionHash, u64)>,
-    windowed: bool,
-    /// The customer's receipt: for a delivery, their acknowledgment of the
-    /// drop-off; for a pickup, their update collecting it.
-    receipt: Option<ActionHash>,
-    /// An arbitrator's ruling applied to the order, and whether it left the
-    /// order cancelled by its customer.
-    ruling: Option<(ActionHash, DisputeOutcome, Option<Cancellation>)>,
+    /// The store's decisions (see `issues`).
+    decisions: crate::issues::Decisions,
     /// The order's cancellation, and how far it had got.
     cancellation: Option<(ActionHash, Cancellation, Stage)>,
 }
@@ -132,35 +122,22 @@ fn versions(order: &ActionHash) -> ExternResult<Vec<Record>> {
 fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
     let all = versions(order)?;
     let Some(original) = all.first() else { return Ok(None) };
-    let delivery = decode_or::<DeliveryOrder>(original);
-    let requester = match (&delivery, decode_or::<PickupOrder>(original)) {
-        (Some(o), _) => o.requester.clone(),
-        (None, Some(o)) => o.requester.clone(),
-        _ => return Ok(None),
-    };
-    let window = crate::issues::get_issue_window(order.clone())?;
-    let closed = window.closed_record.zip(window.closed);
-    let mut facts = Facts { closed, windowed: relay_governance::closing_arbitrator(order).is_some(), receipt: None, ruling: None, cancellation: None };
+    let delivery = decode_or::<DeliveryOrder>(original).is_some();
+    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None };
     for version in &all {
-        let author = version.action().author();
         let prior = match &version.action().data {
             ActionData::Update(update) => all.iter().find(|r| r.action_address() == &update.original_action_address),
             _ => None,
         };
-        let (cancellation, dispute_ref, picked_up, stage) = if delivery.is_some() {
+        let (cancellation, stage) = if delivery {
             let Some(o) = decode_or::<DeliveryOrder>(version) else { continue };
-            // Completed on the customer's scanned code: their receipt.
-            if o.status == DeliveryStatus::Delivered && !relay_governance::is_arbitrator(author)? && attestation_types::rests_on_scan(&o.delivery_receipts)? {
-                facts.receipt = Some(version.action_address().clone());
-                continue;
-            }
             let stage = prior.and_then(decode_or::<DeliveryOrder>).map(|p| match p.status {
                 DeliveryStatus::Scheduled | DeliveryStatus::Placed => Stage::Waiting,
                 DeliveryStatus::Open => Stage::Accepted,
                 DeliveryStatus::BidAccepted | DeliveryStatus::MerchantConfirmed | DeliveryStatus::DriverEnRouteToMerchant => Stage::DriverAssigned,
                 _ => Stage::Other,
             });
-            (o.cancellation, o.dispute_ref, false, stage)
+            (o.cancellation, stage)
         } else {
             let Some(o) = decode_or::<PickupOrder>(version) else { continue };
             let stage = prior.and_then(decode_or::<PickupOrder>).map(|p| match p.status {
@@ -168,52 +145,13 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
                 PickupStatus::MerchantConfirmed | PickupStatus::ReadyForPickup => Stage::Accepted,
                 _ => Stage::Other,
             });
-            (o.cancellation, o.dispute_ref, o.status == PickupStatus::PickedUp, stage)
+            (o.cancellation, stage)
         };
-        if relay_governance::is_arbitrator(author)? {
-            if let Some(dispute_ref) = dispute_ref {
-                if let Some(dispute) = get(dispute_ref, GetOptions::default())?.and_then(|r| decode_or::<Dispute>(&r)) {
-                    if let (DisputeStatus::Resolved, Some(outcome)) = (dispute.status, dispute.outcome) {
-                        facts.ruling = Some((version.action_address().clone(), outcome, cancellation));
-                    }
-                }
-            }
-            continue;
-        }
-        if picked_up && author == &requester {
-            facts.receipt = Some(version.action_address().clone());
-        }
-        // The update that cancelled the order -- not a later one that only
-        // carries its cancellation forward (raising a cancellation dispute
-        // does), which would read as cancelled from "already cancelled".
         if let (Some(cancellation), Some(stage)) = (cancellation, stage) {
-            if stage != Stage::Other {
-                facts.cancellation = Some((version.action_address().clone(), cancellation, stage));
-            }
+            facts.cancellation = Some((version.action_address().clone(), cancellation, stage));
         }
-    }
-    if delivery.is_some() {
-        facts.receipt = delivery_receipt(order, &requester)?;
     }
     Ok(Some(facts))
-}
-
-/// The customer's acknowledgment of a delivery's drop-off, if they've given it.
-fn delivery_receipt(order: &ActionHash, requester: &AgentPubKey) -> ExternResult<Option<ActionHash>> {
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "attestation", "get_legs_for_order".into(), None, order.clone())? else { return Ok(None) };
-    let legs: Vec<Record> = io.decode().map_err(|e| wasm_error!(e))?;
-    for leg in legs {
-        let Some(l) = decode_or::<Leg>(&leg) else { continue };
-        if l.kind != LegKind::CustomerHandoff {
-            continue;
-        }
-        let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "attestation", "get_receipt_for_leg".into(), None, leg.action_address().clone())? else { continue };
-        let receipt: Option<Record> = io.decode().map_err(|e| wasm_error!(e))?;
-        if let Some(receipt) = receipt.filter(|r| r.action().author() == requester) {
-            return Ok(Some(receipt.action_address().clone()));
-        }
-    }
-    Ok(None)
 }
 
 // --- deciding ---
@@ -245,34 +183,37 @@ enum Decision {
     Waive,
 }
 
+/// The rules in `ledger_integrity::validate_collect`, from the caller's
+/// side: what they're owed, and on what.
 fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -> ExternResult<Option<Decision>> {
-    let favor = |side: &DisputeOutcome| facts.ruling.as_ref().filter(|(_, outcome, _)| outcome == side).map(|(version, _, c)| (version.clone(), c.clone()));
-    let receipt_or_ruling = facts.receipt.clone().or_else(|| favor(&DisputeOutcome::FavorProvider).map(|(v, _)| v));
-    if share.portion == Portion::Collateral {
-        return Ok(if &hold.payer == me {
-            receipt_or_ruling.map(Decision::Collect)
-        } else if &share.recipient == me {
-            favor(&DisputeOutcome::FavorRequester).map(|(v, _)| Decision::Collect(v))
-        } else {
-            None
-        });
+    let recipient = &share.recipient == me;
+    let payer = &hold.payer == me;
+    let d = &facts.decisions;
+    // Once the store has decided, its decision settles the part.
+    let decided = match share.portion {
+        Portion::Food => match (&d.settlement, &d.not_delivered) {
+            (Some((settlement, refund)), _) => {
+                let mine = if recipient { share.amount.saturating_sub(*refund) } else if payer { *refund } else { 0 };
+                Some((mine > 0).then(|| Decision::Collect(settlement.clone())))
+            }
+            (None, Some(outcome)) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
+            (None, None) => None,
+        },
+        Portion::Collateral => match (&d.delivered, &d.not_delivered) {
+            (Some(outcome), _) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
+            (None, Some(outcome)) => Some(recipient.then(|| Decision::Collect(outcome.clone()))),
+            _ => None,
+        },
+        Portion::Fee | Portion::Tip => match (&d.delivered, &d.not_delivered) {
+            (Some(outcome), _) => Some(recipient.then(|| Decision::Collect(outcome.clone()))),
+            (None, Some(outcome)) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
+            _ => None,
+        },
+    };
+    if let Some(decision) = decided {
+        return Ok(decision);
     }
-    // The food, once the order's confirmed on a network with arbitrators:
-    // only by its issue window's close -- the store the food less the
-    // refund, the customer the refund. Before confirmation, the usual rules
-    // (a cancellation, a ruling) still apply.
-    if share.portion == Portion::Food && facts.windowed && (receipt_or_ruling.is_some() || facts.closed.is_some()) {
-        let Some((close, refund)) = &facts.closed else { return Ok(None) };
-        let mine = if &share.recipient == me { share.amount.saturating_sub(*refund) } else if &hold.payer == me { *refund } else { 0 };
-        return Ok((mine > 0).then(|| Decision::Collect(close.clone())));
-    }
-    if &share.recipient == me {
-        if let Some(basis) = receipt_or_ruling {
-            return Ok(Some(Decision::Collect(basis)));
-        }
-        if facts.ruling.is_some() {
-            return Ok(None);
-        }
+    if recipient {
         if let Some((version, by, stage)) = &facts.cancellation {
             let owed = *by == Cancellation::ByCustomer
                 && match share.portion {
@@ -284,15 +225,10 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
         }
         return Ok(None);
     }
-    if &hold.payer == me {
+    if payer {
         let waivers: Vec<WaiverWire> = ledger("waivers_for_hold", hold.hold.clone())?;
         if let Some(waiver) = waivers.into_iter().find(|w| w.portion == share.portion && w.by == share.recipient) {
             return Ok(Some(Decision::Collect(waiver.waiver)));
-        }
-        if let Some((version, cancellation)) = favor(&DisputeOutcome::FavorRequester) {
-            if cancellation != Some(Cancellation::ByCustomer) && facts.receipt.is_none() {
-                return Ok(Some(Decision::Collect(version)));
-            }
         }
     }
     Ok(None)
@@ -309,12 +245,10 @@ pub(crate) fn settle(order: &ActionHash) -> ExternResult<u32> {
     if !holds.iter().any(mine) {
         return Ok(0);
     }
+    // The store makes its decisions first -- in a call of its own, so one
+    // that doesn't validate yet can't undo the rest.
+    crate::issues::decide_as_store(&order);
     let Some(facts) = facts(&order)? else { return Ok(0) };
-    // A confirmed order waits on its closing arbitrator: make sure it's
-    // queued there (by its customer or its store).
-    if facts.windowed && facts.closed.is_none() && (facts.receipt.is_some() || facts.ruling.is_some()) {
-        crate::issues::queue_for_window(&order);
-    }
     let mut decided = 0;
     // Payers whose money this gave back, to tell them it's theirs to collect.
     let mut returned: Vec<AgentPubKey> = Vec::new();
@@ -403,8 +337,8 @@ fn sweep(days: i64) -> u32 {
 
 use crate::order_queues::QueueOwnerExt;
 
-/// The window a regular sweep covers. A ruling can come later than this;
-/// its signal triggers a longer sweep (`settle_soon`).
+/// The window a regular sweep covers. A store's decision can come later
+/// than this; its signal triggers a longer sweep (`settle_soon`).
 const SWEEP_DAYS: i64 = 2;
 const SIGNALLED_SWEEP_DAYS: i64 = 30;
 

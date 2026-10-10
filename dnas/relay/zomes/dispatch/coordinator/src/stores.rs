@@ -5,15 +5,21 @@ use hdk::prelude::*;
 
 /// The store's catalog at its latest state.
 pub(crate) fn current_catalog(catalog_ref: &ActionHash) -> ExternResult<catalog_types::MerchantCatalog> {
+    Ok(current_catalog_version(catalog_ref)?.1)
+}
+
+/// The store's latest version -- its action, and its catalog.
+pub(crate) fn current_catalog_version(catalog_ref: &ActionHash) -> ExternResult<(ActionHash, catalog_types::MerchantCatalog)> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, catalog_ref.clone())? else {
         return Err(wasm_error!(WasmErrorInner::Guest("couldn't read the store's details".into())));
     };
-    io.decode::<Record>()
-        .map_err(|e| wasm_error!(e))?
+    let record: Record = io.decode().map_err(|e| wasm_error!(e))?;
+    let catalog = record
         .entry()
         .to_app_option::<catalog_types::MerchantCatalog>()
         .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref is not a store".into())))
+        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref is not a store".into())))?;
+    Ok((record.action_address().clone(), catalog))
 }
 
 /// Just the identity of a store, from `catalog::list_my_catalogs`.
@@ -38,8 +44,9 @@ pub(crate) fn ready_by(catalog_ref: &ActionHash, prep_minutes: Option<u16>) -> E
         Some(minutes) => minutes,
         None => current_catalog(catalog_ref)?.prep_minutes,
     };
-    if prep == 0 || prep > catalog_types::MAX_PREP_MINUTES {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("prep time must be between 1 and {} minutes", catalog_types::MAX_PREP_MINUTES))));
+    let max = relay_governance::max_prep_minutes();
+    if prep == 0 || prep > max {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!("prep time must be between 1 and {max} minutes"))));
     }
     Ok(Timestamp::from_micros(sys_time()?.as_micros() + prep as i64 * 60 * 1_000_000))
 }
@@ -93,6 +100,9 @@ mod tests {
             "location": { "lat": 0.0, "lon": 0.0 },
             "geohash": "s0000",
             "is_open": true,
+            "prep_minutes": 15,
+            "delivery_subsidy_percent": 50,
+            "max_delivery_radius_km": 8.0,
         }))
         .unwrap();
         catalog.weekly_hours = weekly_hours;

@@ -12,6 +12,9 @@ import {
   getOrderPrivateDetails,
   markReadyForPickup,
   setOrderStatus,
+  decideNotDelivered,
+  getMyPickupCode,
+  getOrderDecisions,
 } from "../../holochain/zomes/dispatch";
 import { isFinished, itemCount, mergeNewestFirst } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
@@ -19,17 +22,18 @@ import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/m
 import { useResource } from "../../lib/useResource";
 import { describeError } from "../../lib/errors";
 import { DECLINE_REASONS, responseDeadlineMs } from "../../lib/storeAnswers";
-import { useStoreResponseSecs } from "../../lib/useStoreResponseSecs";
+import { useTerms } from "../../store/network";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, formatClockTime, timeAgo } from "../../lib/format";
+import { formatCents, formatClockTime, formatDeadline, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { acknowledgeLeg } from "../../holochain/zomes/attestation";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import { OrderIssues } from "../../components/OrderIssues";
+import { HandoverCode } from "../../components/HandoverCode";
 import { unconfirmedPickup } from "../../lib/handoffs";
 
 
@@ -41,9 +45,9 @@ const TABS = [
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
 
-/// The prep times a kitchen picks from when it accepts an order.
+/// The prep times a kitchen picks from when it accepts an order (within
+/// the network's longest), alongside the store's own usual time.
 const PREP_CHOICES = [5, 10, 15, 20, 30, 45, 60];
-const DEFAULT_PREP_MINUTES = 15;
 
 /// A merchant's orders across every store they run, the way a DoorDash/
 /// Uber Eats store tablet splits them: the **active** queue (what the
@@ -131,7 +135,8 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   // Why an action on an order failed, by order -- e.g. an order the store
   // can't accept because it's priced from an outdated menu.
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const windowSecs = useStoreResponseSecs();
+  const terms = useTerms();
+  const windowSecs = terms.store_response_secs;
   // `now` is when this snapshot was read -- what each order's window is
   // judged against, refreshed with every poll.
   const { data, reload } = useResource(`merchant-active:${storesKey(stores)}`, async () => ({ rows: await fetchActiveQueue(stores), now: Date.now() }), {
@@ -169,12 +174,12 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
               {errors[row.hex] && (
                 <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">{errors[row.hex]}</p>
               )}
-              {row.order.status === "Placed" && windowSecs !== undefined ? (
+              {row.order.status === "Placed" ? (
                 <AnswerOrder
                   row={row}
                   windowSecs={windowSecs}
                   now={data!.now}
-                  defaultPrep={stores.find((s) => s.hex === row.storeHex)?.catalog.prep_minutes ?? DEFAULT_PREP_MINUTES}
+                  defaultPrep={stores.find((s) => s.hex === row.storeHex)?.catalog.prep_minutes ?? terms.default_prep_minutes}
                   busy={busyHex === row.hex}
                   onAdvance={(action) => advance(row, action)}
                 />
@@ -201,7 +206,8 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
   // How long this one will take -- the store's usual time unless the
   // kitchen picks another; the customer is told when it'll be ready.
   const [prep, setPrep] = useState(defaultPrep);
-  const prepChoices = [...new Set([defaultPrep, ...PREP_CHOICES])].sort((a, b) => a - b);
+  const maxPrep = useTerms().max_prep_minutes;
+  const prepChoices = [...new Set([defaultPrep, ...PREP_CHOICES])].filter((m) => m <= maxPrep).sort((a, b) => a - b);
   const deadlineMs = responseDeadlineMs(row.writtenAt, windowSecs);
   if (now >= deadlineMs) {
     return <p className="mt-2 text-xs text-ink-400">Not accepted in time, so the customer's order is being cancelled.</p>;
@@ -278,14 +284,11 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
         return note("Scheduled for later -- it comes to you to accept at its requested time.");
       case "MerchantConfirmed":
       case "DriverEnRouteToMerchant":
-        return note("Driver is on the way to pick this up. Stay connected so they can confirm the handoff with you directly.");
+        return <PickupHandoff orderHex={row.hex} orderRef={row.ref} />;
       case "PickedUp":
-        return (
-          <>
-            {note("Out for delivery.")}
-            <ConfirmHandoff orderHex={row.hex} orderRef={row.ref} />
-          </>
-        );
+        return note("Out for delivery.");
+      case "Disputed":
+        return <NeverArrivedClaim orderHex={row.hex} orderRef={row.ref} />;
       default:
         return null;
     }
@@ -295,6 +298,13 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
       return button("Mark ready for pickup", markReadyForPickup);
     case "ReadyForPickup":
       return note("Waiting for the customer to collect it.");
+    case "Disputed":
+      return (
+        <>
+          {note("The customer says they can't get their order. Hand it over (they'll confirm it), or refund them.")}
+          {button("Refund the customer", (ref) => declinePickupOrder(ref, "Other"))}
+        </>
+      );
     default:
       return null;
   }
@@ -390,32 +400,79 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
         {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · ready by {formatClockTime(order.ready_by)}</span>}
       </p>
       {(order.kitchen_note || order.sealed_customer_name) && <ForTheStore orderHex={row.hex} orderRef={row.ref} />}
-      {!isFinished(row) && <CustomerHistory customer={order.requester} pinRequired={row.kind === "Delivery" && row.order.pin_required} />}
+      {!isFinished(row) && <CustomerHistory customer={order.requester} />}
       {children}
     </Card>
   );
 }
 
-/// The store confirming it handed an order to the driver -- its own signed
-/// acknowledgment of the driver's pickup, kept as evidence of who had the
-/// food when. Optional: a delivery completes without it.
-function ConfirmHandoff({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+/// Handing the order to its driver: the store's pickup code to show them,
+/// and -- once the driver has recorded the pickup -- a tap to confirm it
+/// instead. Either proves the driver has the food, and the driver's
+/// collateral covers it from then on.
+function PickupHandoff({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
   const [confirming, setConfirming] = useState(false);
-  const { data: pickup, reload } = useResource(`unconfirmed-pickup:${orderHex}`, () => unconfirmedPickup(orderRef));
-  if (!pickup) return null;
+  const [error, setError] = useState<string | null>(null);
+  const { data: code } = useResource(`pickup-code:${orderHex}`, () => getMyPickupCode(orderRef));
+  const { data: pickup, reload } = useResource(`unconfirmed-pickup:${orderHex}`, () => unconfirmedPickup(orderRef), { pollMs: POLL.signalled });
   async function confirm() {
     setConfirming(true);
+    setError(null);
     try {
       await acknowledgeLeg(pickup!);
       await reload();
+    } catch (err) {
+      setError(describeError(err));
     } finally {
       setConfirming(false);
     }
   }
   return (
-    <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={confirming} onClick={confirm}>
-      Confirm handed to driver
-    </Button>
+    <div className="mt-3 flex flex-col gap-2">
+      {code && <HandoverCode orderRef={orderRef} secret={code} giver="store" />}
+      {pickup && (
+        <Button className="w-full py-2 text-xs" loading={confirming} onClick={confirm}>
+          Confirm handed to driver
+        </Button>
+      )}
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
+
+/// A customer saying their delivery never arrived. The store decides: the
+/// app does so on its own once the claim has stood a while with no
+/// delivery, refunding the customer and taking the driver's collateral for
+/// the food -- or the store can decide now.
+function NeverArrivedClaim({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+  const [deciding, setDeciding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { data: decisions, reload } = useResource(`order-decisions:${orderHex}`, () => getOrderDecisions(orderRef), { pollMs: POLL.signalled });
+  if (!decisions) return null;
+  if (decisions.not_delivered) return <p className="mt-2 text-xs text-ink-400">Never arrived: the customer is refunded, and the driver's collateral covers the food.</p>;
+  async function decide() {
+    setDeciding(true);
+    setError(null);
+    try {
+      await decideNotDelivered(orderRef);
+      await reload();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setDeciding(false);
+    }
+  }
+  return (
+    <div className="mt-3 rounded-xl bg-amber-50 p-3 dark:bg-amber-900/20">
+      <p className="text-xs leading-relaxed text-amber-900 dark:text-amber-100">
+        <span className="font-semibold">The customer says it never arrived.</span> If the driver doesn't deliver it, it's refunded
+        {decisions.claim_decided_after ? ` at ${formatDeadline(decisions.claim_decided_after)}` : ""}, and the driver's collateral pays you for the food.
+      </p>
+      <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={deciding} onClick={decide}>
+        Refund now
+      </Button>
+      {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
   );
 }
 

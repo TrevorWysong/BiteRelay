@@ -6,6 +6,15 @@ pub struct GeoPoint {
     pub lon: f64,
 }
 
+impl GeoPoint {
+    /// Whether this is a real place: finite, latitude within ±90 and
+    /// longitude within ±180. Anything else (NaN included) would slip past
+    /// every distance comparison.
+    pub fn is_valid(&self) -> bool {
+        self.lat.is_finite() && self.lon.is_finite() && (-90.0..=90.0).contains(&self.lat) && (-180.0..=180.0).contains(&self.lon)
+    }
+}
+
 const EARTH_RADIUS_KM: f64 = 6371.0;
 
 /// Great-circle (haversine) distance in kilometers -- ported line-for-line
@@ -182,6 +191,26 @@ pub fn time_bucket(now_millis: i64, bucket_millis: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_point_is_valid_only_on_the_globe() {
+        assert!(GeoPoint { lat: 27.77, lon: -82.64 }.is_valid());
+        assert!(!GeoPoint { lat: f64::NAN, lon: 0.0 }.is_valid());
+        assert!(!GeoPoint { lat: 91.0, lon: 0.0 }.is_valid());
+        assert!(!GeoPoint { lat: 0.0, lon: f64::INFINITY }.is_valid());
+    }
+
+    #[test]
+    fn the_distance_to_a_cell_is_to_its_nearest_edge() {
+        let here = GeoPoint { lat: 27.7676, lon: -82.6403 };
+        let cell = encode(here, 5);
+        assert_eq!(distance_to_cell_km(here, &cell), Some(0.0), "inside the cell");
+        let far = encode(GeoPoint { lat: 40.7128, lon: -74.006 }, 5);
+        let d = distance_to_cell_km(here, &far).unwrap();
+        assert!(d > 1_400.0 && d < 1_700.0, "St. Petersburg to New York's cell: {d}");
+        assert_eq!(distance_to_cell_km(here, "not a geohash!"), None);
+        assert_eq!(distance_to_cell_km(here, ""), None);
+    }
     use super::*;
 
     #[test]
@@ -260,4 +289,29 @@ mod tests {
         // readers rely on to also check "the previous bucket" without a second helper.
         assert_eq!(time_bucket(t_next_bucket, bucket_millis) - 1, time_bucket(t0, bucket_millis));
     }
+}
+
+/// A handoff code: what the giving party's app shows as a QR code (and, as
+/// six digits, to read out) at a handoff -- the store's to the driver at
+/// pickup, the customer's to the driver at the door. The order publishes
+/// only `sha256(pin || salt)`; without the salt, nobody can test guesses
+/// against it. Revealed (scanned), it proves the giver handed the order
+/// over.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PinSecret {
+    pub pin: String,
+    pub salt: Vec<u8>,
+}
+
+/// The shortest distance from `point` to anywhere in a geohash cell, in
+/// kilometres -- 0 inside it. `None` if `geohash` isn't one. What a rule
+/// that sees only the cell (a delivery's public drop-off area) can check
+/// against a distance: the cell's nearest edge is the best case.
+pub fn distance_to_cell_km(point: GeoPoint, geohash: &str) -> Option<f64> {
+    if geohash.is_empty() {
+        return None;
+    }
+    let (lat_min, lat_max, lon_min, lon_max) = bounding_box(geohash)?;
+    let nearest = GeoPoint { lat: point.lat.clamp(lat_min, lat_max), lon: point.lon.clamp(lon_min, lon_max) };
+    Some(distance_km(point, nearest))
 }

@@ -19,7 +19,6 @@ import { NewStore } from "./routes/merchant/NewStore";
 import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
 import { Policies } from "./routes/Policies";
-import { ArbitratorDashboard } from "./routes/arbitrator/Dashboard";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
 /// whether a real identity is already provisioned on the conductor and
@@ -94,7 +93,7 @@ function RequireSession({ children }: { children: React.ReactNode }) {
 
 function HomeForMode() {
   const mode = useSession((s) => s.mode);
-  return <Navigate to={mode === "driver" ? "/driver" : mode === "merchant" ? "/merchant" : mode === "arbitrator" ? "/arbitrator" : "/customer"} replace />;
+  return <Navigate to={mode === "driver" ? "/driver" : mode === "merchant" ? "/merchant" : "/customer"} replace />;
 }
 
 /// A production build opened in a plain browser: there's no conductor here
@@ -136,7 +135,6 @@ export default function App() {
           <Route path="/merchant" element={<MerchantOrders />} />
           <Route path="/merchant/catalog" element={<MerchantCatalog />} />
           <Route path="/merchant/stores/new" element={<NewStore />} />
-          <Route path="/arbitrator" element={<ArbitratorDashboard />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/policies" element={<Policies />} />

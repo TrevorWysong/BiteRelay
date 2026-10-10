@@ -10,6 +10,7 @@
 
 use super::*;
 use catalog_types::{order_total, BagClaimStatus, GoodieBag, MenuItem, PricedLine};
+use relay_integrity_support::limits::MAX_ORDER_LINES;
 use relay_integrity_support::{decode, original_creation};
 use std::collections::BTreeSet;
 
@@ -35,8 +36,8 @@ pub(crate) struct OrderPricing<'a> {
 /// always prices at the latest version, and the store sees which version
 /// each line was priced at before confirming the order.
 pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<String>> {
-    if order.lines.is_empty() {
-        return Ok(Some("an order must have at least one line".into()));
+    if order.lines.is_empty() || order.lines.len() > MAX_ORDER_LINES {
+        return Ok(Some(format!("an order has between 1 and {MAX_ORDER_LINES} lines")));
     }
     if order.lines.iter().any(|line| line.quantity == 0) {
         return Ok(Some("every line must have a quantity of at least one".into()));
@@ -119,14 +120,17 @@ fn check_bag_order_price(order: &OrderPricing<'_>, claim_ref: &ActionHash) -> Ex
 fn count_completed_orders(requester: &AgentPubKey, catalog_ref: &ActionHash, proof: &[ActionHash]) -> ExternResult<Result<u32, String>> {
     let mut orders = BTreeSet::new();
     for completion in proof {
+        // A version completing one of the customer's own orders at this
+        // store -- whoever wrote it: a delivery's driver completes it on the
+        // customer's own proof.
         let record = must_get_valid_record(completion.clone())?;
-        if record.action().author() != requester || !matches!(record.action().data, ActionData::Update(_)) {
-            return Ok(Err("loyalty_proof must be the customer's own order completions".into()));
+        if !matches!(record.action().data, ActionData::Update(_)) {
+            return Ok(Err("loyalty_proof must be order completions".into()));
         }
         let completed_here = if let Some(order) = decode::<DeliveryOrder>(&record) {
-            order.status == DeliveryStatus::Delivered && &order.catalog_ref == catalog_ref
+            &order.requester == requester && order.status == DeliveryStatus::Delivered && &order.catalog_ref == catalog_ref
         } else if let Some(order) = decode::<PickupOrder>(&record) {
-            order.status == PickupStatus::PickedUp && &order.catalog_ref == catalog_ref
+            &order.requester == requester && order.status == PickupStatus::PickedUp && &order.catalog_ref == catalog_ref
         } else {
             false
         };

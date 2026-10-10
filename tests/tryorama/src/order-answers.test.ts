@@ -111,7 +111,6 @@ await runScenario(async (scenario) => {
       lines: [{ item_ref: soupRef, priced_version: soupRef, quantity: 1 }],
       order_total: 800,
       status: "Placed",
-      dispute_ref: null,
       requested_at: Date.now() * 1000,
       kitchen_note: null,
       promo_code_ref: null,

@@ -41,7 +41,7 @@ pub enum Portion {
     /// The customer's tip, to the driver.
     Tip,
     /// The driver's collateral: back to the driver once the food is
-    /// delivered, to the store if an arbitrator rules it never was.
+    /// delivered, to the store if it never was (`OrderOutcome`).
     Collateral,
 }
 

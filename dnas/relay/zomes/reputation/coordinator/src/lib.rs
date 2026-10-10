@@ -56,6 +56,9 @@ pub struct RecordEventInput {
     pub target: ReputationTarget,
     pub order_ref: ActionHash,
     pub kind: ReputationEventKind,
+    /// What the event rests on: the order's version it records, or its
+    /// store's decision (see `reputation_integrity::validate_event`).
+    pub basis: ActionHash,
 }
 
 /// Called by the counterparty after a completed/cancelled/disputed order --
@@ -66,10 +69,8 @@ pub struct RecordEventInput {
 pub fn record_event(input: RecordEventInput) -> ExternResult<Record> {
     let counterparty = agent_info()?.agent_initial_pubkey;
     let (base, event_link) = event_links(&input.target);
-    // The order as it stands, which names its driver (see `basis`).
-    let basis = resolve_latest(input.order_ref.clone())?.action_address().clone();
     let tag = event_tag(&input.kind, &input.order_ref);
-    let event = ReputationEvent { target: input.target, counterparty, order_ref: input.order_ref, basis, kind: input.kind, recorded_at: sys_time()? };
+    let event = ReputationEvent { target: input.target, counterparty, order_ref: input.order_ref, basis: input.basis, kind: input.kind, recorded_at: sys_time()? };
     let action_hash = create_entry(&EntryTypes::ReputationEvent(event))?;
     create_link(base, action_hash.clone(), event_link, tag)?;
     get(action_hash, GetOptions::local())?
@@ -150,9 +151,8 @@ fn my_reviews_for_order(order_original_action: &ActionHash) -> ExternResult<Vec<
 /// creation hash every other struct in this system uses for the same field
 /// name, because `validate_review` needs to deterministically see the
 /// order's real `Delivered` status and populated `accepted_bid`, neither of
-/// which exist yet on the as-created record. Same shape as
-/// `apply_dispute_resolution` advancing `dispute_ref` to a resolved action
-/// for the same reason. This coordinator's own status check is a fast-fail
+/// which exist yet on the as-created record. This coordinator's own status
+/// check is a fast-fail
 /// convenience; `validate_review` is what actually enforces it.
 ///
 /// One review per target per order, same as DoorDash/Uber Eats -- checked

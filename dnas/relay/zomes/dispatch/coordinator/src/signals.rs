@@ -35,12 +35,9 @@ pub fn init() -> ExternResult<InitCallbackResult> {
         CapAccess::Unrestricted,
         GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "recv_remote_signal".into())])),
     ))?;
-    // Each party collects what it's owed from its own conductor -- see
-    // `settlement::settle_periodically`.
+    // Each party collects what it's owed from its own conductor, and a store
+    // makes its decisions -- see `settlement::settle_periodically`.
     schedule("settle_periodically")?;
-    // Unconfirmed deliveries, and the disputes an arbitrator can rule on
-    // its own -- see `arbitration`.
-    schedule("review_disputes_periodically")?;
     // Tending a customer's waiting orders and answering a store's new ones
     // -- see `upkeep`.
     schedule("tend_orders_periodically")?;
@@ -89,9 +86,6 @@ pub enum LocalSignal {
     /// The customer reported items missing or wrong on this order.
     IssueReported(ActionHash),
 }
-
-/// The longest chat message, in characters.
-pub const MAX_CHAT_CHARS: usize = 1_000;
 
 /// Peer-to-peer signals, only ever between an order's own parties.
 #[derive(Serialize, Deserialize, Debug)]
@@ -196,8 +190,7 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             };
             match verified {
                 Some(order) => {
-                    // From one of its parties, or an arbitrator applying a ruling.
-                    let sender_ok = order.role_of(&sender).is_some() || relay_governance::is_arbitrator(&sender)?;
+                    let sender_ok = order.role_of(&sender).is_some();
                     match order.role_of(&me) {
                         Some(role) if sender_ok => {
                             // Whatever it changed may settle money owed here.
@@ -230,7 +223,7 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
         RemoteSignal::ChatMessage { order_hash, text } => {
             let Some(order) = current_state(&order_hash) else { return Ok(()) };
             let between = [order.requester.clone(), order.driver.clone().unwrap_or(order.requester.clone())];
-            let ok = order.driver.is_some() && sender != me && between.contains(&sender) && between.contains(&me) && !text.trim().is_empty() && text.chars().count() <= MAX_CHAT_CHARS;
+            let ok = order.driver.is_some() && sender != me && between.contains(&sender) && between.contains(&me) && !text.trim().is_empty() && text.chars().count() <= relay_integrity_support::limits::MAX_NOTE_CHARS;
             if !ok {
                 return Ok(());
             }
@@ -245,9 +238,7 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at: sys_time()? })
         }
         RemoteSignal::Returned { order_hash } => {
-            // From a party, or the arbitrator closing its issue window.
-            let sender_ok = relay_governance::is_arbitrator(&sender)?;
-            if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || (order.role_of(&sender).is_none() && !sender_ok)) {
+            if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || order.role_of(&sender).is_none()) {
                 return Ok(());
             }
             // Settling reads every hold and checks every decision.
@@ -284,7 +275,7 @@ fn bid_from(bid_hash: &ActionHash, me: &AgentPubKey, sender: &AgentPubKey) -> bo
 /// After every commit, tells an order's other parties it changed: the store
 /// when an order is placed with it (`OrderPlaced`), everyone else on the
 /// order otherwise (`OrderUpdated`). One place, so every path that changes
-/// an order -- an extern, the conductor's upkeep, a dispute ruling --
+/// an order -- an extern, the conductor's upkeep --
 /// signals alike. Best-effort, like every signal: screens still poll.
 #[hdk_extern(infallible)]
 pub fn post_commit(committed: Vec<SignedActionHashed>) {
