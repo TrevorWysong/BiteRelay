@@ -2,6 +2,12 @@
 //! types and their create/update validation.
 
 use super::*;
+use relay_integrity_support::limits::{MAX_TEMPLATE_ITEMS, MAX_TIME_ZONE_CHARS, SEAL_CHUNK_BYTES};
+use relay_integrity_support::{sealed_chunks_problem, SealedChunks};
+
+/// The most a recurring order's sealed details may hold: a drop-off and two
+/// notes fit in two chunks.
+const MAX_DETAILS_BYTES: usize = 2 * SEAL_CHUNK_BYTES;
 
 /// How often a `RecurringOrderTemplate` fires. Deliberately just these two
 /// shapes -- the literal "same order every Monday" ask, plus daily as the
@@ -38,7 +44,7 @@ pub struct RecurringOrderTemplate {
     pub item_refs: Vec<ActionHash>,
     /// Where it goes and the notes for it (`TemplateDetails`), sealed to the
     /// requester -- a standing order shouldn't publish a home address.
-    pub sealed_details: XSalsa20Poly1305EncryptedData,
+    pub sealed_details: SealedChunks,
     pub max_delivery_fee: Option<u64>,
     #[serde(default)]
     pub tip_cents: u64,
@@ -64,9 +70,6 @@ fn utc() -> String {
     "UTC".into()
 }
 
-/// An IANA zone name is at most a few dozen characters.
-const MAX_TIME_ZONE_LEN: usize = 64;
-
 pub(crate) fn validate_recurrence(recurrence: &RecurrenceRule) -> Option<&'static str> {
     match recurrence {
         RecurrenceRule::Daily { hour, minute } if *hour > 23 || *minute > 59 => Some("Daily's hour must be 0-23 and minute must be 0-59"),
@@ -84,13 +87,16 @@ pub(crate) fn validate_new_recurring_template(template: &RecurringOrderTemplate,
             "a recurring order template can only be authored by its own requester".into(),
         ));
     }
-    if template.item_refs.is_empty() {
-        return Ok(ValidateCallbackResult::Invalid("item_refs must not be empty".into()));
+    if template.item_refs.is_empty() || template.item_refs.len() > MAX_TEMPLATE_ITEMS {
+        return Ok(ValidateCallbackResult::Invalid(format!("a recurring order has between 1 and {MAX_TEMPLATE_ITEMS} items")));
+    }
+    if let Some(problem) = sealed_chunks_problem("sealed_details", &template.sealed_details, MAX_DETAILS_BYTES) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     if let Some(reason) = validate_recurrence(&template.recurrence) {
         return Ok(ValidateCallbackResult::Invalid(reason.into()));
     }
-    if template.time_zone.is_empty() || template.time_zone.len() > MAX_TIME_ZONE_LEN {
+    if template.time_zone.is_empty() || template.time_zone.len() > MAX_TIME_ZONE_CHARS {
         return Ok(ValidateCallbackResult::Invalid("time_zone must be an IANA zone name".into()));
     }
     if let Some(reason) = check_merchant_owns_catalog(&template.merchant, &template.catalog_ref)? {

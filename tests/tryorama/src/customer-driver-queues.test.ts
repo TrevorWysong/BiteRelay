@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp } from "./helpers.js";
 
 interface OrderEntry {
   kind: "Delivery" | "Pickup";
@@ -17,7 +17,7 @@ const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 const hexes = (entries: { original_action: Uint8Array }[]) => entries.map((e) => hex(e.original_action)).sort();
 
 await runScenario(async (scenario) => {
-  const [merchant, customer, driver] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [merchant, customer, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
   const all = [merchant, customer, driver];
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, merchant.cells[0].cell_id[0]);

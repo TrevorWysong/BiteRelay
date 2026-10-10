@@ -4,16 +4,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import { confirmClaim, createGoodieBag, listGoodieBagsForCatalog, listPendingClaimsForMerchant } from "../../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../../holochain/decode";
 import { useResource } from "../../../lib/useResource";
-import { formatCents } from "../../../lib/format";
+import { formatCents, toMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
 import { Button, Card, Checkbox, Field, Input, StatNumber, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import type { BagClaim, GoodieBag } from "../../../holochain/types";
 import { POLL } from "../../../lib/poll";
+import { useTerms } from "../../../store/network";
+import { MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS } from "../../../holochain/types";
 
-/// Mirrors `MAX_GOODIE_BAG_LIFETIME_MICROS` -- validation rejects a window
-/// ending later than this after listing.
-const MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface BagsData {
   bags: { hex: string; bag: GoodieBag }[];
@@ -122,6 +122,8 @@ function toLocalInput(d: Date) {
 
 /// Seeded once on mount with a window starting in an hour and lasting two.
 function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreated: () => Promise<void> }) {
+  // The longest a bag may stay listed -- validation refuses longer.
+  const maxDays = useTerms().goodie_bag_max_days;
   const [form, setForm] = useState(() => {
     const start = new Date(Date.now() + 60 * 60 * 1000);
     return {
@@ -150,13 +152,13 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
     !form.title.trim()
       ? "Give the bag a name."
       : form.price <= 0 || form.price > form.originalValue
-        ? "The price must be above $0 and no more than the bag's value."
+        ? "The price must be more than nothing, and no more than the bag's value."
         : !form.supports_pickup && !form.supports_delivery
           ? "Offer it for pickup, delivery, or both."
           : !(endMs > startMs)
             ? "The pickup window must end after it starts."
-            : endMs - openedAt > MAX_LIFETIME_MS
-              ? "The pickup window must end within 7 days."
+            : endMs - openedAt > maxDays * DAY_MS
+              ? `The pickup window must end within ${maxDays} days.`
               : null;
 
   async function save() {
@@ -168,8 +170,8 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
         title: form.title.trim(),
         description: form.description,
         photo_data_uri: form.photo_data_uri,
-        original_value_cents: Math.round(form.originalValue * 100),
-        price_cents: Math.round(form.price * 100),
+        original_value_cents: toMinorUnits(form.originalValue),
+        price_cents: toMinorUnits(form.price),
         quantity_total: form.quantity_total,
         pickup_window_start: startMs * 1000,
         pickup_window_end: endMs * 1000,
@@ -188,20 +190,20 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
         <PhotoInput value={form.photo_data_uri} onChange={(v) => set({ photo_data_uri: v })} shape="circle" className="shrink-0" />
         <div className="flex flex-1 flex-col gap-2">
           <Field label="Bag name">
-            <Input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="End-of-day goodie bag" />
+            <Input maxLength={MAX_NAME_CHARS} value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="End-of-day goodie bag" />
           </Field>
           <div className="flex gap-2">
             <Field label="Value">
-              <Input type="number" min={0} step={0.5} value={form.originalValue} onChange={(e) => set({ originalValue: Number(e.target.value) })} prefix="$" />
+              <Input type="number" min={0} step={0.5} value={form.originalValue} onChange={(e) => set({ originalValue: Number(e.target.value) })} prefix={currencySymbol()} />
             </Field>
             <Field label="Price">
-              <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} prefix="$" />
+              <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} prefix={currencySymbol()} />
             </Field>
           </div>
         </div>
       </div>
       <Field label="Description">
-        <Textarea value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
+        <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
       </Field>
       <Field label="Quantity available">
         <Input type="number" min={1} step={1} value={form.quantity_total} onChange={(e) => set({ quantity_total: Number(e.target.value) })} />

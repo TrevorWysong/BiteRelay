@@ -11,6 +11,9 @@
 //! - any other enum -> a union of `{ Variant: payload }` objects (unit
 //!   variants stay bare strings).
 //!
+//! A source can also contribute its public numeric constants (`consts`) --
+//! limits the app's forms share with validation -- as TS constants.
+//!
 //! Holochain's hash and timestamp types map to the aliases at the top of the
 //! output. A referenced type that's neither generated nor aliased is an
 //! error, naming the type -- add its source file below.
@@ -28,18 +31,26 @@ const OUTPUT: &str = "web/src/holochain/generated.ts";
 
 /// Where the wire types live. `None` takes every serde type in the file;
 /// `Some` takes just the named ones (for files that also hold internal
-/// types). A rename resolves two files defining the same name.
+/// types). A rename resolves two files defining the same name. `consts`
+/// takes the file's public numeric constants instead.
 struct Source {
     path: &'static str,
     only: Option<&'static [&'static str]>,
     rename: &'static [(&'static str, &'static str)],
+    consts: bool,
 }
 
 const fn all(path: &'static str) -> Source {
-    Source { path, only: None, rename: &[] }
+    Source { path, only: None, rename: &[], consts: false }
 }
 const fn only(path: &'static str, names: &'static [&'static str]) -> Source {
-    Source { path, only: Some(names), rename: &[] }
+    Source { path, only: Some(names), rename: &[], consts: false }
+}
+const fn renamed(path: &'static str, names: &'static [&'static str], rename: &'static [(&'static str, &'static str)]) -> Source {
+    Source { path, only: Some(names), rename, consts: false }
+}
+const fn consts(path: &'static str) -> Source {
+    Source { path, only: None, rename: &[], consts: true }
 }
 
 const SOURCES: &[Source] = &[
@@ -49,21 +60,21 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/catalog/types/src/hours.rs", &["OpeningPeriod"]),
     all("dnas/relay/zomes/dispatch/types/src/lib.rs"),
     only("dnas/relay/zomes/dispatch/types/src/settlement.rs", &["HoldPurpose", "Portion"]),
-    only("dnas/relay/zomes/dispatch/types/src/issues.rs", &["IssueKind", "IssueLine", "IssueEvidence", "ItemIssue"]),
-    all("dnas/relay/zomes/dispute/types/src/lib.rs"),
+    only("dnas/relay/zomes/dispatch/types/src/issues.rs", &["IssueKind", "IssueLine", "IssueEvidence", "ItemIssue", "Outcome", "OrderOutcome", "ItemSettlement"]),
     only("dnas/relay/zomes/profiles/integrity/src/lib.rs", &["RoleTag", "Profile", "ProviderCredential", "SavedAddress", "AddressDetails"]),
     only("dnas/relay/zomes/reputation/integrity/src/lib.rs", &["ReputationTarget", "ReviewTarget", "Review", "ItemReview", "ReputationEventKind"]),
     only("dnas/relay/zomes/dispatch/integrity/src/recurring.rs", &["RecurrenceRule", "RecurringOrderTemplate", "TemplateDetails"]),
     all("dnas/relay/zomes/ledger/types/src/lib.rs"),
     only("dnas/relay/zomes/ledger/coordinator/src/lib.rs", &["ShareView", "HoldView", "WaiverView"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
-    only("dnas/relay/zomes/dispatch/coordinator/src/pin.rs", &["PinVerdict"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/orders.rs", &["NetworkTerms"]),
-    only("dnas/relay/zomes/dispatch/coordinator/src/issues.rs", &["IssueView", "IssueWindowView", "IssueItem", "IssueItems"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/issues.rs", &["IssueView", "OrderDecisions", "IssueItem", "IssueItems"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/receipts.rs", &["Receipt", "ReceiptLine", "ReceiptPayment"]),
     only("dnas/relay/zomes/reputation/coordinator/src/lib.rs", &["ReputationSummary", "RatingSummary"]),
-    Source { path: "dnas/relay/zomes/dispatch/coordinator/src/signals.rs", only: Some(&["LocalSignal", "OrderChange", "OrderRole"]), rename: &[("LocalSignal", "DispatchLocalSignal")] },
-    Source { path: "dnas/relay/zomes/catalog/coordinator/src/signals.rs", only: Some(&["LocalSignal"]), rename: &[("LocalSignal", "CatalogLocalSignal")] },
+    renamed("dnas/relay/zomes/dispatch/coordinator/src/signals.rs", &["LocalSignal", "OrderChange", "OrderRole"], &[("LocalSignal", "DispatchLocalSignal")]),
+    renamed("dnas/relay/zomes/catalog/coordinator/src/signals.rs", &["LocalSignal"], &[("LocalSignal", "CatalogLocalSignal")]),
+    only("dnas/relay/integrity_support/src/sealed.rs", &["SealedChunks"]),
+    consts("dnas/relay/integrity_support/src/limits.rs"),
 ];
 
 /// Holochain types, emitted once as aliases at the top of the output.
@@ -120,6 +131,17 @@ fn generate(root: &Path) -> Result<String, String> {
     for source in SOURCES {
         let text = fs::read_to_string(root.join(source.path)).map_err(|e| format!("reading {}: {e}", source.path))?;
         let file = syn::parse_file(&text).map_err(|e| format!("parsing {}: {e}", source.path))?;
+        if source.consts {
+            for item in &file.items {
+                if let Some((name, docs, body)) = emit_const(item, source)? {
+                    if let Some(existing) = decls.get(&name) {
+                        return Err(format!("`{name}` is defined in both {} and {}", existing.source, source.path));
+                    }
+                    decls.insert(name, Decl { docs, body, referenced: BTreeSet::new(), source: source.path });
+                }
+            }
+            continue;
+        }
         let mut found = BTreeSet::new();
         for item in &file.items {
             let Some((rust_name, docs, attrs_ok)) = item_header(item) else { continue };
@@ -233,6 +255,23 @@ fn jsdoc(lines: &[String], indent: &str) -> String {
     }
     let _ = writeln!(out, "{indent} */");
     out
+}
+
+/// A public numeric constant as a TS constant: its name, docs and
+/// declaration. Its value must be a literal, so what's emitted is exactly
+/// what Rust compiles.
+fn emit_const(item: &Item, source: &Source) -> Result<Option<(String, Vec<String>, String)>, String> {
+    let Item::Const(c) = item else { return Ok(None) };
+    if !matches!(c.vis, syn::Visibility::Public(_)) {
+        return Ok(None);
+    }
+    let name = c.ident.to_string();
+    let value = match &*c.expr {
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(int), .. }) => int.base10_digits().to_string(),
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Float(float), .. }) => float.base10_digits().to_string(),
+        _ => return Err(format!("`{name}` ({}) must be a numeric literal to be exported", source.path)),
+    };
+    Ok(Some((name.clone(), docs(&c.attrs), format!("export const {name} = {value};"))))
 }
 
 fn emit_item(item: &Item, name: &str, source: &Source, referenced: &mut BTreeSet<String>) -> Result<String, String> {

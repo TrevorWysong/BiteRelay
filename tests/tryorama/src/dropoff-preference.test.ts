@@ -1,4 +1,4 @@
-// Proves DropoffPreference: defaults to LeaveAtDoor when omitted, a
+// Proves DropoffPreference: defaults to HandToMe when omitted, a
 // custom value round-trips through request_delivery, and it survives the
 // normal order lifecycle untouched (dispatch_integrity's field-immutability
 // check already covers this generically -- see validate_order_transition's
@@ -6,13 +6,13 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
   ]);
   const all = [customer, merchant, driver];
   await scenario.shareAllAgents();
@@ -46,8 +46,8 @@ await runScenario(async (scenario) => {
   }
 
   const defaultOrder = await placeOrder();
-  assert.equal(decodeEntry<{ dropoff_preference: string }>(defaultOrder).dropoff_preference, "LeaveAtDoor", "omitting dropoff_preference must default to LeaveAtDoor");
-  console.log("[PASS] dropoff_preference defaults to LeaveAtDoor when omitted");
+  assert.equal(decodeEntry<{ dropoff_preference: string }>(defaultOrder).dropoff_preference, "HandToMe", "omitting dropoff_preference must default to HandToMe: leaving it at the door is the customer's explicit choice");
+  console.log("[PASS] dropoff_preference defaults to HandToMe when omitted");
 
   const customOrder = await placeOrder("MeetOutside");
   assert.equal(decodeEntry<{ dropoff_preference: string }>(customOrder).dropoff_preference, "MeetOutside", "an explicit dropoff_preference must round-trip");

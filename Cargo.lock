@@ -38,10 +38,8 @@ version = "0.1.0"
 dependencies = [
  "attestation_types",
  "dispatch_types",
- "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_governance",
  "relay_integrity_support",
  "relay_types",
  "serde",
@@ -52,9 +50,9 @@ dependencies = [
 name = "attestation_types"
 version = "0.1.0"
 dependencies = [
- "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -110,6 +108,7 @@ dependencies = [
  "hdi",
  "hdk",
  "relay_coordinator_support",
+ "relay_governance",
  "relay_types",
  "serde",
 ]
@@ -121,6 +120,7 @@ dependencies = [
  "catalog_types",
  "hdi",
  "holochain_serialized_bytes",
+ "relay_governance",
  "relay_integrity_support",
  "relay_types",
  "serde",
@@ -300,7 +300,6 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dispatch_integrity",
- "dispute_types",
  "hdi",
  "hdk",
  "relay_coordinator_support",
@@ -319,7 +318,6 @@ dependencies = [
  "attestation_types",
  "catalog_types",
  "dispatch_types",
- "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
@@ -333,44 +331,10 @@ dependencies = [
 name = "dispatch_types"
 version = "0.1.0"
 dependencies = [
- "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_types",
- "serde",
-]
-
-[[package]]
-name = "dispute_coordinator"
-version = "0.1.0"
-dependencies = [
- "attestation_types",
- "dispute_integrity",
- "hdi",
- "hdk",
- "relay_coordinator_support",
- "serde",
-]
-
-[[package]]
-name = "dispute_integrity"
-version = "0.1.0"
-dependencies = [
- "dispatch_types",
- "dispute_types",
- "hdi",
- "holochain_serialized_bytes",
- "relay_governance",
  "relay_integrity_support",
- "serde",
-]
-
-[[package]]
-name = "dispute_types"
-version = "0.1.0"
-dependencies = [
- "hdi",
- "holochain_serialized_bytes",
+ "relay_types",
  "serde",
 ]
 
@@ -802,9 +766,7 @@ dependencies = [
 name = "ledger_integrity"
 version = "0.1.0"
 dependencies = [
- "attestation_types",
  "dispatch_types",
- "dispute_types",
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
@@ -977,8 +939,8 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 name = "relay_coordinator_support"
 version = "0.1.0"
 dependencies = [
- "dispute_types",
  "hdk",
+ "relay_integrity_support",
 ]
 
 [[package]]
@@ -996,6 +958,7 @@ version = "0.1.0"
 dependencies = [
  "hdi",
  "holochain_serialized_bytes",
+ "relay_governance",
  "serde",
 ]
 
@@ -1023,7 +986,6 @@ dependencies = [
  "dispatch_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_governance",
  "relay_integrity_support",
  "serde",
 ]

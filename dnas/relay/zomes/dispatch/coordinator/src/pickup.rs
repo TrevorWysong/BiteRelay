@@ -67,7 +67,6 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         lines: priced.lines,
         order_total: priced.order_total,
         status: PickupStatus::Placed,
-        dispute_ref: None,
         requested_at,
         kitchen_note,
         sealed_customer_name,
@@ -165,10 +164,8 @@ pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellat
 #[hdk_extern]
 pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
-    if order.status != PickupStatus::ReadyForPickup {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "a pickup order can only be completed from the ReadyForPickup status".into()
-        )));
+    if !matches!(order.status, PickupStatus::ReadyForPickup | PickupStatus::Disputed) {
+        return Err(wasm_error!(WasmErrorInner::Guest("a pickup order can only be collected once it's ready".into())));
     }
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
@@ -176,178 +173,28 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     let parties = OrderParties::pickup(&order_original_action, &order);
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     order_queues::retire(&parties)?;
-    // Its issue window starts now (see `issues`).
-    crate::issues::queue_for_window(&order_original_action);
-    // This update is the customer's receipt: it lets the store collect the
-    // food's held payment, from its own conductor (`settlement`).
+    // This update is the customer's receipt: the store settles the food's
+    // held payment on it once their report window has run (`issues`).
 
-    // Best-effort: a reputation bump for the store is valuable but
-    // shouldn't block payment or completion if it fails -- same posture as
-    // complete_delivery's own calls. No driver-side event here at all --
-    // there is no driver. Skipped for a merchant picking up from their own
-    // store (see `record_reputation_event`).
-    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_original_action, ReputationEventKindWire::OrderCompleted)?;
+    // The store's completed order, on the version completing it. Skipped
+    // for a merchant picking up from their own store (see `record_reputation_event`).
+    record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_original_action, ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed pickup order".into())))
 }
 
-// --- disputes -- see dispatch_integrity's check_raising_pickup_dispute/
-// check_resolving_pickup_dispute doc comments for why "Provider" is
-// reinterpreted as "merchant" here, the only other party there is. ---
-
-#[derive(Serialize, Deserialize, Debug)]
-struct OpenDisputeInputWire {
-    order_ref: ActionHash,
-    respondent: AgentPubKey,
-    reason: DisputeReasonWirePickup,
-    description: String,
-    evidence_refs: Vec<ActionHash>,
-}
-
-// A separate wire enum from disputes.rs's own `DisputeReasonWire` rather
-// than importing it -- both must match `dispute_types::DisputeReason`'s
-// variant names exactly (msgpack matches by name across the zome-call
-// boundary), but keeping pickup.rs's own copy avoids a cross-module
-// `pub(crate)` dependency for what's otherwise two fully independent
-// dispute-raising flows.
-#[derive(Serialize, Deserialize, Debug)]
-pub enum DisputeReasonWirePickup {
-    NeverDelivered,
-    WrongOrIncompleteItems,
-    ProviderAbandoned,
-    UnjustCancellation,
-    Other,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RaisePickupDisputeInput {
-    pub order_original_action: ActionHash,
-    pub reason: DisputeReasonWirePickup,
-    pub description: String,
-    pub evidence_refs: Vec<ActionHash>,
-}
-
-/// `raise_dispute`'s pickup sibling -- derives `respondent` as whichever of
-/// the order's two parties didn't raise it (trivial here, unlike
-/// `derive_respondent`'s three-way delivery-vertical logic, since there's
-/// no accepted-provider concept at all).
+/// The customer telling the store they can't get their order (it isn't
+/// there, or isn't being handed over). The store then hands it over (the
+/// customer collects it as usual) or cancels it, returning their money
+/// (`decline_pickup_order`).
 #[hdk_extern]
-pub fn raise_pickup_dispute(input: RaisePickupDisputeInput) -> ExternResult<Record> {
-    let (order_record, order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action.clone(), "PickupOrder")?;
-    let me = agent_info()?.agent_initial_pubkey;
-    // The respondent's reputation target follows the role they played on
-    // this order: the merchant answers for their *store* (never their
-    // other stores, or their driving), the requester as a customer.
-    let (respondent, respondent_target) = if me == order.requester {
-        (order.merchant.clone(), ReputationTargetWire::Store(order.catalog_ref.clone()))
-    } else if me == order.merchant {
-        (order.requester.clone(), ReputationTargetWire::Customer(order.requester.clone()))
-    } else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "only the pickup order's requester or merchant may raise a dispute".into()
-        )));
-    };
-
-    let open_response = call(
-        CallTargetCell::Local,
-        "dispute",
-        "open_dispute".into(),
-        None,
-        OpenDisputeInputWire {
-            order_ref: input.order_original_action.clone(),
-            respondent: respondent.clone(),
-            reason: input.reason,
-            description: input.description,
-            evidence_refs: input.evidence_refs,
-        },
-    )?;
-    let ZomeCallResponse::Ok(extern_io) = open_response else {
-        return Err(wasm_error!(WasmErrorInner::Guest("dispute::open_dispute cross-zome call failed".into())));
-    };
-    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
-    let dispute_ref = dispute_record.action_address().clone();
-
-    record_reputation_event(&respondent, respondent_target, input.order_original_action.clone(), ReputationEventKindWire::DisputeRaised)?;
-
-    let mut updated_order = order;
-    updated_order.status = PickupStatus::Disputed;
-    updated_order.dispute_ref = Some(dispute_ref);
-    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::PickupOrder(updated_order))?;
-    get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back disputed pickup order".into())))
-}
-
-use dispute_types::{Dispute, DisputeOutcome};
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ApplyPickupDisputeResolutionInput {
-    pub order_original_action: ActionHash,
-}
-
-/// `apply_dispute_resolution`'s pickup sibling -- `FavorProvider` resolves
-/// to `PickedUp` (the merchant's side wins, order completes and settles),
-/// `FavorRequester` resolves to `Cancelled`. A ruling for the store settles
-/// the order total; either side may also owe collateral.
-#[hdk_extern]
-pub fn apply_pickup_dispute_resolution(input: ApplyPickupDisputeResolutionInput) -> ExternResult<Record> {
-    // Synchronous gate before anything side-effecting -- see
-    // disputes::apply_dispute_resolution's own doc comment for why
-    // update_entry's deferred validation can't be relied on alone here.
-    if !relay_governance::is_arbitrator(&agent_info()?.agent_initial_pubkey)? {
-        return Err(wasm_error!(WasmErrorInner::Guest("only an arbitrator may apply a dispute resolution".into())));
+pub fn report_pickup_problem(order_original_action: ActionHash) -> ExternResult<Record> {
+    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    if order.status != PickupStatus::ReadyForPickup {
+        return Err(wasm_error!(WasmErrorInner::Guest("you can report a problem once the store says it's ready".into())));
     }
-    let (order_record, order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action.clone(), "PickupOrder")?;
-    if order.status != PickupStatus::Disputed {
-        return Err(wasm_error!(WasmErrorInner::Guest("a pickup order can only have its dispute resolution applied from Disputed".into())));
-    }
-    let dispute_ref = order
-        .dispute_ref
-        .clone()
-        .ok_or(wasm_error!(WasmErrorInner::Guest("order has no dispute_ref".into())))?;
-
-    let get_response = call(CallTargetCell::Local, "dispute", "get_dispute".into(), None, dispute_ref)?;
-    let ZomeCallResponse::Ok(extern_io) = get_response else {
-        return Err(wasm_error!(WasmErrorInner::Guest("dispute::get_dispute cross-zome call failed".into())));
-    };
-    let dispute_record: Record = extern_io.decode().map_err(|e| wasm_error!(e))?;
-    let dispute: Dispute = dispute_record
-        .entry()
-        .to_app_option()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("record is not a Dispute".into())))?;
-    let outcome = dispute
-        .outcome
-        .ok_or(wasm_error!(WasmErrorInner::Guest("dispute has no outcome yet -- call dispute::submit_resolution first".into())))?;
-
-    let requester = order.requester.clone();
-    let merchant = order.merchant.clone();
-    let catalog_ref = order.catalog_ref.clone();
-    let target_status = match &outcome {
-        DisputeOutcome::FavorProvider => PickupStatus::PickedUp,
-        DisputeOutcome::FavorRequester => PickupStatus::Cancelled,
-    };
-    let mut updated_order = order;
-    let parties = OrderParties::pickup(&input.order_original_action, &updated_order);
-    updated_order.cancellation = (target_status == PickupStatus::Cancelled).then_some(Cancellation::ByArbitrator);
-    updated_order.status = target_status;
-    updated_order.dispute_ref = Some(dispute_record.action_address().clone());
-    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::PickupOrder(updated_order))?;
-    // Both outcomes (PickedUp / Cancelled) are terminal.
-    order_queues::retire(&parties)?;
-    // The ruling moves no money itself: this update is the evidence each
-    // party settles the held payment by, from their own conductor -- the
-    // store collects it, or the customer has it back.
-
-    match outcome {
-        DisputeOutcome::FavorProvider => {
-            record_reputation_event(&requester, ReputationTargetWire::Customer(requester.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
-        }
-        DisputeOutcome::FavorRequester => {
-            record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref.clone()), input.order_original_action.clone(), ReputationEventKindWire::DisputeResolvedAgainst)?;
-        }
-    }
-
-    get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back resolved pickup order".into())))
+    order.status = PickupStatus::Disputed;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+    get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the order".into())))
 }

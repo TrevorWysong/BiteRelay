@@ -160,7 +160,7 @@ const fieldBase =
 type Adornment = { prefix?: ReactNode; suffix?: ReactNode };
 
 /// `prefix`/`suffix` render as fixed, non-editable glyphs inside the field
-/// (e.g. `prefix="$"` for a dollar amount, `suffix="%"` for a percentage)
+/// (e.g. `prefix={currencySymbol()}` for an amount, `suffix="%"` for a percentage)
 /// -- unlike placeholder text, these never disappear once the customer
 /// starts typing, so the unit stays legible the whole time.
 export function Input({ className, prefix, suffix, ...rest }: InputHTMLAttributes<HTMLInputElement> & Adornment) {

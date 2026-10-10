@@ -4,10 +4,11 @@
 //! `ReceiptAttestation` of their own. Each is signed by its own author on
 //! their own chain, and validation ties them together: a leg only by the
 //! order's assigned driver, to that order's store or customer; a receipt
-//! only by the leg's recipient. A delivery completes on the driver's
-//! pickup record and the customer's receipt (see `dispatch_integrity`).
+//! only by the leg's recipient. A handoff can also carry the giver's
+//! scanned code, which proves on its own that they handed the order over
+//! (see `dispatch_integrity` for what each proof completes).
 
-use dispatch_types::{Bid, DeliveryOrder};
+use dispatch_types::{Bid, DeliveryOrder, DropoffPreference};
 use hdi::prelude::*;
 use relay_integrity_support::{classify, decode, invalid, require, valid, Checked};
 
@@ -19,22 +20,31 @@ mod links;
 // this crate wouldn't work. Re-exported here so nothing else in this crate
 // or the coordinator crate (which imports via `attestation_integrity::*`)
 // needs to change.
-pub use attestation_types::{ArbitratorSeal, EvidenceShare, HandoffEvidence, Leg, LegKind, PinSecret, ReceiptAttestation};
+pub use attestation_types::{HandoffEvidence, Leg, LegKind, PinSecret, ReceiptAttestation};
+
+/// A wrong handoff code typed in for one of the author's orders -- kept
+/// privately, so its owner's conductor can stop answering after a few (a
+/// six-digit code can't be guessed in a handful of tries, but could be in a
+/// million).
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct CodeAttempt {
+    pub order: ActionHash,
+}
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
     Leg(Leg),
     ReceiptAttestation(ReceiptAttestation),
-    EvidenceShare(EvidenceShare),
+    #[entry_type(visibility = "private")]
+    CodeAttempt(CodeAttempt),
 }
 
 #[hdk_link_types]
 pub enum LinkTypes {
     OrderToLeg,
     LegToReceipt,
-    /// A handoff's evidence, shared with the arbitrators for a dispute.
-    LegToEvidenceShare,
 }
 
 #[hdk_extern]
@@ -43,7 +53,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         Checked::Create { entry, action } => match entry {
             EntryTypes::Leg(leg) => validate_leg(&leg, action.author()),
             EntryTypes::ReceiptAttestation(receipt) => validate_receipt(&receipt, action.author()),
-            EntryTypes::EvidenceShare(share) => validate_evidence_share(&share, action.author()),
+            // Private, and only ever its author's own count.
+            EntryTypes::CodeAttempt(_) => valid(),
         },
         // Handoffs and their acknowledgments are a permanent record.
         Checked::Update { .. } => invalid("handoffs and receipts can't be changed"),
@@ -61,8 +72,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
 fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     // Sealed, so its content can't be checked here (the parties' apps check
     // the photo when they open it) -- but its size can.
-    if leg.sealed_evidence.as_encrypted_data_ref().len() > relay_integrity_support::MAX_IMAGE_URI_BYTES + 1_024 {
-        return invalid("a handoff's evidence may hold at most one 300KB photo");
+    if relay_integrity_support::sealed_chunks_problem("a handoff's evidence", &leg.sealed_evidence, relay_integrity_support::max_sealed_image_bytes()).is_some() {
+        return invalid("a handoff's evidence may hold at most one photo, within the network's image limit");
     }
     if author != &leg.from {
         return invalid("a handoff is recorded by the driver who made it");
@@ -89,21 +100,26 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
     if &leg.to != expected_counterparty {
         return invalid("a handoff is with the order's own store or customer");
     }
-    // The PIN, if one was collected: sealed to every arbitrator, so any of
-    // them can check it. A drop-off on an order its store said needs one
-    // can't be recorded without it.
-    let roster = relay_governance::arbitrator_roster();
-    let collected = !leg.sealed_pin_for_arbitrators.is_empty();
-    let scanned = leg.revealed_pin.is_some();
-    if scanned && !pin_matches(leg.revealed_pin.as_ref(), &order.pin_commitment) {
-        return invalid("a scanned code must match the order's PIN");
+    // A scanned code is the giver's: the store's at pickup, the customer's
+    // at the door.
+    if leg.revealed_pin.is_some() {
+        let commitment = match leg.kind {
+            LegKind::MerchantHandoff => &order.pickup_commitment,
+            LegKind::CustomerHandoff => &order.pin_commitment,
+        };
+        if !pin_matches(leg.revealed_pin.as_ref(), commitment) {
+            return invalid("a scanned code must match the order's");
+        }
     }
-    match leg.kind {
-        LegKind::MerchantHandoff if collected || scanned => invalid("a PIN is collected from the customer, not the store"),
-        LegKind::CustomerHandoff if order.pin_required && !collected && !scanned => invalid("this order's store requires the customer's PIN at the door"),
-        _ if collected && !dispute_types::seals_cover_roster(&leg.sealed_pin_for_arbitrators, &roster) => invalid("a collected PIN is sealed once to each arbitrator"),
-        _ => valid(),
+    // Left at the door: only where the customer chose that and accepted the
+    // risk, and never alongside a scan (one or the other completes it).
+    if leg.left_at_door {
+        let chosen = order.dropoff_preference == DropoffPreference::LeaveAtDoor && order.door_risk_accepted;
+        if leg.kind != LegKind::CustomerHandoff || !chosen || leg.revealed_pin.is_some() {
+            return invalid("only a drop-off the customer chose to have left at the door is left there");
+        }
     }
+    valid()
 }
 
 /// Whether `revealed` opens `commitment`: `sha256(pin || salt)`.
@@ -117,24 +133,6 @@ pub fn pin_matches(revealed: Option<&PinSecret>, commitment: &[u8]) -> bool {
     hasher.update(secret.pin.as_bytes());
     hasher.update(&secret.salt);
     hasher.finalize().as_slice() == commitment
-}
-
-/// A handoff's evidence shared with the arbitrators: by one of its two
-/// parties, one seal for each arbitrator, each at most one photo's worth.
-fn validate_evidence_share(share: &EvidenceShare, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let Some(leg) = decode::<Leg>(&must_get_valid_record(share.leg.clone())?) else {
-        return invalid("evidence is shared about a handoff");
-    };
-    if author != &leg.from && author != &leg.to {
-        return invalid("only a handoff's two parties share its evidence");
-    }
-    if !dispute_types::seals_cover_roster(&share.seals, &relay_governance::arbitrator_roster()) {
-        return invalid("shared evidence is sealed once to each arbitrator");
-    }
-    require(
-        share.seals.iter().all(|s| s.sealed.as_encrypted_data_ref().len() <= relay_integrity_support::MAX_IMAGE_URI_BYTES + 1_024),
-        "shared evidence may hold at most one 300KB photo",
-    )
 }
 
 /// A handoff's acknowledgment, signed by the person who received it (or

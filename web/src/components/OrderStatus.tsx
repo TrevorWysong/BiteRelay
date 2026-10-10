@@ -75,7 +75,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
   if (status === "Disputed") {
     return (
       <TerminalBanner icon={<AlertTriangle size={20} />} tone="danger">
-        This order is under dispute review.
+        The customer says this order never arrived. The store decides.
       </TerminalBanner>
     );
   }
@@ -168,7 +168,7 @@ export function PickupStatusTimeline({ status, cancellation = null }: { status: 
   if (status === "Disputed") {
     return (
       <TerminalBanner icon={<AlertTriangle size={20} />} tone="danger">
-        This order is under dispute review.
+        The customer says this order never arrived. The store decides.
       </TerminalBanner>
     );
   }

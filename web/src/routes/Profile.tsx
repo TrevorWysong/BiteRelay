@@ -19,6 +19,7 @@ import { describeError } from "../lib/errors";
 import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
 import { HOST } from "../holochain/host";
 import { NotificationSettings } from "../components/NotificationSettings";
+import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
 
 /// One identity, several hats: ratings and stats are shown per role (your
 /// driving) and per store (each restaurant you run), never blended into
@@ -169,12 +170,12 @@ export function ProfilePage() {
         <AnimatePresence mode="wait" initial={false}>
         {editing ? (
           <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
-            <Input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Your name" aria-label="Your name" />
+            <Input maxLength={MAX_LABEL_CHARS} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Your name" aria-label="Your name" />
             <p className="-mt-1 text-[11px] text-ink-400">
               {publicFacing ? "Shown publicly, as your store or driver name." : "Shared only with the store and driver of each of your orders -- nobody else can see it."}
             </p>
-            <Textarea value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
-            <Input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
+            <Textarea maxLength={MAX_NOTE_CHARS} value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
+            <Input maxLength={MAX_PHONE_CHARS} value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
             {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}
             <Button loading={saving} onClick={saveProfile} className="py-2 text-xs">
               Save
@@ -206,11 +207,13 @@ export function ProfilePage() {
             <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
               <PhotoInput value={vehicleDraft.photo_data_uri} onChange={(v) => setVehicleDraft((d) => ({ ...d, photo_data_uri: v }))} shape="banner" />
               <Input
+                maxLength={MAX_VEHICLE_CHARS}
                 value={vehicleDraft.vehicle_description}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, vehicle_description: e.target.value }))}
                 placeholder="e.g. Blue Honda Civic"
               />
               <Input
+                maxLength={MAX_LICENSE_PLATE_CHARS}
                 value={vehicleDraft.license_plate}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, license_plate: e.target.value }))}
                 placeholder="License plate"
@@ -303,7 +306,7 @@ export function ProfilePage() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-ink-900 dark:text-ink-50">No-skim transparency</p>
-          <p className="text-xs text-ink-400">See every cent, verified from your own ledger. $0 platform fee, always.</p>
+          <p className="text-xs text-ink-400">See every cent, verified from your own ledger. No platform fee, always.</p>
         </div>
         <ChevronRight size={18} className="shrink-0 text-ink-300" />
       </Link>

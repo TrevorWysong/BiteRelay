@@ -1,6 +1,7 @@
-// Delivery handoffs: the driver records each one (`recordLeg`) and the
-// other party acknowledges it (`acknowledgeLeg`) -- see the attestation
-// zome. Neither needs the other online at the same moment.
+// Delivery handoffs: the driver records each one (`recordLeg`), and the
+// giver proves it -- the driver scans their code, they confirm in their own
+// app (`acknowledgeLeg`), or the driver types the digits they read out
+// (`handoffByCode`). See the attestation zome.
 import { callZome } from "../client";
 import type { ActionHash, AgentPubKey, GeoPoint, HandoffEvidence, HcRecord, LegKind, PinSecret } from "../types";
 
@@ -13,11 +14,10 @@ export async function recordLeg(input: {
   to: AgentPubKey;
   geo_at_completion: GeoPoint;
   photo_data_uri?: string;
-  /// The customer's delivery PIN, if the driver asked for it.
-  pin?: string | null;
-  /// The customer's handover code, if the driver scanned it -- proof on its
-  /// own that the customer took the order.
+  /// The giver's code, if the driver scanned it -- proof on its own.
   scanned?: PinSecret | null;
+  /// Left at the door, on an order whose customer chose that.
+  left_at_door?: boolean;
 }): Promise<HcRecord> {
   return callZome("attestation", "record_leg", { photo_data_uri: "", ...input });
 }
@@ -42,7 +42,9 @@ export async function getHandoffEvidence(leg: ActionHash): Promise<HandoffEviden
   return callZome("attestation", "get_handoff_evidence", leg);
 }
 
-/// A handoff's evidence as shared with the caller, an arbitrator.
-export async function getSharedEvidence(leg: ActionHash): Promise<HandoffEvidence | null> {
-  return callZome("attestation", "get_shared_evidence", leg);
+/// The driver proving a handoff with the six digits the giver read out --
+/// checked by the giver's own app, which must be online. Returns the
+/// giver's confirmation.
+export async function handoffByCode(leg: ActionHash, code: string): Promise<ActionHash> {
+  return callZome("attestation", "handoff_by_code", { leg, code });
 }

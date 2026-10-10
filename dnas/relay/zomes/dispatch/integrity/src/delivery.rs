@@ -1,13 +1,16 @@
 //! Delivery-order validation: creation, the status state machine, the
-//! leg-attestation completion gate, and delivery disputes.
+//! pickup and drop-off proof gates, and the customer's claim that an order
+//! never arrived.
 
 use super::*;
 use crate::holds::{check_hold, terms_of, ExpectedHold};
 use dispatch_types::HoldPurpose;
-use relay_integrity_support::decode;
+use relay_integrity_support::limits::MAX_SEALED_BYTES;
+use relay_integrity_support::{decode, sealed_problem};
 use crate::store_answer::{check_cancellation, check_ready_by, CancelledFrom, OrderUpdate};
 use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
-use crate::disputes::*;
+use crate::claims::{resolve_original_creation, wrote_update_of};
+use attestation_types::dropoff_proof;
 
 pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, action_timestamp: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if &order.requester != author {
@@ -18,8 +21,14 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     if order.cancellation.is_some() || order.ready_by.is_some() || order.food_hold.is_some() || order.driver_pay_hold.is_some() || order.subsidy_hold.is_some() || order.collateral_hold.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order can't already be accepted, cancelled or picked up".into()));
     }
-    if let Some(reason) = check_new_pin(order) {
-        return Ok(ValidateCallbackResult::Invalid(reason.into()));
+    if order.pin_commitment.len() != 32 {
+        return Ok(ValidateCallbackResult::Invalid("a delivery commits to the customer's handoff code (32 bytes)".into()));
+    }
+    if !order.pickup_commitment.is_empty() || order.sealed_pickup_code.is_some() || order.pickup_proof.is_some() {
+        return Ok(ValidateCallbackResult::Invalid("the store's pickup code is set when it accepts the order".into()));
+    }
+    if order.door_risk_accepted != (order.dropoff_preference == DropoffPreference::LeaveAtDoor) {
+        return Ok(ValidateCallbackResult::Invalid("an order left at the door needs its customer to accept the risk -- and only such an order".into()));
     }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
@@ -39,10 +48,13 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     if !order.delivery_receipts.is_empty() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have delivery receipts".into()));
     }
-    if order.dispute_ref.is_some() {
-        return Ok(ValidateCallbackResult::Invalid("a new order cannot already have a dispute_ref".into()));
-    }
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
+    }
+    if let Some(reason) = check_store_terms(order)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
+    }
+    if let Some(reason) = sealed_fields_problem(order) {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
     let pricing = OrderPricing {
@@ -66,131 +78,96 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// The completion gate, run in validation rather than trusted from the
-/// coordinator: `delivery_receipts` must prove both ends of the delivery --
-/// the driver's record of collecting the order from the store (a
-/// `MerchantHandoff` leg, or the store's acknowledgment of it) and the
-/// customer's acknowledgment that it reached them (a receipt for a
-/// `CustomerHandoff` leg). The attestation zome's own validation already
-/// guarantees a leg is the assigned driver's and a receipt its recipient's;
-/// this checks they're for *this* order and cover both ends. Returns
-/// `Err(reason)` so the caller builds one consistent message.
+/// The store's terms a delivery was placed under, from the version it cites
+/// (`catalog_version`): its fee split, and its delivery radius -- checked
+/// against the drop-off's public cell, the nearest the store could be to it
+/// (the exact point is sealed). `Some(reason)` if they don't hold.
+fn check_store_terms(order: &DeliveryOrder) -> ExternResult<Option<String>> {
+    if resolve_original_creation(order.catalog_version.clone())? != order.catalog_ref {
+        return Ok(Some("catalog_version must be a version of the order's own store".into()));
+    }
+    let Some(store) = decode::<MerchantCatalog>(&must_get_valid_record(order.catalog_version.clone())?) else {
+        return Ok(Some("catalog_version must be a store".into()));
+    };
+    if order.delivery_subsidy_percent != store.delivery_subsidy_percent {
+        return Ok(Some("an order's fee split is its store's, as it stood when the order was placed".into()));
+    }
+    if order.dropoff_geohash.chars().count() != DROPOFF_GEOHASH_PRECISION {
+        return Ok(Some(format!("a drop-off's area is a geohash of {DROPOFF_GEOHASH_PRECISION} characters")));
+    }
+    match relay_types::distance_to_cell_km(store.location, &order.dropoff_geohash) {
+        Some(distance) if distance <= store.max_delivery_radius_km => Ok(None),
+        Some(_) => Ok(Some("the drop-off is outside the store's delivery radius".into())),
+        None => Ok(Some("dropoff_geohash isn't a geohash".into())),
+    }
+}
+
+/// Why one of an order's sealed fields is too large, if one is: each is a
+/// note, a name, an address or a handoff code -- small, and stored by every
+/// authority for the order.
+pub(crate) fn sealed_fields_problem(order: &DeliveryOrder) -> Option<String> {
+    let sealed = [
+        ("sealed_dropoff", Some(&order.sealed_dropoff)),
+        ("driver_dropoff", order.driver_dropoff.as_ref()),
+        ("kitchen_note", order.kitchen_note.as_ref()),
+        ("sealed_customer_name", order.sealed_customer_name.as_ref()),
+        ("sealed_pin", Some(&order.sealed_pin)),
+        ("sealed_pickup_code", order.sealed_pickup_code.as_ref()),
+    ];
+    sealed.into_iter().find_map(|(field, value)| value.and_then(|v| sealed_problem(field, v, MAX_SEALED_BYTES)))
+}
+
+/// The drop-off gate: `delivery_receipts` must prove the order reached its
+/// customer -- the driver's drop-off carrying the customer's scanned code,
+/// the customer's own acknowledgment of it, or (for an order the customer
+/// chose to have left at the door, accepting the risk) the driver's
+/// drop-off left there. The attestation zome's validation already holds
+/// each to its author and order version; this checks they're for *this*
+/// order and include one such proof. `Err(reason)` if not.
 pub(crate) fn validate_delivery_receipts(order_original_creation: &ActionHash, receipts: &[ActionHash]) -> ExternResult<Result<(), String>> {
-    let mut collected = false;
-    let mut received = false;
     for proof_ref in receipts {
         let record = must_get_valid_record(proof_ref.clone())?;
-        let (leg, acknowledged) = if let Some(leg) = decode::<Leg>(&record) {
-            // A drop-off against the customer's scanned code is their
-            // receipt: validation checked the code against the commitment.
-            let scanned = leg.revealed_pin.is_some();
-            (leg, scanned)
+        let leg = if let Some(leg) = decode::<Leg>(&record) {
+            leg
         } else if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
             let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg.clone())?) else {
                 return Ok(Err("a delivery receipt does not acknowledge a handoff".into()));
             };
-            (leg, true)
+            leg
         } else {
             return Ok(Err("delivery_receipts may only hold handoffs and their receipts".into()));
         };
         if &resolve_original_creation(leg.order_ref.clone())? != order_original_creation {
             return Ok(Err("a delivery receipt belongs to a different order".into()));
         }
-        match leg.kind {
-            LegKind::MerchantHandoff => collected = true,
-            LegKind::CustomerHandoff if acknowledged => received = true,
-            LegKind::CustomerHandoff => {}
-        }
     }
-    if !collected {
-        return Ok(Err("completing a delivery needs the driver's record of collecting it from the store".into()));
+    match dropoff_proof(receipts)? {
+        Some(_) => Ok(Ok(())),
+        None => Ok(Err("completing a delivery needs proof the customer has it: their scanned code, their own confirmation, or a drop-off left at the door as they chose".into())),
     }
-    if !received {
-        return Ok(Err("completing a delivery needs the customer's acknowledgment that it reached them".into()));
-    }
-    Ok(Ok(()))
 }
 
-/// The dispute being first raised (`PickedUp`/`Delivered -> Disputed`, or
-/// the `Cancelled -> Cancelled` cancellation-fairness case) -- extracted out
-/// of `validate_order_transition`'s own dispute-ref handling so that
-/// function's three-way branch (raise / resolve / resolve-cancellation)
-/// reads as three named checks rather than one long inline block, same
-/// pattern as `validate_delivery_receipts`/`validate_dispute_resolution_matches`
-/// above. `is_accepted_provider`/`accepted_bidder` are passed in rather than
-/// re-derived, since the caller already resolved them with the correct
-/// prior-state context.
-pub(crate) fn check_raising_dispute(
-    prior: &DeliveryOrder,
-    order: &DeliveryOrder,
-    author: &AgentPubKey,
-    is_accepted_provider: bool,
-    accepted_bidder: &Option<AgentPubKey>,
-    original_action_hash: &ActionHash,
-) -> ExternResult<Result<(), String>> {
-    if prior.dispute_ref.is_some() {
-        return Ok(Err("dispute_ref must be empty before a dispute is first raised".into()));
-    }
-    let Some(new_dispute_ref) = &order.dispute_ref else {
-        return Ok(Err("raising a dispute must set dispute_ref".into()));
-    };
-    // The order's *other* party relative to whoever raised this.
-    let expected_respondent = if is_accepted_provider {
-        prior.requester.clone()
+/// The driver's proof they collected the order from the store: their
+/// pickup leg carrying the store's scanned code, or the store's own
+/// acknowledgment of their pickup leg.
+fn validate_pickup_proof(order_original_creation: &ActionHash, proof: &ActionHash, merchant: &AgentPubKey) -> ExternResult<Result<(), &'static str>> {
+    let record = must_get_valid_record(proof.clone())?;
+    let leg = if let Some(leg) = decode::<Leg>(&record) {
+        if leg.revealed_pin.is_none() {
+            return Ok(Err("a pickup leg proves the pickup only with the store's scanned code"));
+        }
+        leg
+    } else if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
+        if record.action().author() != merchant {
+            return Ok(Err("only the store acknowledges a pickup"));
+        }
+        let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg)?) else { return Ok(Err("a pickup receipt must acknowledge a handoff")) };
+        leg
     } else {
-        match accepted_bidder {
-            Some(bidder) => bidder.clone(),
-            None => return Ok(Err("cannot raise a dispute on an order with no accepted bid".into())),
-        }
+        return Ok(Err("pickup_proof must be the driver's pickup or the store's acknowledgment of it"));
     };
-    let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
-    validate_new_dispute_ref(&order_original_creation, new_dispute_ref, author, &expected_respondent)
-}
-
-/// The `Disputed -> Delivered`/`Cancelled` resolution transition -- see
-/// `check_raising_dispute`'s doc comment for why this is extracted.
-pub(crate) fn check_resolving_dispute(prior: &DeliveryOrder, order: &DeliveryOrder, author: &AgentPubKey) -> ExternResult<Result<(), String>> {
-    let Some(prior_dispute_ref) = &prior.dispute_ref else {
-        return Ok(Err("a Disputed order with no dispute_ref cannot be resolved".into()));
-    };
-    let Some(new_dispute_ref) = &order.dispute_ref else {
-        return Ok(Err("resolving a dispute must set dispute_ref to the resolved record".into()));
-    };
-    // dispute_ref is allowed to *advance* here, from the dispute's original
-    // creation hash to its resolved-update hash -- must_get_valid_record is
-    // literal, so validate_dispute_resolution_matches needs a reference that
-    // already points directly at the Resolved content (the creation hash
-    // would only ever show the original Open-status entry, the same
-    // "get() is literal" gotcha as delivery_receipts elsewhere in this
-    // file). Still must be the *same* dispute chain, not a swap to an
-    // unrelated one.
-    let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
-    if &new_dispute_original_creation != prior_dispute_ref {
-        return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
-    }
-    validate_dispute_resolution_matches(new_dispute_ref, &order.status, author)
-}
-
-/// The cancellation-fairness resolution transition (`Cancelled -> Cancelled`
-/// with `prior.dispute_ref` already set) -- see `check_raising_dispute`'s
-/// doc comment for why this is extracted. Arbitrator-only authorship is
-/// already enforced by `validate_order_transition`'s own `authorized` check
-/// before this runs, so there's nothing further to check on that front here.
-pub(crate) fn check_resolving_cancellation_dispute(prior: &DeliveryOrder, order: &DeliveryOrder, author: &AgentPubKey) -> ExternResult<Result<(), String>> {
-    // Safe: callers only reach this once resolving_cancellation_dispute has
-    // already established prior.dispute_ref.is_some().
-    let prior_dispute_ref = prior.dispute_ref.as_ref().unwrap();
-    let Some(new_dispute_ref) = &order.dispute_ref else {
-        return Ok(Err("dispute_ref must remain set while resolving a cancellation dispute".into()));
-    };
-    if new_dispute_ref == prior_dispute_ref {
-        return Ok(Err("applying a cancellation dispute resolution must advance dispute_ref to the resolved record".into()));
-    }
-    let new_dispute_original_creation = resolve_original_creation(new_dispute_ref.clone())?;
-    if &new_dispute_original_creation != prior_dispute_ref {
-        return Ok(Err("dispute_ref update must resolve back to the same dispute originally raised".into()));
-    }
-    validate_cancellation_dispute_resolution_matches(new_dispute_ref, author)
+    let ours = leg.kind == LegKind::MerchantHandoff && &resolve_original_creation(leg.order_ref)? == order_original_creation;
+    Ok(if ours { Ok(()) } else { Err("pickup_proof must be about this order's pickup") })
 }
 
 pub(crate) fn validate_order_transition(
@@ -198,7 +175,9 @@ pub(crate) fn validate_order_transition(
     author: &AgentPubKey,
     original_action_hash: &ActionHash,
     action_timestamp: Timestamp,
+    prev_action: Option<&ActionHash>,
 ) -> ExternResult<ValidateCallbackResult> {
+    let Some(prev_action) = prev_action else { return Ok(ValidateCallbackResult::Invalid("an order update can't open a chain".into())) };
     let prior_record = must_get_valid_record(original_action_hash.clone())?;
     let prior: DeliveryOrder = prior_record
         .entry()
@@ -232,30 +211,14 @@ pub(crate) fn validate_order_transition(
     };
     let is_accepted_provider = accepted_bidder.as_ref() == Some(author);
 
-    // Computed here (rather than down with the rest of the dispute_ref
-    // handling below) because the (Cancelled, Cancelled) pair needs it to
-    // pick the right required-author check too: that one status pair
-    // covers *both* raising a cancellation-fairness dispute (Any: req/
-    // merchant/provider) and applying its resolution (arbitrator only) --
-    // transition_requirement's table has no way to express two different
-    // requirements for the same pair, so the split happens here, keyed off
-    // prior.dispute_ref, same signal the dispute_ref block below uses.
-    let resolving_cancellation_dispute =
-        prior.status == DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled && prior.dispute_ref.is_some();
-
     let authorized = match required_author {
         RequiredAuthor::Requester => &prior.requester == author,
         RequiredAuthor::Merchant => &prior.merchant == author,
         RequiredAuthor::RequesterOrMerchant => is_requester_or_merchant,
         RequiredAuthor::AcceptedProvider => is_accepted_provider,
-        RequiredAuthor::Any if resolving_cancellation_dispute => relay_governance::is_arbitrator(author)?,
-        RequiredAuthor::Any => is_requester_or_merchant || is_accepted_provider,
-        RequiredAuthor::Arbitrator => relay_governance::is_arbitrator(author)?,
+        RequiredAuthor::RequesterOrProvider => &prior.requester == author || is_accepted_provider,
     };
-    // A driver may complete a delivery themselves on the customer's scanned
-    // code -- the one receipt that doesn't need the customer's own update.
-    let driver_completes_on_scan = prior.status == DeliveryStatus::PickedUp && order.status == DeliveryStatus::Delivered && is_accepted_provider && attestation_types::rests_on_scan(&order.delivery_receipts)?;
-    if !authorized && !driver_completes_on_scan {
+    if !authorized {
         return Ok(ValidateCallbackResult::Invalid(format!(
             "transition {:?} -> {:?} requires author role {:?}, but the author holds none of the roles it permits",
             prior.status, order.status, required_author
@@ -270,11 +233,18 @@ pub(crate) fn validate_order_transition(
         written_at: action_timestamp,
     };
     let store_accepting = prior.status == DeliveryStatus::Placed && order.status == DeliveryStatus::Open;
-    // Only the store, accepting the order, may require the PIN -- and only
-    // if the order has one.
-    let pin_ok = if store_accepting { !order.pin_required || !order.pin_commitment.is_empty() } else { prior.pin_required == order.pin_required };
-    if !pin_ok {
-        return Ok(ValidateCallbackResult::Invalid("pin_required is set once, by the store accepting an order that has a PIN".into()));
+    // The store's pickup code: committed when it accepts the order, with its
+    // own sealed copy, and never changed after.
+    let pickup_code_ok = if store_accepting {
+        order.pickup_commitment.len() == 32 && order.sealed_pickup_code.is_some()
+    } else {
+        prior.pickup_commitment == order.pickup_commitment && prior.sealed_pickup_code == order.sealed_pickup_code
+    };
+    if let Some(reason) = sealed_fields_problem(order) {
+        return Ok(ValidateCallbackResult::Invalid(reason));
+    }
+    if !pickup_code_ok {
+        return Ok(ValidateCallbackResult::Invalid("the store commits to its pickup code (32 bytes) when it accepts the order, and never changes it".into()));
     }
     if store_accepting && !update.within_response_window() {
         return Ok(ValidateCallbackResult::Invalid("the store's window to accept this order has passed".into()));
@@ -282,9 +252,8 @@ pub(crate) fn validate_order_transition(
     if let Some(reason) = check_ready_by(&update, store_accepting, prior.ready_by, order.ready_by) {
         return Ok(ValidateCallbackResult::Invalid(reason.into()));
     }
-    let cancelled_from = (prior.status != DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled).then(|| match prior.status {
+    let cancelled_from = (prior.status != DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled).then_some(match prior.status {
         DeliveryStatus::Placed => CancelledFrom::Placed,
-        DeliveryStatus::Disputed => CancelledFrom::Disputed,
         _ => CancelledFrom::Elsewhere,
     });
     if let Some(reason) = check_cancellation(&update, cancelled_from, &prior.cancellation, &order.cancellation) {
@@ -334,7 +303,10 @@ pub(crate) fn validate_order_transition(
         Some(bid_ref) => decode::<Bid>(&must_get_valid_record(bid_ref.clone())?),
         None => None,
     };
-    let steps: [(bool, &Option<ActionHash>, &Option<ActionHash>, Option<HoldPurpose>, &str); 4] = [
+    // Each hold: whether this is the step that places it, the hold before
+    // and after, what it must be for, and its field.
+    type HoldStep<'a> = (bool, &'a Option<ActionHash>, &'a Option<ActionHash>, Option<HoldPurpose>, &'static str);
+    let steps: [HoldStep; 4] = [
         (store_accepting, &prior.food_hold, &order.food_hold, Some(HoldPurpose::Food), "food_hold"),
         (accepting, &prior.driver_pay_hold, &order.driver_pay_hold, bid_ref.clone().map(|bid| HoldPurpose::DriverPay { bid }), "driver_pay_hold"),
         (confirming, &prior.subsidy_hold, &order.subsidy_hold, bid_ref.clone().map(|bid| HoldPurpose::Subsidy { bid }), "subsidy_hold"),
@@ -371,86 +343,42 @@ pub(crate) fn validate_order_transition(
             ));
         }
     }
-    // delivery_receipts may only be populated, once, during PickedUp ->
-    // Delivered -- and when it is, it must actually check out: every
-    // referenced ReceiptAttestation must be real, belong to a Leg on *this*
-    // order, and together cover every required leg kind. This is the
-    // completion gate that used to live only in `dispatch::complete_delivery`
-    // (trusted from the coordinator) -- now it's enforced here too, so a
-    // direct `update_entry` bypassing that coordinator function can't skip it.
-    if prior.status == DeliveryStatus::PickedUp && order.status == DeliveryStatus::Delivered {
-        if !prior.delivery_receipts.is_empty() {
-            return Ok(ValidateCallbackResult::Invalid(
-                "delivery_receipts must be empty before the Delivered transition sets it".into(),
-            ));
+    // The driver picks the order up on proof the store handed it over.
+    if picking_up {
+        let Some(proof) = &order.pickup_proof else {
+            return Ok(ValidateCallbackResult::Invalid("picking an order up needs proof the store handed it over: its scanned code, or its acknowledgment".into()));
+        };
+        if let Err(reason) = validate_pickup_proof(&order_original, proof, &prior.merchant)? {
+            return Ok(ValidateCallbackResult::Invalid(reason.into()));
         }
-        let order_original_creation = resolve_original_creation(original_action_hash.clone())?;
-        if let Err(reason) = validate_delivery_receipts(&order_original_creation, &order.delivery_receipts)? {
+    } else if prior.pickup_proof != order.pickup_proof {
+        return Ok(ValidateCallbackResult::Invalid("pickup_proof is set once, by the update picking the order up".into()));
+    }
+    // Delivered only on proof the customer has it, set once by the update
+    // completing it -- final: there's no claim from Delivered.
+    let completing = matches!(prior.status, DeliveryStatus::PickedUp | DeliveryStatus::Disputed) && order.status == DeliveryStatus::Delivered;
+    if completing {
+        if !prior.delivery_receipts.is_empty() {
+            return Ok(ValidateCallbackResult::Invalid("delivery_receipts are set once, by the update completing the order".into()));
+        }
+        if let Err(reason) = validate_delivery_receipts(&order_original, &order.delivery_receipts)? {
             return Ok(ValidateCallbackResult::Invalid(reason));
         }
     } else if prior.delivery_receipts != order.delivery_receipts {
-        return Ok(ValidateCallbackResult::Invalid(
-            "delivery_receipts may only be set, once, during the PickedUp -> Delivered transition".into(),
-        ));
+        return Ok(ValidateCallbackResult::Invalid("delivery_receipts are set once, by the update completing the order".into()));
     }
-
-    // dispute_ref: set once, when a dispute is first raised (PickedUp/
-    // Delivered -> Disputed, or Cancelled -> Cancelled for a cancellation-
-    // fairness dispute -- architecture plan §11.1, which reuses this exact
-    // block unchanged: an order cancelled from Open never had an accepted
-    // bid, so the "cannot raise a dispute on an order with no accepted bid"
-    // check below already correctly refuses a fairness dispute where there
-    // was never a provider to have one with), then immutable except that
-    // the resolution transitions (Disputed -> Delivered/Cancelled) must
-    // find it pointing at a genuinely Resolved dispute whose ruling matches
-    // the target status -- see architecture plan §8. This is what stops a
-    // peer from calling update_entry directly to flip a Disputed order to
-    // Delivered/Cancelled without a real arbitrator ruling behind it, same
-    // posture as the delivery_receipts completion gate above. A
-    // cancellation-fairness dispute has no equivalent resolution transition
-    // here at all -- the order is already terminal, so resolving one only
-    // ever touches the Dispute entry and a ledger transaction, never this
-    // order (see `dispatch::apply_cancellation_dispute_resolution`).
-    // The (Cancelled, Cancelled) same-status pair covers *both* raising a
-    // cancellation-fairness dispute (dispute_ref unset -> set) and applying
-    // its resolution (dispute_ref advancing) -- transition_requirement's
-    // table can't distinguish them (same status pair either way, and the
-    // raise side deliberately needs RequiredAuthor::Any while the resolve
-    // side needs an arbitrator only), so that distinction is made here,
-    // from prior.dispute_ref, same as the other two dispute cases below.
-    // (resolving_cancellation_dispute is already computed above, alongside
-    // the `authorized` check it also feeds into.)
-    let raising_dispute = (matches!(prior.status, DeliveryStatus::PickedUp | DeliveryStatus::Delivered)
-        && order.status == DeliveryStatus::Disputed)
-        || (prior.status == DeliveryStatus::Cancelled && order.status == DeliveryStatus::Cancelled && prior.dispute_ref.is_none());
-    let resolving_dispute =
-        prior.status == DeliveryStatus::Disputed && matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Cancelled);
-    // The customer let the driver scan their handover code, and the driver
-    // completed the delivery on it: that's settled, and can't be disputed.
-    if raising_dispute && prior.status == DeliveryStatus::Delivered && attestation_types::rests_on_scan(&prior.delivery_receipts)? {
-        return Ok(ValidateCallbackResult::Invalid("a delivery completed on the customer's scanned code can't be disputed".into()));
-    }
-    if raising_dispute {
-        if let Err(reason) = check_raising_dispute(&prior, order, author, is_accepted_provider, &accepted_bidder, original_action_hash)? {
-            return Ok(ValidateCallbackResult::Invalid(reason));
-        }
-    } else if resolving_dispute {
-        if let Err(reason) = check_resolving_dispute(&prior, order, author)? {
-            return Ok(ValidateCallbackResult::Invalid(reason));
-        }
-    } else if resolving_cancellation_dispute {
-        if let Err(reason) = check_resolving_cancellation_dispute(&prior, order, author)? {
-            return Ok(ValidateCallbackResult::Invalid(reason));
-        }
-    } else if prior.dispute_ref != order.dispute_ref {
-        return Ok(ValidateCallbackResult::Invalid(
-            "dispute_ref may only change when a dispute is raised or resolved".into(),
-        ));
+    // The customer's claim it never arrived. Their own decisions on another
+    // branch of the order bind them: a customer who cancelled it (and so
+    // owes the driver's fee) can't also claim it back.
+    let claiming = prior.status == DeliveryStatus::PickedUp && order.status == DeliveryStatus::Disputed;
+    if claiming && wrote_update_of(author, prev_action, &order_original, |v| v.status == DeliveryStatus::Cancelled)? {
+        return Ok(ValidateCallbackResult::Invalid("a customer who cancelled an order can't claim it never arrived".into()));
     }
 
     let unchanged = prior.requester == order.requester
         && prior.merchant == order.merchant
         && prior.catalog_ref == order.catalog_ref
+        && prior.catalog_version == order.catalog_version
         && prior.lines == order.lines
         && prior.loyalty_proof == order.loyalty_proof
         && prior.order_total == order.order_total
@@ -465,10 +393,10 @@ pub(crate) fn validate_order_transition(
         && prior.requested_delivery_time == order.requested_delivery_time
         && prior.promo_code_ref == order.promo_code_ref
         && prior.dropoff_preference == order.dropoff_preference
+        && prior.door_risk_accepted == order.door_risk_accepted
         && prior.bag_claim_ref == order.bag_claim_ref
         && prior.pin_commitment == order.pin_commitment
-        && prior.sealed_pin == order.sealed_pin
-        && prior.pin_for_arbitrators == order.pin_for_arbitrators;
+        && prior.sealed_pin == order.sealed_pin;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "an order update may only change status (and accepted_bid, on acceptance) -- every other field must stay the same".into(),
@@ -477,20 +405,3 @@ pub(crate) fn validate_order_transition(
 
     Ok(ValidateCallbackResult::Valid)
 }
-
-/// A new delivery's PIN: none at all, or a 32-byte commitment with the
-/// customer's own sealed copy and one seal for each arbitrator on the
-/// roster -- so an arbitrator can always check a driver's PIN against it.
-/// What's inside the seals can't be checked here; an arbitrator who finds
-/// them inconsistent with the commitment has caught the customer out.
-fn check_new_pin(order: &DeliveryOrder) -> Option<&'static str> {
-    if order.pin_required {
-        return Some("a new order's PIN is required (or not) by its store, when it accepts it");
-    }
-    match order.pin_commitment.len() {
-        0 if order.sealed_pin.is_none() && order.pin_for_arbitrators.is_empty() => None,
-        32 if order.sealed_pin.is_some() && dispute_types::seals_cover_roster(&order.pin_for_arbitrators, &relay_governance::arbitrator_roster()) => None,
-        _ => Some("a delivery PIN is a 32-byte commitment, the customer's sealed copy, and one seal for each arbitrator"),
-    }
-}
-

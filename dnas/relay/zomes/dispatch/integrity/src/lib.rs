@@ -5,7 +5,6 @@
 
 use attestation_types::{Leg, LegKind, ReceiptAttestation};
 use catalog_types::{BagClaim, BagClaimFulfillment, MenuItem, MerchantCatalog, PromoCode};
-use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
 use hdi::prelude::*;
 use relay_integrity_support::{classify, invalid, require, Checked};
 use relay_types::GeoPoint;
@@ -16,12 +15,12 @@ mod issues;
 mod store_answer;
 mod checks;
 mod delivery;
-mod disputes;
+mod claims;
 mod links;
 mod pickup;
 mod recurring;
 mod order_queues;
-pub use order_queues::{history_day, QueueOwner, HISTORY_BUCKET_MICROS};
+pub use order_queues::{history_day, history_index_tag, parse_history_index_tag, QueueOwner, HISTORY_BUCKET_MICROS};
 pub use recurring::{RecurrenceRule, RecurringOrderTemplate, TemplateDetails};
 use bids::{validate_bid_update, validate_new_bid};
 use delivery::{validate_new_order, validate_order_transition};
@@ -30,14 +29,14 @@ use recurring::{validate_new_recurring_template, validate_recurring_template_upd
 pub use links::{open_order_anchor, OPEN_ORDER_BUCKET_MILLIS};
 use links::{validate_create_link, validate_delete_link, OpLinkFields};
 
-// DeliveryStatus/RequiredAuthor/BidStatus/DeliveryOrder/Bid now live in
-// dispatch_types so dispute_integrity can decode a DeliveryOrder too, for
-// its own dispute-eligibility validation -- see that crate's doc comment
-// for why a direct dependency on this crate wouldn't work. Re-exported here
-// so nothing else in this crate or the coordinator crate (which imports via
-// `dispatch_integrity::*`) needs to change.
-pub use dispatch_types::{claimed_value, IssueEvidence, IssueKind, IssueLine, IssueResponse, IssueWindowClosed, IssueWindowOpened, ItemIssue, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+// The entry structs live in dispatch_types so other integrity zomes can
+// decode them -- see that crate's doc comment. Re-exported here so the
+// coordinator crate imports everything via `dispatch_integrity::*`.
+pub use dispatch_types::{claimed_value, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
+// Built once per write and dropped -- boxing the large order would only
+// add an allocation.
+#[allow(clippy::large_enum_variant)]
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {
@@ -47,8 +46,8 @@ pub enum EntryTypes {
     PickupOrder(PickupOrder),
     ItemIssue(ItemIssue),
     IssueResponse(IssueResponse),
-    IssueWindowOpened(IssueWindowOpened),
-    IssueWindowClosed(IssueWindowClosed),
+    OrderOutcome(OrderOutcome),
+    ItemSettlement(ItemSettlement),
 }
 
 #[hdk_link_types]
@@ -74,9 +73,8 @@ pub enum LinkTypes {
     /// Missing and wrong items -- see `dispatch_types::issues`.
     OrderToIssue,
     IssueToResponse,
-    OrderToIssueWindow,
-    /// Orders waiting on their issue window, under their closing arbitrator.
-    ArbitratorToClosingQueue,
+    /// The store's decisions about an order: its outcome and settlement.
+    OrderToDecision,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -106,20 +104,20 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::ItemIssue(issue) => issues::validate_item_issue(&issue, action.author()),
             EntryTypes::IssueResponse(response) => issues::validate_issue_response(&response, action.author(), action.timestamp(), action.prev_action()),
-            EntryTypes::IssueWindowOpened(opened) => issues::validate_window_opened(&opened, action.author(), action.timestamp(), action.prev_action()),
-            EntryTypes::IssueWindowClosed(closed) => issues::validate_window_closed(&closed, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::OrderOutcome(outcome) => issues::validate_outcome(&outcome, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::ItemSettlement(settlement) => issues::validate_settlement(&settlement, action.author(), action.timestamp(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
-            EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
+            EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
             EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author(), &action.original_action_address),
             EntryTypes::RecurringOrderTemplate(template) => validate_recurring_template_update(&template, action.author(), &action.original_action_address),
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
-            EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::IssueWindowOpened(_) | EntryTypes::IssueWindowClosed(_) => {
-                Ok(ValidateCallbackResult::Invalid("issues and their settlement can't be changed".into()))
+            EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) => {
+                Ok(ValidateCallbackResult::Invalid("issues and an order's settlement can't be changed".into()))
             }
         },
         // Orders, bids and templates move by updates; their history is
-        // what payments, reviews and disputes cite.
+        // what payments, reviews and settlements cite.
         Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("dispatch entries can't be deleted".into())),
         Checked::CreateLink { link_type, action } => validate_create_link(OpLinkFields {
             link_type: &link_type,

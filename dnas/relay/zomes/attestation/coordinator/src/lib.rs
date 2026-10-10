@@ -4,12 +4,27 @@
 //! their own chain, tied together by validation (see the integrity crate).
 //! Neither party needs the other online at the same moment.
 //!
-//! `delivery_proof_for_order` is what `dispatch::complete_delivery` uses to
-//! gather the proof a delivery needs before it can complete.
+//! `pickup_proof_for_order` and `delivery_proof_for_order` are what
+//! dispatch cites to pick an order up and to complete it.
+
+use hdk::prelude::*;
 
 mod legs;
 
 pub use legs::*;
+
+/// A giver checks a typed handoff code on their own conductor, called by the
+/// driver (`legs::confirm_by_code`) -- anyone may ask; only the right code,
+/// within a few tries, gets an answer that counts.
+#[hdk_extern]
+pub fn init() -> ExternResult<InitCallbackResult> {
+    create_cap_grant(CapGrantEntry::new(
+        "confirm_by_code".into(),
+        CapAccess::Unrestricted,
+        GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "confirm_by_code".into())])),
+    ))?;
+    Ok(InitCallbackResult::Pass)
+}
 
 #[cfg(feature = "test-utils")]
 mod test_utils {

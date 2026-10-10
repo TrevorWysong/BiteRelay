@@ -12,12 +12,12 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder } from "./helpers.js";
+import { appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
   ]);
   const both = [customer, driver];
   // force_order_update_for_testing only exists in the test-utils build.
@@ -67,6 +67,13 @@ await runScenario(async (scenario) => {
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
+  // The store (the customer runs it here) confirms handing it over.
+  const pickupLeg = actionHash(
+    await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
+  );
+  await dhtSync(both, driver.cells[0].cell_id[0]);
+  await attestationOf(customer)("acknowledge_leg", pickupLeg);
+  await dhtSync(both, customer.cells[0].cell_id[0]);
   await dispatchOf(driver)("pick_up_order", orderRef);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
@@ -95,13 +102,9 @@ await runScenario(async (scenario) => {
   console.log("[PASS] validate() rejects a delivery_receipts entry of the wrong entry type");
 
   // Attempt 3: the driver's record of collecting the order, alone.
-  const pickupLeg = actionHash(
-    await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
-  );
-  await dhtSync(both, customer.cells[0].cell_id[0]);
   const forge = (proof: Uint8Array[]) =>
     dispatchOf(customer)("force_order_update_for_testing", { order_original_action: orderRef, next_status: "Delivered", delivery_receipts: proof });
-  await assert.rejects(forge([pickupLeg]), /needs the customer's acknowledgment/, "the pickup alone doesn't complete a delivery");
+  await assert.rejects(forge([pickupLeg]), /needs proof the customer has it/, "the pickup alone doesn't complete a delivery");
   console.log("[PASS] validate() rejects a completion with only the pickup recorded");
 
   // Attempt 4: the driver's drop-off record too, but not acknowledged --
@@ -110,11 +113,11 @@ await runScenario(async (scenario) => {
     await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
   );
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  await assert.rejects(forge([pickupLeg, dropoffLeg]), /needs the customer's acknowledgment/, "an unacknowledged drop-off doesn't complete a delivery");
+  await assert.rejects(forge([pickupLeg, dropoffLeg]), /needs proof the customer has it/, "an unacknowledged drop-off doesn't complete a delivery");
   console.log("[PASS] validate() rejects a completion on the driver's word alone");
 
   // With the customer's own acknowledgment, the same proof completes it.
   const receipt = actionHash(await attestationOf(customer)<HcRecord>("acknowledge_leg", dropoffLeg));
-  await forge([pickupLeg, receipt]);
-  console.log("[PASS] validate() accepts the pickup and the customer's acknowledgment as proof of delivery");
+  await forge([receipt]);
+  console.log("[PASS] validate() accepts the customer's acknowledgment as proof of delivery");
 });

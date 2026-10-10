@@ -15,27 +15,22 @@
 //!   -- so with a limit of 0, an identity with nothing in it can't order.
 //!   Each step of an order cites its hold (`dispatch_integrity`): a store
 //!   can't accept an order whose food isn't paid for.
-//! - **Each part of a hold is decided once, by its recipient** -- collected
-//!   with proof they're owed it (the customer's receipt, an arbitrator's
-//!   ruling applied to the order, or a cancellation that entitles them), or
-//!   waived back to the payer. Both are entries on the recipient's chain, so
-//!   validation sees if they ever did both. The payer gets a part back only
-//!   by that waiver or by a ruling, and never after they've given their
-//!   receipt -- and a part collected on the strength of a receipt is refused
-//!   if the payer had already been refunded it. Arbitrators never write
-//!   money entries; their rulings are only ever evidence.
+//! - **Each part of a hold is paid out once, on one decision.** Once an
+//!   order is out of the kitchen, everything moves on the store's single
+//!   decision about it (`dispatch_types::issues`): its outcome (delivered,
+//!   or not) and its settlement of the food. The store can write each only
+//!   once, so no two payments can rest on contradictory decisions. Before
+//!   that, a cancellation settles what the canceller owes, and a recipient
+//!   can always waive a part back. Each party decides each part once --
+//!   entries on their own chain, which validation walks.
 //!
-//! What it can't: stop two contradictory rulings on one order (arbitrators
-//! are the DNA's named trust anchor -- see `relay_governance`), or move
-//! money nobody is entitled to collect yet (a customer who never confirms a
-//! delivery leaves it held; an arbitrator's ruling releases it).
+//! What it can't: move money nobody is entitled to collect yet. An order
+//! nobody has decided stays held.
 
-use attestation_types::{Leg, LegKind, ReceiptAttestation};
-use dispatch_types::{hold_amount, hold_terms, Bid, Cancellation, DeliveryOrder, DeliveryStatus, IssueWindowClosed, IssueWindowOpened, OrderTerms, PickupOrder, PickupStatus, Share};
-use dispute_types::{Dispute, DisputeOutcome, DisputeStatus};
+use dispatch_types::{hold_amount, hold_terms, Bid, Cancellation, DeliveryOrder, DeliveryStatus, ItemSettlement, OrderOutcome, OrderTerms, Outcome, PickupOrder, PickupStatus, Share};
 use hdi::prelude::*;
 pub use ledger_types::*;
-use relay_integrity_support::{classify, decode, first_problem, invalid, link_target, original_creation, require, text_problem, valid, Checked, LinkTarget};
+use relay_integrity_support::{classify, decode, first_problem, invalid, linked_record, original_creation, require, text_problem, valid, Checked};
 
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
@@ -76,14 +71,14 @@ fn validate_grant(grant: &IssuerGrant, author: &AgentPubKey) -> ExternResult<Val
     if grant.amount == 0 || grant.reference.trim().is_empty() {
         return invalid("a grant must be for something, with the issuer's reference");
     }
-    match first_problem([text_problem("reference", &grant.reference, 100)]) {
+    match first_problem([text_problem("reference", &grant.reference, relay_integrity_support::limits::MAX_REFERENCE_CHARS)]) {
         Some(problem) => Ok(problem),
         None => valid(),
     }
 }
 
 fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let LinkTarget::Record(record) = link_target(target)? else {
+    let Some(record) = linked_record(target)? else {
         return invalid("ledger links must target a record");
     };
     if author != record.action().author() {
@@ -316,18 +311,16 @@ fn validate_waive(hold_ref: &ActionHash, portion: Portion, author: &AgentPubKey,
 
 /// What entitles a collection.
 enum Basis {
-    /// The customer confirming they have the order.
-    Receipt { by: AgentPubKey, at: ActionHash },
-    /// An arbitrator's ruling, applied to the order; and how the order
-    /// stands after it (a cancellation, if it was cancelled).
-    Ruling { outcome: DisputeOutcome, cancellation: Option<Cancellation> },
+    /// The store's decision that the order reached its customer.
+    Delivered,
+    /// The store's decision that it never did.
+    NotDelivered,
+    /// The store's settlement of the food, with the refund it names.
+    Settled { refund: u64 },
     /// The order cancelled, from the status it had.
     Cancelled { by: Cancellation, from: Stage },
     /// A part waived back to its payer.
     Waived { by: AgentPubKey, hold: ActionHash, portion: Portion },
-    /// The order's issue window closed by its arbitrator, with the refund
-    /// owed for missing or wrong items.
-    Closed { refund: u64 },
 }
 
 /// How far an order had got when it was cancelled.
@@ -360,52 +353,37 @@ fn pickup_stage(status: &PickupStatus) -> Stage {
 }
 
 /// What `basis` entitles, for a hold on `hold.order` -- or why it doesn't.
+/// The store's decisions are validated as its own (`dispatch_integrity`):
+/// one each per order, by its store.
 fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<Basis, &'static str>> {
     let record = must_get_valid_record(basis_ref.clone())?;
     let author = record.action().author().clone();
     if let Some(LedgerEntry { kind: LedgerKind::Waive { hold: waived, portion }, .. }) = decode::<LedgerEntry>(&record) {
         return Ok(Ok(Basis::Waived { by: author, hold: waived, portion }));
     }
-    if let Some(closed) = decode::<IssueWindowClosed>(&record) {
-        let Some(opened) = decode::<IssueWindowOpened>(&must_get_valid_record(closed.opened)?) else { return Ok(Err("a close must cite its window")) };
-        return Ok(if opened.order == hold.order { Ok(Basis::Closed { refund: closed.refund }) } else { Err("that window is another order's") });
+    if let Some(outcome) = decode::<OrderOutcome>(&record) {
+        if outcome.order != hold.order {
+            return Ok(Err("that outcome is another order's"));
+        }
+        return Ok(Ok(match outcome.outcome {
+            Outcome::Delivered { .. } => Basis::Delivered,
+            Outcome::NotDelivered { .. } => Basis::NotDelivered,
+        }));
     }
-    if let Some(receipt) = decode::<ReceiptAttestation>(&record) {
-        let Some(leg) = decode::<Leg>(&must_get_valid_record(receipt.leg.clone())?) else { return Ok(Err("a receipt must acknowledge a handoff")) };
-        let ours = leg.kind == LegKind::CustomerHandoff && original_creation(leg.order_ref)? == hold.order && author == hold.terms.requester;
-        return Ok(if ours { Ok(Basis::Receipt { by: author, at: basis_ref.clone() }) } else { Err("that receipt isn't the customer's for this order") });
+    if let Some(settlement) = decode::<ItemSettlement>(&record) {
+        return Ok(if settlement.order == hold.order { Ok(Basis::Settled { refund: settlement.refund }) } else { Err("that settlement is another order's") });
     }
     if original_creation(basis_ref.clone())? != hold.order {
         return Ok(Err("a collection's basis must be about the hold's own order"));
     }
-    // The order itself, at a version that settles it.
-    let (cancellation, dispute_ref, prior_stage) = if hold.terms.delivery {
+    // The order itself, at the version that cancelled it.
+    let (cancellation, prior_stage) = if hold.terms.delivery {
         let Some(order) = decode::<DeliveryOrder>(&record) else { return Ok(Err("that isn't a basis for collecting")) };
-        // Completed on the customer's scanned code: their receipt. (Such a
-        // delivery can't then be disputed -- see dispatch validation.)
-        if order.status == DeliveryStatus::Delivered && attestation_types::rests_on_scan(&order.delivery_receipts)? {
-            return Ok(Ok(Basis::Receipt { by: author, at: basis_ref.clone() }));
-        }
-        let prior = prior_version::<DeliveryOrder>(&record)?.map(|p| delivery_stage(&p.status));
-        (order.cancellation, order.dispute_ref, prior)
+        (order.cancellation, prior_version::<DeliveryOrder>(&record)?.map(|p| delivery_stage(&p.status)))
     } else {
         let Some(order) = decode::<PickupOrder>(&record) else { return Ok(Err("that isn't a basis for collecting")) };
-        let prior = prior_version::<PickupOrder>(&record)?.map(|p| pickup_stage(&p.status));
-        // The customer's own update collecting it is their receipt.
-        if order.status == PickupStatus::PickedUp && author == hold.terms.requester {
-            return Ok(Ok(Basis::Receipt { by: author, at: basis_ref.clone() }));
-        }
-        (order.cancellation, order.dispute_ref, prior)
+        (order.cancellation, prior_version::<PickupOrder>(&record)?.map(|p| pickup_stage(&p.status)))
     };
-    if relay_governance::is_arbitrator(&author)? {
-        let Some(dispute_ref) = dispute_ref else { return Ok(Err("an arbitrator's update settles an order only by a ruling")) };
-        let Some(dispute) = decode::<Dispute>(&must_get_valid_record(dispute_ref)?) else { return Ok(Err("a ruling must be a dispute")) };
-        let (DisputeStatus::Resolved, Some(outcome)) = (dispute.status, dispute.outcome) else { return Ok(Err("a ruling must be resolved")) };
-        if dispute.order_ref != hold.order {
-            return Ok(Err("a ruling must be about the hold's own order"));
-        }
-        return Ok(Ok(Basis::Ruling { outcome, cancellation }));
-    }
     match (cancellation, prior_stage) {
         (Some(by), Some(from)) => Ok(Ok(Basis::Cancelled { by, from })),
         _ => Ok(Err("that version of the order doesn't entitle anyone to collect")),
@@ -416,50 +394,6 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
 fn prior_version<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(record: &Record) -> ExternResult<Option<T>> {
     let ActionData::Update(update) = &record.action().data else { return Ok(None) };
     Ok(decode::<T>(&must_get_valid_record(update.original_action_address.clone())?))
-}
-
-/// Whether the hold's payer gave their receipt for its order between the
-/// hold and `chain_top` -- the payer's own chain holds every receipt they
-/// gave. A match by shape alone could only *refuse* a refund, never grant
-/// one: a genuine receipt always matches, and is then checked for real.
-fn payer_gave_receipt(hold: &HoldContext, chain_top: &ActionHash) -> ExternResult<bool> {
-    let Some(filter) = activity_since(chain_top, hold.held_at)? else { return Ok(false) };
-    for item in must_get_agent_activity(hold.payer.clone(), filter.include_cached_entries())? {
-        let action = &item.action.hashed.content;
-        let entry_hash = match &action.data {
-            ActionData::Create(create) => create.entry_hash.clone(),
-            ActionData::Update(update) => update.entry_hash.clone(),
-            _ => continue,
-        };
-        let entry = match item.cached_entry {
-            Some(entry) => entry,
-            None => must_get_entry(entry_hash)?.content,
-        };
-        let Entry::App(bytes) = entry else { continue };
-        let bytes = SerializedBytes::from(bytes);
-        let receipt = if hold.terms.delivery {
-            match ReceiptAttestation::try_from(bytes) {
-                Ok(receipt) => match must_get_valid_record(receipt.leg).ok().and_then(|r| decode::<Leg>(&r)) {
-                    Some(leg) => leg.kind == LegKind::CustomerHandoff && original_creation(leg.order_ref).ok().as_ref() == Some(&hold.order),
-                    None => false,
-                },
-                Err(_) => false,
-            }
-        } else {
-            PickupOrder::try_from(bytes).is_ok_and(|order| order.status == PickupStatus::PickedUp)
-                && original_creation(item.action.hashed.hash.clone()).ok().as_ref() == Some(&hold.order)
-        };
-        if receipt {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether the hold's payer was refunded it between the hold and `chain_top`.
-fn payer_was_refunded(hold: &HoldContext, hold_ref: &ActionHash, chain_top: &ActionHash) -> ExternResult<bool> {
-    let Some(filter) = activity_since(chain_top, hold.held_at)? else { return Ok(false) };
-    Ok(ledger_entries(&hold.payer, filter)?.into_iter().any(|e| matches!(&e.entry.kind, LedgerKind::Collect { hold, .. } if hold == hold_ref)))
 }
 
 fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion, basis_ref: &ActionHash, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
@@ -482,45 +416,31 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
     };
     let is_recipient = author == &share.recipient;
     let is_payer = author == &hold.payer;
-    // What this collection takes: the whole part -- except the food at an
-    // issue window's close, split between the store (the food less the
-    // refund) and the customer (the refund).
+    // What this collection takes: the whole part -- except the food at its
+    // settlement, split between the store (the food less the refund) and
+    // the customer (the refund).
     let expected = match (&portion, &basis) {
-        (Portion::Food, Basis::Closed { refund }) if is_recipient => share.amount.checked_sub(*refund),
-        (Portion::Food, Basis::Closed { refund }) if is_payer => Some(*refund),
+        (Portion::Food, Basis::Settled { refund }) if is_recipient => share.amount.checked_sub(*refund),
+        (Portion::Food, Basis::Settled { refund }) if is_payer => Some(*refund),
         _ => Some(share.amount),
     };
     if expected.is_none_or(|amount| amount == 0 || amount != entry.amount) {
         return invalid("a collection takes exactly its part of the hold");
     }
-    // On a network with arbitrators, the food's payment for a confirmed
-    // order moves only when its issue window closes -- never on the receipt
-    // or a ruling, which would skip the window.
-    let windowed = relay_governance::closing_arbitrator(&hold.order).is_some();
     let entitled = match (portion, basis) {
-        (Portion::Food, Basis::Closed { .. }) => windowed && (is_recipient || is_payer),
-        (_, Basis::Closed { .. }) => false,
-        (Portion::Food, Basis::Receipt { .. } | Basis::Ruling { outcome: DisputeOutcome::FavorProvider, .. }) if windowed => false,
+        // The food: split at its settlement; the customer's again if it never
+        // arrived.
+        (Portion::Food, Basis::Settled { .. }) => is_recipient || is_payer,
+        (_, Basis::Settled { .. }) => false,
+        (Portion::Food, Basis::Delivered) => false,
         // The driver's collateral: theirs again once the food is delivered,
-        // the store's if a ruling says it never was.
-        (Portion::Collateral, Basis::Receipt { .. }) | (Portion::Collateral, Basis::Ruling { outcome: DisputeOutcome::FavorProvider, .. }) => is_payer,
-        (Portion::Collateral, Basis::Ruling { outcome: DisputeOutcome::FavorRequester, .. }) => is_recipient,
-        (Portion::Collateral, _) => false,
-        // A part its payer owes, once the customer has the order -- unless
-        // they'd already been refunded it.
-        (_, Basis::Receipt { by, at: receipt }) => {
-            if !is_recipient {
-                false
-            } else if by == hold.payer {
-                !payer_was_refunded(&hold, hold_ref, &receipt)?
-            } else {
-                true
-            }
-        }
-        (_, Basis::Ruling { outcome: DisputeOutcome::FavorProvider, .. }) => is_recipient,
-        // A refund by ruling -- never for an order the customer cancelled
-        // themselves, nor after they'd given their receipt.
-        (_, Basis::Ruling { outcome: DisputeOutcome::FavorRequester, cancellation }) => is_payer && cancellation != Some(Cancellation::ByCustomer) && !payer_gave_receipt(&hold, prev_action)?,
+        // the store's if it never was.
+        (Portion::Collateral, Basis::Delivered) => is_payer,
+        (Portion::Collateral, Basis::NotDelivered) => is_recipient,
+        // The driver's pay and the store's subsidy: the driver's once it's
+        // delivered, back to whoever paid if it never was.
+        (_, Basis::Delivered) => is_recipient,
+        (_, Basis::NotDelivered) => is_payer,
         // A customer who cancels after the store has accepted still owes the
         // food; after a driver is assigned, the driver's fee too.
         (Portion::Food, Basis::Cancelled { by: Cancellation::ByCustomer, from }) => is_recipient && from != Stage::Waiting && from != Stage::Other,

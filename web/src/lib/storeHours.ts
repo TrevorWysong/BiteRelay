@@ -49,6 +49,8 @@ export function closesAt(schedule: OpeningPeriod[], weekday: number, minute: num
 export function localWeekdayMinute(timeZone: string, at: Date): { weekday: number; minute: number } {
   let parts: Intl.DateTimeFormatPart[];
   try {
+    // A fixed locale, for parsing, not display: the weekday names and 24-hour
+    // digits below are read back as values, whatever the viewer's language.
     parts = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
   } catch {
     return localWeekdayMinute("UTC", at);

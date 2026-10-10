@@ -6,12 +6,19 @@
 // can set are filled in from its own settings (`NetworkTerms`), never typed
 // here. When a rule changes, change the text, bump `POLICY_VERSION`, and
 // add a line to `POLICY_CHANGES`.
-import type { NetworkTerms } from "../holochain/types";
+import { HANDOFF_CODE_DIGITS, type NetworkTerms } from "../holochain/types";
+import { formatCents } from "./format";
 
-export const POLICY_VERSION = "1.0";
+export const POLICY_VERSION = "1.1";
 export const POLICY_UPDATED = "2026-10-09";
 
 export const POLICY_CHANGES: { version: string; date: string; summary: string }[] = [
+  {
+    version: "1.1",
+    date: "2026-10-09",
+    summary:
+      "No arbitrators. Handoffs are proved by the giver's code or their own confirmation, at pickup as at the door. Leaving an order at the door is the customer's choice and risk. The store decides a delivery that never arrived (paid either way, by the customer or by the driver's collateral) and has the final say on missing items.",
+  },
   {
     version: "1.0",
     date: "2026-10-09",
@@ -47,62 +54,73 @@ export function spoken(secs: number): string {
 }
 
 export function policySections(t: NetworkTerms): PolicySection[] {
-  const arbitrated = t.arbitrators.length > 0;
-  const grace = spoken(Math.min(30 * 60, t.issue_window_secs));
+  const reportWindow = spoken(t.report_window_secs);
   return [
     {
       id: "payments",
       title: "Payments and escrow",
-      summary: "Money is set aside at each step and released by proof, not by anyone's say-so. Relay takes no fee.",
+      summary: "Money is set aside at each step and moves only on proof or on the store's decision about the order. Relay takes no fee.",
       points: [
         "When a store accepts your order, the price of the food is set aside from your balance. When you accept a driver's bid, their fee and your tip are set aside too.",
-        "Set-aside money moves only on evidence the network checks: your confirmation, a handover scan, the close of an issue window, a cancellation that entitles someone, or an arbitrator's ruling.",
+        "The driver sets aside the value of the food when they pick it up. That's their collateral: it's theirs again once the order is delivered.",
         "Each part of a payment is decided once. Nobody can collect it twice or take back what's been paid.",
-        "Your balance is the arithmetic of your own signed ledger. Every entry is shown on the Transparency page.",
+        "Your balance is the arithmetic of your own signed ledger. Every entry is on the Transparency page.",
         t.credit_limit_cents > 0
-          ? `This network lets a balance go up to ${(t.credit_limit_cents / 100).toLocaleString(undefined, { style: "currency", currency: "USD" })} below zero.`
+          ? `This network lets a balance go up to ${formatCents(t.credit_limit_cents)} below zero.`
           : "A balance can't go below zero on this network: you can only spend what you've deposited.",
         "There is no platform fee and no operator account. Stores, drivers and customers pay each other directly.",
       ],
     },
     {
-      id: "delivery",
-      title: "Confirming a delivery",
-      summary: "Every delivery has a 6-digit PIN only you can see. Giving it, or letting your driver scan it, is your signature.",
+      id: "handoffs",
+      title: "Handing over an order",
+      summary: "Every handoff is proved by whoever hands the order over: the store at pickup, the customer at the door.",
       points: [
-        "Share your PIN or show your handover code only once the order is in your hands. Either one proves you received it, and can't be taken back.",
-        "Stores choose when drivers must collect the PIN: never, only from customers who have lost a dispute (the default), or always. Drivers see this before they bid.",
-        "A driver who scans your handover code completes the delivery on the spot and is paid at once. A delivery completed this way can't be disputed later.",
-        `When a driver records a drop-off without a scan, you're notified right away and have ${spoken(t.confirm_window_secs)} to confirm it or report a problem (${spoken(t.pin_confirm_window_secs)} if you gave your PIN).`,
-        "If you don't respond in time, the delivery goes to an arbitrator with the driver's evidence. Staying silent doesn't refund you.",
+        `The store and the customer each have a ${HANDOFF_CODE_DIGITS}-digit code for the order, shown on their screen with a QR code. Only they can see it.`,
+        `The driver scans the code, or types the digits read out to them, or the giver taps to confirm in their own app. Any one of them proves the handoff. After ${t.max_code_attempts} wrong codes, typing stops working for that order.`,
+        "A driver can't pick up an order without the store's proof, and can't complete a delivery without the customer's.",
+        "Share your code only once the order is in your hands: it proves you received it, and can't be taken back.",
+        "If you choose to have your order left at the door, you accept that it's delivered once your driver leaves it there. They photograph where; if it's taken after that, it isn't refunded.",
+        "Stores can set a limit above which they always hand orders over in person.",
       ],
       effects: [
-        { who: "customers", good: "Your PIN can't be guessed: only a hash of it is public, and nobody can test guesses against it.", bad: "Giving your PIN or code before checking your order means accepting it as delivered." },
-        { who: "drivers", good: "A PIN or scan is the strongest proof of delivery there is. It's ruled in your favor automatically.", bad: "Without a PIN, your photo is your word; an undisputed, photographed drop-off is ruled for you, a disputed one goes to a person." },
+        { who: "customers", good: "Nobody can mark your order delivered without your code or your say-so, unless you chose to have it left at the door.", bad: "Giving your code before checking your order means accepting it as delivered." },
+        { who: "drivers", good: "A delivery completed with the customer's code or confirmation is final: nobody can say later it never arrived.", bad: "Without the customer's proof you can't complete a hand-to-me delivery, and you're paid only once it's complete." },
+        { who: "stores", good: "Once the driver has your code, the food is in their care, covered by their collateral.", bad: "Hand over the code only with the food: it's your word that the driver has it." },
       ],
     },
     {
       id: "items",
       title: "Missing or wrong items",
-      summary: arbitrated
-        ? `You have ${spoken(t.issue_window_secs)} after delivery to report a problem with your items. The store reviews each report and has the final say.`
-        : "On this network, stores are paid when you confirm your order, and missing items are settled with the store directly.",
-      points: arbitrated
-        ? [
-            `Once your order is confirmed, the store's payment for the food is held for ${spoken(t.issue_window_secs)}. Your driver is paid right away: what's inside a sealed bag isn't theirs to answer for.`,
-            "Choose the items and quantities that were missing or wrong, and add a note or photo if you like. The refund for each item is its share of what you actually paid, after any promo.",
-            "The store accepts or declines each report, and its answer is final, just as if you'd ordered from it directly.",
-            `A report the store doesn't answer is refunded. However late you report, the store gets at least ${grace} to answer.`,
-            "When the window closes, refunds return to your balance and the store receives the rest.",
-            "Your note and photo are sealed to the store and the network's arbitrators. Nobody else can read them.",
-          ]
-        : ["This network has no arbitrators, so there is no window for reporting problems after delivery."],
-      effects: arbitrated
-        ? [
-            { who: "customers", good: "A store that ignores you can't keep your money for items you didn't get.", bad: "A store can decline a report. If you think it does so unfairly, your review is how others find out." },
-            { who: "stores", good: "You decide every refund. Nobody can grant one over your answer.", bad: "You're paid for food after the window closes, not at the door, and unanswered reports are refunded." },
-          ]
-        : undefined,
+      summary: `You have ${reportWindow} after you get your order to report a problem with your items. The store reviews each report and has the final say.`,
+      points: [
+        "Choose the items and quantities that were missing or wrong, and add a note or photo if you like. The refund for each item is its share of what you actually paid, after any promo.",
+        "The store accepts or declines each report, and its answer is final, as it would be if you'd ordered from it directly.",
+        `The store's payment for the food waits until your window closes. Reports it accepts, or never answers, are refunded then; however late you report, the store gets at least ${spoken(t.answer_grace_secs)} to answer.`,
+        "Your driver's pay doesn't wait for this window: what's inside a sealed bag isn't theirs to answer for.",
+        "Your note and photo are sealed to the store. Nobody else can read them.",
+      ],
+      effects: [
+        { who: "customers", good: "A store that ignores your report refunds it.", bad: "A store can decline a report. Your review is how others find out if it does so unfairly." },
+        { who: "stores", good: "You decide every refund. Nobody can grant one over your answer.", bad: "You're paid for the food once the report window closes, not at the door, and reports you don't answer are refunded." },
+      ],
+    },
+    {
+      id: "never-arrived",
+      title: "If an order never arrives",
+      summary: "The driver is accountable for the food from the moment they pick it up until the customer has it.",
+      points: [
+        "Once your driver has picked up your order, and until it's delivered, you can say it never arrived. Your driver can still turn up and hand it over as usual.",
+        `If they don't, the store decides. Its app does so on its own once your claim has stood for ${spoken(t.claim_grace_secs)}, or the store can decide sooner.`,
+        "When the store decides it never arrived, you get back what you paid for the food, the delivery fee and your tip. The store gets back its share of the fee, and the driver's collateral pays the store for the food.",
+        "The store is paid for the food either way, by you if it arrived or by the driver if it didn't, so it has nothing to gain from either answer.",
+        "A delivery completed with your code, your confirmation, or left at your door as you chose, can't be claimed afterwards.",
+      ],
+      effects: [
+        { who: "customers", good: "You're never out of pocket for food that didn't reach you.", bad: "If you say it never arrived and it's then delivered, that goes on your record, where drivers see it." },
+        { who: "drivers", good: "If you hand it over with the customer's code, nobody can claim it didn't arrive.", bad: "If you pick it up and don't deliver it, you lose your collateral and your fee, and it's on your record." },
+        { who: "stores", good: "The food is always paid for.", bad: "You decide what happens when a customer and driver disagree, and that decision is public." },
+      ],
     },
     {
       id: "cancellations",
@@ -112,32 +130,19 @@ export function policySections(t: NetworkTerms): PolicySection[] {
         "Before a store accepts your order, cancelling costs nothing.",
         "After the store accepts, cancelling means the store keeps the price of the food it started on. After a driver is assigned, the driver keeps their fee as well. Your tip always comes back to you.",
         "If a store or driver cancels, everything they'd have been paid is returned to you.",
-        arbitrated ? "If a cancellation by a store or driver seems unfair, you can ask an arbitrator to review it." : "Cancellations can't be appealed on this network.",
+        "Once the driver has picked up your order, it can't be cancelled: it's either delivered, or it never arrives (see above).",
       ],
     },
     {
-      id: "disputes",
-      title: "Disputes and arbitrators",
-      summary: arbitrated
-        ? "Arbitrators settle what proof alone can't, mainly orders that may never have arrived."
-        : "This network has no arbitrators, so disputes can't be settled on it.",
-      points: arbitrated
-        ? [
-            `The arbitrators are the ${t.arbitrators.length === 1 ? "person" : `${t.arbitrators.length} people`} chosen by whoever runs this network, listed by their keys below. Only they can rule, and every ruling is public and signed.`,
-            "Clear cases are ruled automatically within minutes: a correct PIN collected at the door, or an unconfirmed drop-off the driver photographed and the customer never disputed.",
-            "Everything else waits for a person, who sees the driver's sealed evidence (shared with arbitrators only for the dispute) and each side's history.",
-            "If an order is ruled delivered, the store and driver are paid. If it's ruled never delivered, you're refunded and the driver's collateral (the value of the food, set aside at pickup) goes to the store.",
-            "Arbitrators can't move money themselves, refund more than an order cost, or overturn a delivery completed on a scan.",
-            "Each order's issue window is kept by one arbitrator, on their own clock. They don't decide item reports; they apply the store's answers.",
-          ]
-        : ["Orders are settled by proof alone: your confirmation, a handover scan, or a cancellation."],
-      effects: arbitrated
-        ? [
-            { who: "customers", good: "If your food never came, an arbitrator can refund you in full.", bad: "Losing a dispute is on your record: stores using the default setting will ask for your PIN from then on, and drivers see your history before they bid." },
-            { who: "drivers", good: "Delivering with a PIN or scan means disputes about that order are settled for you.", bad: "Losing a dispute forfeits your collateral to the store and is recorded against you." },
-            { who: "stores", good: "If a driver loses your order, their collateral covers the food.", bad: "A dispute about your order holds your payment until it's ruled." },
-          ]
-        : undefined,
+      id: "who-decides",
+      title: "Who decides",
+      summary: "There's no company, operator or referee. Proof settles almost everything; where it can't, the store decides, within rules everyone's app enforces.",
+      points: [
+        "A handoff code, a confirmation, or a cancellation settles an order on its own.",
+        "For each order, the store writes one outcome and one settlement of the food, and the network accepts no second of either. Every payment rests on them, so no two payments can contradict each other.",
+        "The store can't take both the customer's money and the driver's collateral, can't refund more than the reports it cites are worth, and can't decide an order it cancelled went undelivered.",
+        "Every decision is signed and public, and recorded against whoever it went against.",
+      ],
     },
     {
       id: "reputation",
@@ -145,14 +150,14 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       summary: "Your history follows you, and it's built only from things that actually happened.",
       points: [
         "Ratings are one vote per customer per order, and only from that order's customer.",
-        "Completed orders and dispute outcomes are recorded against the store, driver or customer involved, and only that order's parties or an arbitrator can record them.",
+        "Completed orders are recorded for the store and driver. A store's decision that an order never arrived is recorded against the driver; that a claimed order had arrived, against the customer.",
         "Nobody can edit or delete reviews, ratings or history, including their own.",
-        "Drivers see a customer's history, and whether the store wants their PIN, before they bid.",
+        "Drivers see a customer's history before they bid.",
       ],
       effects: [
-        { who: "customers", good: "A clean history means fewer checks at the door.", bad: "Each lost dispute makes PIN checks more likely and may make drivers less keen to bid." },
+        { who: "customers", good: "A clean history means drivers are glad to take your orders.", bad: "Saying an order never arrived when it had stays on your record." },
         { who: "stores", good: "Completed orders and good ratings build the rating customers see.", bad: "Ratings can't be removed, even unfair ones." },
-        { who: "drivers", good: "Completed deliveries build the record customers see when choosing a bid.", bad: "Lost disputes stay on your record." },
+        { who: "drivers", good: "Completed deliveries build the record customers see when choosing a bid.", bad: "Orders that never arrived stay on your record." },
       ],
     },
     {
@@ -161,7 +166,7 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       summary: "You're known by a key, not a name. What's private is sealed; what isn't is said here.",
       points: [
         "Customers publish no name. Your name and exact address are sealed to the store and to the driver you accept, for that order only.",
-        "Handoff photos and locations are sealed between the two people at the handoff, and reach arbitrators only if one of them shares them for a dispute.",
+        "Handoff photos and locations are sealed between the two people at the handoff.",
         "Drivers publish no location. They find work by reading the open orders around them.",
         "Visible to anyone: which customer key ordered from which store, an order's prices, and its drop-off area to within about a kilometre.",
       ],
@@ -170,19 +175,17 @@ export function policySections(t: NetworkTerms): PolicySection[] {
 }
 
 /// What could go wrong, plainly.
-export function policyRisks(t: NetworkTerms): string[] {
-  const arbitrated = t.arbitrators.length > 0;
+export function policyRisks(): string[] {
   return [
-    "Relay is software run by its users, not a company that stands behind your orders. No one can reverse a payment the network has settled, and no customer service desk exists beyond the network's arbitrators.",
-    arbitrated
-      ? "Arbitrators are trusted. An arbitrator could rule a dispute unfairly or be slow to act. Their rulings are public, signed and permanent, so misconduct is visible, but it can't be undone by the network."
-      : "This network has no arbitrators: a dispute that proof can't settle has no one to settle it.",
-    "Without a PIN or scan, a drop-off photo is the driver's word. Stores that don't require a PIN accept that risk, as a sender does for a parcel left without a signature.",
+    "Relay is software run by its users, not a company that stands behind your orders. No one can reverse a payment the network has settled, and there's no customer service desk.",
+    "When a customer and driver disagree about a delivery, the store decides. A store could side with a customer against a driver who did deliver; it gains nothing by it, and its decision is public, but the network can't overturn it. Drivers are protected by handing over against the customer's code.",
+    "An order left at the door is delivered once it's left. If it's taken after that, the customer bears the loss, as with a parcel left without a signature.",
+    "Nothing forces a store to answer a report about missing items before it settles the order; a store that settles early, or declines unfairly, answers to its reviews.",
     "Balances are credits issued by this network's issuers. What a balance is worth outside Relay depends on those issuers, not on Relay.",
     "Everything you publish is permanent and copied across the network. Reviews, ratings and order records can't be deleted.",
     "Which store a customer key ordered from, and roughly where, is public. Using one identity for everything links those orders together.",
     "Reviews can't detect a store buying from itself under another identity to rate itself.",
-    "Some deadlines (store response times, scheduled orders, promo expiry) rely on clocks people control. The rules above bound the damage but can't remove it entirely.",
+    "Some deadlines (store response times, report windows, scheduled orders, promo expiry) rely on clocks people control. The rules above bound the damage but can't remove it entirely.",
     "The software is provided as is, without warranty. Check your order before confirming it, and keep your device and identity secure.",
   ];
 }

@@ -8,4 +8,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 hdk.workspace = true
-dispute_types.workspace = true
+relay_integrity_support.workspace = true

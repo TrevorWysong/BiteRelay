@@ -33,7 +33,8 @@ impl OrderUpdate<'_> {
 pub(crate) enum CancelledFrom {
     /// Waiting for the store to accept it.
     Placed,
-    /// Under dispute -- only an arbitrator's ruling cancels it from here.
+    /// A pickup its customer says they can't get -- only the store, giving
+    /// their money back, cancels it from here.
     Disputed,
     Elsewhere,
 }
@@ -50,17 +51,14 @@ pub(crate) fn check_cancellation(update: &OrderUpdate<'_>, cancelled_from: Optio
         return Some("cancelling an order must say why".into());
     };
     let allowed = match reason {
-        _ if from == CancelledFrom::Disputed => *reason == Cancellation::ByArbitrator,
+        Cancellation::ByStore(_) if from == CancelledFrom::Disputed => update.author == update.merchant,
+        _ if from == CancelledFrom::Disputed => false,
         Cancellation::ByCustomer => update.author == update.requester,
         Cancellation::ByStore(_) => update.author == update.merchant,
         Cancellation::StoreDidNotRespond => update.author == update.requester && from == CancelledFrom::Placed && !update.within_response_window(),
-        Cancellation::ByArbitrator => false,
     };
     (!allowed).then(|| format!("{reason:?} isn't a cancellation this author can give here"))
 }
-
-/// The longest a store may say an order will take.
-const MAX_READY_MICROS: i64 = 240 * 60 * 1_000_000;
 
 /// `ready_by` across one update: set when the store accepts the order
 /// (`accepting`), to a time after the acceptance and within the longest a
@@ -69,8 +67,10 @@ pub(crate) fn check_ready_by(update: &OrderUpdate<'_>, accepting: bool, prior: O
     if !accepting {
         return (prior != next).then_some("ready_by is set once, when the store accepts the order");
     }
+    // No kitchen promises further out than the network allows.
+    let max_ready_micros = i64::from(relay_governance::max_prep_minutes()) * 60 * 1_000_000;
     match next {
-        Some(ready_by) if ready_by > update.written_at && ready_by.as_micros() - update.written_at.as_micros() <= MAX_READY_MICROS => None,
-        _ => Some("accepting an order must say when it'll be ready, within four hours"),
+        Some(ready_by) if ready_by > update.written_at && ready_by.as_micros() - update.written_at.as_micros() <= max_ready_micros => None,
+        _ => Some("accepting an order must say when it'll be ready, within the longest prep time the network allows"),
     }
 }

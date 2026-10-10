@@ -3,6 +3,8 @@
 //! reimplement the same low-level HDK plumbing.
 
 use hdk::prelude::*;
+use relay_integrity_support::limits::SEAL_CHUNK_BYTES;
+pub use relay_integrity_support::SealedChunks;
 
 /// The original creation action behind `action_hash` -- itself, unless
 /// it's an update, in which case its chain of updates is walked back. The
@@ -87,6 +89,30 @@ pub fn seal<T: Serialize + std::fmt::Debug>(recipient: &AgentPubKey, value: &T) 
     ed_25519_x_salsa20_poly1305_encrypt(me, recipient.clone(), XSalsa20Poly1305Data::from(bytes))
 }
 
+/// Seals `value` to `recipient` a chunk at a time -- for anything that may
+/// be larger than one box holds (a photo); see `SealedChunks`.
+pub fn seal_chunked<T: Serialize + std::fmt::Debug>(recipient: &AgentPubKey, value: &T) -> ExternResult<SealedChunks> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let bytes = ExternIO::encode(value).map_err(|e| wasm_error!(e))?.0;
+    let boxes = bytes
+        .chunks(SEAL_CHUNK_BYTES)
+        .map(|chunk| ed_25519_x_salsa20_poly1305_encrypt(me.clone(), recipient.clone(), XSalsa20Poly1305Data::from(chunk.to_vec())))
+        .collect::<ExternResult<Vec<_>>>()?;
+    Ok(SealedChunks(boxes))
+}
+
+/// Opens `seal_chunked`'s boxes, as `open` does one -- `None` unless the
+/// caller can open every one.
+pub fn open_chunked<T: for<'de> Deserialize<'de> + std::fmt::Debug>(counterpart: &AgentPubKey, sealed: &SealedChunks) -> ExternResult<Option<T>> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let mut bytes = Vec::new();
+    for sealed_box in &sealed.0 {
+        let Ok(chunk) = ed_25519_x_salsa20_poly1305_decrypt(me.clone(), counterpart.clone(), sealed_box.clone()) else { return Ok(None) };
+        bytes.extend_from_slice(chunk.as_ref());
+    }
+    Ok(ExternIO(bytes).decode().ok())
+}
+
 /// Opens a box exchanged between the caller and `counterpart`, sealed in
 /// either direction (`counterpart` is the caller themselves for something
 /// they sealed to themselves). `None` when the caller isn't one of its two
@@ -95,29 +121,6 @@ pub fn open<T: for<'de> Deserialize<'de> + std::fmt::Debug>(counterpart: &AgentP
     let me = agent_info()?.agent_initial_pubkey;
     let Ok(data) = ed_25519_x_salsa20_poly1305_decrypt(me, counterpart.clone(), sealed.clone()) else { return Ok(None) };
     Ok(ExternIO(data.as_ref().to_vec()).decode().ok())
-}
-
-/// `value` sealed once to each arbitrator on `roster` (their keys as
-/// strings, as `relay_governance::arbitrator_roster` returns them) --
-/// evidence only arbitrators can open.
-pub fn seal_to_arbitrators<T: Serialize + std::fmt::Debug>(roster: &[String], value: &T) -> ExternResult<Vec<dispute_types::ArbitratorSeal>> {
-    roster
-        .iter()
-        .map(|key| {
-            let arbitrator: AgentPubKey = AgentPubKeyB64::from_b64_str(key).map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("bad arbitrator key: {e}"))))?.into();
-            Ok(dispute_types::ArbitratorSeal { sealed: seal(&arbitrator, value)?, arbitrator })
-        })
-        .collect()
-}
-
-/// The caller's own seal among `seals`, opened -- `None` if there isn't
-/// one, or it doesn't open. `sealer` is whoever sealed it.
-pub fn open_my_seal<T: for<'de> Deserialize<'de> + std::fmt::Debug>(seals: &[dispute_types::ArbitratorSeal], sealer: &AgentPubKey) -> ExternResult<Option<T>> {
-    let me = agent_info()?.agent_initial_pubkey;
-    match seals.iter().find(|s| s.arbitrator == me) {
-        Some(mine) => open(sealer, &mine.sealed),
-        None => Ok(None),
-    }
 }
 
 /// The next page's `after` cursor, given the last link in this page.

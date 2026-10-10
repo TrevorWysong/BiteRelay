@@ -1,5 +1,6 @@
 import { hexToBytes } from "../../../holochain/decode";
 import type { PromoRequirement, PromoReward } from "../../../holochain/types";
+import { toMinorUnits } from "../../../lib/format";
 
 // Requirement and reward are picked independently (two dropdowns), the
 // same way `PromoRequirement`/`PromoReward` are two independent enums in
@@ -30,7 +31,7 @@ export function buildRequirement(form: PromoForm): PromoRequirement | null {
     case "none":
       return "None";
     case "minSpend":
-      return { MinimumSpend: Math.max(1, Math.round(form.requirementAmount * 100)) };
+      return { MinimumSpend: Math.max(1, toMinorUnits(form.requirementAmount)) };
     case "minItemQty":
       if (!form.requirementItemHex) return null;
       return { MinimumItemQuantity: { item_ref: hexToBytes(form.requirementItemHex), quantity: Math.max(1, Math.round(form.requirementAmount)) } };
@@ -47,7 +48,7 @@ export function buildReward(form: PromoForm): PromoReward | null {
     case "percentOffSubtotal":
       return { PercentOffSubtotal: percent };
     case "flatOffSubtotal":
-      return { FlatOffSubtotal: Math.max(1, Math.round(form.rewardAmount * 100)) };
+      return { FlatOffSubtotal: Math.max(1, toMinorUnits(form.rewardAmount)) };
     case "freeItem":
       if (!form.rewardItemHex) return null;
       return { FreeItem: { item_ref: hexToBytes(form.rewardItemHex), quantity } };

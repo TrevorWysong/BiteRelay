@@ -8,7 +8,7 @@ test("the response deadline is the window after the order reached the store", ()
 });
 
 test("every cancellation reason reads as a sentence for the customer", () => {
-  for (const reason of ["ByCustomer", "StoreDidNotRespond", "ByArbitrator"] as const) {
+  for (const reason of ["ByCustomer", "StoreDidNotRespond"] as const) {
     assert.match(cancellationText(reason), /\.$/);
   }
   for (const { reason } of DECLINE_REASONS) {

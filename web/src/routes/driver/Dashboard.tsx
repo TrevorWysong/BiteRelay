@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate, pickUpOrder } from "../../holochain/zomes/dispatch";
-import { recordLeg } from "../../holochain/zomes/attestation";
+import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { planRoute } from "../../lib/route";
@@ -14,9 +13,9 @@ import { Button, Card, EmptyState, Input, PresenceDot, Skeleton, StatNumber } fr
 import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
-import { DropoffStep } from "./DropoffStep";
+import { HandoffStep } from "./HandoffStep";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
-import { formatCents, formatEta, formatClockTime } from "../../lib/format";
+import { formatCents, formatEta, formatClockTime, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
@@ -317,16 +316,11 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
 
   useLocationBroadcast(row.hash, TRACKED_STATUSES.includes(row.order.status));
 
-  async function advance(action: "en_route" | "pickup") {
+  async function headToStore() {
     setBusy(true);
     setError(null);
     try {
-      if (action === "en_route") {
-        await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
-      } else if (action === "pickup") {
-        await recordLeg({ order_ref: row.hash, sequence: 0, kind: "MerchantHandoff", to: row.order.merchant, geo_at_completion: location });
-        await pickUpOrder(row.hash);
-      }
+      await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
       await onAdvanced();
     } catch (err) {
       setError(describeError(err));
@@ -365,16 +359,12 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       </div>
       <div className="mt-4">
         {row.order.status === "MerchantConfirmed" && (
-          <Button className="w-full" loading={busy} onClick={() => advance("en_route")}>
+          <Button className="w-full" loading={busy} onClick={headToStore}>
             Head to merchant
           </Button>
         )}
-        {row.order.status === "DriverEnRouteToMerchant" && (
-          <Button className="w-full" loading={busy} onClick={() => advance("pickup")}>
-            Confirm pickup from merchant
-          </Button>
-        )}
-        {row.order.status === "PickedUp" && <DropoffStep orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
+        {row.order.status === "DriverEnRouteToMerchant" && <HandoffStep kind="pickup" orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
+        {(row.order.status === "PickedUp" || row.order.status === "Disputed") && <HandoffStep kind="dropoff" orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
         {row.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
       </div>
       <div className="mt-4">
@@ -426,7 +416,7 @@ function BidCard({
         {order.ready_by !== null && <span> · ready {formatClockTime(order.ready_by)}</span>}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
-      <CustomerHistory customer={order.requester} pinRequired={order.pin_required} />
+      <CustomerHistory customer={order.requester} />
       {/* The bid commits it; validation requires it at pickup. */}
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
         <ShieldCheck size={12} /> You'll set aside {formatCents(order.order_total)} collateral from pickup until delivery.
@@ -442,9 +432,9 @@ function BidCard({
             type="number"
             min={0}
             step={0.5}
-            value={fee / 100}
-            onChange={(e) => setFee(Math.round(Number(e.target.value) * 100))}
-            prefix="$"
+            value={fromMinorUnits(fee)}
+            onChange={(e) => setFee(toMinorUnits(Number(e.target.value)))}
+            prefix={currencySymbol()}
             className="mt-1 py-1.5 text-sm"
           />
         </label>

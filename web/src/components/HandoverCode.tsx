@@ -1,6 +1,7 @@
-// The customer's handover code at the door: their 6-digit PIN to read out,
-// and, as an option below it, the same code as a QR code for the driver to
-// scan -- which confirms the delivery on the spot.
+// A handoff code, shown by whoever hands an order over -- the customer at
+// the door, the store at pickup: its digits to read out and, as an option
+// below them, the same code as a QR code for the driver to scan. Either one
+// proves the handoff.
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Lock, QrCode } from "lucide-react";
@@ -9,13 +10,29 @@ import { bytesToHex } from "../holochain/decode";
 import type { ActionHash, PinSecret } from "../holochain/types";
 import { encodeHandoverCode } from "../lib/handoverCode";
 
-export function HandoverCode({ orderRef, secret, required }: { orderRef: ActionHash; secret: PinSecret; required: boolean }) {
+const FOR = {
+  customer: {
+    title: "Handover code",
+    note: "Your driver needs this to hand over your order. Share it only once it's in your hands.",
+    reveal: "Let your driver scan instead",
+    scanNote: "Once you have your order, your driver scans this to complete the delivery. It works like your code: don't share it before then.",
+  },
+  store: {
+    title: "Pickup code",
+    note: "The driver needs this to collect the order. Give it only as you hand it over.",
+    reveal: "Let the driver scan instead",
+    scanNote: "The driver scans this as you hand it over. It proves they have the food -- and puts it in their care.",
+  },
+} as const;
+
+export function HandoverCode({ orderRef, secret, giver = "customer" }: { orderRef: ActionHash; secret: PinSecret; giver?: keyof typeof FOR }) {
+  const copy = FOR[giver];
   const [showQr, setShowQr] = useState(false);
   return (
     <div className="overflow-hidden rounded-3xl border border-ink-100 bg-white shadow-[var(--shadow-card)] dark:border-ink-800 dark:bg-ink-900/60">
       <div className="px-5 pt-5 pb-4 text-center">
         <p className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">
-          <Lock size={12} /> Delivery PIN
+          <Lock size={12} /> {copy.title}
         </p>
         <div className="mt-3 flex justify-center gap-1.5" aria-label={`PIN ${secret.pin.split("").join(" ")}`}>
           {secret.pin.split("").map((digit, i) => (
@@ -25,7 +42,7 @@ export function HandoverCode({ orderRef, secret, required }: { orderRef: ActionH
           ))}
         </div>
         <p className="mx-auto mt-3 max-w-xs text-xs leading-relaxed text-ink-500 dark:text-ink-400">
-          {required ? "Your driver needs this at the door." : "Give this to your driver if they ask."} Share it only once the order is in your hands.
+          {copy.note}
         </p>
       </div>
       <button
@@ -34,7 +51,7 @@ export function HandoverCode({ orderRef, secret, required }: { orderRef: ActionH
         className="flex w-full items-center justify-center gap-2 border-t border-ink-100 py-3.5 text-sm font-semibold text-relay-600 transition hover:bg-relay-50/60 dark:border-ink-800 dark:text-relay-400 dark:hover:bg-relay-900/20"
       >
         <QrCode size={16} />
-        {showQr ? "Hide scan code" : "Let your driver scan instead"}
+        {showQr ? "Hide scan code" : copy.reveal}
         <ChevronDown size={16} className={`transition-transform ${showQr ? "rotate-180" : ""}`} />
       </button>
       <AnimatePresence initial={false}>
@@ -46,7 +63,7 @@ export function HandoverCode({ orderRef, secret, required }: { orderRef: ActionH
                 <QrSvg text={encodeHandoverCode(bytesToHex(orderRef), secret)} size={196} />
               </div>
               <p className="mt-3 max-w-xs text-center text-xs leading-relaxed text-ink-500 dark:text-ink-400">
-                Once you have your order, your driver scans this to confirm the delivery instantly. It works like your PIN: don't share it before then.
+                {copy.scanNote}
               </p>
             </div>
           </motion.div>

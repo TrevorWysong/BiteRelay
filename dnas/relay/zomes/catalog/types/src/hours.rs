@@ -7,8 +7,6 @@
 use serde::{Deserialize, Serialize};
 
 pub const MINUTES_PER_DAY: u16 = 24 * 60;
-/// Enough for split shifts every day of the week.
-pub const MAX_OPENING_PERIODS: usize = 28;
 
 /// One period a store is open: from `opens` to `closes` on `weekday`
 /// (0 = Sunday), in minutes after local midnight. A `closes` at or before

@@ -12,6 +12,7 @@ import { bytesEqual, bytesToHex } from "../holochain/decode";
 import { shortAgentId } from "../lib/format";
 import type { ActionHash } from "../holochain/types";
 import { Button, Input } from "./ui";
+import { MAX_NOTE_CHARS } from "../holochain/types";
 
 interface ChatLine {
   from: Uint8Array;
@@ -80,6 +81,7 @@ export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; 
       </div>
       <div className="flex gap-2">
         <Input
+          maxLength={MAX_NOTE_CHARS}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}

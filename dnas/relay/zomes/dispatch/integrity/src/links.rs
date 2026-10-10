@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::order_queues::{validate_queue_link_create, validate_queue_link_delete};
-use relay_integrity_support::{decode, invalid, link_target, original_creation, path_hash, require, LinkTarget};
+use relay_integrity_support::{decode, invalid, linked_record, original_creation, path_hash, require};
 
 /// The parts of a create- or delete-link op these checks look at. For a
 /// delete, `base`/`target` come from the link being deleted and `author` is
@@ -49,7 +49,7 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
             )
         }
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToIssueWindow | LinkTypes::ArbitratorToClosingQueue => validate_issue_link(&link),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision => validate_issue_link(&link),
     }
 }
 
@@ -59,10 +59,8 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
 /// entry, but it's never after this link and at most moments before it, so
 /// it falls in this link's bucket or the one before.
 fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
-    let record = match link_target(link.target)? {
-        LinkTarget::Record(record) => record,
-        LinkTarget::PathNode => return Ok(ValidateCallbackResult::Valid),
-    };
+    // Anchors are computed, never walked: only orders are linked under one.
+    let Some(record) = linked_record(link.target)? else { return invalid("an open-order anchor links only orders") };
     let Some(order) = decode::<DeliveryOrder>(&record) else { return invalid("target is not a DeliveryOrder") };
     if link.author != &order.merchant || order.status != DeliveryStatus::Open {
         return invalid("only an order's store may publish it for discovery, once it has accepted it");
@@ -80,7 +78,7 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToIssueWindow | LinkTypes::ArbitratorToClosingQueue => invalid("an order's issues and their settlement are a permanent record"),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision => invalid("an order's issues and its settlement are a permanent record"),
         _ => validate_queue_link_delete(link),
     }
 }
@@ -88,39 +86,23 @@ pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
 /// The entry a data link points at, decoded as `T`. `None` for a path node
 /// or a different entry type.
 fn target_entry<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(target: &AnyLinkableHash) -> ExternResult<Option<T>> {
-    Ok(match link_target(target)? {
-        LinkTarget::Record(record) => decode::<T>(&record),
-        LinkTarget::PathNode => None,
-    })
+    Ok(linked_record(target)?.and_then(|record| decode::<T>(&record)))
 }
 
-/// An issue, a store's answer, and an issue window are each found under the
-/// order (or issue) they're about, linked by whoever wrote them. An order
-/// waiting on its issue window is queued under its closing arbitrator, by
-/// its customer or its store.
+/// An issue, a store's answer, and the store's decisions are each found
+/// under the order (or issue) they're about, linked by whoever wrote them.
 fn validate_issue_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
-    use dispatch_types::{IssueResponse, IssueWindowClosed, IssueWindowOpened, ItemIssue};
-    let LinkTarget::Record(record) = link_target(link.target)? else { return invalid("this link must target a record") };
+    use dispatch_types::{IssueResponse, ItemIssue, ItemSettlement, OrderOutcome};
+    let Some(record) = linked_record(link.target)? else { return invalid("this link must target a record") };
     let written_by_author = record.action().author() == link.author;
     let expected_base: Option<AnyLinkableHash> = match link.link_type {
         LinkTypes::OrderToIssue => decode::<ItemIssue>(&record).map(|i| i.order.into()),
         LinkTypes::IssueToResponse => decode::<IssueResponse>(&record).map(|r| r.issue.into()),
-        LinkTypes::OrderToIssueWindow => match (decode::<IssueWindowOpened>(&record), decode::<IssueWindowClosed>(&record)) {
-            (Some(opened), _) => Some(opened.order.into()),
-            (None, Some(closed)) => decode::<IssueWindowOpened>(&must_get_valid_record(closed.opened)?).map(|o| o.order.into()),
+        LinkTypes::OrderToDecision => match (decode::<OrderOutcome>(&record), decode::<ItemSettlement>(&record)) {
+            (Some(outcome), _) => Some(outcome.order.into()),
+            (None, Some(settlement)) => Some(settlement.order.into()),
             _ => None,
         },
-        LinkTypes::ArbitratorToClosingQueue => {
-            let order = record.action_address().clone();
-            let Some(terms) = crate::issues::order_for_issues(&order)? else { return invalid("only an order is queued for its issue window") };
-            if link.author != &terms.requester && link.author != &terms.merchant {
-                return invalid("an order is queued for its issue window by its customer or its store");
-            }
-            return match relay_governance::closing_arbitrator(&order) {
-                Some(arbitrator) => require(link.base == &AnyLinkableHash::from(arbitrator), "an order is queued under its own closing arbitrator"),
-                None => invalid("there's no issue window without arbitrators"),
-            };
-        }
         _ => None,
     };
     match expected_base {

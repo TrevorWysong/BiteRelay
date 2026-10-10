@@ -68,7 +68,7 @@ export function Transparency() {
         <motion.div animate={{ scale: [1, 1.08, 1] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }} className="relative">
           <ShieldCheck size={30} />
         </motion.div>
-        <p className="relative text-4xl font-black tracking-tight">$0.00</p>
+        <p className="relative text-4xl font-black tracking-tight">{formatCents(0)}</p>
         <p className="relative text-sm font-bold opacity-95">Platform fee taken from your orders: always, by design.</p>
         <p className="relative mt-1 max-w-xs text-xs leading-relaxed opacity-80">
           Every cent you've ever paid or been paid through Relay is listed below, straight from your own cryptographically

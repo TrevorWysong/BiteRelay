@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, setPinPolicy, updateCatalogDetails } from "../../../holochain/zomes/catalog";
-import { formatCatalogAddress } from "../../../lib/format";
-import { Button, Card, Field, Input, SegmentedTabs, Switch, Textarea } from "../../../components/ui";
+import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, setLeaveAtDoorLimit, updateCatalogDetails } from "../../../holochain/zomes/catalog";
+import { formatCatalogAddress, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
+import { Button, Card, Field, Input, Switch, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import { SplitAddressFields } from "../../../components/SplitAddressFields";
-import type { MerchantCatalog, PinPolicy } from "../../../holochain/types";
+import type { MerchantCatalog } from "../../../holochain/types";
+import { MAX_DESCRIPTION_CHARS, MAX_LABEL_CHARS, MAX_PHONE_CHARS } from "../../../holochain/types";
 
 /// The storefront's details: a read-only summary, or the editor.
 export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; startEditing: boolean; onSaved: () => Promise<void> }) {
@@ -83,10 +84,10 @@ function DetailsEditor({ catalog, onSave }: { catalog: MerchantCatalog; onSave: 
     <div className="flex flex-col gap-2">
       <PhotoInput value={draft.banner_data_uri} onChange={(v) => set({ banner_data_uri: v })} shape="banner" />
       <Field label="Description">
-        <Textarea value={draft.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Describe your restaurant" />
+        <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={draft.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Describe your restaurant" />
       </Field>
       <Field label="Cuisine">
-        <Input value={draft.cuisine_type} onChange={(e) => set({ cuisine_type: e.target.value })} placeholder="Cuban, Italian, …" />
+        <Input maxLength={MAX_LABEL_CHARS} value={draft.cuisine_type} onChange={(e) => set({ cuisine_type: e.target.value })} placeholder="Cuban, Italian, …" />
       </Field>
       {/* The pickup point itself can't move after publishing (see
           update_catalog_details), so only the address text is editable. */}
@@ -98,7 +99,7 @@ function DetailsEditor({ catalog, onSave }: { catalog: MerchantCatalog; onSave: 
         onAddressChange={(a) => set({ address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip })}
       />
       <Field label="Phone">
-        <Input value={draft.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="(555) 555-0100" />
+        <Input maxLength={MAX_PHONE_CHARS} value={draft.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="(555) 555-0100" />
       </Field>
       <Field label="Delivery radius (km)">
         <Input type="number" min={0} step="any" value={draft.max_delivery_radius_km} onChange={(e) => set({ max_delivery_radius_km: Number(e.target.value) })} placeholder="8" />
@@ -168,36 +169,45 @@ export function AutoAcceptCard({ catalog, catalogRef, onSaved }: { catalog: Merc
   );
 }
 
-const PIN_POLICIES: readonly { value: PinPolicy; label: string }[] = [
-  { value: "Off", label: "Never" },
-  { value: "CustomersWithHistory", label: "After a dispute" },
-  { value: "Always", label: "Always" },
-];
+/// The most an order may cost to be left at the door. A customer who
+/// chooses the door accepts the risk once it's left; above this, the
+/// store's orders are always handed over against the customer's code.
+export function LeaveAtDoorCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const limit = catalog.leave_at_door_max_cents;
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Leaving orders at the door</p>
+      <p className="mb-3 text-xs leading-relaxed text-ink-400">
+        Customers who choose it accept the risk once the order's left. Above your limit, orders are always handed over with the customer's code.
+      </p>
+      <LimitEditor key={limit ?? "none"} initialCents={limit} onSave={async (cents) => {
+        await setLeaveAtDoorLimit(catalogRef, cents);
+        await onSaved();
+      }} />
+    </Card>
+  );
+}
 
-/// When drivers must collect the customer's delivery PIN at the door --
-/// the store's proof the food arrived, if a customer later says it didn't.
-export function PinPolicyCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+/// A dollar limit, or none. Seeded from the saved limit when it mounts.
+function LimitEditor({ initialCents, onSave }: { initialCents: number | null; onSave: (cents: number | null) => Promise<void> }) {
+  const [draft, setDraft] = useState(initialCents === null ? "" : String(fromMinorUnits(initialCents)));
   const [saving, setSaving] = useState(false);
-  async function choose(policy: PinPolicy) {
-    if (policy === catalog.pin_policy || saving) return;
+  async function save() {
     setSaving(true);
     try {
-      await setPinPolicy(catalogRef, policy);
-      await onSaved();
+      const dollars = Number(draft);
+      await onSave(draft.trim() === "" || !Number.isFinite(dollars) || dollars <= 0 ? null : toMinorUnits(dollars));
     } finally {
       setSaving(false);
     }
   }
   return (
-    <Card className="mb-4 p-4">
-      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Require the customer's PIN</p>
-      <p className="mb-3 text-xs text-ink-400">
-        A driver who collects the customer's PIN at the door has proof the order arrived. Without it, a "never arrived" claim is
-        answered only by the driver's photo, like a parcel left without a signature. "After a dispute" asks only customers who've
-        lost one before.
-      </p>
-      <SegmentedTabs tabs={PIN_POLICIES} value={catalog.pin_policy} onChange={choose} />
-    </Card>
+    <div className="flex items-center gap-2">
+      <Input type="number" min={0} step={5} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="No limit" prefix={currencySymbol()} className="w-32" />
+      <Button loading={saving} onClick={save} className="px-4 py-2 text-xs">
+        Save
+      </Button>
+    </div>
   );
 }
 

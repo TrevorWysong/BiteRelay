@@ -30,9 +30,6 @@ if (!args.includes("--network-seed") || !networkSeed) {
 const propertiesPath = path.join(REPO, "deploy/properties.json");
 if (!existsSync(propertiesPath)) fail("deploy/properties.json is missing -- copy deploy/properties.example.json and fill it in.");
 const properties = JSON.parse(readFileSync(propertiesPath, "utf8"));
-if (!Array.isArray(properties.arbitrators) || properties.arbitrators.length === 0 || properties.arbitrators.some((key) => !/^uhCAk[A-Za-z0-9_-]{48}$/.test(key))) {
-  fail("deploy/properties.json needs at least one arbitrator, each an agent key (uhCAk...): without one, no dispute can ever be resolved.");
-}
 
 // Money: a network states how far into debt anyone may go (0 recommended:
 // everything prepaid, so a fresh identity can't order on credit), and who

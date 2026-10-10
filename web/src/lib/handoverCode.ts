@@ -1,13 +1,15 @@
-// The handover code a customer's app shows as a QR code at the door, and the
-// driver's app scans: the order, its PIN and the PIN's salt. Scanned, it's
-// proof the customer handed it over -- the network checks it against the
-// order's commitment, `sha256(pin || salt)` (see dispatch `pin`). The salt
-// never leaves the customer's device before this moment, so nobody can test
-// PINs against the commitment beforehand.
+// A handoff code as a QR code -- the customer's at the door, the store's at
+// pickup -- which the driver's app scans: the order, the code and its salt.
+// Scanned, it proves the giver handed the order over: the network checks it
+// against the order's commitment, `sha256(pin || salt)` (see dispatch
+// `pin`). The salt never leaves the giver's device before the handoff, so
+// nobody can test guesses against the commitment beforehand.
 import { bytesToHex, hexToBytes } from "../holochain/decode";
-import type { PinSecret } from "../holochain/types";
+import { HANDOFF_CODE_DIGITS, type PinSecret } from "../holochain/types";
 
 const PREFIX = "relay-handover:1";
+/// The order, the code's digits and its 16-byte salt.
+const HANDOVER_PATTERN = new RegExp(`^${PREFIX}:([0-9a-f]+):(\\d{${HANDOFF_CODE_DIGITS}}):([0-9a-f]{32})$`);
 
 export function encodeHandoverCode(orderHex: string, secret: PinSecret): string {
   return `${PREFIX}:${orderHex}:${secret.pin}:${bytesToHex(Uint8Array.from(secret.salt))}`;
@@ -15,7 +17,7 @@ export function encodeHandoverCode(orderHex: string, secret: PinSecret): string 
 
 /// A scanned code, if it's one: the order it's for, and its secret.
 export function decodeHandoverCode(text: string): { orderHex: string; secret: PinSecret } | null {
-  const match = /^relay-handover:1:([0-9a-f]+):(\d{6}):([0-9a-f]{32})$/.exec(text.trim());
+  const match = HANDOVER_PATTERN.exec(text.trim());
   if (!match) return null;
   return { orderHex: match[1], secret: { pin: match[2], salt: hexToBytes(match[3]) } };
 }

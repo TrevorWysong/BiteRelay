@@ -4,10 +4,10 @@
 //! receipt under the leg it attests.
 
 use crate::*;
-use relay_integrity_support::{decode, invalid, link_target, original_creation, require, LinkTarget};
+use relay_integrity_support::{decode, invalid, linked_record, original_creation, require};
 
 pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    let LinkTarget::Record(record) = link_target(target)? else {
+    let Some(record) = linked_record(target)? else {
         return invalid("attestation links must target a record");
     };
     match link_type {
@@ -16,13 +16,6 @@ pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target
             require(
                 author == record.action().author() && base == &AnyLinkableHash::from(original_creation(leg.order_ref)?),
                 "a leg may only be linked under its own order, by its author",
-            )
-        }
-        LinkTypes::LegToEvidenceShare => {
-            let Some(share) = decode::<EvidenceShare>(&record) else { return invalid("target is not an EvidenceShare") };
-            require(
-                base == &AnyLinkableHash::from(share.leg) && author == record.action().author(),
-                "shared evidence may only be linked under its own handoff, by whoever shared it",
             )
         }
         LinkTypes::LegToReceipt => {

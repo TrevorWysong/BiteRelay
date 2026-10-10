@@ -2,17 +2,17 @@
 // could write -- which an honest coordinator never would, so these use the
 // `test-utils` coordinator build's raw link externs (see
 // `useTestCoordinators`). Each attack targets a real read: ratings, menus,
-// order lists, balances, the dispute queue, presence and profiles. Run
+// order lists, balances, a store's decisions, presence and profiles. Run
 // `npm run build:test-coordinators` first.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder } from "./helpers.js";
+import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp } from "./helpers.js";
 
-const ALL_ZOMES = ["attestation", "catalog", "dispatch", "dispute", "ledger", "profiles", "reputation"];
+const ALL_ZOMES = ["attestation", "catalog", "dispatch", "ledger", "profiles", "reputation"];
 
 await runScenario(async (scenario) => {
-  const [customer, merchant, attacker] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [customer, merchant, attacker] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
   const all = [customer, merchant, attacker];
   await scenario.shareAllAgents();
   for (const player of all) await useTestCoordinators(player, ALL_ZOMES);
@@ -49,10 +49,6 @@ await runScenario(async (scenario) => {
   await sync();
   await completePickup(reviewedOrder);
   const review = actionHash(await call(customer, "reputation")<HcRecord>("submit_review", { target: { Store: storeA }, order_original_action: reviewedOrder, rating: 1, comment: "cold" }));
-  const disputedOrder = await placePickup();
-  await sync();
-  await completePickup(disputedOrder);
-  await call(customer, "dispatch")("raise_pickup_dispute", { order_original_action: disputedOrder, reason: "WrongOrIncompleteItems", description: "missing fries", evidence_refs: [] });
   const activeOrder = await placePickup();
   const deliveryOrder = actionHash(
     await call(customer, "dispatch")<HcRecord>("request_delivery", { merchant: merchant.agentPubKey, catalog_ref: storeA, items: [{ item_ref: itemA, quantity: 1 }], order_total: 1000, dropoff: ST_PETE, max_delivery_fee: null }),
@@ -72,7 +68,7 @@ await runScenario(async (scenario) => {
   await sync();
   const [hold] = await call(customer, "ledger")<{ hold: Uint8Array }[]>("holds_for_order", reviewedOrder);
   assert.ok(hold, "the pickup's food should have been held");
-  console.log("[PASS] set up two stores, a reviewed order, a disputed order, an active order, a leg and a payment");
+  console.log("[PASS] set up two stores, a reviewed order, an active order, a leg and a payment");
 
   const rejects = (attempt: Promise<unknown>, reason: RegExp, what: string) => assert.rejects(attempt, reason, what);
 
@@ -95,22 +91,30 @@ await runScenario(async (scenario) => {
   await rejects(rawLink(customer, "dispatch", "CustomerToActiveOrder", agentAsLinkBase(attacker.agentPubKey), activeOrder), /under the order's own store, customer or driver/, "a customer can't put their order in someone else's list");
   await rejects(rawDelete(attacker, "dispatch", "CustomerToActiveOrder", agentAsLinkBase(customer.agentPubKey)), /may retire it from an active queue/, "a stranger can't hide a customer's active order");
   await rejects(rawLink(attacker, "dispatch", "DriverToActiveDelivery", agentAsLinkBase(attacker.agentPubKey), deliveryOrder, attackerBid), /only the order's requester may add it/, "a driver can't assign themselves a delivery the customer never accepted");
-  await rejects(rawLink(customer, "dispatch", "DriverToActiveDelivery", agentAsLinkBase(attacker.agentPubKey), deliveryOrder), /tag must name the accepted bid/, "a delivery can't be assigned to a driver without naming their bid");
+  await rejects(rawLink(customer, "dispatch", "DriverToActiveDelivery", agentAsLinkBase(attacker.agentPubKey), deliveryOrder), /tag must be the order version accepting that driver/, "a delivery can't be assigned to a driver without the version that accepted them");
   await rejects(rawLink(attacker, "dispatch", "StoreToActiveOrder", storeB, activeOrder), /only the order's requester may add it/, "a stranger can't inject an order into a store queue");
   await rejects(rawLink(customer, "dispatch", "StoreToActiveOrder", storeB, activeOrder), /under the order's own store/, "an order can't be queued at a store it wasn't placed with");
   await rejects(rawDelete(attacker, "dispatch", "StoreToActiveOrder", storeA), /may retire it from an active queue/, "a stranger can't pull an order out of a store's active queue");
   console.log("[PASS] dispatch: orders can't be attached to strangers or other stores' queues, or pulled from them");
+
+  // --- Anchors and history indexes: nothing to clutter them with. ---
+  const nowhere = agentAsLinkBase(attacker.agentPubKey);
+  await rejects(rawLink(attacker, "catalog", "GeohashToCatalog", storeA, nowhere), /catalog links must target a record/, "a store anchor links only stores");
+  await rejects(rawLink(attacker, "dispatch", "OpenOrderGeohashAnchor", storeA, nowhere), /an open-order anchor links only orders/, "an open-order anchor links only orders");
+  await rejects(rawLink(attacker, "dispatch", "StoreHistoryPath", storeA, storeA), /must name its day and order/, "a history day is indexed only for an order");
+  const dayTag = (order: Uint8Array) => new Uint8Array([...new Uint8Array(8), ...order]);
+  await rejects(rawLink(attacker, "dispatch", "StoreHistoryPath", storeA, storeA, dayTag(activeOrder)), /indexed by its order's customer/, "only by its customer");
+  await rejects(rawLink(customer, "dispatch", "CustomerHistoryPath", storeA, storeA, dayTag(activeOrder)), /indexed by its order's customer, for the day it was placed/, "for the day it was placed");
+  console.log("[PASS] anchors and history indexes can't be cluttered with links to nothing");
 
   // --- Ledger: a hold is found under its own order. ---
   await rejects(rawLink(attacker, "ledger", "OrderToHold", activeOrder, hold.hold), /authored by the author of the entry/, "a stranger can't file someone else's hold");
   await rejects(rawLink(customer, "ledger", "OrderToHold", activeOrder, hold.hold), /must sit under the order, hold or agent its entry is about/, "a hold can't be filed under an order it isn't for");
   console.log("[PASS] ledger: a hold can only be linked under its own order, by its payer");
 
-  // --- Dispute: only an arbitrator closes a case out of the open queue. ---
-  const openDisputes = await call(customer, "dispute")<Uint8Array[]>("test_get_link_hashes", { link_type: "OpenDisputeAnchor", base: await call(customer, "dispute")<Uint8Array>("test_path_hash", "open_disputes") });
-  assert.ok(openDisputes.length > 0, "the raised dispute should be in the open queue");
-  await rejects(call(customer, "dispute")("test_delete_link", openDisputes[openDisputes.length - 1]), /only an arbitrator may close a dispute/, "even the raiser can't close their own case");
-  console.log("[PASS] dispute: a case can't be removed from the open queue by a non-arbitrator");
+  // --- A store's decisions: only its own outcome or settlement, under its order. ---
+  await rejects(rawLink(attacker, "dispatch", "OrderToDecision", reviewedOrder, review), /isn't the record its link type indexes/, "anything else can't pose as a store's decision");
+  console.log("[PASS] dispatch: only a store's decision is filed as one");
 
   // --- Attestation, profiles. ---
   await rejects(rawLink(attacker, "attestation", "OrderToLeg", activeOrder, leg), /under its own order/, "a leg can't be attached to a different order");

@@ -3,6 +3,7 @@
 //! (merchant-scoped discount codes).
 
 use hdi::prelude::*;
+use relay_integrity_support::limits::*;
 use relay_integrity_support::{first_problem, image_problem, text_problem};
 use relay_integrity_support::{classify, decode, invalid, Checked};
 
@@ -15,7 +16,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PinPolicy, PromoCode, PromoRequirement, PromoReward, CLOCK_SKEW_TOLERANCE_MICROS, MAX_GOODIE_BAG_LIFETIME_MICROS, DEFAULT_PREP_MINUTES, MAX_OPENING_PERIODS, MAX_PREP_MINUTES};
+pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -109,14 +110,14 @@ fn validate_menu_item_update(item: &MenuItem, author: &AgentPubKey, original: &A
 fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([
         image_problem(&catalog.banner_data_uri).map(String::from),
-        text_problem("business_name", &catalog.business_name, 100),
-        text_problem("description", &catalog.description, 2_000),
-        text_problem("cuisine_type", &catalog.cuisine_type, 60),
-        text_problem("phone", &catalog.phone, 30),
-        text_problem("address_street", &catalog.address_street, 200),
-        text_problem("address_city", &catalog.address_city, 100),
-        text_problem("address_state", &catalog.address_state, 100),
-        text_problem("address_zip", &catalog.address_zip, 20),
+        text_problem("business_name", &catalog.business_name, MAX_NAME_CHARS),
+        text_problem("description", &catalog.description, MAX_DESCRIPTION_CHARS),
+        text_problem("cuisine_type", &catalog.cuisine_type, MAX_LABEL_CHARS),
+        text_problem("phone", &catalog.phone, MAX_PHONE_CHARS),
+        text_problem("address_street", &catalog.address_street, MAX_STREET_CHARS),
+        text_problem("address_city", &catalog.address_city, MAX_PLACE_CHARS),
+        text_problem("address_state", &catalog.address_state, MAX_PLACE_CHARS),
+        text_problem("address_zip", &catalog.address_zip, MAX_POSTAL_CODE_CHARS),
     ]) {
         return Ok(invalid);
     }
@@ -127,6 +128,13 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
         return Ok(ValidateCallbackResult::Invalid(
             "a merchant catalog can only be authored by its own owner".into(),
         ));
+    }
+    if !catalog.location.is_valid() {
+        return Ok(ValidateCallbackResult::Invalid("a store's location must be a real place".into()));
+    }
+    let radius = catalog.max_delivery_radius_km;
+    if !radius.is_finite() || radius <= 0.0 || radius > relay_governance::max_delivery_radius_km() {
+        return Ok(ValidateCallbackResult::Invalid(format!("a delivery radius must be more than 0 and at most {} km", relay_governance::max_delivery_radius_km())));
     }
     let expected = relay_types::encode(catalog.location, CATALOG_GEOHASH_PRECISION);
     if catalog.geohash != expected {
@@ -145,11 +153,15 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
     if let Some(problem) = catalog.weekly_hours.iter().find_map(|period| period.problem()) {
         return Ok(ValidateCallbackResult::Invalid(problem.into()));
     }
-    if catalog.time_zone.is_empty() || catalog.time_zone.len() > 64 {
+    if catalog.time_zone.is_empty() || catalog.time_zone.len() > MAX_TIME_ZONE_CHARS {
         return Ok(ValidateCallbackResult::Invalid("time_zone must be an IANA zone name".into()));
     }
-    if catalog.prep_minutes == 0 || catalog.prep_minutes > MAX_PREP_MINUTES {
-        return Ok(ValidateCallbackResult::Invalid(format!("prep_minutes must be between 1 and {MAX_PREP_MINUTES}")));
+    let max_prep = relay_governance::max_prep_minutes();
+    if catalog.prep_minutes == 0 || catalog.prep_minutes > max_prep {
+        return Ok(ValidateCallbackResult::Invalid(format!("prep_minutes must be between 1 and {max_prep}")));
+    }
+    if let Some(problem) = dietary_tags_problem(&catalog.dietary_tags) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     Ok(ValidateCallbackResult::Valid)
 }
@@ -157,14 +169,17 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
 fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([
         image_problem(&item.photo_data_uri).map(String::from),
-        text_problem("name", &item.name, 100),
-        text_problem("description", &item.description, 2_000),
-        text_problem("category", &item.category, 60),
+        text_problem("name", &item.name, MAX_NAME_CHARS),
+        text_problem("description", &item.description, MAX_DESCRIPTION_CHARS),
+        text_problem("category", &item.category, MAX_LABEL_CHARS),
     ]) {
         return Ok(invalid);
     }
     if item.name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("name must not be empty".into()));
+    }
+    if let Some(problem) = dietary_tags_problem(&item.dietary_tags) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     if item.price_cents == 0 {
         return Ok(ValidateCallbackResult::Invalid("price_cents must be greater than zero".into()));
@@ -267,7 +282,7 @@ fn reward_item_ref(reward: &PromoReward) -> Option<&ActionHash> {
 }
 
 fn validate_new_promo_code(promo: &PromoCode, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
-    if let Some(invalid) = first_problem([text_problem("code", &promo.code, 40)]) {
+    if let Some(invalid) = first_problem([text_problem("code", &promo.code, MAX_PROMO_CODE_CHARS)]) {
         return Ok(invalid);
     }
     if promo.code.trim().is_empty() {
@@ -331,11 +346,11 @@ fn validate_promo_code_update(promo: &PromoCode, author: &AgentPubKey, original_
 }
 
 fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey, created: Timestamp) -> ExternResult<ValidateCallbackResult> {
-    if (bag.created_at.as_micros() - created.as_micros()).abs() > CLOCK_SKEW_TOLERANCE_MICROS {
+    if (bag.created_at.as_micros() - created.as_micros()).abs() > clock_tolerance_micros() {
         return Ok(ValidateCallbackResult::Invalid("created_at must match when the bag was actually published".into()));
     }
-    if bag.pickup_window_end.as_micros() - bag.created_at.as_micros() > MAX_GOODIE_BAG_LIFETIME_MICROS {
-        return Ok(ValidateCallbackResult::Invalid("a goodie bag's pickup window must end within 7 days of listing it".into()));
+    if bag.pickup_window_end.as_micros() - bag.created_at.as_micros() > relay_governance::goodie_bag_max_lifetime().as_micros() as i64 {
+        return Ok(ValidateCallbackResult::Invalid("a goodie bag's pickup window ends too long after it's listed".into()));
     }
     validate_bag_fields(bag, author)
 }
@@ -344,8 +359,8 @@ fn validate_new_goodie_bag(bag: &GoodieBag, author: &AgentPubKey, created: Times
 fn validate_bag_fields(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([
         image_problem(&bag.photo_data_uri).map(String::from),
-        text_problem("title", &bag.title, 100),
-        text_problem("description", &bag.description, 2_000),
+        text_problem("title", &bag.title, MAX_NAME_CHARS),
+        text_problem("description", &bag.description, MAX_DESCRIPTION_CHARS),
     ]) {
         return Ok(invalid);
     }
@@ -410,7 +425,7 @@ fn validate_goodie_bag_update(bag: &GoodieBag, author: &AgentPubKey, original_ac
 }
 
 fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey, claimed: Timestamp) -> ExternResult<ValidateCallbackResult> {
-    if (claim.claimed_at.as_micros() - claimed.as_micros()).abs() > CLOCK_SKEW_TOLERANCE_MICROS {
+    if (claim.claimed_at.as_micros() - claimed.as_micros()).abs() > clock_tolerance_micros() {
         return Ok(ValidateCallbackResult::Invalid("claimed_at must match when the claim was actually made".into()));
     }
     if &claim.customer != author {
@@ -488,4 +503,17 @@ fn validate_claim_confirmation(claim: &BagClaim, author: &AgentPubKey, original_
         ));
     }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// How far a self-reported time may sit from its own action's timestamp
+/// (`relay_governance::clock_tolerance`): generous enough for clock skew,
+/// tight enough that a bag can't be backdated out of (or forward-dated
+/// into) its listing window.
+fn clock_tolerance_micros() -> i64 {
+    relay_governance::clock_tolerance().as_micros() as i64
+}
+
+/// Why a list of dietary tags is unacceptable, if it is.
+fn dietary_tags_problem(tags: &[String]) -> Option<String> {
+    (tags.len() > MAX_DIETARY_TAGS || tags.iter().any(|tag| tag.chars().count() > MAX_LABEL_CHARS)).then(|| format!("at most {MAX_DIETARY_TAGS} dietary tags, each at most {MAX_LABEL_CHARS} characters"))
 }

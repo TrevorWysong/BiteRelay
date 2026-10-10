@@ -23,19 +23,18 @@
 use hdi::hash_path::path::Path;
 use hdi::prelude::*;
 
-/// What a link points at. Anchor paths (`Path::ensure`) build their tree
-/// out of links whose targets are path *entries*; data links target the
-/// *action* of the record they index. Rules apply to data links; tree links
-/// only shape an anchor and carry no claim about any record.
-pub enum LinkTarget {
-    PathNode,
-    Record(Record),
-}
+pub mod limits;
+mod sealed;
+pub use sealed::{max_sealed_image_bytes, sealed_chunks_problem, sealed_problem, SealedChunks};
 
-pub fn link_target(target: &AnyLinkableHash) -> ExternResult<LinkTarget> {
+/// The record a link points at -- `None` if it points at anything else.
+/// Every link in this app indexes a record (by its action); anchors are
+/// computed hashes, never trees of links, so a link to anything else is
+/// clutter, and every validator refuses it.
+pub fn linked_record(target: &AnyLinkableHash) -> ExternResult<Option<Record>> {
     match target.clone().into_action_hash() {
-        Some(action) => Ok(LinkTarget::Record(must_get_valid_record(action)?)),
-        None => Ok(LinkTarget::PathNode),
+        Some(action) => Ok(Some(must_get_valid_record(action)?)),
+        None => Ok(None),
     }
 }
 
@@ -123,11 +122,6 @@ pub fn author_of(hash: &ActionHash) -> ExternResult<AgentPubKey> {
     Ok(must_get_action(hash.clone())?.hashed.content.header.author.clone())
 }
 
-/// The largest image an entry may carry, as a data URI -- the same ceiling
-/// the app's own uploader resizes to (`web/src/lib/image.ts`). An entry is
-/// stored by every authority for it, forever.
-pub const MAX_IMAGE_URI_BYTES: usize = 300_000;
-
 /// Why `uri` isn't an acceptable image, if it isn't. An image is empty or an
 /// inline `data:` URI of a raster format, never a link: a link would have
 /// every viewer's app fetch it from a server that learns who they are and
@@ -136,8 +130,11 @@ pub fn image_problem(uri: &str) -> Option<&'static str> {
     if uri.is_empty() {
         return None;
     }
-    if uri.len() > MAX_IMAGE_URI_BYTES {
-        return Some("an image may be at most 300KB");
+    // An entry is stored by every authority for it, forever -- so the
+    // network bounds it (`relay_governance::max_image_bytes`); the app's
+    // uploader resizes to fit.
+    if uri.len() > relay_governance::max_image_bytes() {
+        return Some("an image is larger than this network allows");
     }
     let raster = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,", "data:image/gif;base64,"];
     let Some(payload) = raster.iter().find_map(|prefix| uri.strip_prefix(prefix)) else {

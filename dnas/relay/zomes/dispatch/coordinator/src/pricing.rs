@@ -97,10 +97,13 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput
 }
 
 /// How long the store still honours an order priced just before one of its
-/// items changed -- an honest order that raced the update. Bounded, because
-/// when an order was placed is the customer's own claim (its action's
-/// timestamp), which a modified client could backdate a little.
-const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
+/// items changed -- an honest order that raced the update
+/// (`relay_governance::price_change_grace`). Bounded, because when an order
+/// was placed is the customer's own claim (its action's timestamp), which a
+/// modified client could backdate a little.
+fn price_change_grace_secs() -> i64 {
+    relay_governance::price_change_grace().as_secs() as i64
+}
 
 /// The store's check before it accepts an order: every line is priced from
 /// the version of its item that was current when the order was placed, and
@@ -114,14 +117,11 @@ const PRICE_CHANGE_GRACE_SECS: i64 = 15 * 60;
 /// is the bag itself, never outdated. The same goes for the promo: it must
 /// still be live (validation can't tell a deactivated code from a live one
 /// either), or have stopped only after this order was placed, recently.
-/// How far ahead of the store's clock an order's timestamp may be.
-const MAX_CLOCK_SKEW_MICROS: i64 = 5 * 60 * 1_000_000;
-
 pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>, promo_ref: Option<&ActionHash>) -> ExternResult<()> {
-    // An order dated in the future would hold back the store's payment until
-    // then: its issue window can't open before the order's own timestamp.
+    // An order dated in the future would hold back the store's decisions
+    // until then: none can be dated before the order.
     let placed = get(order_ref.clone(), GetOptions::default())?.ok_or(guest("order not found".into()))?.action().timestamp();
-    if placed.as_micros() > sys_time()?.as_micros() + MAX_CLOCK_SKEW_MICROS {
+    if placed.as_micros() > sys_time()?.as_micros() + relay_governance::clock_tolerance().as_micros() as i64 {
         return Err(guest("this order is dated in the future, so it can't be accepted -- decline it".into()));
     }
     match outdated_item(order_ref, lines, bag_claim_ref, promo_ref)? {
@@ -156,7 +156,7 @@ pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_cla
         // When the version the line names was replaced, if it's this item's.
         let replaced_at = versions.iter().position(|v| v.action == line.priced_version).and_then(|i| versions.get(i + 1)).map(|next| next.written_at);
         let raced = replaced_at.is_some_and(|changed| changed > placed_at);
-        let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= PRICE_CHANGE_GRACE_SECS;
+        let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= price_change_grace_secs();
         if !(raced && recent) {
             let name = if history.name.is_empty() { "An item".to_string() } else { history.name };
             return Ok(Some(name));
@@ -194,7 +194,7 @@ fn promo_lapsed(order_ref: &ActionHash, promo_ref: &ActionHash) -> ExternResult<
     let deactivated = versions.iter().rev().take_while(|v| !v.active).last().map(|v| v.written_at);
     let stopped = [deactivated, current.expires_at].into_iter().flatten().min().unwrap_or(now);
     let placed_at = placement_time(order_ref)?;
-    let recent = now.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= PRICE_CHANGE_GRACE_SECS;
+    let recent = now.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= price_change_grace_secs();
     Ok(!(placed_at < stopped && recent))
 }
 

@@ -7,12 +7,12 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil } from "./helpers.js";
+import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
   ]);
   const both = [customer, driver];
   await scenario.shareAllAgents();
@@ -92,7 +92,7 @@ await runScenario(async (scenario) => {
   await dhtSync(both, customer.cells[0].cell_id[0]);
   await assert.rejects(
     dispatchOf(customer)("complete_delivery", { order_original_action: orderRef }),
-    /hasn't acknowledged receiving this order/,
+    /no proof yet that the customer has it/,
     "the driver's word alone doesn't complete a delivery",
   );
   await attestationOf(customer)("acknowledge_leg", dropoffLeg);

@@ -6,12 +6,12 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, retryUntil, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, appSource, decodeEntry, retryUntil, ST_PETE, useTestCoordinators, testApp } from "./helpers.js";
 
 const MINUTE = 60 * 1_000_000;
 
 await runScenario(async (scenario) => {
-  const [customer, merchant] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
   const both = [customer, merchant];
   await scenario.shareAllAgents();
   // Each can write what a modified client could.
@@ -70,7 +70,6 @@ await runScenario(async (scenario) => {
       lines: [{ item_ref: soup, priced_version: soup, quantity: 1 }],
       order_total: 800,
       status: "Placed",
-      dispute_ref: null,
       requested_at: Date.now() * 1000,
       kitchen_note: null,
       promo_code_ref: null,

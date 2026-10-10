@@ -23,9 +23,8 @@
 use crate::links::OpLinkFields;
 use crate::LinkTypes;
 use dispatch_types::{Bid, DeliveryOrder, PickupOrder};
-use hdi::hash_path::path::{Path, TypedPath};
 use hdi::prelude::*;
-use relay_integrity_support::{decode, invalid, link_target, original_creation, require, LinkTarget};
+use relay_integrity_support::{decode, invalid, linked_record, original_creation, path_hash, require};
 
 /// Whose order queues these are.
 pub enum QueueOwner<'a> {
@@ -49,14 +48,16 @@ impl QueueOwner<'_> {
     }
 
     /// The owner's history root -- its children are the day buckets.
-    pub fn history_root(&self) -> ExternResult<TypedPath> {
-        let (prefix, path_type, id) = self.history_parts();
-        Path::from(format!("{prefix}.{id}")).typed(path_type)
+    /// Where the owner's history days are indexed (`history_index_tag`).
+    pub fn history_root(&self) -> ExternResult<AnyLinkableHash> {
+        let (prefix, _, id) = self.history_parts();
+        path_hash(format!("{prefix}.{id}"))
     }
 
-    pub fn history_day(&self, day: i64) -> ExternResult<TypedPath> {
-        let (prefix, path_type, id) = self.history_parts();
-        Path::from(format!("{prefix}.{id}.{day}")).typed(path_type)
+    /// One day of the owner's history, which its orders are linked under.
+    pub fn history_day(&self, day: i64) -> ExternResult<AnyLinkableHash> {
+        let (prefix, _, id) = self.history_parts();
+        path_hash(format!("{prefix}.{id}.{day}"))
     }
 
     pub fn history_link_type(&self) -> LinkTypes {
@@ -66,8 +67,8 @@ impl QueueOwner<'_> {
         }
     }
 
-    /// The link type of the owner's day-bucket path links.
-    pub fn history_path_link_type(&self) -> LinkTypes {
+    /// The link type indexing the owner's history days.
+    pub fn history_index_link_type(&self) -> LinkTypes {
         self.history_parts().1
     }
 
@@ -81,6 +82,21 @@ impl QueueOwner<'_> {
 
 /// History buckets are UTC days of the order's `requested_at`.
 pub const HISTORY_BUCKET_MICROS: i64 = 86_400 * 1_000_000;
+
+/// The tag of a history index link: the day it indexes, and the order that
+/// put an order in it -- what lets validation check every indexed day
+/// holds a real order, so nobody can pad a history with empty days.
+pub fn history_index_tag(day: i64, order: &ActionHash) -> LinkTag {
+    let mut bytes = day.to_be_bytes().to_vec();
+    bytes.extend_from_slice(order.get_raw_39());
+    LinkTag::new(bytes)
+}
+
+/// A history index link's day and order, from its tag.
+pub fn parse_history_index_tag(tag: &LinkTag) -> Option<(i64, ActionHash)> {
+    let (day, order) = tag.0.split_at_checked(8)?;
+    Some((i64::from_be_bytes(day.try_into().ok()?), ActionHash::try_from_raw_39(order.to_vec()).ok()?))
+}
 
 pub fn history_day(at: Timestamp) -> i64 {
     at.as_micros().div_euclid(HISTORY_BUCKET_MICROS)
@@ -96,7 +112,7 @@ struct QueuedOrder {
 }
 
 fn queued_order(target: &AnyLinkableHash) -> ExternResult<Result<QueuedOrder, String>> {
-    let LinkTarget::Record(record) = link_target(target)? else {
+    let Some(record) = linked_record(target)? else {
         return Ok(Err("an order queue link must target an order".into()));
     };
     if let Some(o) = decode::<DeliveryOrder>(&record) {
@@ -109,9 +125,15 @@ fn queued_order(target: &AnyLinkableHash) -> ExternResult<Result<QueuedOrder, St
 }
 
 /// The bid named by a `DriverToActiveDelivery` link's tag.
-fn tagged_bid(tag: &LinkTag) -> ExternResult<Option<Bid>> {
-    let Ok(bid_ref) = ActionHash::try_from_raw_39(tag.0.clone()) else { return Ok(None) };
-    Ok(decode::<Bid>(&must_get_valid_record(bid_ref)?))
+/// The driver a delivery link's tag names: the bidder of the bid accepted by
+/// the order version the tag is -- the version that made them its driver.
+fn tagged_driver(tag: &LinkTag, order: &AnyLinkableHash) -> ExternResult<Option<AgentPubKey>> {
+    let Ok(version) = ActionHash::try_from_raw_39(tag.0.clone()) else { return Ok(None) };
+    if AnyLinkableHash::from(original_creation(version.clone())?) != *order {
+        return Ok(None);
+    }
+    let Some(accepted) = decode::<DeliveryOrder>(&must_get_valid_record(version)?).and_then(|o| o.accepted_bid) else { return Ok(None) };
+    Ok(decode::<Bid>(&must_get_valid_record(accepted)?).map(|bid| bid.bidder))
 }
 
 /// Only the order's requester (who places it, and accepts a bid) may
@@ -119,7 +141,7 @@ fn tagged_bid(tag: &LinkTag) -> ExternResult<Option<Bid>> {
 /// for history), or under the driver whose bid they accepted.
 pub fn validate_queue_link_create(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     if matches!(link.link_type, LinkTypes::StoreHistoryPath | LinkTypes::CustomerHistoryPath) {
-        return require(matches!(link_target(link.target)?, LinkTarget::PathNode), "history path links must target a path");
+        return validate_history_index(&link);
     }
     let order = match queued_order(link.target)? {
         Ok(order) => order,
@@ -134,26 +156,20 @@ pub fn validate_queue_link_create(link: OpLinkFields<'_>) -> ExternResult<Valida
     let expected_base: AnyLinkableHash = match link.link_type {
         LinkTypes::StoreToActiveOrder => store.active_base(),
         LinkTypes::CustomerToActiveOrder => customer.active_base(),
-        LinkTypes::StoreHistoryToOrder => store.history_day(day)?.path_entry_hash()?.into(),
-        LinkTypes::CustomerHistoryToOrder => customer.history_day(day)?.path_entry_hash()?.into(),
-        LinkTypes::DriverToActiveDelivery => {
-            let Some(bid) = tagged_bid(link.tag)? else { return invalid("a driver delivery link's tag must name the accepted bid") };
-            // A scheduled order is bid on via the update that opened it
-            // (that's the version published to drivers), so compare
-            // identities, not the exact version the bid names.
-            if AnyLinkableHash::from(original_creation(bid.order_ref)?) != *link.target {
-                return invalid("the tagged bid must be for this order");
-            }
-            bid.bidder.into()
-        }
+        LinkTypes::StoreHistoryToOrder => store.history_day(day)?,
+        LinkTypes::CustomerHistoryToOrder => customer.history_day(day)?,
+        LinkTypes::DriverToActiveDelivery => match tagged_driver(link.tag, link.target)? {
+            Some(driver) => driver.into(),
+            None => return invalid("a driver delivery link's tag must be the order version accepting that driver"),
+        },
         _ => return Ok(ValidateCallbackResult::Valid),
     };
     require(link.base == &expected_base, "an order queue link must sit under the order's own store, customer or driver (and day, for history)")
 }
 
 /// History is permanent. An order leaves an active queue only by one of the
-/// parties who can end it -- its requester, its merchant, or an arbitrator
-/// resolving a dispute -- or, for a driver's queue, that driver.
+/// parties who can end it -- its requester or its merchant -- or, for a
+/// driver's queue, that driver.
 pub fn validate_queue_link_delete(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::StoreToActiveOrder | LinkTypes::CustomerToActiveOrder | LinkTypes::DriverToActiveDelivery => {
@@ -161,10 +177,10 @@ pub fn validate_queue_link_delete(link: OpLinkFields<'_>) -> ExternResult<Valida
                 Ok(order) => order,
                 Err(reason) => return invalid(&reason),
             };
-            let is_driver = matches!(link.link_type, LinkTypes::DriverToActiveDelivery) && tagged_bid(link.tag)?.is_some_and(|bid| &bid.bidder == link.author);
+            let is_driver = matches!(link.link_type, LinkTypes::DriverToActiveDelivery) && tagged_driver(link.tag, link.target)?.as_ref() == Some(link.author);
             require(
-                link.author == &order.requester || link.author == &order.merchant || is_driver || relay_governance::is_arbitrator(link.author)?,
-                "only the order's requester, merchant, driver or an arbitrator may retire it from an active queue",
+                link.author == &order.requester || link.author == &order.merchant || is_driver,
+                "only the order's requester, merchant or driver may retire it from an active queue",
             )
         }
         LinkTypes::StoreHistoryToOrder | LinkTypes::StoreHistoryPath | LinkTypes::CustomerHistoryToOrder | LinkTypes::CustomerHistoryPath => {
@@ -194,4 +210,23 @@ mod tests {
         assert_eq!(history_day(Timestamp::from_micros(-DAY)), -1);
         assert_eq!(history_day(Timestamp::from_micros(-DAY - 1)), -2);
     }
+}
+
+/// A history index link: under the owner's history root, to the day an
+/// order of theirs was placed, by its customer, naming the order in its tag
+/// (`history_index_tag`).
+fn validate_history_index(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
+    let Some((day, order_ref)) = parse_history_index_tag(link.tag) else { return invalid("a history index link's tag must name its day and order") };
+    let order = match queued_order(&order_ref.into())? {
+        Ok(order) => order,
+        Err(reason) => return invalid(&reason),
+    };
+    if link.author != &order.requester || day != history_day(order.requested_at) {
+        return invalid("a history day is indexed by its order's customer, for the day it was placed");
+    }
+    let owner = match link.link_type {
+        LinkTypes::StoreHistoryPath => QueueOwner::Store(&order.catalog_ref),
+        _ => QueueOwner::Customer(&order.requester),
+    };
+    require(link.base == &owner.history_root()? && link.target == &owner.history_day(day)?, "a history index link must sit under its own owner's history, pointing at its day")
 }

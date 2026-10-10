@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useResource } from "../../lib/useResource";
 import { useParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ChefHat } from "lucide-react";
+import { CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
-import { cancelPickupOrder, getOrderPrivateDetails, getPickupOrder, raisePickupDispute, completePickup } from "../../holochain/zomes/dispatch";
+import { cancelPickupOrder, getOrderPrivateDetails, getPickupOrder, reportPickupProblem, completePickup } from "../../holochain/zomes/dispatch";
 import { fetchOrderItemNames } from "../../lib/menu";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
 import { decodeEntry, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
@@ -19,6 +19,7 @@ import type { PickupOrder, Review } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderIssues } from "../../components/OrderIssues";
+import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 
 
 /// `OrderDetail`'s pickup sibling -- no bids, no driver, no live map, no
@@ -77,7 +78,7 @@ export function PickupOrderDetail() {
     setDisputing(true);
     setError(null);
     try {
-      await raisePickupDispute({ order_original_action: orderRef, reason: "NeverDelivered", description: "Order was never ready/handed over.", evidence_refs: [] });
+      await reportPickupProblem(orderRef);
       await reloadOrder();
     } catch (err) {
       setError(describeError(err));
@@ -123,9 +124,6 @@ export function PickupOrderDetail() {
     }
   }
 
-  // Validation only takes a pickup dispute once the order is ready or
-  // collected.
-  const canDispute = order.status === "PickedUp";
 
   async function cancel() {
     setCancelling(true);
@@ -186,15 +184,22 @@ export function PickupOrderDetail() {
         </motion.div>
       )}
 
-      {order.status === "ReadyForPickup" && (
+      {(order.status === "ReadyForPickup" || order.status === "Disputed") && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <div className="flex items-center gap-3">
             <ChefHat size={20} className="text-relay-600" />
-            <p className="text-sm text-relay-700 dark:text-relay-300">Your order is ready for pickup.</p>
+            <p className="text-sm text-relay-700 dark:text-relay-300">
+              {order.status === "Disputed" ? "You've told the store there's a problem. They'll hand it over, or cancel it and refund you." : "Your order is ready for pickup."}
+            </p>
           </div>
           <Button loading={completing} onClick={confirmPickup}>
             I picked this up
           </Button>
+          {order.status === "ReadyForPickup" && (
+            <button onClick={fileDispute} disabled={disputing} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline disabled:opacity-50 dark:text-relay-300">
+              Can't get your order?
+            </button>
+          )}
         </motion.div>
       )}
 
@@ -205,20 +210,6 @@ export function PickupOrderDetail() {
         </motion.div>
       )}
 
-      {canDispute && (
-        <motion.div variants={fadeSlideUp} className="mt-6">
-          <Button variant="ghost" loading={disputing} onClick={fileDispute} className="w-full">
-            Something else went wrong
-          </Button>
-        </motion.div>
-      )}
-
-      {order.status === "Disputed" && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-300">
-          <AlertTriangle size={20} />
-          <p className="text-sm">An arbitrator is reviewing this case. You'll see the outcome here once resolved.</p>
-        </motion.div>
-      )}
 
       {order.status === "PickedUp" && canRateStore && (
         <motion.div variants={fadeSlideUp}>
@@ -227,7 +218,7 @@ export function PickupOrderDetail() {
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-              {merchantRating > 0 && <Textarea value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
+              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
             </div>
             {canRateItems && (
               <div>

@@ -22,12 +22,13 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, setupArbitratedPlayers, ST_PETE, acceptOrder } from "./helpers.js";
+import { actionHash, setupPlayersWithProperties, ST_PETE, acceptOrder } from "./helpers.js";
 
 type WarrantSummary = { count: number; has_chain_fork: boolean; has_invalid_chain_op: boolean };
 
 await runScenario(async (scenario) => {
-  const { customer, driver, arbitrator, all } = await setupArbitratedPlayers(scenario);
+  const [customer, driver, observer] = await setupPlayersWithProperties(scenario, 3, () => ({}));
+  const all = [customer, driver, observer];
 
   const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
   const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
@@ -42,7 +43,7 @@ await runScenario(async (scenario) => {
   // real chain history (genesis actions + a create_profile) -- proves the
   // API round-trips correctly in this hdk/holochain version and that the
   // decode/summarization logic doesn't error, rather than merely compiling.
-  const cleanSummary = await dispatchOf(arbitrator)<WarrantSummary>("check_warrants", driver.agentPubKey);
+  const cleanSummary = await dispatchOf(observer)<WarrantSummary>("check_warrants", driver.agentPubKey);
   assert.deepEqual(cleanSummary, { count: 0, has_chain_fork: false, has_invalid_chain_op: false }, "a clean agent must show zero warrants");
   console.log("[PASS] check_warrants against a real, clean agent chain correctly reports zero warrants");
 

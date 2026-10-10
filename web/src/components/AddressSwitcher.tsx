@@ -10,6 +10,7 @@ import { AddressSearch } from "./AddressSearch";
 import { Button, Input } from "./ui";
 import type { AddressComponents } from "../lib/geocoding";
 import type { GeoPoint, AddressDetails } from "../holochain/types";
+import { MAX_LABEL_CHARS } from "../holochain/types";
 
 interface AddressRow {
   hash: Uint8Array;
@@ -203,7 +204,7 @@ export function AddressSwitcher({
 
                   {picked && (
                     <div className="mt-3 flex items-center gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
-                      <Input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g. Home, Work)" className="flex-1" />
+                      <Input maxLength={MAX_LABEL_CHARS} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g. Home, Work)" className="flex-1" />
                       <Button loading={saving} disabled={!newLabel.trim()} onClick={saveCurrentPick} className="px-3 py-2.5 text-xs">
                         <Plus size={14} /> Save
                       </Button>

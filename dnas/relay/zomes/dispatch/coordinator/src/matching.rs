@@ -18,13 +18,6 @@ pub(crate) fn open_order_anchor_path(geohash: &str, bucket: i64) -> ExternResult
     Path::from(open_order_anchor(geohash, bucket)).typed(LinkTypes::OpenOrderGeohashAnchor)
 }
 
-/// How precisely an order's drop-off is published (a ~1.2km x 0.6km cell):
-/// enough for a driver to see it's nearby, never the address itself, which
-/// only the assigned driver can open.
-pub(crate) fn dropoff_geohash_precision() -> usize {
-    6
-}
-
 /// Open orders in `geohash` and its neighbouring cells -- what an online
 /// driver's app reads every few seconds.
 #[hdk_extern]

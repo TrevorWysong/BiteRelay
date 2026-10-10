@@ -6,10 +6,10 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators, waitForSignal } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators, waitForSignal, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
-  const [customer, merchant, driver] = await scenario.addPlayersWithApps([{ appBundleSource: appSource }, { appBundleSource: appSource }, { appBundleSource: appSource }]);
+  const [customer, merchant, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
   const all = [customer, merchant, driver];
   await scenario.shareAllAgents();
   // The customer can write what a modified client could.
@@ -48,7 +48,7 @@ await runScenario(async (scenario) => {
   // --- Only the store can accept it. ---
   await assert.rejects(call(customer, "dispatch")("accept_delivery_order", { order_original_action: order }), /only the order's store can accept it/);
   await assert.rejects(
-    call(customer, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "Open", delivery_receipts: [], dispute_ref: null }),
+    call(customer, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "Open", delivery_receipts: [] }),
     /Placed -> Open requires author role Merchant/,
     "validation refuses a customer opening their own order, whatever their client does",
   );
@@ -108,7 +108,6 @@ await runScenario(async (scenario) => {
       lines: [{ item_ref: burgerV1, priced_version: burgerV1, quantity: 1 }],
       order_total: 1000,
       status: "Placed",
-      dispute_ref: null,
       requested_at: Date.now() * 1000,
       kitchen_note: null,
       promo_code_ref: null,

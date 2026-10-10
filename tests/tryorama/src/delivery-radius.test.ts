@@ -1,24 +1,19 @@
-// Proves `max_delivery_radius_km` (catalog zome) is actually enforced --
-// `request_delivery`'s own coordinator-level pre-check
-// (dispatch_coordinator::orders, same best-effort shape and trust tier as
-// its existing promo-code/bag-claim-status checks right above it) rejects
-// a dropoff past the merchant's own radius, for both a normal cart order
-// and a goodie-bag delivery claim finalizing into one. See
-// `relay_types::distance_km`'s own doc comment for why this is a
-// coordinator-level check, not a `validate()`-level one: the radius is a
-// merchant-editable setting (`update_catalog_details`), so a deterministic
-// check would only ever see its value *as published*, not whatever the
-// merchant has since changed it to.
+// Proves a store's delivery radius holds: `request_delivery` refuses a
+// drop-off past it (for a cart order and a goodie-bag delivery alike), and
+// validation refuses an order a modified client writes anyway -- every
+// order cites the store version it was placed under (`catalog_version`),
+// and its public drop-off area must lie within that version's radius, its
+// fee split be that version's, and its sealed notes stay small.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, NYC } from "./helpers.js";
+import { actionHash, decodeEntry, limits, ST_PETE, NYC, testApp, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer, otherMerchant] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
   ]);
   const all = [merchant, customer, otherMerchant];
   await scenario.shareAllAgents();
@@ -131,6 +126,20 @@ await runScenario(async (scenario) => {
   });
   assert.equal(decodeEntry<{ max_delivery_radius_km: number }>(defaultCatalogRecord).max_delivery_radius_km, 8);
   console.log("[PASS] omitting max_delivery_radius_km from publish_catalog defaults to 8km, not a deserialize error");
+
+  // ===== What validation holds an order to =====
+  await useTestCoordinators(customer, ["dispatch"]);
+  await dhtSync(all, customer.cells[0].cell_id[0]);
+  const forged = (fields: Record<string, unknown>) => dispatchOf(customer)("create_raw_delivery_order_for_testing", { template: actionHash(orderInRange), ...fields });
+  const honest = decodeEntry<{ catalog_version: Uint8Array; dropoff_geohash: string }>(orderInRange);
+  assert.equal(honest.dropoff_geohash.length, 6, "an order publishes its drop-off's area, not its point");
+  await assert.rejects(forged({ dropoff_geohash: "dr5reg" }), /outside the store's delivery radius/, "a drop-off in New York, for a store in St. Petersburg");
+  await assert.rejects(forged({ dropoff_geohash: honest.dropoff_geohash.slice(0, 4) }), /geohash of 6 characters/, "nor a vaguer area, which could stretch the radius");
+  await assert.rejects(forged({ catalog_version: actionHash(defaultCatalogRecord) }), /version of the order's own store/, "an order cites its own store's terms, not another's");
+  await assert.rejects(forged({ delivery_subsidy_percent: 0 }), /fee split is its store's/, "nor a fee split the store never set");
+  await assert.rejects(forged({ kitchen_note_bytes: limits.MAX_SEALED_BYTES + 1 }), /kitchen_note is too large/, "a sealed note stays small");
+  assert.ok(await forged({}), "the honest order's own copy is still valid");
+  console.log("[PASS] validation holds every order to its store's radius, fee split and size limits");
 
   console.log("[PASS] delivery radius enforcement test complete");
 });

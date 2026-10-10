@@ -40,9 +40,7 @@ fn claim_anchor_path(bag_ref: &ActionHash) -> ExternResult<hdi::hash_path::path:
 pub fn create_goodie_bag(bag: GoodieBag) -> ExternResult<Record> {
     let catalog_ref = bag.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::GoodieBag(bag))?;
-    let path = bag_anchor_path(&catalog_ref)?;
-    path.ensure()?;
-    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
+    create_link(bag_anchor_path(&catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back goodie bag".into())))
 }
@@ -76,13 +74,14 @@ pub struct BagView {
     pub record: Record,
 }
 
-/// Bags listed within the last `MAX_GOODIE_BAG_LIFETIME_MICROS` -- the only
+/// Bags listed within the longest a bag may live
+/// (`relay_governance::goodie_bag_max_lifetime`) -- the only
 /// ones that can still be live (validation caps a bag's lifetime), so this
 /// reads a week of links at most, never a store's whole history.
 fn recent_bags(catalog_ref: &ActionHash) -> ExternResult<Vec<(BagView, GoodieBag)>> {
     let path_hash = bag_anchor_path(catalog_ref)?.path_entry_hash()?;
     let mut query = LinkQuery::try_new(path_hash, LinkTypes::CatalogToBag)?;
-    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - MAX_GOODIE_BAG_LIFETIME_MICROS));
+    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - bag_lifetime_micros()));
     let links = get_links(query, GetStrategy::default())?;
     Ok(resolve_links_to_records_with_original(links)
         .into_iter()
@@ -139,9 +138,7 @@ pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
         claimed_at: sys_time()?,
     };
     let action_hash = create_entry(&EntryTypes::BagClaim(claim.clone()))?;
-    let path = claim_anchor_path(&input.bag_ref)?;
-    path.ensure()?;
-    create_link(path.path_entry_hash()?, action_hash.clone(), LinkTypes::BagToClaim, ())?;
+    create_link(claim_anchor_path(&input.bag_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::BagToClaim, ())?;
     create_link(claim.customer, action_hash.clone(), LinkTypes::CustomerToClaim, ())?;
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back bag claim".into())))
@@ -172,7 +169,7 @@ pub fn get_my_bag_claims(_: ()) -> ExternResult<Vec<MyClaim>> {
     const FINALIZE_GRACE_MICROS: i64 = 86_400 * 1_000_000;
     let owner = agent_info()?.agent_initial_pubkey;
     let mut query = LinkQuery::try_new(owner.clone(), LinkTypes::CustomerToClaim)?;
-    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - MAX_GOODIE_BAG_LIFETIME_MICROS - FINALIZE_GRACE_MICROS));
+    query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - bag_lifetime_micros() - FINALIZE_GRACE_MICROS));
     let mut claims = Vec::new();
     for record in resolve_links_to_records(get_links(query, GetStrategy::default())?) {
         let dropoff = match decode_or::<BagClaim>(&record).map(|c| c.fulfillment) {
@@ -248,4 +245,9 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     let _ = send_remote_signal(crate::signals::RemoteSignal::ClaimConfirmed { claim_hash: updated.clone() }, vec![customer]);
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back confirmed claim".into())))
+}
+
+/// The longest a goodie bag may stay listed, in microseconds.
+fn bag_lifetime_micros() -> i64 {
+    relay_governance::goodie_bag_max_lifetime().as_micros() as i64
 }

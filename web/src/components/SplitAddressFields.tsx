@@ -1,6 +1,7 @@
 import { Field, Input } from "./ui";
 import { AddressSearch } from "./AddressSearch";
 import type { GeoPoint } from "../holochain/types";
+import { MAX_PLACE_CHARS, MAX_POSTAL_CODE_CHARS } from "../holochain/types";
 
 export interface SplitAddress {
   street: string;
@@ -58,14 +59,14 @@ export function SplitAddressFields({
         initialQuery={address.street}
       />
       <Field label="City">
-        <Input value={address.city} onChange={(e) => onAddressChange({ ...address, city: e.target.value })} placeholder="Saint Petersburg" />
+        <Input maxLength={MAX_PLACE_CHARS} value={address.city} onChange={(e) => onAddressChange({ ...address, city: e.target.value })} placeholder="Saint Petersburg" />
       </Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label="State/Province">
-          <Input value={address.state} onChange={(e) => onAddressChange({ ...address, state: e.target.value })} placeholder="FL" />
+          <Input maxLength={MAX_PLACE_CHARS} value={address.state} onChange={(e) => onAddressChange({ ...address, state: e.target.value })} placeholder="FL" />
         </Field>
         <Field label="Postal code">
-          <Input value={address.zip} onChange={(e) => onAddressChange({ ...address, zip: e.target.value })} placeholder="33710" />
+          <Input maxLength={MAX_POSTAL_CODE_CHARS} value={address.zip} onChange={(e) => onAddressChange({ ...address, zip: e.target.value })} placeholder="33710" />
         </Field>
       </div>
     </>

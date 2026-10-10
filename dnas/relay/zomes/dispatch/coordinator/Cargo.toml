@@ -14,7 +14,6 @@ serde.workspace = true
 relay_types.workspace = true
 relay_coordinator_support.workspace = true
 dispatch_integrity = { path = "../integrity" }
-dispute_types.workspace = true
 attestation_types.workspace = true
 relay_integrity_support.workspace = true
 sha2 = { version = "0.10", default-features = false }

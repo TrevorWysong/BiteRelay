@@ -31,8 +31,8 @@ pub fn send_chat_message(input: SendChatMessageInput) -> ExternResult<()> {
     if input.text.trim().is_empty() {
         return Err(wasm_error!(WasmErrorInner::Guest("chat message must not be empty".into())));
     }
-    if input.text.chars().count() > crate::signals::MAX_CHAT_CHARS {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("a chat message is at most {} characters", crate::signals::MAX_CHAT_CHARS))));
+    if input.text.chars().count() > relay_integrity_support::limits::MAX_NOTE_CHARS {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!("a chat message is at most {} characters", relay_integrity_support::limits::MAX_NOTE_CHARS))));
     }
     let me = agent_info()?.agent_initial_pubkey;
     let (order, bid) = resolve_order_and_bid(input.order_ref.clone(), "chat is only available once a driver has been assigned")?;

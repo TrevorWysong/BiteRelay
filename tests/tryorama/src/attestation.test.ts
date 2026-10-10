@@ -7,14 +7,14 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver, stranger] = await scenario.addPlayersWithApps([
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
-    { appBundleSource: appSource },
+    testApp,
+    testApp,
+    testApp,
+    testApp,
   ]);
   const all = [customer, merchant, driver, stranger];
   await scenario.shareAllAgents();
@@ -53,7 +53,7 @@ await runScenario(async (scenario) => {
     to: merchant.agentPubKey,
     completed_at: Date.now() * 1000,
     // Sealed evidence isn't what these cases are about.
-    sealed_evidence: { nonce: new Uint8Array(24), encrypted_data: new Uint8Array(32) },
+    sealed_evidence: [{ nonce: new Uint8Array(24), encrypted_data: new Uint8Array(32) }],
     ...fields,
   });
 
@@ -69,7 +69,7 @@ await runScenario(async (scenario) => {
   const pickupRef = actionHash(pickup);
   assert.ok(Buffer.from(decodeEntry<{ order_ref: Uint8Array }>(pickup).order_ref).equals(Buffer.from(current)), "it cites the version of the order naming the driver");
   await sync();
-  await assert.rejects(call(customer, "attestation")("acknowledge_leg", pickupRef), /only the other party to a handoff can acknowledge it/);
+  await assert.rejects(call(customer, "attestation")("acknowledge_leg", pickupRef), /only the other party to a handoff can confirm it/);
   await assert.rejects(call(stranger, "attestation")("create_raw_receipt_for_testing", { leg: pickupRef, attested_at: Date.now() * 1000 }), /acknowledged by the other party to it/, "even written directly");
   const receipt = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));
   const again = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));
@@ -80,14 +80,14 @@ await runScenario(async (scenario) => {
   console.log("[PASS] the store acknowledges the driver's pickup on its own chain, once");
 
   // --- Each side writes in its own time: no shared session to fail. ---
-  await call(driver, "dispatch")("pick_up_order", order);
+  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", order));
   const dropoff = actionHash(await call(driver, "attestation")<HcRecord>("record_leg", { order_ref: order, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }));
   const legs = await call(customer, "attestation")<HcRecord[]>("get_legs_for_order", order);
   assert.ok(legs.length >= 1, "the customer finds the order's handoffs");
   await sync();
   await call(customer, "attestation")("acknowledge_leg", dropoff);
-  const proof = await call(customer, "attestation")<Uint8Array[]>("delivery_proof_for_order", order);
-  assert.deepEqual(proof.map((h) => Buffer.from(h).toString("hex")).slice(0, 1), [Buffer.from(pickupRef).toString("hex")], "the proof is the driver's pickup...");
-  assert.equal(proof.length, 2, "...and the customer's acknowledgment");
-  console.log("[PASS] a delivery's proof is the driver's pickup and the customer's acknowledgment");
+  const proof = await call(customer, "attestation")<Uint8Array | null>("delivery_proof_for_order", order);
+  const theirs = await call(customer, "attestation")<HcRecord | null>("get_receipt_for_leg", dropoff);
+  assert.ok(proof && theirs && Buffer.from(proof).equals(Buffer.from(actionHash(theirs))), "a delivery's proof is the customer's acknowledgment");
+  console.log("[PASS] a delivery's proof is the customer's acknowledgment");
 });
