@@ -71,6 +71,10 @@ pub struct RelayDnaProperties {
     pub default_delivery_subsidy_percent: Option<u8>,
     #[serde(default)]
     pub max_delivery_radius_km: Option<f64>,
+    #[serde(default)]
+    pub max_concurrent_deliveries: Option<u32>,
+    #[serde(default)]
+    pub add_on_detour_km: Option<f64>,
 }
 
 fn properties() -> Option<RelayDnaProperties> {
@@ -158,6 +162,20 @@ pub fn max_delivery_radius_km() -> f64 {
 /// The longest a goodie bag may stay listed.
 pub fn goodie_bag_max_lifetime() -> Duration {
     Duration::from_secs(u64::from(setting(|p| p.goodie_bag_max_days, 7)) * 86_400)
+}
+
+// --- drivers ---
+
+/// The most orders a driver may carry at once -- picked up and not yet
+/// settled. Validation refuses a pickup past it (`ledger_types::InHand`).
+pub fn max_concurrent_deliveries() -> u32 {
+    setting(|p| p.max_concurrent_deliveries, 3).max(1)
+}
+
+/// How far from a driver's remaining drop-offs another order may go and
+/// still be offered to them as an add-on while they're delivering.
+pub fn add_on_detour_km() -> f64 {
+    setting(|p| p.add_on_detour_km, 2.0)
 }
 
 // --- handoffs and settlement ---

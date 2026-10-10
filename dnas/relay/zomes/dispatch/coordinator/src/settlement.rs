@@ -163,6 +163,12 @@ struct DecideWire {
 }
 
 #[derive(Serialize, Debug)]
+struct ForfeitWire {
+    hold: ActionHash,
+    basis: ActionHash,
+}
+
+#[derive(Serialize, Debug)]
 struct CollectWire {
     hold: ActionHash,
     portion: Portion,
@@ -181,6 +187,9 @@ struct WaiverWire {
 enum Decision {
     Collect(ActionHash),
     Waive,
+    /// Concede it, on this basis -- a driver's collateral for an order that
+    /// never arrived, which frees them to carry another.
+    Forfeit(ActionHash),
 }
 
 /// The rules in `ledger_integrity::validate_collect`, from the caller's
@@ -201,7 +210,8 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
         },
         Portion::Collateral => match (&d.delivered, &d.not_delivered) {
             (Some(outcome), _) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
-            (None, Some(outcome)) => Some(recipient.then(|| Decision::Collect(outcome.clone()))),
+            (None, Some(outcome)) if recipient => Some(Some(Decision::Collect(outcome.clone()))),
+            (None, Some(outcome)) => Some(payer.then(|| Decision::Forfeit(outcome.clone()))),
             _ => None,
         },
         Portion::Fee | Portion::Tip => match (&d.delivered, &d.not_delivered) {
@@ -265,6 +275,7 @@ pub(crate) fn settle(order: &ActionHash) -> ExternResult<u32> {
                         returned.push(hold.payer.clone());
                     }
                 }),
+                Some(Decision::Forfeit(basis)) => ledger::<_, ActionHash>("forfeit", ForfeitWire { hold: hold.hold.clone(), basis }).map(|_| ()),
                 None => continue,
             };
             if outcome.is_ok() {

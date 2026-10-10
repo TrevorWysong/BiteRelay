@@ -38,6 +38,8 @@ Every other setting is optional, and the defaults suit most networks. Set only t
 | `default_delivery_radius_km` | 8 | A new store's delivery radius. |
 | `max_delivery_radius_km` | 50 | The furthest any store may deliver. Validation checks every order's drop-off area against its store's radius. |
 | `default_delivery_subsidy_percent` | 50 | A new store's share of each delivery fee. |
+| `max_concurrent_deliveries` | 3 | The most orders a driver may carry at once. Validation refuses a pickup past it, and a priority order is always carried alone. |
+| `add_on_detour_km` | 2 | While delivering, a driver is offered only orders from a store they're still to collect from, or going within this distance of one of their drop-offs. |
 | `max_image_bytes` | 300000 | The largest photo, in bytes of its data URI. Every peer that stores an entry stores its photos. |
 | `goodie_bag_max_days` | 7 | The longest a goodie bag may stay listed. |
 | `clock_tolerance_secs` | 600 | How far an author's clock may be from a time it claims, where a rule compares them. |

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bike, Link2, MapPin, Power, Route, ShieldCheck } from "lucide-react";
+import { Bike, Link2, MapPin, Power, Route, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
@@ -22,6 +22,8 @@ import { useResource } from "../../lib/useResource";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
+import { offerable, offerRefusal, type Commitment } from "../../lib/addOns";
+import { useTerms } from "../../store/network";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
   LeaveAtDoor: "Leave at door",
@@ -77,11 +79,6 @@ function dropoffPoint(row: OrderRow): GeoPoint {
   return row.dropoff?.point ?? geohashCenter(row.order.dropoff_geohash);
 }
 
-// Nothing in the backend caps concurrent deliveries per driver -- this is a
-// deliberate, modest client-side cap: enough to let a driver already on one
-// or two deliveries pick up another that's on their way, without
-// overcommitting past what one person can carry at once.
-const MAX_CONCURRENT_DELIVERIES = 3;
 
 export function DriverDashboard() {
   const location = useSession((s) => s.location);
@@ -95,6 +92,7 @@ export function DriverDashboard() {
   const { data: rating } = useResource(`driver-rating:${driverHex}`, () => getRatingSummary({ Driver: driverKey }));
   const avgRating = rating ? averageRating(rating) : null;
 
+  const terms = useTerms();
   const geohash = encodeGeohash(location.lat, location.lon);
 
   // This driver's in-progress deliveries, from their own active-delivery
@@ -167,8 +165,12 @@ export function DriverDashboard() {
     const area = geohashCenter(order.dropoff_geohash);
     return Math.min(...activeOrders.map((a) => distanceKm(area, dropoffPoint(a))));
   }
+  // What this driver has taken on decides what they're offered: add-ons on
+  // their way while they're delivering, nothing past their limit.
+  const commitments: Commitment[] = activeOrders.map((row) => ({ order: row.order, dropoff: dropoffPoint(row) }));
+  const refusal = offerRefusal(commitments, terms.max_concurrent_deliveries);
   const sortedNearby = online && nearby
-    ? [...nearby].sort((a, b) => {
+    ? offerable(nearby, commitments, terms).sort((a, b) => {
         const aSame = sameMerchantHexes.has(bytesToHex(a.order.catalog_ref));
         const bSame = sameMerchantHexes.has(bytesToHex(b.order.catalog_ref));
         if (aSame !== bSame) return aSame ? -1 : 1;
@@ -218,11 +220,11 @@ export function DriverDashboard() {
         )}
       </AnimatePresence>
 
-      {online && activeOrders.length < MAX_CONCURRENT_DELIVERIES && (
+      {online && refusal === null && (
         <>
           <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink-400">
             <MapPin size={14} className="text-relay-500" />
-            Nearby open orders
+            {activeOrders.length === 0 ? "Nearby open orders" : "Add-ons on your way"}
           </div>
           {sortedNearby === null && (
             <div className="flex flex-col gap-3">
@@ -235,7 +237,12 @@ export function DriverDashboard() {
               ))}
             </div>
           )}
-          {sortedNearby?.length === 0 && <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />}
+          {sortedNearby?.length === 0 &&
+            (activeOrders.length === 0 ? (
+              <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />
+            ) : (
+              <EmptyState icon={<Route size={28} />} title="No add-ons on your way" subtitle="Orders from your stores, or going near your drop-offs, show up here." />
+            ))}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3">
             {sortedNearby?.map(({ hash, order }) => (
               <motion.div key={bytesToHex(hash)} variants={fadeSlideUp} layout>
@@ -245,6 +252,7 @@ export function DriverDashboard() {
                   onBid={(eta, fee) => placeBid(hash, eta, fee)}
                   sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
                   nearbyDropoffKm={nearestActiveDropoffKm(order)}
+                  detourKm={terms.add_on_detour_km}
                 />
               </motion.div>
             ))}
@@ -252,9 +260,11 @@ export function DriverDashboard() {
         </>
       )}
 
-      {online && activeOrders.length >= MAX_CONCURRENT_DELIVERIES && (
+      {online && refusal !== null && (
         <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
-          You're at your {MAX_CONCURRENT_DELIVERIES}-delivery limit. Finish one to see new nearby orders again.
+          {refusal === "CarryingPriority"
+            ? "You're on a priority delivery, which goes on its own. New orders show up again once it's delivered."
+            : `You have ${terms.max_concurrent_deliveries} orders, the most at once. New orders show up again once you deliver one.`}
         </p>
       )}
 
@@ -381,15 +391,19 @@ function BidCard({
   onBid,
   sameMerchant,
   nearbyDropoffKm,
+  detourKm,
 }: {
   order: DeliveryOrder;
   loading: boolean;
   onBid: (etaMinutes: number, feeCents: number) => void;
   sameMerchant?: boolean;
   nearbyDropoffKm?: number | null;
+  /// How near another drop-off counts as on the way (the network's add-on detour).
+  detourKm: number;
 }) {
   const [eta, setEta] = useState(15);
-  const [fee, setFee] = useState(500);
+  // The customer's cap, which no bid may exceed -- the driver lowers it to compete.
+  const [fee, setFee] = useState(order.max_delivery_fee ?? 0);
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
@@ -405,7 +419,7 @@ function BidCard({
       ) : (
         nearbyDropoffKm !== null &&
         nearbyDropoffKm !== undefined &&
-        nearbyDropoffKm < 2 && (
+        nearbyDropoffKm <= detourKm && (
           <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-presence-600">
             <Link2 size={12} /> {nearbyDropoffKm < 0.1 ? "Same drop-off area" : `${nearbyDropoffKm.toFixed(1)}km from your other drop-off`}
           </p>
@@ -416,6 +430,11 @@ function BidCard({
         {order.ready_by !== null && <span> · ready {formatClockTime(order.ready_by)}</span>}
         {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
       </p>
+      {order.priority && (
+        <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
+          <Zap size={12} /> Priority: no other orders on this trip
+        </p>
+      )}
       <CustomerHistory customer={order.requester} />
       {/* The bid commits it; validation requires it at pickup. */}
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">

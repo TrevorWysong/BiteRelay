@@ -290,6 +290,11 @@ pub struct DeliveryOrder {
     /// it. Fixed when the order is placed.
     #[serde(default)]
     pub door_risk_accepted: bool,
+    /// The customer asking for a driver of their own: nobody picks this
+    /// order up while carrying another, or picks another up while carrying
+    /// it (`ledger_types::InHand`). Fixed when the order is placed.
+    #[serde(default)]
+    pub priority: bool,
     /// `None` for an ordinary menu order (the default, and every order
     /// written before this field existed). `Some` means this delivery
     /// originated from a confirmed `catalog::BagClaim` (a goodie bag

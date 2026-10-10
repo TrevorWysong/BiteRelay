@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { AlertTriangle, Bike, CheckCircle2, DoorOpen, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Bike, CheckCircle2, DoorOpen, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cancelOrder, claimNeverArrived, getMyHandoverCode, getOrder, getOrderDecisions, getOrderPrivateDetails, listBidsForOrder, acceptBid, checkWarrants } from "../../holochain/zomes/dispatch";
+import { cancelOrder, claimNeverArrived, getMyHandoverCode, getOrder, getOrderDecisions, getOrderPrivateDetails, listBidsForOrder, acceptBid, checkWarrants, getDriverLoad } from "../../holochain/zomes/dispatch";
 import { confirmDeliveryReceived, HandoffNotYetHere } from "../../lib/handoffs";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { fetchOrderItemNames } from "../../lib/menu";
@@ -21,7 +21,9 @@ import { formatCents, formatEta, shortAgentId, formatClockTime, formatDeadline }
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
-import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
+import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, InHand, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
+import { carryRefusal, CUSTOMER_REFUSAL, describeLoad } from "../../lib/driverLoad";
+import { useTerms } from "../../store/network";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderIssues } from "../../components/OrderIssues";
@@ -71,6 +73,8 @@ interface BidRow {
   bid: Bid;
   warrants: WarrantSummary | null;
   stats: DriverStats | null;
+  /// The orders the driver has taken on, if it could be read.
+  load: InHand | null;
 }
 
 /// Bids arriving or settling, or the order changing.
@@ -79,6 +83,7 @@ const ORDER_SIGNALS = (signal: LocalSignal) => "BidPlaced" in signal || "BidAcce
 export function OrderDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
   const orderRef = hexToBytes(hash);
+  const terms = useTerms();
   const [accepting, setAccepting] = useState<string | null>(null);
   const [disputing, setDisputing] = useState(false);
   const [confirmingClaim, setConfirmingClaim] = useState(false);
@@ -150,8 +155,12 @@ export function OrderDetail() {
       return Promise.all(
         page.bids.map(async (record) => {
           const bid = decodeEntry<Bid>(record);
-          const [warrants, stats] = await Promise.all([checkWarrants(bid.bidder).catch(() => null), fetchDriverStats(bid.bidder).catch(() => null)]);
-          return { hash: actionHash(record), bid, warrants, stats };
+          const [warrants, stats, load] = await Promise.all([
+            checkWarrants(bid.bidder).catch(() => null),
+            fetchDriverStats(bid.bidder).catch(() => null),
+            getDriverLoad(bid.bidder).catch(() => null),
+          ]);
+          return { hash: actionHash(record), bid, warrants, stats, load };
         }),
       );
     },
@@ -222,11 +231,13 @@ export function OrderDetail() {
     );
   }
 
-  async function pickBid(bidHash: Uint8Array) {
+  /// Accepts a bid -- `overrideWarrants` once the customer has seen the
+  /// driver's complaints and chosen them anyway.
+  async function pickBid(bidHash: Uint8Array, overrideWarrants: boolean) {
     setAccepting(bytesToHex(bidHash));
     setError(null);
     try {
-      await acceptBid(orderRef, bidHash);
+      await acceptBid(orderRef, bidHash, overrideWarrants);
       await reloadOrder();
     } catch (err) {
       setError(describeError(err));
@@ -301,7 +312,14 @@ export function OrderDetail() {
         <h1 className="flex items-baseline gap-1.5 text-xl font-black text-ink-900 dark:text-ink-50">
           <StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber> order
         </h1>
-        <StatusBadge status={order.status} />
+        <div className="flex items-center gap-1.5">
+          {order.priority && (
+            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+              <Zap size={11} /> Priority
+            </span>
+          )}
+          <StatusBadge status={order.status} />
+        </div>
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
@@ -364,7 +382,9 @@ export function OrderDetail() {
           {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid. This updates live.</p>}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
-              {bids?.map(({ hash: bidHash, bid, warrants: w, stats }) => {
+              {bids?.map(({ hash: bidHash, bid, warrants: w, stats, load }) => {
+                const complaints = w !== null && w.count > 0;
+                const refusal = load && carryRefusal(load, order.priority, terms.max_concurrent_deliveries);
                 return (
                   <motion.div key={bytesToHex(bidHash)} layout variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0, scale: 0.97 }}>
                     <Card className="flex items-center justify-between p-3.5">
@@ -383,20 +403,25 @@ export function OrderDetail() {
                             <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
                           </div>
                         )}
-                        {w && w.count > 0 && (
+                        {load && <p className="mt-1 text-xs text-ink-400">{describeLoad(load)}</p>}
+                        {complaints && (
                           <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
                             <AlertTriangle size={12} /> {w.count} verified complaint{w.count === 1 ? "" : "s"} on record
                           </p>
                         )}
                       </div>
-                      <Button
-                        variant={w && w.count > 0 ? "danger" : "primary"}
-                        className="px-4 py-2 text-xs"
-                        loading={accepting === bytesToHex(bidHash)}
-                        onClick={() => pickBid(bidHash)}
-                      >
-                        {w && w.count > 0 ? "Accept anyway" : "Accept"}
-                      </Button>
+                      {refusal ? (
+                        <span className="max-w-[7.5rem] text-right text-[11px] font-medium leading-tight text-ink-400">{CUSTOMER_REFUSAL[refusal]}</span>
+                      ) : (
+                        <Button
+                          variant={complaints ? "danger" : "primary"}
+                          className="px-4 py-2 text-xs"
+                          loading={accepting === bytesToHex(bidHash)}
+                          onClick={() => pickBid(bidHash, complaints)}
+                        >
+                          {complaints ? "Accept anyway" : "Accept"}
+                        </Button>
+                      )}
                     </Card>
                   </motion.div>
                 );

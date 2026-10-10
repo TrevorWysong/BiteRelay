@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, PinSecret, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, DeclineReason, InHand, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, PinSecret, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -30,6 +30,8 @@ export async function requestDelivery(input: {
   /// The customer accepting that an order left at their door is delivered
   /// once it's left -- required for `LeaveAtDoor`.
   door_risk_accepted?: boolean;
+  /// A driver of the customer's own: one carrying no other order.
+  priority?: boolean;
   /// `null` for a normal cart order. Set only when this delivery redeems a
   /// confirmed goodie-bag claim -- which the customer's conductor does on
   /// its own (`dispatch::claims`).
@@ -43,6 +45,7 @@ export async function requestDelivery(input: {
     promo_code_ref: null,
     dropoff_preference: "HandToMe",
     door_risk_accepted: false,
+    priority: false,
     bag_claim_ref: null,
     ...input,
   });
@@ -169,14 +172,21 @@ export async function submitBid(input: { order_ref: ActionHash; eta_seconds: num
   return callZome("dispatch", "submit_bid", input);
 }
 
-/// The driver picking the order up: posts their collateral to the customer
-/// and marks it picked up, in one step. Returned on delivery.
+/// The driver picking the order up: sets aside their collateral (the food's
+/// value, the store's if it never arrives) and marks it picked up, in one
+/// step. Theirs again once it's delivered.
 export async function pickUpOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "pick_up_order", orderOriginalAction);
 }
 
 export async function withdrawBid(bidAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "withdraw_bid", { bid_action: bidAction });
+}
+
+/// The orders a driver has taken on -- assigned or in hand -- and whether
+/// one is a priority order.
+export async function getDriverLoad(driver: AgentPubKey): Promise<InHand> {
+  return callZome("dispatch", "get_driver_load", driver);
 }
 
 export async function checkWarrants(agent: AgentPubKey): Promise<WarrantSummary> {
@@ -230,6 +240,8 @@ export async function createRecurringTemplate(input: {
   dropoff_preference?: DropoffPreference;
   /// Required for `LeaveAtDoor` -- see `requestDelivery`.
   door_risk_accepted?: boolean;
+  /// Each order asks for a driver of its own -- see `requestDelivery`.
+  priority?: boolean;
   promo_code_ref?: ActionHash | null;
   recurrence: RecurrenceRule;
   /// The IANA zone `recurrence` is in -- the device's own.
@@ -239,7 +251,9 @@ export async function createRecurringTemplate(input: {
     kitchen_notes: "",
     dropoff_notes: "",
     tip_cents: 0,
-    dropoff_preference: "LeaveAtDoor",
+    dropoff_preference: "HandToMe",
+    door_risk_accepted: false,
+    priority: false,
     promo_code_ref: null,
     ...input,
   });

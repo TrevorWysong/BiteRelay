@@ -25,10 +25,14 @@ fn entry_of(record: &Record) -> Option<LedgerEntry> {
 /// Writes the caller's next ledger entry, after their latest.
 fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
     let latest = my_entries()?.into_iter().last();
-    let (previous, balance) = match &latest {
-        Some(record) => (Some(record.action_address().clone()), entry_of(record).map_or(0, |e| e.balance)),
-        None => (None, 0),
+    let (previous, balance, in_hand) = match &latest {
+        Some(record) => {
+            let prior = entry_of(record);
+            (Some(record.action_address().clone()), prior.as_ref().map_or(0, |e| e.balance), prior.map(|e| e.in_hand).unwrap_or_default())
+        }
+        None => (None, 0, InHand::default()),
     };
+    let in_hand = in_hand_after(in_hand, &kind)?;
     let signed = i64::try_from(amount).map_err(|_| guest("amount out of range"))?;
     let balance = match kind {
         LedgerKind::Hold { .. } => {
@@ -39,10 +43,40 @@ fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
             }
             after
         }
-        LedgerKind::Waive { .. } => balance,
+        LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
         LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } => balance + signed,
     };
-    create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, previous }))
+    create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
+}
+
+/// The caller's orders in hand after `kind` -- `ledger_integrity`'s rule,
+/// checked here first so a driver at their limit is told why.
+fn in_hand_after(prior: InHand, kind: &LedgerKind) -> ExternResult<InHand> {
+    match kind {
+        LedgerKind::Hold { order, purpose: purpose @ HoldPurpose::Collateral { .. } } => {
+            let (terms, _) = order_context(order, purpose)?;
+            prior.taking(terms.priority, relay_governance::max_concurrent_deliveries()).map_err(|refusal| guest(pickup_refusal(refusal)))
+        }
+        // The caller's own collateral, back or forfeited (holds are written
+        // by their payers).
+        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => {
+            let record = get(hold.clone(), GetOptions::default())?.ok_or(guest("hold not found"))?;
+            if record.action().author() != &agent_info()?.agent_initial_pubkey {
+                return Ok(prior);
+            }
+            prior.settling().ok_or(guest("no order is in hand to settle"))
+        }
+        _ => Ok(prior),
+    }
+}
+
+/// Why a driver can't pick an order up, told to them.
+fn pickup_refusal(refusal: CarryRefusal) -> String {
+    match refusal {
+        CarryRefusal::CarryingPriority => "You're delivering a priority order, which goes on its own. Deliver it before picking up another.".into(),
+        CarryRefusal::PriorityGoesAlone => "This is a priority order: it's picked up with nothing else in hand. Deliver your other orders first.".into(),
+        CarryRefusal::AtLimit => format!("You're carrying {} orders, the most at once. Deliver one first.", relay_governance::max_concurrent_deliveries()),
+    }
 }
 
 // --- funds ---
@@ -203,11 +237,12 @@ pub fn holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 
 // --- deciding a part of a hold ---
 
-/// Whether the caller has already collected or waived this part.
+/// Whether the caller has already collected, waived or forfeited this part.
 fn my_decision(hold: &ActionHash, portion: Portion) -> ExternResult<Option<ActionHash>> {
     Ok(my_entries()?.into_iter().find_map(|record| {
         let decided = entry_of(&record).is_some_and(|e| match &e.kind {
             LedgerKind::Collect { hold: h, portion: p, .. } | LedgerKind::Waive { hold: h, portion: p } => h == hold && *p == portion,
+            LedgerKind::Forfeit { hold: h, .. } => h == hold && portion == Portion::Collateral,
             _ => false,
         });
         decided.then(|| record.action_address().clone())
@@ -278,6 +313,24 @@ pub fn waive(input: WaiveInput) -> ExternResult<ActionHash> {
     let hash = append(LedgerKind::Waive { hold: input.hold.clone(), portion: input.portion }, 0)?;
     create_link(input.hold, hash.clone(), LinkTypes::HoldToWaive, ())?;
     Ok(hash)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ForfeitInput {
+    pub hold: ActionHash,
+    /// The store's decision that the order never arrived.
+    pub basis: ActionHash,
+}
+
+/// The caller, a driver, conceding their collateral on the store's decision
+/// that the order never arrived -- which settles it as an order in hand.
+/// Safe to repeat.
+#[hdk_extern]
+pub fn forfeit(input: ForfeitInput) -> ExternResult<ActionHash> {
+    if let Some(done) = my_decision(&input.hold, Portion::Collateral)? {
+        return Ok(done);
+    }
+    append(LedgerKind::Forfeit { hold: input.hold, basis: input.basis }, 0)
 }
 
 /// Whether the caller has decided this part of a hold yet.

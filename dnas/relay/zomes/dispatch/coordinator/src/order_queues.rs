@@ -91,25 +91,23 @@ pub(crate) fn enqueue_for_driver(order_ref: &ActionHash, accepting_version: &Act
 }
 
 /// Removes a just-finished order from every active queue it's in. Called by
-/// whoever moved it into a terminal status; a queue the caller isn't
-/// allowed to edit (see `validate_queue_link_delete`) is skipped rather than
-/// failing their whole call. Best-effort beyond that too: a link that
+/// whoever finished it -- its customer or store (a cancellation), or its
+/// store recording a delivery's outcome; anyone else edits no queue (see
+/// `validate_queue_link_delete`), so is a no-op. Best-effort beyond that too: a link that
 /// hasn't reached this agent yet stays, and the active reads filter by
 /// status, so a leftover costs one extra read, never a finished order on
 /// screen.
 pub(crate) fn retire(order: &OrderParties) -> ExternResult<()> {
     let me = agent_info()?.agent_initial_pubkey;
-    let is_party = me == order.requester || me == order.merchant;
-    let mut queues: Vec<(AnyLinkableHash, LinkTypes)> = Vec::new();
-    if is_party {
-        for owner in [QueueOwner::Store(&order.catalog_ref), QueueOwner::Customer(&order.requester)] {
-            queues.push((owner.active_base(), owner.active_link_type()));
-        }
+    if me != order.requester && me != order.merchant {
+        return Ok(());
     }
+    let mut queues: Vec<(AnyLinkableHash, LinkTypes)> = [QueueOwner::Store(&order.catalog_ref), QueueOwner::Customer(&order.requester)]
+        .iter()
+        .map(|owner| (owner.active_base(), owner.active_link_type()))
+        .collect();
     if let Some(driver) = &order.driver {
-        if is_party || &me == driver {
-            queues.push((driver.clone().into(), LinkTypes::DriverToActiveDelivery));
-        }
+        queues.push((driver.clone().into(), LinkTypes::DriverToActiveDelivery));
     }
     let target: AnyLinkableHash = order.order_ref.clone().into();
     for (base, link_type) in queues {
@@ -147,10 +145,9 @@ fn active_orders(owner: QueueOwner<'_>) -> ExternResult<Vec<OrderEntry>> {
 
 const DEFAULT_HISTORY_PAGE: usize = 20;
 const MAX_HISTORY_PAGE: usize = 50;
-/// The most day buckets one page reads. Anyone can index an empty day
-/// under someone's history root (path links can't be tied to an author),
-/// so without a cap a page could be made to read any number of them; with
-/// it, a page that runs out of days early just hands back a cursor.
+/// The most day buckets one page reads -- a page that runs out of days
+/// early just hands back a cursor, so a long gap in someone's history
+/// costs pages, never one unbounded read.
 const MAX_DAYS_PER_PAGE: usize = 31;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -328,6 +325,25 @@ pub fn get_my_order_for_claim(claim_ref: ActionHash) -> ExternResult<Option<Acti
 pub struct ActiveDelivery {
     pub order: OrderEntry,
     pub bid: Record,
+}
+
+/// The orders `driver` has taken on -- assigned to them or in hand, from
+/// their active-delivery queue, which only the orders' customers and
+/// stores edit -- and whether one is a priority order. What a customer sees
+/// beside a driver's bid, and what accepting it is held to; the ledger
+/// enforces the same limit on what they actually pick up (`InHand`).
+#[hdk_extern]
+pub fn get_driver_load(driver: AgentPubKey) -> ExternResult<InHand> {
+    let mut orders: Vec<ActionHash> = get_links(LinkQuery::try_new(driver, LinkTypes::DriverToActiveDelivery)?, GetStrategy::default())?
+        .into_iter()
+        .filter_map(|link| link.target.into_action_hash())
+        .collect();
+    orders.sort();
+    orders.dedup();
+    Ok(orders.into_iter().filter_map(classify).filter(|(_, _, active)| *active).fold(InHand::default(), |load, (entry, _, _)| InHand {
+        orders: load.orders + 1,
+        priority: load.priority || decode_or::<DeliveryOrder>(&entry.record).is_some_and(|order| order.priority),
+    }))
 }
 
 /// The caller's in-progress deliveries, oldest first. Replaces walking

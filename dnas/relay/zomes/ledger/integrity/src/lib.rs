@@ -24,6 +24,13 @@
 //!   can always waive a part back. Each party decides each part once --
 //!   entries on their own chain, which validation walks.
 //!
+//! - **A driver carries a bounded number of orders.** Every entry carries
+//!   the orders its author has in hand (`InHand`), checked against their
+//!   previous entry like the balance: picking one up (its collateral hold)
+//!   adds one -- refused past the network's `max_concurrent_deliveries`, or
+//!   alongside a priority order, which goes alone -- and settling it (the
+//!   collateral back, or forfeited on the store's decision) takes one away.
+//!
 //! What it can't: move money nobody is entitled to collect yet. An order
 //! nobody has decided stays held.
 
@@ -143,7 +150,7 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
     let Some(prev_action) = prev_action else { return invalid("a ledger entry can't open a chain") };
 
     // Its place on the author's chain: right after their previous entry.
-    let prior_balance = match &entry.previous {
+    let prior = match &entry.previous {
         Some(previous) => {
             let record = must_get_valid_record(previous.clone())?;
             let Some(prior) = decode::<LedgerEntry>(&record) else { return invalid("previous must be a ledger entry") };
@@ -154,24 +161,25 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
             if between.iter().any(|e| &e.hash != previous) {
                 return invalid("previous must be the author's latest ledger entry");
             }
-            prior.balance
+            (prior.balance, prior.in_hand)
         }
         None => {
             if !ledger_entries(author, ChainFilter::new(prev_action.clone()))?.is_empty() {
                 return invalid("previous must name the author's latest ledger entry");
             }
-            0
+            (0, InHand::default())
         }
     };
+    let (prior_balance, prior_in_hand) = prior;
 
     // The arithmetic, and the credit limit on what's spent.
     let amount = i128::from(entry.amount);
     let (expected, debit) = match &entry.kind {
         LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } => (i128::from(prior_balance) + amount, false),
         LedgerKind::Hold { .. } => (i128::from(prior_balance) - amount, true),
-        LedgerKind::Waive { .. } => {
+        LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => {
             if entry.amount != 0 {
-                return invalid("waiving changes nothing in the waiver's own balance");
+                return invalid("waiving or forfeiting changes nothing in the author's own balance");
             }
             (i128::from(prior_balance), false)
         }
@@ -183,12 +191,42 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
         return invalid("that would take the balance past the network's credit limit");
     }
 
-    match &entry.kind {
+    let kind_result = match &entry.kind {
         LedgerKind::Deposit { grant } => validate_deposit(entry, grant, author, at, prev_action),
         LedgerKind::Hold { order, purpose } => validate_hold(entry, order, purpose, author),
         LedgerKind::Collect { hold, portion, basis } => validate_collect(entry, hold, *portion, basis, author, at, prev_action),
         LedgerKind::Waive { hold, portion } => validate_waive(hold, *portion, author, at, prev_action),
+        LedgerKind::Forfeit { hold, basis } => validate_forfeit(hold, basis, author, at, prev_action),
+    }?;
+    if !matches!(kind_result, ValidateCallbackResult::Valid) {
+        return Ok(kind_result);
     }
+
+    // The orders in hand, and the limit on them.
+    match in_hand_after(prior_in_hand, &entry.kind, author)? {
+        Ok(in_hand) if in_hand == entry.in_hand => valid(),
+        Ok(_) => invalid("a ledger entry's orders in hand must follow from the author's previous one"),
+        Err(reason) => invalid(reason),
+    }
+}
+
+/// The orders `author` has in hand after `kind`, from `prior` -- or why
+/// `kind` would break the limit on them.
+fn in_hand_after(prior: InHand, kind: &LedgerKind, author: &AgentPubKey) -> ExternResult<Result<InHand, &'static str>> {
+    Ok(match kind {
+        // Picking an order up: its driver's collateral.
+        LedgerKind::Hold { order, purpose: purpose @ HoldPurpose::Collateral { .. } } => match hold_context(order, purpose)? {
+            Ok((terms, _)) => prior.taking(terms.priority, relay_governance::max_concurrent_deliveries()).map_err(CarryRefusal::rule),
+            Err(reason) => Err(reason),
+        },
+        // Settling one: the driver's collateral back, or forfeited.
+        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => match hold_of(hold)? {
+            Ok(hold) if &hold.payer == author => prior.settling().ok_or("no order is in hand to settle"),
+            Ok(_) => Ok(prior),
+            Err(reason) => Err(reason),
+        },
+        _ => Ok(prior),
+    })
 }
 
 fn validate_deposit(entry: &LedgerEntry, grant_ref: &ActionHash, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
@@ -288,6 +326,7 @@ fn already_decided(author: &AgentPubKey, prev_action: &ActionHash, hold_ref: &Ac
     let Some(filter) = activity_since(prev_action, held_at)? else { return Ok(false) };
     Ok(ledger_entries(author, filter)?.into_iter().any(|e| match &e.entry.kind {
         LedgerKind::Collect { hold, portion: p, .. } | LedgerKind::Waive { hold, portion: p } => hold == hold_ref && *p == portion,
+        LedgerKind::Forfeit { hold, .. } => hold == hold_ref && portion == Portion::Collateral,
         _ => false,
     }))
 }
@@ -307,6 +346,29 @@ fn validate_waive(hold_ref: &ActionHash, portion: Portion, author: &AgentPubKey,
         return invalid("that part of the hold has already been decided");
     }
     valid()
+}
+
+/// A driver conceding their collateral: theirs to concede (they paid it),
+/// once, on the store's decision that the order never arrived.
+fn validate_forfeit(hold_ref: &ActionHash, basis_ref: &ActionHash, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let hold = match hold_of(hold_ref)? {
+        Ok(hold) => hold,
+        Err(reason) => return invalid(reason),
+    };
+    if !matches!(hold.purpose, HoldPurpose::Collateral { .. }) || &hold.payer != author {
+        return invalid("only a driver forfeits, and only their own collateral");
+    }
+    if at < hold.held_at {
+        return invalid("a hold is decided after it's made");
+    }
+    if already_decided(author, prev_action, hold_ref, Portion::Collateral, hold.held_at)? {
+        return invalid("that part of the hold has already been decided");
+    }
+    match basis_of(basis_ref, &hold)? {
+        Ok(Basis::NotDelivered) => valid(),
+        Ok(_) => invalid("collateral is forfeited only on the store's decision that the order never arrived"),
+        Err(reason) => invalid(reason),
+    }
 }
 
 /// What entitles a collection.

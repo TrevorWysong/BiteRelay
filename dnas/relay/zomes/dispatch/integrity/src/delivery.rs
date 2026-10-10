@@ -30,6 +30,12 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
     if order.door_risk_accepted != (order.dropoff_preference == DropoffPreference::LeaveAtDoor) {
         return Ok(ValidateCallbackResult::Invalid("an order left at the door needs its customer to accept the risk -- and only such an order".into()));
     }
+    // The driver answers for what they carry with collateral of its value
+    // -- which is also how the network counts the orders they carry -- so a
+    // delivery always carries something of value.
+    if order.order_total == 0 {
+        return Ok(ValidateCallbackResult::Invalid("a delivery must carry something of value: its total can't be zero".into()));
+    }
     if order.delivery_subsidy_percent > 100 {
         return Ok(ValidateCallbackResult::Invalid("delivery_subsidy_percent must be between 0 and 100".into()));
     }
@@ -394,6 +400,7 @@ pub(crate) fn validate_order_transition(
         && prior.promo_code_ref == order.promo_code_ref
         && prior.dropoff_preference == order.dropoff_preference
         && prior.door_risk_accepted == order.door_risk_accepted
+        && prior.priority == order.priority
         && prior.bag_claim_ref == order.bag_claim_ref
         && prior.pin_commitment == order.pin_commitment
         && prior.sealed_pin == order.sealed_pin;

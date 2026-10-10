@@ -158,6 +158,7 @@ function Terms({ index, terms }: { index: number; terms: NetworkTerms }) {
     ["A store has to answer a new order within", spoken(terms.store_response_secs)],
     ["To report missing or wrong items", spoken(terms.report_window_secs)],
     ["Before a store's app decides an order never arrived", spoken(terms.claim_grace_secs)],
+    ["Orders a driver carries at once, at most", String(terms.max_concurrent_deliveries)],
     ["A balance can go below zero by", terms.credit_limit_cents ? formatCents(terms.credit_limit_cents) : "Nothing"],
     ["Platform fee", "None"],
   ];
