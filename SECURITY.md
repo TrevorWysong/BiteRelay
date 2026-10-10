@@ -56,6 +56,11 @@ Peers choose their own action timestamps. Holochain only requires each agent's t
 - A handoff's location and photo are sealed between its two parties.
 - Drivers publish no presence: they find work by reading the open orders around them.
 
+**How many orders a driver carries** (`dispatch_types::InHand`, `ledger_integrity`).
+- Each ledger entry carries the orders its author has in hand, checked against their previous entry like the balance. Picking an order up (its collateral hold) adds one; the driver's collateral back on delivery, or forfeited on the store's decision that it never arrived, takes one away. Validation refuses a pickup past the network's `max_concurrent_deliveries`, a priority order picked up with anything else in hand, and anything picked up alongside one.
+- A delivery's total can't be zero, so every pickup posts collateral and is counted.
+- A driver's queue of assigned orders is edited only by those orders' customers and stores, so a driver can't hide what they've taken on. Customers see it beside each bid, and their app won't accept a bid past the limit.
+
 **Who decides** (`dispatch_types::issues`, `dispatch::issues`, `dispatch::never_arrived`).
 - There is no referee. Proof settles almost every order. Where it can't, the store decides, because it has nothing to gain either way: it's paid for the food by the customer if the order arrived, or by the driver's collateral if it didn't.
 - A customer can claim an order never arrived once it's picked up and until it's delivered. Validation refuses a claim from a customer who cancelled the order on another branch of its history: they'd be owed the driver's fee back after already conceding it.
@@ -91,6 +96,7 @@ Peers choose their own action timestamps. Holochain only requires each agent's t
 | Anchors accepted links to path nodes from anyone, so a peer could fill a store or history anchor with links to nothing | Low | Every link targets a record; history days are indexed by the order's customer |
 | Lists and sealed fields had no size limit | Low | Limits on order lines, template items, and every sealed field |
 | A photo sealed in one box exceeded what the conductor can seal, so real handoff and issue photos failed | High (availability) | Photos are sealed in chunks (`SealedChunks`) |
+| The limit on concurrent deliveries was only the driver's own app, and a driver could delete their own queue links to hide their load | Medium | The ledger counts orders in hand and validation enforces the limit; only customers and stores retire a driver's queue |
 
 The tests in `tests/tryorama/src/security-regressions.test.ts` and `ledger-rules.test.ts` replay these attacks.
 
@@ -101,4 +107,5 @@ The tests in `tests/tryorama/src/security-regressions.test.ts` and `ledger-rules
 - **Left at the door is the customer's risk.** A drop-off left there completes the delivery; a dishonest driver could photograph the wrong door. The photo and location are sealed to the customer, and stores can limit which orders may be left.
 - **Who orders from whom** is visible to anyone reading an order's public fields, as is a customer's ~1 km drop-off area. A driver's reads of the open-order lists for an area are seen by the peers that store those lists. See DEVELOPMENT.md, "Personal data".
 - **Reviews from colluding identities.** A store can buy from itself with a second identity and review itself. It costs real money (the food is paid for), but it isn't detected.
+- **Orders assigned but not yet picked up** are limited by the customer's app, which reads the driver's queue before accepting a bid; validation can't see a driver's other assignments. What a driver actually carries is enforced by the network. A customer could retire an order from its driver's queue to understate their load to other customers, but not what the driver can pick up.
 - **Timestamps** still decide store response windows, scheduled orders and promo expiry. An author can backdate within their own chain's history. The store's acceptance check bounds the promo case.

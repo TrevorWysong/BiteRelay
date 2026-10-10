@@ -33,6 +33,9 @@ pub struct CreateRecurringTemplateInput {
     /// delivered once it's left.
     #[serde(default)]
     pub door_risk_accepted: bool,
+    /// Each order asks for a driver of its own.
+    #[serde(default)]
+    pub priority: bool,
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,
     pub recurrence: RecurrenceRule,
@@ -51,7 +54,7 @@ pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternR
     crate::orders::check_note(&input.dropoff_notes)?;
     crate::orders::check_note(&input.kitchen_notes)?;
     let template = RecurringOrderTemplate {
-        sealed_details: seal_chunked(&requester, &TemplateDetails { dropoff: input.dropoff, dropoff_notes: input.dropoff_notes, kitchen_notes: input.kitchen_notes })?,
+        sealed_details: seal_chunked(&requester, &TemplateDetails { dropoff: input.dropoff, dropoff_notes: input.dropoff_notes, kitchen_notes: input.kitchen_notes, priority: input.priority })?,
         requester,
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
@@ -182,6 +185,7 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
         dropoff_preference: template.dropoff_preference,
         // Accepted when the template was made (`create_recurring_template`).
         door_risk_accepted: template.dropoff_preference == DropoffPreference::LeaveAtDoor,
+        priority: details.priority,
         bag_claim_ref: None,
     })?;
     Ok(())

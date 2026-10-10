@@ -41,18 +41,21 @@ pub const MAX_OPENING_PERIODS: usize = 28;
 /// Dietary tags a store's menu sums to.
 pub const MAX_DIETARY_TAGS: usize = 32;
 
-/// The most sealed in one box, in bytes: a larger value is sealed in chunks
-/// of this (`SealedChunks`). The conductor refuses a sealing request over
-/// 8,192 bytes *including its framing* (~230 bytes), so a chunk leaves
-/// room for that.
-pub const SEAL_CHUNK_BYTES: usize = 7_168;
+/// The most sealed in one box of a `SealedChunks`, in bytes. The keystore
+/// carries each request and reply in a frame of at most 8 KiB, with bytes
+/// written as a list of numbers -- up to two bytes each -- so a chunk, once
+/// sealed, must fit in under half a frame with room for its framing.
+pub const SEAL_CHUNK_BYTES: usize = 3_584;
 /// What sealing adds to each box: its authentication tag.
 pub const SEAL_TAG_BYTES: usize = 16;
+const _: () = assert!(2 * (SEAL_CHUNK_BYTES + SEAL_TAG_BYTES) + 512 <= 8 * 1024);
 /// A small sealed field -- a note, a name, an address, a phone number, a
-/// handoff code -- is one box: at most a chunk, sealed
-/// (`SEAL_CHUNK_BYTES + SEAL_TAG_BYTES`).
-pub const MAX_SEALED_BYTES: usize = 7_184;
-const _: () = assert!(MAX_SEALED_BYTES == SEAL_CHUNK_BYTES + SEAL_TAG_BYTES);
+/// handoff code -- is one box. No honest box is larger than the keystore's
+/// 8 KiB frame.
+pub const MAX_SEALED_BYTES: usize = 8_192;
+/// The most bytes a note can take as UTF-8: four per character, at worst.
+pub const MAX_NOTE_BYTES: usize = 4_000;
+const _: () = assert!(MAX_NOTE_BYTES == 4 * MAX_NOTE_CHARS);
 /// What a sealed field holding an image may add, beyond the image itself:
 /// a note, and its encoding.
 pub const SEALED_IMAGE_OVERHEAD_BYTES: usize = 4_096;

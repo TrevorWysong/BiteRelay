@@ -17,7 +17,7 @@ export const POLICY_CHANGES: { version: string; date: string; summary: string }[
     version: "1.1",
     date: "2026-10-09",
     summary:
-      "No arbitrators. Handoffs are proved by the giver's code or their own confirmation, at pickup as at the door. Leaving an order at the door is the customer's choice and risk. The store decides a delivery that never arrived (paid either way, by the customer or by the driver's collateral) and has the final say on missing items.",
+      "No arbitrators. Handoffs are proved by the giver's code or their own confirmation, at pickup as at the door. Leaving an order at the door is the customer's choice and risk. The store decides a delivery that never arrived (paid either way, by the customer or by the driver's collateral) and has the final say on missing items. Drivers carry a limited number of orders at once, and a priority order goes alone.",
   },
   {
     version: "1.0",
@@ -120,6 +120,22 @@ export function policySections(t: NetworkTerms): PolicySection[] {
         { who: "customers", good: "You're never out of pocket for food that didn't reach you.", bad: "If you say it never arrived and it's then delivered, that goes on your record, where drivers see it." },
         { who: "drivers", good: "If you hand it over with the customer's code, nobody can claim it didn't arrive.", bad: "If you pick it up and don't deliver it, you lose your collateral and your fee, and it's on your record." },
         { who: "stores", good: "The food is always paid for.", bad: "You decide what happens when a customer and driver disagree, and that decision is public." },
+      ],
+    },
+    {
+      id: "drivers",
+      title: "How many orders a driver carries",
+      summary: `A driver carries at most ${t.max_concurrent_deliveries} order${t.max_concurrent_deliveries === 1 ? "" : "s"} at once, as on the big delivery apps, and you can ask for one with no others.`,
+      points: [
+        `A driver can take on at most ${t.max_concurrent_deliveries} order${t.max_concurrent_deliveries === 1 ? "" : "s"} at once. The network counts what they've picked up and refuses a pickup past that, so no app can get around it.`,
+        `While delivering, a driver is offered only add-ons on their way: orders from a store they're still to collect from, or going within ${t.add_on_detour_km} km of one of their drop-offs.`,
+        "Every bid shows how many other orders that driver has, and you choose. A driver can't hide orders they've taken on.",
+        "Choose Priority at checkout for a driver with no other orders. Nobody can pick up your order while carrying another, or another while carrying yours. Drivers usually bid more for it.",
+        "A driver whose order never arrives is free to take more once their collateral for it is forfeited, which their app does on the store's decision.",
+      ],
+      effects: [
+        { who: "customers", good: "Your order isn't one of many on a long route, and Priority guarantees it's the only one.", bad: "A Priority order may wait longer for a driver, and usually costs more." },
+        { who: "drivers", good: "Add-ons on your way earn more for the same trip.", bad: "Past the limit, or on a Priority order, you're offered nothing more until you deliver." },
       ],
     },
     {

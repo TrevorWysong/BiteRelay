@@ -32,7 +32,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // The entry structs live in dispatch_types so other integrity zomes can
 // decode them -- see that crate's doc comment. Re-exported here so the
 // coordinator crate imports everything via `dispatch_integrity::*`.
-pub use dispatch_types::{claimed_value, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+pub use dispatch_types::{claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 // Built once per write and dropped -- boxing the large order would only
 // add an allocation.

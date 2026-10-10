@@ -10,7 +10,7 @@
 //! entry on the agent's chain, and a fork of that chain is the kind of
 //! misbehaviour Holochain itself catches.
 
-pub use dispatch_types::{HoldPurpose, Portion};
+pub use dispatch_types::{CarryRefusal, HoldPurpose, InHand, Portion};
 use hdi::prelude::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -28,6 +28,11 @@ pub enum LedgerKind {
     /// (an order cancelled before they were owed it). No change to the
     /// author's balance; the payer collects it.
     Waive { hold: ActionHash, portion: Portion },
+    /// The author, a driver, conceding their collateral to the store on its
+    /// decision that the order never arrived (`basis`) -- the store collects
+    /// it. No change to the author's balance; it settles the order they had
+    /// in hand (`InHand`).
+    Forfeit { hold: ActionHash, basis: ActionHash },
 }
 
 #[hdk_entry_helper]
@@ -37,6 +42,8 @@ pub struct LedgerEntry {
     pub amount: u64,
     /// The author's balance after this entry.
     pub balance: i64,
+    /// The orders the author has in hand after this entry.
+    pub in_hand: InHand,
     /// The author's previous ledger entry -- `None` only for their first.
     pub previous: Option<ActionHash>,
 }

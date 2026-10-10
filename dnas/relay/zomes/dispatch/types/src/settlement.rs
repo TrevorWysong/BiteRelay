@@ -63,6 +63,8 @@ pub struct OrderTerms {
     pub tip_cents: u64,
     pub delivery_subsidy_percent: u8,
     pub delivery: bool,
+    /// A delivery whose driver carries nothing else.
+    pub priority: bool,
 }
 
 impl OrderTerms {
@@ -74,6 +76,7 @@ impl OrderTerms {
             tip_cents: order.tip_cents,
             delivery_subsidy_percent: order.delivery_subsidy_percent,
             delivery: true,
+            priority: order.priority,
         }
     }
 
@@ -85,6 +88,7 @@ impl OrderTerms {
             tip_cents: 0,
             delivery_subsidy_percent: 0,
             delivery: false,
+            priority: false,
         }
     }
 }
@@ -139,12 +143,37 @@ pub fn hold_amount(shares: &[Share]) -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_driver_carries_up_to_the_limit_and_frees_a_place_as_each_settles() {
+        let mut hands = InHand::default();
+        for _ in 0..3 {
+            hands = hands.taking(false, 3).unwrap();
+        }
+        assert_eq!(hands.taking(false, 3), Err(CarryRefusal::AtLimit));
+        hands = hands.settling().unwrap();
+        assert_eq!(hands.taking(false, 3).map(|h| h.orders), Ok(3));
+    }
+
+    #[test]
+    fn a_priority_order_goes_alone() {
+        let one = InHand::default().taking(false, 3).unwrap();
+        assert_eq!(one.taking(true, 3), Err(CarryRefusal::PriorityGoesAlone));
+        let priority = InHand::default().taking(true, 3).unwrap();
+        assert_eq!(priority.taking(false, 3), Err(CarryRefusal::CarryingPriority));
+        assert_eq!(priority.settling(), Some(InHand::default()), "delivering it frees the driver entirely");
+    }
+
+    #[test]
+    fn nothing_settles_from_empty_hands() {
+        assert_eq!(InHand::default().settling(), None);
+    }
+
     fn agent(n: u8) -> AgentPubKey {
         AgentPubKey::from_raw_36(vec![n; 36])
     }
 
     fn terms() -> OrderTerms {
-        OrderTerms { requester: agent(1), merchant: agent(2), order_total: 2000, tip_cents: 300, delivery_subsidy_percent: 50, delivery: true }
+        OrderTerms { requester: agent(1), merchant: agent(2), order_total: 2000, tip_cents: 300, delivery_subsidy_percent: 50, delivery: true, priority: false }
     }
 
     fn bid(price_offer: u64) -> Bid {
@@ -199,5 +228,64 @@ mod tests {
         let b = bid(500);
         assert!(hold_terms(&pickup, &HoldPurpose::DriverPay { bid: b.order_ref.clone() }, Some(&b)).is_none());
         assert!(hold_terms(&terms(), &HoldPurpose::DriverPay { bid: b.order_ref.clone() }, None).is_none());
+    }
+}
+
+/// The orders a driver has in hand: those whose collateral they've set
+/// aside (by picking them up) and not yet had back or forfeited. The ledger
+/// carries it from entry to entry like the balance (`ledger_types`), so
+/// validation checks it in one step rather than walking the chain; a
+/// customer's app counts a driver's assigned orders the same way before
+/// accepting their bid.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InHand {
+    pub orders: u32,
+    /// Whether the one order in hand is a priority order, which goes alone.
+    pub priority: bool,
+}
+
+/// Why a driver can't take one more order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarryRefusal {
+    /// They're carrying a priority order, which goes alone.
+    CarryingPriority,
+    /// The new order is a priority order, and they're carrying others.
+    PriorityGoesAlone,
+    /// They're carrying as many orders as the network allows.
+    AtLimit,
+}
+
+impl CarryRefusal {
+    /// The rule, as validation states it.
+    pub fn rule(self) -> &'static str {
+        match self {
+            CarryRefusal::CarryingPriority => "a priority order is carried alone",
+            CarryRefusal::PriorityGoesAlone => "a priority order is picked up with nothing else in hand",
+            CarryRefusal::AtLimit => "a driver may carry no more orders at once than the network allows",
+        }
+    }
+}
+
+impl InHand {
+    /// After taking one more order (a priority one, if `priority`), with at
+    /// most `max` in hand.
+    pub fn taking(self, priority: bool, max: u32) -> Result<Self, CarryRefusal> {
+        if self.priority {
+            return Err(CarryRefusal::CarryingPriority);
+        }
+        if priority && self.orders > 0 {
+            return Err(CarryRefusal::PriorityGoesAlone);
+        }
+        if self.orders >= max {
+            return Err(CarryRefusal::AtLimit);
+        }
+        Ok(Self { orders: self.orders + 1, priority })
+    }
+
+    /// After one order in hand is settled: delivered (the driver's collateral
+    /// back) or not (forfeited). `None` if none was in hand.
+    pub fn settling(self) -> Option<Self> {
+        // A priority order is the only one in hand, so settling it leaves none.
+        self.orders.checked_sub(1).map(|orders| Self { orders, priority: false })
     }
 }

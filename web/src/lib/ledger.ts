@@ -23,5 +23,6 @@ export function describeLedgerEntry(entry: LedgerEntry): { label: string; direct
   if ("Deposit" in kind) return { label: "Funds added", direction: "in" };
   if ("Hold" in kind) return { label: `Set aside for ${purposeLabel(kind.Hold.purpose)}`, direction: "out" };
   if ("Collect" in kind) return { label: `Collected: ${PORTION_LABEL[kind.Collect.portion].toLowerCase()}`, direction: "in" };
-  return { label: `Returned to the payer: ${PORTION_LABEL[kind.Waive.portion].toLowerCase()}`, direction: "none" };
+  if ("Waive" in kind) return { label: `Returned to the payer: ${PORTION_LABEL[kind.Waive.portion].toLowerCase()}`, direction: "none" };
+  return { label: "Collateral forfeited: the order never arrived", direction: "none" };
 }

@@ -239,8 +239,18 @@ export async function setupPlayersWithProperties(scenario: Scenario, count: numb
 
 /// The caller's latest ledger entry and its hash, or nulls before any --
 /// what a hand-built (forged) entry would have to chain from.
-export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint8Array | null; balance: number }> {
+/// The orders a driver has in hand, as their ledger carries it.
+export interface InHand {
+  orders: number;
+  priority: boolean;
+}
+
+export const EMPTY_HANDS: InHand = { orders: 0, priority: false };
+
+export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint8Array | null; balance: number; in_hand: InHand }> {
   const page = await player.cells[0].callZome<{ entries: HcRecord[] }>({ zome_name: "ledger", fn_name: "list_my_ledger", payload: { before: null } });
   const latest = page.entries[0];
-  return latest ? { hash: actionHash(latest), balance: decodeEntry<{ balance: number }>(latest).balance } : { hash: null, balance: 0 };
+  if (!latest) return { hash: null, balance: 0, in_hand: EMPTY_HANDS };
+  const entry = decodeEntry<{ balance: number; in_hand: InHand }>(latest);
+  return { hash: actionHash(latest), balance: entry.balance, in_hand: entry.in_hand };
 }

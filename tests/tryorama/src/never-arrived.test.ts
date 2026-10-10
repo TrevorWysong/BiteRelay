@@ -112,7 +112,7 @@ await runScenario(async (scenario) => {
   const customerFee = driverPay.shares.find((share) => share.portion === "Fee")!.amount;
   const forge = async (p: typeof customer, hold: Uint8Array, portion: string, amount: number) => {
     const latest = await latestLedgerEntry(p);
-    return call(p, "ledger")("create_raw_ledger_entry_for_testing", { kind: { Collect: { hold, portion, basis: notDelivered } }, amount, balance: latest.balance + amount, previous: latest.hash });
+    return call(p, "ledger")("create_raw_ledger_entry_for_testing", { kind: { Collect: { hold, portion, basis: notDelivered } }, amount, balance: latest.balance + amount, in_hand: latest.in_hand, previous: latest.hash });
   };
   await assert.rejects(forge(driver, driverPay.hold, "Fee", customerFee), /isn't grounds/, "the driver can't take their fee on an order that never arrived");
   await assert.rejects(forge(driver, collateral.hold, "Collateral", FOOD), /isn't grounds/, "nor their collateral back");

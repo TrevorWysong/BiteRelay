@@ -2,12 +2,12 @@
 //! types and their create/update validation.
 
 use super::*;
-use relay_integrity_support::limits::{MAX_TEMPLATE_ITEMS, MAX_TIME_ZONE_CHARS, SEAL_CHUNK_BYTES};
+use relay_integrity_support::limits::{MAX_NOTE_BYTES, MAX_TEMPLATE_ITEMS, MAX_TIME_ZONE_CHARS};
 use relay_integrity_support::{sealed_chunks_problem, SealedChunks};
 
-/// The most a recurring order's sealed details may hold: a drop-off and two
-/// notes fit in two chunks.
-const MAX_DETAILS_BYTES: usize = 2 * SEAL_CHUNK_BYTES;
+/// The most a recurring order's sealed details may hold: two notes at their
+/// longest, and room for the drop-off and its encoding.
+const MAX_DETAILS_BYTES: usize = 2 * MAX_NOTE_BYTES + 1_024;
 
 /// How often a `RecurringOrderTemplate` fires. Deliberately just these two
 /// shapes -- the literal "same order every Monday" ask, plus daily as the
@@ -33,6 +33,9 @@ pub struct TemplateDetails {
     pub dropoff: GeoPoint,
     pub dropoff_notes: String,
     pub kitchen_notes: String,
+    /// Each order asks for a driver of its own (`DeliveryOrder::priority`).
+    #[serde(default)]
+    pub priority: bool,
 }
 
 #[hdk_entry_helper]

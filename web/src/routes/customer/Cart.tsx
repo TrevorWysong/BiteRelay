@@ -35,6 +35,13 @@ const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] 
 // checkout instead of an unbounded "set by driver bid" placeholder.
 const DELIVERY_FEE_PRESETS_CENTS = [400, 600, 900, 1200];
 
+/// How a delivery is driven: standard, or priority -- a driver with no
+/// other orders (`DeliveryOrder::priority`).
+const DELIVERY_SPEEDS = [
+  { priority: false, label: "Standard", detail: "Your driver may pick up another order on the way, as on any delivery app." },
+  { priority: true, label: "Priority", detail: "A driver with no other orders brings yours straight to you. Drivers usually bid more for it." },
+];
+
 function Section({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <motion.div variants={fadeSlideUp}>
@@ -188,6 +195,7 @@ export function Cart() {
   const [savingRecurring, setSavingRecurring] = useState(false);
   const [recurringSaved, setRecurringSaved] = useState(false);
   const [scheduled, setScheduled] = useState(false);
+  const [priority, setPriority] = useState(false);
   const [scheduledFor, setScheduledFor] = useState("");
   const [tipPercent, setTipPercent] = useState<number | null>(15);
   const [customTip, setCustomTip] = useState("");
@@ -317,6 +325,7 @@ export function Cart() {
         promo_code_ref: appliedPromo?.hash ?? null,
         dropoff_preference: dropoffPreference,
         door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
+        priority,
       });
       const orderRef = actionHash(record);
       if (saveAsDefault) setSessionLocation(dropoff);
@@ -349,6 +358,7 @@ export function Cart() {
         tip_cents: tipCents,
         dropoff_preference: dropoffPreference,
         door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
+        priority,
         promo_code_ref: appliedPromo?.hash ?? null,
         recurrence,
         time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -449,6 +459,19 @@ export function Cart() {
             <p className="mt-2 text-xs text-ink-400">You'll show your driver a code when they hand it over. That's how you both know it reached you.</p>
           )}
           {!doorAllowed && <p className="mt-1 text-xs text-ink-400">This store hands over orders of this size in person.</p>}
+        </Section>
+      )}
+
+      {fulfillment === "Delivery" && (
+        <Section title="Delivery">
+          <div className="flex gap-2">
+            {DELIVERY_SPEEDS.map(({ priority: value, label }) => (
+              <ToggleChip key={label} active={priority === value} onClick={() => setPriority(value)} className="flex-1">
+                {label}
+              </ToggleChip>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-400">{DELIVERY_SPEEDS.find((speed) => speed.priority === priority)?.detail}</p>
         </Section>
       )}
 
@@ -678,6 +701,11 @@ export function Cart() {
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md flex-col items-center gap-2 px-4">
+        {fulfillment === "Delivery" && discountedSubtotalCents === 0 && (
+          <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
+            A free order can't be delivered: your driver answers for what they carry. Choose pickup instead.
+          </p>
+        )}
         {storeClosed && (
           <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
             {orderFor === now ? storeHours.label : "The store isn't open at that time."}
@@ -686,7 +714,7 @@ export function Cart() {
         <Button
           className="w-full"
           loading={placing}
-          disabled={storeClosed || (fulfillment === "Delivery" && (maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
+          disabled={storeClosed || (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
           onClick={placeOrder}
         >
           {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}

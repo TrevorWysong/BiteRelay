@@ -54,6 +54,10 @@ pub struct RequestDeliveryInput {
     /// delivered once it's left -- required to choose `LeaveAtDoor`.
     #[serde(default)]
     pub door_risk_accepted: bool,
+    /// A driver of the customer's own: one carrying no other order (see
+    /// `DeliveryOrder::priority`).
+    #[serde(default)]
+    pub priority: bool,
     /// `None` means this is a normal order, not a claimed goodie bag's
     /// delivery. `Some` is set by the customer's own client immediately
     /// after their `BagClaim` is confirmed (see `catalog::confirm_claim`'s
@@ -201,6 +205,9 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
+    if input.order_total == 0 {
+        return Err(wasm_error!(WasmErrorInner::Guest("A free order can't be delivered: your driver answers for what they carry. Choose pickup instead.".into())));
+    }
     if !input.dropoff.is_valid() {
         return Err(wasm_error!(WasmErrorInner::Guest("that drop-off isn't a real place".into())));
     }
@@ -268,6 +275,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         promo_code_ref: input.promo_code_ref,
         dropoff_preference: input.dropoff_preference,
         door_risk_accepted: input.dropoff_preference == DropoffPreference::LeaveAtDoor,
+        priority: input.priority,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
         cancellation: None,
@@ -456,6 +464,10 @@ pub struct NetworkTerms {
     pub default_prep_minutes: u16,
     pub max_prep_minutes: u16,
     pub max_delivery_radius_km: f64,
+    /// The most orders a driver may carry at once.
+    pub max_concurrent_deliveries: u32,
+    /// How far from a driver's remaining drop-offs an add-on may go.
+    pub add_on_detour_km: f64,
     /// The most an inline image may take, in bytes of its data URI.
     pub max_image_bytes: u64,
     pub goodie_bag_max_days: u64,
@@ -474,6 +486,8 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         default_prep_minutes: relay_governance::default_prep_minutes(),
         max_prep_minutes: relay_governance::max_prep_minutes(),
         max_delivery_radius_km: relay_governance::max_delivery_radius_km(),
+        max_concurrent_deliveries: relay_governance::max_concurrent_deliveries(),
+        add_on_detour_km: relay_governance::add_on_detour_km(),
         max_image_bytes: relay_governance::max_image_bytes() as u64,
         goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
     })

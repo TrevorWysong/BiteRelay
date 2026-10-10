@@ -59,7 +59,7 @@ const SOURCES: &[Source] = &[
     all("dnas/relay/zomes/catalog/types/src/lib.rs"),
     only("dnas/relay/zomes/catalog/types/src/hours.rs", &["OpeningPeriod"]),
     all("dnas/relay/zomes/dispatch/types/src/lib.rs"),
-    only("dnas/relay/zomes/dispatch/types/src/settlement.rs", &["HoldPurpose", "Portion"]),
+    only("dnas/relay/zomes/dispatch/types/src/settlement.rs", &["HoldPurpose", "Portion", "InHand"]),
     only("dnas/relay/zomes/dispatch/types/src/issues.rs", &["IssueKind", "IssueLine", "IssueEvidence", "ItemIssue", "Outcome", "OrderOutcome", "ItemSettlement"]),
     only("dnas/relay/zomes/profiles/integrity/src/lib.rs", &["RoleTag", "Profile", "ProviderCredential", "SavedAddress", "AddressDetails"]),
     only("dnas/relay/zomes/reputation/integrity/src/lib.rs", &["ReputationTarget", "ReviewTarget", "Review", "ItemReview", "ReputationEventKind"]),

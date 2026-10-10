@@ -2,11 +2,11 @@
 //! inside one, but it bounds its size, so no one can make every peer store
 //! an unbounded blob.
 //!
-//! The conductor seals at most `SEAL_CHUNK_BYTES` in one box. A small field
-//! (a note, a name, an address, a code) is one box; one that can hold a
-//! photo is `SealedChunks`, a box per chunk.
+//! The keystore can only seal a few kilobytes at a time. A small field (a
+//! note, a name, an address, a code) is one box; one that can hold a photo
+//! is `SealedChunks`, a box per `SEAL_CHUNK_BYTES`.
 
-use crate::limits::{MAX_SEALED_BYTES, SEALED_IMAGE_OVERHEAD_BYTES, SEAL_CHUNK_BYTES, SEAL_TAG_BYTES};
+use crate::limits::{SEALED_IMAGE_OVERHEAD_BYTES, SEAL_CHUNK_BYTES, SEAL_TAG_BYTES};
 use hdi::prelude::*;
 
 /// A value sealed between two agents in order, a box per
@@ -29,7 +29,7 @@ pub fn sealed_chunks_problem(field: &'static str, sealed: &SealedChunks, max_pla
     let total: usize = chunks.iter().map(|c| c.as_encrypted_data_ref().len()).sum();
     let fits = !chunks.is_empty()
         && chunks.len() <= max_plaintext.div_ceil(SEAL_CHUNK_BYTES)
-        && chunks.iter().all(|c| c.as_encrypted_data_ref().len() <= MAX_SEALED_BYTES)
+        && chunks.iter().all(|c| c.as_encrypted_data_ref().len() <= SEAL_CHUNK_BYTES + SEAL_TAG_BYTES)
         && total <= max_plaintext + chunks.len() * SEAL_TAG_BYTES;
     (!fits).then(|| format!("{field} is too large"))
 }

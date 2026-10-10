@@ -25,6 +25,9 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     if order.status != DeliveryStatus::Open {
         return Err(wasm_error!(WasmErrorInner::Guest("this order isn't open for bids".into())));
     }
+    if let Err(refusal) = crate::order_queues::get_driver_load(bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
+        return Err(wasm_error!(WasmErrorInner::Guest(driver_refusal(refusal))));
+    }
 
     let bid = Bid {
         order_ref: current.action_address().clone(),
@@ -133,6 +136,12 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         }
     }
 
+    // Never more orders than a driver may carry, nor a priority order with
+    // anything else.
+    if let Err(refusal) = crate::order_queues::get_driver_load(winning_bid.bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
+        return Err(wasm_error!(WasmErrorInner::Guest(customer_refusal(refusal).into())));
+    }
+
     // The driver learns the exact drop-off only now: the customer opens
     // their own sealed copy and seals it again for this driver alone.
     let me = agent_info()?.agent_initial_pubkey;
@@ -170,6 +179,24 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
 
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted order".into())))
+}
+
+/// Why a driver can't take an order on, told to them.
+fn driver_refusal(refusal: CarryRefusal) -> String {
+    match refusal {
+        CarryRefusal::CarryingPriority => "You're on a priority delivery, which goes on its own. Finish it before taking another.".into(),
+        CarryRefusal::PriorityGoesAlone => "This is a priority order: it goes to a driver with no other orders. Finish yours first.".into(),
+        CarryRefusal::AtLimit => format!("You have {} orders, the most at once. Finish one before taking another.", relay_governance::max_concurrent_deliveries()),
+    }
+}
+
+/// Why a customer can't give their order to a driver, told to them.
+fn customer_refusal(refusal: CarryRefusal) -> &'static str {
+    match refusal {
+        CarryRefusal::CarryingPriority => "This driver is on a priority delivery right now. Choose another driver.",
+        CarryRefusal::PriorityGoesAlone => "Your order is priority, and this driver has other orders. Choose a driver with none.",
+        CarryRefusal::AtLimit => "This driver has as many orders as they can carry. Choose another driver.",
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

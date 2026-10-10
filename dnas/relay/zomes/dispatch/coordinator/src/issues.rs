@@ -384,6 +384,8 @@ pub fn decide_order(order: ActionHash) -> ExternResult<bool> {
                             record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), order.clone(), ReputationEventKindWire::OrderCompleted, hash.clone())?;
                             let _ = send_remote_signal(crate::signals::RemoteSignal::Returned { order_hash: order.clone() }, vec![bid.bidder]);
                         }
+                        // Finished: off every queue, the driver's included.
+                        crate::order_queues::retire(&crate::OrderParties::delivery(&order, &delivery)?)?;
                         decisions.delivered = Some(hash);
                     }
                     DeliveryStatus::Disputed if now >= latest.action().timestamp().as_micros() + claim_grace_micros() => {
@@ -441,6 +443,8 @@ fn not_delivered(order: &ActionHash, claim: &Record, delivery: &DeliveryOrder) -
             let _ = send_remote_signal(crate::signals::RemoteSignal::Returned { order_hash: order.clone() }, vec![delivery.requester.clone(), driver]);
         }
     }
+    // Finished: off every queue, the driver's included.
+    crate::order_queues::retire(&crate::OrderParties::delivery(order, delivery)?)?;
     Ok(hash)
 }
 

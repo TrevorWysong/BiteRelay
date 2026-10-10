@@ -269,6 +269,12 @@ export interface DeliveryOrder {
    */
   door_risk_accepted: boolean;
   /**
+   * The customer asking for a driver of their own: nobody picks this
+   * order up while carrying another, or picks another up while carrying
+   * it (`ledger_types::InHand`). Fixed when the order is placed.
+   */
+  priority: boolean;
+  /**
    * `None` for an ordinary menu order (the default, and every order
    * written before this field existed). `Some` means this delivery
    * originated from a confirmed `catalog::BagClaim` (a goodie bag
@@ -554,6 +560,22 @@ export interface HoldView {
 }
 
 /**
+ * The orders a driver has in hand: those whose collateral they've set
+ * aside (by picking them up) and not yet had back or forfeited. The ledger
+ * carries it from entry to entry like the balance (`ledger_types`), so
+ * validation checks it in one step rather than walking the chain; a
+ * customer's app counts a driver's assigned orders the same way before
+ * accepting their bid.
+ */
+export interface InHand {
+  orders: number;
+  /**
+   * Whether the one order in hand is a priority order, which goes alone.
+   */
+  priority: boolean;
+}
+
+/**
  * What a customer can say about an issue, sealed to the store: a note, and
  * a photo.
  */
@@ -703,6 +725,10 @@ export interface LedgerEntry {
    */
   balance: number;
   /**
+   * The orders the author has in hand after this entry.
+   */
+  in_hand: InHand;
+  /**
    * The author's previous ledger entry -- `None` only for their first.
    */
   previous: ActionHash | null;
@@ -748,6 +774,18 @@ export type LedgerKind =
       Waive: {
         hold: ActionHash;
         portion: Portion;
+      };
+    }
+  /**
+   * The author, a driver, conceding their collateral to the store on its
+   * decision that the order never arrived (`basis`) -- the store collects
+   * it. No change to the author's balance; it settles the order they had
+   * in hand (`InHand`).
+   */
+  | {
+      Forfeit: {
+        hold: ActionHash;
+        basis: ActionHash;
       };
     };
 
@@ -811,6 +849,11 @@ export const MAX_LICENSE_PLATE_CHARS = 20;
 export const MAX_NAME_CHARS = 100;
 
 /**
+ * The most bytes a note can take as UTF-8: four per character, at worst.
+ */
+export const MAX_NOTE_BYTES = 4000;
+
+/**
  * A note: a profile's bio, a report of missing items, a chat message, a
  * kitchen or drop-off note.
  */
@@ -844,10 +887,10 @@ export const MAX_REFERENCE_CHARS = 100;
 
 /**
  * A small sealed field -- a note, a name, an address, a phone number, a
- * handoff code -- is one box: at most a chunk, sealed
- * (`SEAL_CHUNK_BYTES + SEAL_TAG_BYTES`).
+ * handoff code -- is one box. No honest box is larger than the keystore's
+ * 8 KiB frame.
  */
-export const MAX_SEALED_BYTES = 7184;
+export const MAX_SEALED_BYTES = 8192;
 
 export const MAX_STREET_CHARS = 200;
 
@@ -994,6 +1037,14 @@ export interface NetworkTerms {
   default_prep_minutes: number;
   max_prep_minutes: number;
   max_delivery_radius_km: number;
+  /**
+   * The most orders a driver may carry at once.
+   */
+  max_concurrent_deliveries: number;
+  /**
+   * How far from a driver's remaining drop-offs an add-on may go.
+   */
+  add_on_detour_km: number;
   /**
    * The most an inline image may take, in bytes of its data URI.
    */
@@ -1622,12 +1673,12 @@ export type RoleTag = "Requester" | "Provider" | "Merchant";
 export const SEALED_IMAGE_OVERHEAD_BYTES = 4096;
 
 /**
- * The most sealed in one box, in bytes: a larger value is sealed in chunks
- * of this (`SealedChunks`). The conductor refuses a sealing request over
- * 8,192 bytes *including its framing* (~230 bytes), so a chunk leaves
- * room for that.
+ * The most sealed in one box of a `SealedChunks`, in bytes. The keystore
+ * carries each request and reply in a frame of at most 8 KiB, with bytes
+ * written as a list of numbers -- up to two bytes each -- so a chunk, once
+ * sealed, must fit in under half a frame with room for its framing.
  */
-export const SEAL_CHUNK_BYTES = 7168;
+export const SEAL_CHUNK_BYTES = 3584;
 
 /**
  * What sealing adds to each box: its authentication tag.
@@ -1674,6 +1725,10 @@ export interface TemplateDetails {
   dropoff: GeoPoint;
   dropoff_notes: string;
   kitchen_notes: string;
+  /**
+   * Each order asks for a driver of its own (`DeliveryOrder::priority`).
+   */
+  priority: boolean;
 }
 
 /**

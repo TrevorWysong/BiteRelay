@@ -177,10 +177,11 @@ pub fn validate_queue_link_delete(link: OpLinkFields<'_>) -> ExternResult<Valida
                 Ok(order) => order,
                 Err(reason) => return invalid(&reason),
             };
-            let is_driver = matches!(link.link_type, LinkTypes::DriverToActiveDelivery) && tagged_driver(link.tag, link.target)?.as_ref() == Some(link.author);
+            // Never the driver: their queue is how customers see how many
+            // orders they're carrying, which they'd otherwise hide.
             require(
-                link.author == &order.requester || link.author == &order.merchant || is_driver,
-                "only the order's requester, merchant or driver may retire it from an active queue",
+                link.author == &order.requester || link.author == &order.merchant,
+                "only the order's requester or merchant may retire it from an active queue",
             )
         }
         LinkTypes::StoreHistoryToOrder | LinkTypes::StoreHistoryPath | LinkTypes::CustomerHistoryToOrder | LinkTypes::CustomerHistoryPath => {
