@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Minus, Plus, Trash2, ArrowLeft } from "lucide-react";
+import { InfoTip } from "../../components/InfoTip";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
@@ -11,7 +12,9 @@ import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
-import { formatCents, toMinorUnits, currencySymbol } from "../../lib/format";
+import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
+import { useCustomerSettings } from "../../store/roleSettings";
+import { useTerms } from "../../store/network";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
 import { fetchMenu } from "../../lib/menu";
 import { WEEKDAYS } from "../../lib/recurrence";
@@ -33,13 +36,19 @@ const DROPOFF_PREFERENCE_OPTIONS: { value: DropoffPreference; label: string }[] 
 // anything higher) -- letting the customer set it, rather than hardcoding
 // `max_delivery_fee: null`, is what actually gives them cost certainty at
 // checkout instead of an unbounded "set by driver bid" placeholder.
-const DELIVERY_FEE_PRESETS_CENTS = [400, 600, 900, 1200];
 
 /// How a delivery is driven: standard, or priority -- a driver with no
 /// other orders (`DeliveryOrder::priority`).
 const DELIVERY_SPEEDS = [
   { priority: false, label: "Standard", detail: "Your driver may pick up another order on the way, as on any delivery app." },
   { priority: true, label: "Priority", detail: "A driver with no other orders brings yours straight to you. Drivers usually bid more for it." },
+];
+
+/// Who picks the driver: the app, by the network's published rule, or the
+/// customer.
+const MATCHING = [
+  { autoMatch: true, label: "Pick for me", detail: "Your app takes the best bid shortly after the first arrives: the lowest fee, counting time and each driver's record. You can still pick one yourself first." },
+  { autoMatch: false, label: "I'll choose", detail: "You see every bid, with each driver's record, and accept one yourself." },
 ];
 
 function Section({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
@@ -56,9 +65,8 @@ function Section({ title, right, children }: { title: string; right?: React.Reac
   );
 }
 
-// Client-side pre-check only -- `request_delivery`'s own coordinator-level
-// check (dispatch_coordinator::orders, same best-effort trust tier as its
-// promo-code/bag-claim checks) is the real enforcement. `null` for
+// A pre-check, so the customer hears it while choosing: the network refuses
+// an order outside the radius of the store version it cites. `null` for
 // `merchantLocation`/`merchantRadiusKm` (catalog still loading) means
 // nothing to check yet, so every pick is allowed rather than blocked on a
 // fetch that hasn't resolved.
@@ -93,12 +101,9 @@ const NO_ITEMS: { hash: ActionHash; item: MenuItem }[] = [];
 
 interface CartStoreInfo {
   subsidyPercent: number;
-  // Merchant's own delivery-range setting -- lets `onValidate` below
-  // reject an out-of-range dropoff pick client-side, before the order is
-  // even submitted. The real, authoritative enforcement is still
-  // `request_delivery`'s own coordinator-level check; this is purely a
-  // faster, friendlier pre-check -- `null` until the catalog loads, which
-  // `onValidate` treats as "nothing to check yet".
+  // The store's delivery range -- lets `onValidate` below reject an
+  // out-of-range drop-off as it's picked (the network refuses one anyway).
+  // `null` until the catalog loads: nothing to check yet.
   merchantLocation: GeoPoint | null;
   merchantRadiusKm: number | null;
   /// When the store takes orders -- checkout says so up front; the zome
@@ -107,6 +112,14 @@ interface CartStoreInfo {
   /// The most an order may cost to be left at the door, if the store sets
   /// a limit -- above it, the option isn't offered.
   leaveAtDoorMaxCents: number | null;
+  /// The smallest order the store takes, before promos -- the network
+  /// refuses a smaller one.
+  minOrderCents: number | null;
+  /// Minutes the store is adding to its prep time while it's busy.
+  busyExtraMinutes: number;
+  /// How long past the ready time the store may keep a driver waiting, if
+  /// it sets its own -- else the network's.
+  storeWaitMinutes: number | null;
   promoCodes: PromoRow[];
   menuItems: { hash: ActionHash; item: MenuItem }[];
   completedOrderCount: number;
@@ -140,6 +153,9 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
     merchantRadiusKm: catalog?.max_delivery_radius_km ?? null,
     hours: catalog,
     leaveAtDoorMaxCents: catalog?.leave_at_door_max_cents ?? null,
+    minOrderCents: catalog?.min_order_cents ?? null,
+    busyExtraMinutes: catalog?.busy_extra_minutes ?? 0,
+    storeWaitMinutes: catalog?.store_wait_minutes ?? null,
     promoCodes,
     menuItems,
     completedOrderCount,
@@ -184,7 +200,10 @@ export function Cart() {
   // moving.
   const [dropoff, setDropoff] = useState<GeoPoint>(location);
   const [saveAsDefault, setSaveAsDefault] = useState(false);
-  const [chosenPreference, setDropoffPreference] = useState<DropoffPreference>("HandToMe");
+  // Checkout starts as the customer last left it.
+  const [usual] = useState(() => useCustomerSettings.getState().checkout);
+  const feePresets = useTerms().suggested_delivery_fees;
+  const [chosenPreference, setDropoffPreference] = useState<DropoffPreference>(usual.dropoffPreference);
   // Leaving it at the door means accepting it's delivered once it's left --
   // asked each time it's chosen.
   const [doorRiskAccepted, setDoorRiskAccepted] = useState(false);
@@ -195,15 +214,24 @@ export function Cart() {
   const [savingRecurring, setSavingRecurring] = useState(false);
   const [recurringSaved, setRecurringSaved] = useState(false);
   const [scheduled, setScheduled] = useState(false);
-  const [priority, setPriority] = useState(false);
+  const [priority, setPriority] = useState(usual.priority);
+  const [autoMatch, setAutoMatch] = useState(usual.autoMatch);
   const [scheduledFor, setScheduledFor] = useState("");
-  const [tipPercent, setTipPercent] = useState<number | null>(15);
+  const [tipPercent, setTipPercent] = useState<number | null>(usual.tipPercent);
   const [customTip, setCustomTip] = useState("");
-  const [feePreset, setFeePreset] = useState<number | null>(DELIVERY_FEE_PRESETS_CENTS[1]);
-  const [customFee, setCustomFee] = useState("");
+  const [feePreset, setFeePreset] = useState<number | null>(() => {
+    if (usual.feeCapCents !== null && feePresets.includes(usual.feeCapCents)) return usual.feeCapCents;
+    if (usual.feeCapCents !== null) return null;
+    return feePresets[Math.min(1, feePresets.length - 1)];
+  });
+  const [customFee, setCustomFee] = useState(() => (usual.feeCapCents !== null && !feePresets.includes(usual.feeCapCents) ? String(fromMinorUnits(usual.feeCapCents)) : ""));
   const catalogRef = cart.catalogRef;
   const now = useClock();
   const { data: storeInfo } = useResource(catalogRef && `cart-store:${bytesToHex(catalogRef)}`, () => fetchCartStoreInfo(catalogRef!));
+  // How late the store may run before a driver can leave it paid and the
+  // customer cancel for nothing -- its own, or the network's.
+  const networkWaitSecs = useTerms().store_wait_secs;
+  const storeWaitMinutes = storeInfo?.storeWaitMinutes ?? Math.round(networkWaitSecs / 60);
   const subsidyPercent = storeInfo?.subsidyPercent ?? 0;
   const merchantLocation = storeInfo?.merchantLocation ?? null;
   const merchantRadiusKm = storeInfo?.merchantRadiusKm ?? null;
@@ -265,6 +293,8 @@ export function Cart() {
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
   // The store's limit on what may be left at a door; above it, the order is
   // handed over whatever was chosen.
+  // The store's minimum is on the menu prices, before any promo.
+  const shortOfMinimum = storeInfo?.minOrderCents != null ? Math.max(0, storeInfo.minOrderCents - cart.total()) : 0;
   const doorAllowed = storeInfo?.leaveAtDoorMaxCents == null || discountedSubtotalCents <= storeInfo.leaveAtDoorMaxCents;
   const dropoffPreference: DropoffPreference = chosenPreference === "LeaveAtDoor" && !doorAllowed ? "HandToMe" : chosenPreference;
   const estimatedTotalCents = discountedSubtotalCents + tipCents + customerFeeShareCents;
@@ -326,8 +356,10 @@ export function Cart() {
         dropoff_preference: dropoffPreference,
         door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
         priority,
+        auto_match: autoMatch,
       });
       const orderRef = actionHash(record);
+      useCustomerSettings.getState().rememberCheckout({ tipPercent, feeCapCents: maxFeeCents, dropoffPreference, priority, autoMatch });
       if (saveAsDefault) setSessionLocation(dropoff);
       cart.clear();
       navigate(`/customer/orders/${bytesToHex(orderRef)}`);
@@ -463,7 +495,18 @@ export function Cart() {
       )}
 
       {fulfillment === "Delivery" && (
-        <Section title="Delivery">
+        <Section
+          title="Delivery"
+          right={
+            <InfoTip label="If your order runs late">
+              <p className="font-semibold text-ink-900 dark:text-ink-50">If it runs late</p>
+              <p className="mt-1">
+                If this store keeps your driver waiting more than {storeWaitMinutes} minutes past its ready time, the store pays your driver and your order goes to another one. You can then cancel for a full refund.
+              </p>
+              <p className="mt-1">If no driver comes, you're refunded in full. You never pay for food you didn't get unless you cancel while it's on its way.</p>
+            </InfoTip>
+          }
+        >
           <div className="flex gap-2">
             {DELIVERY_SPEEDS.map(({ priority: value, label }) => (
               <ToggleChip key={label} active={priority === value} onClick={() => setPriority(value)} className="flex-1">
@@ -472,6 +515,19 @@ export function Cart() {
             ))}
           </div>
           <p className="mt-2 text-xs text-ink-400">{DELIVERY_SPEEDS.find((speed) => speed.priority === priority)?.detail}</p>
+        </Section>
+      )}
+
+      {fulfillment === "Delivery" && (
+        <Section title="Driver">
+          <div className="flex gap-2">
+            {MATCHING.map(({ autoMatch: value, label }) => (
+              <ToggleChip key={label} active={autoMatch === value} onClick={() => setAutoMatch(value)} className="flex-1">
+                {label}
+              </ToggleChip>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-400">{MATCHING.find((m) => m.autoMatch === autoMatch)?.detail}</p>
         </Section>
       )}
 
@@ -557,7 +613,7 @@ export function Cart() {
         <Section title="Delivery fee cap">
           <p className="mb-2 text-xs text-ink-400">Drivers bid to deliver your order, up to this amount. You're only ever charged what the winning bid actually offers, never more.</p>
           <div className="flex flex-wrap gap-2">
-            {DELIVERY_FEE_PRESETS_CENTS.map((cents) => (
+            {feePresets.map((cents) => (
               <ToggleChip
                 key={cents}
                 active={feePreset === cents}
@@ -701,6 +757,16 @@ export function Cart() {
       {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="fixed inset-x-0 bottom-20 z-20 mx-auto flex max-w-md flex-col items-center gap-2 px-4">
+        {storeInfo && storeInfo.busyExtraMinutes > 0 && (
+          <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
+            The store is busy: orders are taking about {storeInfo.busyExtraMinutes} minutes longer than usual.
+          </p>
+        )}
+        {shortOfMinimum > 0 && storeInfo?.minOrderCents != null && (
+          <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
+            This store's minimum order is {formatCents(storeInfo.minOrderCents)}. Add {formatCents(shortOfMinimum)} more to order.
+          </p>
+        )}
         {fulfillment === "Delivery" && discountedSubtotalCents === 0 && (
           <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
             A free order can't be delivered: your driver answers for what they carry. Choose pickup instead.
@@ -714,7 +780,7 @@ export function Cart() {
         <Button
           className="w-full"
           loading={placing}
-          disabled={storeClosed || (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
+          disabled={storeClosed || shortOfMinimum > 0 || (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
           onClick={placeOrder}
         >
           {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}

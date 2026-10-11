@@ -14,6 +14,7 @@
 
 use dispatch_types::{Bid, Cancellation, DeliveryOrder, DeliveryStatus, OrderOutcome, Outcome, PickupOrder, PickupStatus};
 use hdi::prelude::*;
+use relay_integrity_support::chain::entries_since;
 use relay_integrity_support::{first_problem, text_problem};
 use relay_integrity_support::{classify, decode, original_creation, Checked};
 
@@ -51,6 +52,19 @@ pub enum ReputationEventKind {
     DisputeRaised,
     DisputeResolvedAgainst,
     CollateralForfeited { amount: u64 },
+    /// A driver who left a delivery they'd committed to before picking it
+    /// up -- dropping it, or moved on by the store once they were late.
+    /// Recorded by the customer, on the version that released them: a
+    /// driver's completion rate.
+    DeliveryDropped,
+    /// A store that kept a checked-in driver waiting past its wait.
+    /// Recorded by that driver, on their update leaving it late.
+    StoreLate,
+    /// A driver's report that a store wouldn't check them in -- which the
+    /// network can't check, so it moves no money: the store answers to it
+    /// in what drivers and customers see. Recorded by a driver the order's
+    /// customer accepted, on a version naming them.
+    CheckInRefused,
 }
 
 /// Append-only by design (see architecture plan §2): a single mutable
@@ -159,8 +173,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
         Checked::Create { entry, action } => match entry {
             EntryTypes::ReputationEvent(event) => validate_event(&event, action.author()),
-            EntryTypes::Review(review) => validate_review(&review, action.author()),
-            EntryTypes::ItemReview(review) => validate_item_review(&review, action.author()),
+            EntryTypes::Review(review) => validate_review(&review, action.author(), action.prev_action()),
+            EntryTypes::ItemReview(review) => validate_item_review(&review, action.author(), action.prev_action()),
         },
         // Reputation is an append-only record.
         Checked::Update { .. } => Ok(ValidateCallbackResult::Invalid("reputation entries can't be changed".into())),
@@ -197,7 +211,7 @@ fn resolve_reviewable_order(
 ) -> ExternResult<Result<ReviewableOrder, String>> {
     let order_record = must_get_valid_record(order_ref.clone())?;
     if let Ok(Some(order)) = order_record.entry().to_app_option::<DeliveryOrder>() {
-        if order.status != DeliveryStatus::Delivered {
+        if !matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Collected) {
             return Ok(Err(not_yet_delivered_msg.into()));
         }
         let driver = match &order.accepted_bid {
@@ -238,7 +252,7 @@ fn resolve_reviewable_order(
 /// actually be one of the order's own `item_refs`, checked deterministically
 /// since `order_ref` is already resolved (by the coordinator) to the
 /// order's real, immutable-at-this-point item list.
-fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_item_review(review: &ItemReview, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([text_problem("comment", &review.comment, relay_integrity_support::limits::MAX_DESCRIPTION_CHARS)]) {
         return Ok(invalid);
     }
@@ -273,7 +287,36 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
             "item_ref must have actually been part of the reviewed order".into(),
         ));
     }
+    let item = review.item_ref.clone();
+    if reviewed_before::<ItemReview>(author, prev_action, &review.order_ref, UnitEntryTypes::ItemReview, |earlier| earlier.item_ref == item, |earlier| &earlier.order_ref)? {
+        return Ok(ValidateCallbackResult::Invalid("an item is reviewed once per order".into()));
+    }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// Whether `author` already wrote a review of type `T` about the same order
+/// as `order_ref` (any version of it) for which `same_subject` holds --
+/// reviews are once per order and subject, so nobody can bury a store's,
+/// a driver's or an item's reviews in their own. Walked on their chain
+/// since the order was placed.
+fn reviewed_before<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
+    author: &AgentPubKey,
+    prev_action: Option<&ActionHash>,
+    order_ref: &ActionHash,
+    unit: UnitEntryTypes,
+    same_subject: impl Fn(&T) -> bool,
+    order_of: impl Fn(&T) -> &ActionHash,
+) -> ExternResult<bool> {
+    let Some(prev) = prev_action else { return Ok(false) };
+    let order = original_creation(order_ref.clone())?;
+    let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
+    for bytes in entries_since(author, prev, placed, &[unit.try_into()?])? {
+        let Ok(earlier) = T::try_from(bytes) else { continue };
+        if same_subject(&earlier) && original_creation(order_of(&earlier).clone())? == order {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 
@@ -292,7 +335,7 @@ fn validate_item_review(review: &ItemReview, author: &AgentPubKey) -> ExternResu
 /// on that specific, named action is still fully deterministic (a fixed,
 /// content-addressed hash), it's just the coordinator's job to have
 /// resolved it to the right one first.
-fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_review(review: &Review, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if let Some(invalid) = first_problem([text_problem("comment", &review.comment, relay_integrity_support::limits::MAX_DESCRIPTION_CHARS)]) {
         return Ok(invalid);
     }
@@ -338,6 +381,9 @@ fn validate_review(review: &Review, author: &AgentPubKey) -> ExternResult<Valida
                 ));
             }
         }
+    }
+    if reviewed_before::<Review>(author, prev_action, &review.order_ref, UnitEntryTypes::Review, |earlier| earlier.target == review.target, |earlier| &earlier.order_ref)? {
+        return Ok(ValidateCallbackResult::Invalid("an order's store and driver are each reviewed once".into()));
     }
     Ok(ValidateCallbackResult::Valid)
 }
@@ -392,7 +438,7 @@ fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult
     let subject = match &event.target {
         ReputationTarget::Store(store) if store == &order.catalog_ref => order.merchant.clone(),
         ReputationTarget::Customer(customer) if customer == &order.requester => customer.clone(),
-        ReputationTarget::Driver(agent) if order.driver.as_ref() == Some(agent) => agent.clone(),
+        ReputationTarget::Driver(agent) if order.driver.as_ref() == Some(agent) || order.released_driver.as_ref() == Some(agent) => agent.clone(),
         _ => return Ok(ValidateCallbackResult::Invalid("an event must be about this order's own store, customer or driver".into())),
     };
     if &subject == author {
@@ -403,9 +449,15 @@ fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult
     let at_store = matches!(event.target, ReputationTarget::Store(_));
     let at_customer = matches!(event.target, ReputationTarget::Customer(_));
     let allowed = match (&event.kind, &outcome) {
-        (ReputationEventKind::OrderCompleted, None) => at_store && order.completed && version.action().author() == author,
+        // A completed order, credited to its store by whoever completed it --
+        // or by its customer, who has it whoever wrote that version.
+        (ReputationEventKind::OrderCompleted, None) => at_store && order.completed && (version.action().author() == author || author == &order.requester),
         (ReputationEventKind::OrderCompleted, Some(Outcome::Delivered { .. })) => at_driver && by_store,
         (ReputationEventKind::OrderCancelledByThem, None) => order.cancelled_by.as_ref() == Some(&subject) && cancelled_here(&version)? && order.is_party(author),
+        // A driver who left because the store was late didn't drop it.
+        (ReputationEventKind::DeliveryDropped, None) => at_driver && order.released_driver.as_ref() == Some(&subject) && order.released_committed && order.called_late_by.is_none() && author == &order.requester,
+        (ReputationEventKind::StoreLate, None) => at_store && order.called_late_by.as_ref() == Some(author),
+        (ReputationEventKind::CheckInRefused, None) => at_store && (order.driver.as_ref() == Some(author) || order.released_driver.as_ref() == Some(author)),
         (ReputationEventKind::DisputeRaised, None) => at_driver && order.claimed && version.action().author() == author && author == &order.requester,
         (ReputationEventKind::DisputeResolvedAgainst, Some(Outcome::NotDelivered { .. })) => at_driver && by_store,
         (ReputationEventKind::DisputeResolvedAgainst, Some(Outcome::Delivered { proof })) => at_customer && by_store && claimed_before(proof)?,
@@ -427,8 +479,14 @@ struct Parties {
     driver: Option<AgentPubKey>,
     /// What the driver posts as collateral, once there is one.
     collateral: Option<u64>,
-    /// Delivered, or (for a pickup) collected.
+    /// Delivered, or collected.
     completed: bool,
+    /// The driver this version released, before they picked it up.
+    released_driver: Option<AgentPubKey>,
+    /// Whether that driver had committed to it (their collateral held).
+    released_committed: bool,
+    /// The driver who called the store late, if this version does.
+    called_late_by: Option<AgentPubKey>,
     /// The customer's claim that a delivery never arrived.
     claimed: bool,
     /// Who cancelled it, if this version is cancelled.
@@ -443,10 +501,23 @@ impl Parties {
                 None => None,
             };
             let cancelled_by = canceller(&order.cancellation, &order.requester, &order.merchant);
+            let (released_driver, released_committed) = released_driver(version, &order)?.unzip();
+            // A driver leaving because the store kept them waiting.
+            let late = match dispatch_types::lineage::Version::of(version.clone()) {
+                Some(v) => match v.prior()? {
+                    Some(p) => dispatch_types::lineage::is_store_late_release(&v, &p)?,
+                    None => false,
+                },
+                None => false,
+            };
+            let called_late_by = late.then(|| version.action().author().clone());
             return Ok(Some(Self {
+                released_driver,
+                released_committed: released_committed.unwrap_or(false),
+                called_late_by,
                 driver: bid.as_ref().map(|b| b.bidder.clone()),
                 collateral: bid.map(|b| b.collateral),
-                completed: order.status == DeliveryStatus::Delivered,
+                completed: matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Collected),
                 claimed: order.status == DeliveryStatus::Disputed,
                 cancelled_by: (order.status == DeliveryStatus::Cancelled).then_some(cancelled_by).flatten(),
                 requester: order.requester,
@@ -457,6 +528,9 @@ impl Parties {
         if let Some(order) = decode::<PickupOrder>(version) {
             let cancelled_by = canceller(&order.cancellation, &order.requester, &order.merchant);
             return Ok(Some(Self {
+                released_driver: None,
+                released_committed: false,
+                called_late_by: None,
                 driver: None,
                 collateral: None,
                 completed: order.status == PickupStatus::PickedUp,
@@ -478,8 +552,12 @@ impl Parties {
 /// Who a cancellation says cancelled the order.
 fn canceller(cancellation: &Option<Cancellation>, requester: &AgentPubKey, merchant: &AgentPubKey) -> Option<AgentPubKey> {
     match cancellation.as_ref()? {
-        Cancellation::ByCustomer => Some(requester.clone()),
-        Cancellation::ByStore(_) | Cancellation::StoreDidNotRespond => Some(merchant.clone()),
+        // Never collecting an order they chose to collect is the customer's
+        // cancelling, though the store records it.
+        Cancellation::ByCustomer | Cancellation::NotCollected => Some(requester.clone()),
+        Cancellation::ByStore(_) | Cancellation::StoreDidNotRespond | Cancellation::StoreLate => Some(merchant.clone()),
+        // A driver's doing, recorded as a drop.
+        Cancellation::NoDriver => None,
     }
 }
 
@@ -517,9 +595,27 @@ pub fn event_tag(kind: &ReputationEventKind, order_original: &ActionHash) -> Lin
         ReputationEventKind::DisputeRaised => (2, 0),
         ReputationEventKind::DisputeResolvedAgainst => (3, 0),
         ReputationEventKind::CollateralForfeited { amount } => (4, *amount),
+        ReputationEventKind::DeliveryDropped => (5, 0),
+        ReputationEventKind::StoreLate => (6, 0),
+        ReputationEventKind::CheckInRefused => (7, 0),
     };
     let mut bytes = vec![code];
     bytes.extend_from_slice(&amount.to_be_bytes());
     bytes.extend_from_slice(order_original.get_raw_39());
     LinkTag::new(bytes)
+}
+
+/// The driver `version` released, if it's the version releasing one: its
+/// prior version named an accepted bid, and it reopened the order (or
+/// turned it over to its customer to collect) without one -- and whether
+/// they'd committed to it.
+fn released_driver(version: &Record, order: &DeliveryOrder) -> ExternResult<Option<(AgentPubKey, bool)>> {
+    let ActionData::Update(update) = &version.action().data else { return Ok(None) };
+    if order.accepted_bid.is_some() || !matches!(order.status, DeliveryStatus::Open | DeliveryStatus::Collecting) {
+        return Ok(None);
+    }
+    let Some(prior) = decode::<DeliveryOrder>(&must_get_valid_record(update.original_action_address.clone())?) else { return Ok(None) };
+    let Some(bid_ref) = prior.accepted_bid else { return Ok(None) };
+    let committed = prior.collateral_hold.is_some();
+    Ok(decode::<Bid>(&must_get_valid_record(bid_ref)?).map(|bid| (bid.bidder, committed)))
 }

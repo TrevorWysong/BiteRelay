@@ -85,6 +85,10 @@ pub enum LocalSignal {
     HandoffRecorded(ActionHash),
     /// The customer reported items missing or wrong on this order.
     IssueReported(ActionHash),
+    /// The store handed this order over to this agent, its driver.
+    HandedOver(ActionHash),
+    /// This agent's store's customer asked to collect this order.
+    CollectRequested(ActionHash),
 }
 
 /// Peer-to-peer signals, only ever between an order's own parties.
@@ -116,6 +120,11 @@ pub enum RemoteSignal {
     /// From the customer to the store: they've reported items missing or
     /// wrong.
     IssueReported { order_hash: ActionHash },
+    /// From the store to the driver: it's handed the order over -- their app
+    /// picks it up on the store's record.
+    HandedOver { order_hash: ActionHash },
+    /// From the customer to the store: they've asked to collect it.
+    CollectRequested { order_hash: ActionHash },
 }
 
 /// An order's parties and what it is now, from one version of it.
@@ -174,25 +183,45 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
     match payload {
         // A store set to auto-accept answers it from its conductor.
         RemoteSignal::OrderPlaced { order_hash } => {
-            if current_state(&order_hash).is_some_and(|order| order.merchant != me || order.requester != sender) {
-                return Ok(());
-            }
-            // Answering re-reads every waiting order and checks it.
+            // Anyone can send this, and the order routinely arrives after its
+            // notice -- so it wakes the answering sweep regardless. That's
+            // harmless: the sweep re-reads every waiting order from the
+            // network and checks it, and scheduling is idempotent, so a flood
+            // keeps it to one run per scheduler tick.
             upkeep::answer_new_orders_soon()?;
-            emit_signal(LocalSignal::OrderPlaced(order_hash))
+            // The screen (and its new-order chime) hears only of an order it
+            // can see: placed with this store, by the sender.
+            match current_state(&order_hash) {
+                Some(order) if order.merchant == me && order.requester == sender => emit_signal(LocalSignal::OrderPlaced(order_hash)),
+                _ => Ok(()),
+            }
         }
         RemoteSignal::OrderUpdated { order_hash, version } => {
             // The new version itself, if it's reached us: written by the
             // sender, as an update of this order.
-            let verified = match get(version.clone(), GetOptions::network()).ok().flatten() {
-                Some(record) if record.action().author() == &sender && original_action_of(version).ok().as_ref() == Some(&order_hash) => OrderState::of(&record),
-                _ => None,
-            };
+            let written = get(version.clone(), GetOptions::network())
+                .ok()
+                .flatten()
+                .filter(|record| record.action().author() == &sender && original_action_of(version.clone()).ok().as_ref() == Some(&order_hash));
+            let verified = written.as_ref().and_then(OrderState::of);
             match verified {
                 Some(order) => {
-                    let sender_ok = order.role_of(&sender).is_some();
+                    // A party to the order -- or the driver this version
+                    // released, who isn't one any more.
+                    let released = written.as_ref().map(crate::deliveries::released_driver).transpose()?.flatten();
+                    let sender_ok = order.role_of(&sender).is_some() || released.as_ref().is_some_and(|(driver, _)| driver == &sender);
                     match order.role_of(&me) {
                         Some(role) if sender_ok => {
+                            if let Some(record) = &written {
+                                crate::deliveries::record_what_changed(record, &order_hash, released.as_ref())?;
+                            }
+                            // Whatever it changed may be the store's or the
+                            // driver's to act on -- their apps tend it.
+                            match role {
+                                OrderRole::Store => upkeep::tend_my_stores_soon()?,
+                                OrderRole::Driver => upkeep::tend_my_deliveries_soon()?,
+                                OrderRole::Customer => upkeep::tend_my_orders_soon()?,
+                            }
                             // Whatever it changed may settle money owed here.
                             schedule("settle_soon")?;
                             emit_signal(LocalSignal::OrderUpdated { order_hash, change: order.change, role })
@@ -215,10 +244,16 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             if wrong_order || wrong_bidder {
                 return Ok(());
             }
+            // A customer matching automatically counts from the first bid.
+            upkeep::tend_my_orders_soon()?;
             emit_signal(LocalSignal::BidPlaced(bid_hash))
         }
         RemoteSignal::BidAccepted { bid_hash } | RemoteSignal::BidReleased { bid_hash } if !bid_from(&bid_hash, &me, &sender) => Ok(()),
-        RemoteSignal::BidAccepted { bid_hash } => emit_signal(LocalSignal::BidAccepted(bid_hash)),
+        RemoteSignal::BidAccepted { bid_hash } => {
+            // The driver's app commits to it at once.
+            upkeep::tend_my_deliveries_soon()?;
+            emit_signal(LocalSignal::BidAccepted(bid_hash))
+        }
         RemoteSignal::BidReleased { bid_hash } => emit_signal(LocalSignal::BidReleased(bid_hash)),
         RemoteSignal::ChatMessage { order_hash, text } => {
             let Some(order) = current_state(&order_hash) else { return Ok(()) };
@@ -241,7 +276,9 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || order.role_of(&sender).is_none()) {
                 return Ok(());
             }
-            // Settling reads every hold and checks every decision.
+            // Settling reads every hold and checks every decision, and
+            // scheduling is idempotent -- so a stranger's notice about an order
+            // not yet seen costs at most one run per scheduler tick.
             schedule("settle_soon")
         }
         RemoteSignal::HandoffRecorded { order_hash } => {
@@ -251,6 +288,22 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
                 _ => Ok(()),
             }
         }
+        RemoteSignal::HandedOver { order_hash } => match current_state(&order_hash) {
+            // The driver's app picks it up on the store's record -- which it
+            // reads and checks itself, so a stranger's notice costs a look.
+            Some(order) if order.driver.as_ref() == Some(&me) && order.merchant == sender => {
+                upkeep::tend_my_deliveries_soon()?;
+                emit_signal(LocalSignal::HandedOver(order_hash))
+            }
+            _ => Ok(()),
+        },
+        RemoteSignal::CollectRequested { order_hash } => match current_state(&order_hash) {
+            Some(order) if order.merchant == me && order.requester == sender => {
+                upkeep::tend_my_stores_soon()?;
+                emit_signal(LocalSignal::CollectRequested(order_hash))
+            }
+            _ => Ok(()),
+        },
         RemoteSignal::IssueReported { order_hash } => match current_state(&order_hash) {
             Some(order) if order.merchant == me && order.requester == sender => emit_signal(LocalSignal::IssueReported(order_hash)),
             _ => Ok(()),

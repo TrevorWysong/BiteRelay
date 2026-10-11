@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, bytesEqual, decodeEntry, retryUntil, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customerA, customerB, driver] = await scenario.addPlayersWithApps([
@@ -80,7 +80,10 @@ await runScenario(async (scenario) => {
 
   const orderA = decodeEntry<{ status: string; accepted_bid: Uint8Array }>(await dispatchOf(driver)<HcRecord>("get_order", orderRefA));
   const orderB = decodeEntry<{ status: string; accepted_bid: Uint8Array }>(await dispatchOf(driver)<HcRecord>("get_order", orderRefB));
-  assert.equal(orderA.status, "BidAccepted", "order A should be BidAccepted, won by the same driver as order B");
-  assert.equal(orderB.status, "BidAccepted", "order B should be BidAccepted, won by the same driver as order A");
+  // The driver's app commits to each as soon as it hears, and each store's
+  // starts cooking -- so either may already have moved on.
+  const assigned = ["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed"];
+  assert.ok(assigned.includes(orderA.status) && bytesEqual(orderA.accepted_bid, actionHash(bidRecordA)), "order A is the driver's");
+  assert.ok(assigned.includes(orderB.status) && bytesEqual(orderB.accepted_bid, actionHash(bidRecordB)), "order B is the same driver's");
   console.log("[PASS] a single driver can hold two genuinely concurrent accepted deliveries -- nothing in the backend restricts this");
 });

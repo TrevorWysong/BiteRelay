@@ -54,6 +54,9 @@ pub struct IssueEvidence {
 pub struct ItemIssue {
     /// The order's original action.
     pub order: ActionHash,
+    /// The version of the order showing the customer has it: its delivered
+    /// version, or their own update collecting a pickup.
+    pub received: ActionHash,
     pub lines: Vec<IssueLine>,
     /// The customer's `IssueEvidence`, sealed to the store.
     pub sealed_for_store: SealedChunks,

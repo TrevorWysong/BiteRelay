@@ -14,10 +14,16 @@ export const POLICY_UPDATED = "2026-10-09";
 
 export const POLICY_CHANGES: { version: string; date: string; summary: string }[] = [
   {
+    version: "1.2",
+    date: "2026-10-10",
+    summary:
+      "Stores cook once a driver commits. Drivers check in at the store's counter and the store hands the order over by scanning the driver's code. A customer is never charged for food they didn't get unless they chose to: a driver who leaves an order cooking pays for it if no other driver takes it on, and a store that keeps a checked-in driver waiting past its own wait pays their fee, the order goes to another driver, and the customer may cancel for a full refund. Customers can collect a late order themselves and get the store's share of the delivery fee back. Apps can match drivers automatically by a published rule, and drivers can bid automatically.",
+  },
+  {
     version: "1.1",
     date: "2026-10-09",
     summary:
-      "No arbitrators. Handoffs are proved by the giver's code or their own confirmation, at pickup as at the door. Leaving an order at the door is the customer's choice and risk. The store decides a delivery that never arrived (paid either way, by the customer or by the driver's collateral) and has the final say on missing items. Drivers carry a limited number of orders at once, and a priority order goes alone.",
+      "No arbitrators. Handoffs are proved by the giver's code or their own confirmation, at pickup as at the door. Leaving an order at the door is the customer's choice and risk. The store decides a delivery that never arrived (paid either way, by the customer or by the driver's collateral) and has the final say on missing items. Drivers carry a limited number of orders at once, and a priority order goes alone. Limits on waiting orders, one bid per driver, goodie-bag holds, store minimums and busy times.",
   },
   {
     version: "1.0",
@@ -62,7 +68,8 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       summary: "Money is set aside at each step and moves only on proof or on the store's decision about the order. Relay takes no fee.",
       points: [
         "When a store accepts your order, the price of the food is set aside from your balance. When you accept a driver's bid, their fee and your tip are set aside too.",
-        "The driver sets aside the value of the food when they pick it up. That's their collateral: it's theirs again once the order is delivered.",
+        "The driver sets aside the value of the food when they commit to the order, before the store starts cooking it. That's their collateral: it's theirs again once the order is delivered.",
+        "When the store checks the driver in at its counter, it sets aside its share of their fee, and your share again in case it keeps them waiting.",
         "Each part of a payment is decided once. Nobody can collect it twice or take back what's been paid.",
         "Your balance is the arithmetic of your own signed ledger. Every entry is on the Transparency page.",
         t.credit_limit_cents > 0
@@ -74,11 +81,12 @@ export function policySections(t: NetworkTerms): PolicySection[] {
     {
       id: "handoffs",
       title: "Handing over an order",
-      summary: "Every handoff is proved by whoever hands the order over: the store at pickup, the customer at the door.",
+      summary: "Every handoff is proved by whoever hands the order over: the store at its counter, the customer at the door.",
       points: [
-        `The store and the customer each have a ${HANDOFF_CODE_DIGITS}-digit code for the order, shown on their screen with a QR code. Only they can see it.`,
-        `The driver scans the code, or types the digits read out to them, or the giver taps to confirm in their own app. Any one of them proves the handoff. After ${t.max_code_attempts} wrong codes, typing stops working for that order.`,
-        "A driver can't pick up an order without the store's proof, and can't complete a delivery without the customer's.",
+        `At the store, the driver checks in by scanning the store's ${HANDOFF_CODE_DIGITS}-digit code, or typing it, and the store's app checks it. Checking in shows they're there; it doesn't hand anything over.`,
+        "The store hands the order over by scanning the driver's own code, or confirming in its app. Only the store's record of handing it over lets a driver pick it up.",
+        `At the door, the customer has their own code. The driver scans it, types the digits read out to them, or the customer confirms in their app. After ${t.max_code_attempts} wrong codes, typing stops working for that order.`,
+        "A driver can't pick up an order without the store's record, and can't complete a delivery without the customer's proof.",
         "Share your code only once the order is in your hands: it proves you received it, and can't be taken back.",
         "If you choose to have your order left at the door, you accept that it's delivered once your driver leaves it there. They photograph where; if it's taken after that, it isn't refunded.",
         "Stores can set a limit above which they always hand orders over in person.",
@@ -86,7 +94,7 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       effects: [
         { who: "customers", good: "Nobody can mark your order delivered without your code or your say-so, unless you chose to have it left at the door.", bad: "Giving your code before checking your order means accepting it as delivered." },
         { who: "drivers", good: "A delivery completed with the customer's code or confirmation is final: nobody can say later it never arrived.", bad: "Without the customer's proof you can't complete a hand-to-me delivery, and you're paid only once it's complete." },
-        { who: "stores", good: "Once the driver has your code, the food is in their care, covered by their collateral.", bad: "Hand over the code only with the food: it's your word that the driver has it." },
+        { who: "stores", good: "Once you've scanned the driver's code, the food is in their care, covered by their collateral.", bad: "Scan it only as you hand the food over: your record is the proof they have it." },
       ],
     },
     {
@@ -127,7 +135,7 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       title: "How many orders a driver carries",
       summary: `A driver carries at most ${t.max_concurrent_deliveries} order${t.max_concurrent_deliveries === 1 ? "" : "s"} at once, as on the big delivery apps, and you can ask for one with no others.`,
       points: [
-        `A driver can take on at most ${t.max_concurrent_deliveries} order${t.max_concurrent_deliveries === 1 ? "" : "s"} at once. The network counts what they've picked up and refuses a pickup past that, so no app can get around it.`,
+        `A driver can take on at most ${t.max_concurrent_deliveries} order${t.max_concurrent_deliveries === 1 ? "" : "s"} at once. The network counts what they've committed to and refuses one past that, so no app can get around it.`,
         `While delivering, a driver is offered only add-ons on their way: orders from a store they're still to collect from, or going within ${t.add_on_detour_km} km of one of their drop-offs.`,
         "Every bid shows how many other orders that driver has, and you choose. A driver can't hide orders they've taken on.",
         "Choose Priority at checkout for a driver with no other orders. Nobody can pick up your order while carrying another, or another while carrying yours. Drivers usually bid more for it.",
@@ -136,6 +144,55 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       effects: [
         { who: "customers", good: "Your order isn't one of many on a long route, and Priority guarantees it's the only one.", bad: "A Priority order may wait longer for a driver, and usually costs more." },
         { who: "drivers", good: "Add-ons on your way earn more for the same trip.", bad: "Past the limit, or on a Priority order, you're offered nothing more until you deliver." },
+      ],
+    },
+    {
+      id: "matching",
+      title: "How a driver is chosen",
+      summary: "Like the big delivery apps, your app can choose a driver for you, by a rule anyone can check. Or you choose.",
+      points: [
+        `Drivers bid on your order with their fee and when they'd get it to you. ${spoken(t.bid_window_secs)} after the first bid, your app takes the best one.`,
+        `The best bid is the lowest fee once each minute until delivery counts as ${formatCents(t.minute_value_cents)} and the driver's dropped orders count against them: a faster driver can win at a higher fee, and one who drops orders has to bid lower to win.`,
+        "Bids over your fee cap, from a driver who left your order before, or from one who can't take another order right now, aren't chosen.",
+        "Choose \"I'll choose\" at checkout to see every bid and accept one yourself.",
+        `Once chosen, a driver has ${spoken(t.offer_secs)} to commit, as on DoorDash. Drivers can have their app bid for them at their own rate, skipping stores other drivers report.`,
+      ],
+      effects: [
+        { who: "customers", good: "A driver is found without you watching the screen, by a rule that's the same for everyone.", bad: "The cheapest bid doesn't always win: time and reliability count too." },
+        { who: "drivers", good: "Reliable, fast drivers win more often, even at a higher fee.", bad: "Dropped orders cost you bids." },
+      ],
+    },
+    {
+      id: "late",
+      title: "When a driver or store is late",
+      summary: "You're never charged for food you didn't get unless you chose to be. Whoever caused the delay pays for it, as the network can see it.",
+      points: [
+        "The store starts cooking only once a driver has committed, so an order no driver takes costs nobody anything: cancel it, and you're refunded in full.",
+        `A driver who isn't at the store within ${spoken(t.pickup_grace_secs)} of when they're due is moved on by the store's app, and your order goes to another driver.`,
+        `A driver can drop an order before picking it up. If the store had started cooking it, they answer for the food: if no other driver takes it on within ${spoken(t.replacement_window_secs)}, the order ends, you're refunded in full, and their collateral pays the store.`,
+        `Each store sets how long it may keep a checked-in driver waiting past its ready time (${spoken(t.min_store_wait_secs)} to ${spoken(t.max_store_wait_secs)}; ${spoken(t.store_wait_secs)} if it doesn't), and you see it at checkout. Past that, the driver can call the store late and leave: the store pays their whole fee, your order goes to another driver, and you can cancel for a full refund.`,
+        "If your driver is late, or none has your order, you can collect it from the store yourself. The food costs the same, the store's share of the delivery fee comes back to you, and anything you set aside for a driver comes back too.",
+        `If you choose to collect it and don't come within ${spoken(t.collection_window_secs)}, the store keeps the price of the food it made. If you cancel while a driver is on the way and nobody's late, you pay for the food and the driver's fee, as on any app.`,
+        "Every deadline that costs someone else if it's claimed early (a driver leaving, a store moving a driver on, calling a store late, ending an order no driver came for, keeping the food of a customer who never came) is proved against a public time source run by independent organisations, so nobody can claim one early.",
+        `An order can change drivers at most ${t.max_driver_changes} times. After that you can collect it or cancel it.`,
+      ],
+      effects: [
+        { who: "customers", good: "No driver, a no-show, or a slow store never costs you anything.", bad: "If you choose to collect and don't, or cancel while it's on its way, you pay for the food." },
+        { who: "drivers", good: "Checked in, you're paid in full if the store keeps you waiting, and it never counts against you.", bad: "Leaving an order the store has cooked can cost you its price, if no one else takes it on." },
+        { who: "stores", good: "You only cook for a committed driver, you set how long a driver waits, and you're paid for food a driver leaves behind.", bad: "Keep a checked-in driver waiting past your wait and you pay their fee, and the customer may cancel for a full refund." },
+      ],
+    },
+    {
+      id: "fair-use",
+      title: "Keeping it fair",
+      summary: "Limits that keep any one person from crowding out everyone else, enforced by the network.",
+      points: [
+        `A customer can have at most ${t.max_pending_orders} order${t.max_pending_orders === 1 ? "" : "s"} placed within ${spoken(t.store_response_secs)}, the time a store has to answer. An order costs nothing until a store accepts it, so this stops anyone burying a store in orders.`,
+        "A driver bids on an order once. Their offer is their offer, so no one can fill an order's bids with their own.",
+        "When a store confirms your goodie bag, it's held for you for the time the store set. If you haven't ordered it by then, it goes back on sale. Your app orders it the moment it's confirmed.",
+        "A store can set a minimum order, and say it's busy, adding to its usual prep time. You see both before you order.",
+        `Listing a store sets aside a ${formatCents(t.store_listing_stake)} deposit, returned when it closes, so every store you can find is real.`,
+        "You claim a goodie bag once, review an order's store and driver once each, and report each item on an order once.",
       ],
     },
     {
@@ -191,17 +248,18 @@ export function policySections(t: NetworkTerms): PolicySection[] {
 }
 
 /// What could go wrong, plainly.
-export function policyRisks(): string[] {
+export function policyRisks(t: NetworkTerms): string[] {
   return [
     "Relay is software run by its users, not a company that stands behind your orders. No one can reverse a payment the network has settled, and there's no customer service desk.",
     "When a customer and driver disagree about a delivery, the store decides. A store could side with a customer against a driver who did deliver; it gains nothing by it, and its decision is public, but the network can't overturn it. Drivers are protected by handing over against the customer's code.",
     "An order left at the door is delivered once it's left. If it's taken after that, the customer bears the loss, as with a parcel left without a signature.",
     "Nothing forces a store to answer a report about missing items before it settles the order; a store that settles early, or declines unfairly, answers to its reviews.",
+    `A store could refuse to check a driver in, then collect that driver's collateral if they leave and no one else comes. The network can't tell a store that won't check drivers in from a driver who never arrived, so it sides with the store, the party with the most to lose. Drivers can report it; reports from drivers with at least ${t.min_reporter_deliveries} deliveries show on the store's record, and drivers' apps can skip reported stores.`,
     "Balances are credits issued by this network's issuers. What a balance is worth outside Relay depends on those issuers, not on Relay.",
     "Everything you publish is permanent and copied across the network. Reviews, ratings and order records can't be deleted.",
     "Which store a customer key ordered from, and roughly where, is public. Using one identity for everything links those orders together.",
     "Reviews can't detect a store buying from itself under another identity to rate itself.",
-    "Some deadlines (store response times, report windows, scheduled orders, promo expiry) rely on clocks people control. The rules above bound the damage but can't remove it entirely.",
+    "Some deadlines (store response times, report windows, scheduled orders, promo expiry) rely on clocks people control, and a store's own times are taken at its word. The rules above bound the damage but can't remove it entirely. Calling a store late, and a driver leaving, are proved against the public time source.",
     "The software is provided as is, without warranty. Check your order before confirming it, and keep your device and identity secure.",
   ];
 }

@@ -108,6 +108,7 @@ await runScenario(async (scenario) => {
       requester: customer.agentPubKey,
       merchant: merchant.agentPubKey,
       catalog_ref: store,
+      catalog_version: store,
       lines: [{ item_ref: soupRef, priced_version: soupRef, quantity: 1 }],
       order_total: 800,
       status: "Placed",

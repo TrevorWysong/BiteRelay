@@ -303,6 +303,32 @@ pub struct PinSecret {
     pub salt: Vec<u8>,
 }
 
+impl PinSecret {
+    /// Its commitment, as an order publishes it: `sha256(pin || salt)`.
+    pub fn commitment(&self) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.pin.as_bytes());
+        hasher.update(&self.salt);
+        hasher.finalize().to_vec()
+    }
+
+    /// Whether it's the code behind `commitment`.
+    pub fn opens(&self, commitment: &[u8]) -> bool {
+        commitment.len() == 32 && self.commitment() == commitment
+    }
+}
+
+/// A round of the network's public time source (`relay_governance::TimeSource`):
+/// its number and the signature published for it. A record carrying one
+/// wasn't made before that round was published -- the proof a deadline
+/// claim makes that its deadline has passed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Beacon {
+    pub round: u64,
+    pub signature: Vec<u8>,
+}
+
 /// The shortest distance from `point` to anywhere in a geohash cell, in
 /// kilometres -- 0 inside it. `None` if `geohash` isn't one. What a rule
 /// that sees only the cell (a delivery's public drop-off area) can check

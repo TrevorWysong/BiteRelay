@@ -1,7 +1,7 @@
-// A handoff code, shown by whoever hands an order over -- the customer at
-// the door, the store at pickup: its digits to read out and, as an option
-// below them, the same code as a QR code for the driver to scan. Either one
-// proves the handoff.
+// A code a driver scans: the customer's handover code at the door, which
+// proves the handoff, or the store's check-in code at its counter, which
+// checks the driver in. Its digits to read out and, as an option below
+// them, the same code as a QR code.
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Lock, QrCode } from "lucide-react";
@@ -18,10 +18,10 @@ const FOR = {
     scanNote: "Once you have your order, your driver scans this to complete the delivery. It works like your code: don't share it before then.",
   },
   store: {
-    title: "Pickup code",
-    note: "The driver needs this to collect the order. Give it only as you hand it over.",
+    title: "Check-in code",
+    note: "The driver scans this when they reach your counter, to check in. It shows they're here; it doesn't hand the order over.",
     reveal: "Let the driver scan instead",
-    scanNote: "The driver scans this as you hand it over. It proves they have the food -- and puts it in their care.",
+    scanNote: "Show this at your counter. Once a driver's checked in, you owe them their fee if you keep them waiting past the network's wait.",
   },
 } as const;
 
@@ -75,7 +75,7 @@ export function HandoverCode({ orderRef, secret, giver = "customer" }: { orderRe
 
 /// A QR code as crisp vector squares -- generated synchronously, nothing
 /// fetched.
-function QrSvg({ text, size }: { text: string; size: number }) {
+export function QrSvg({ text, size }: { text: string; size: number }) {
   const { modules } = QRCode.create(text, { errorCorrectionLevel: "M" });
   const n = modules.size;
   const quiet = 2;

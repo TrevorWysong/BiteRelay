@@ -113,6 +113,22 @@ export async function setCatalogOpen(originalAction: ActionHash, isOpen: boolean
 /// A single catalog by reference -- Cart.tsx uses this to read the
 /// merchant's current `delivery_subsidy_percent` before checkout
 /// (architecture plan §12: the standard delivery-cost-sharing model).
+/// Whether the caller's store is listed for customers to find.
+export async function isStoreListed(catalogRef: ActionHash): Promise<boolean> {
+  return callZome("catalog", "is_store_listed", catalogRef);
+}
+
+/// Takes the caller's store out of customers' listings, returning its
+/// listing deposit. It keeps answering the orders it has.
+export async function closeListing(catalogRef: ActionHash): Promise<void> {
+  return callZome("catalog", "close_listing", catalogRef);
+}
+
+/// Lists the caller's store again, setting aside a fresh deposit.
+export async function reopenListing(catalogRef: ActionHash): Promise<void> {
+  return callZome("catalog", "reopen_listing", catalogRef);
+}
+
 export async function getCatalog(catalogRef: ActionHash): Promise<HcRecord> {
   return callZome("catalog", "get_catalog", catalogRef);
 }
@@ -199,6 +215,9 @@ export interface CreateGoodieBagInput {
   pickup_window_end: Timestamp;
   supports_pickup: boolean;
   supports_delivery: boolean;
+  /// How long a confirmed claim is held for its customer to order it --
+  /// the network's default if left out.
+  hold_minutes?: number;
 }
 
 export async function createGoodieBag(input: CreateGoodieBagInput): Promise<HcRecord> {
@@ -268,6 +287,23 @@ export async function confirmClaim(claimRef: ActionHash): Promise<HcRecord> {
 
 /// The most an order may cost to be left at the door, in cents -- `null`
 /// for no limit.
+/// The smallest order the store takes, in minor units -- `null` for any size.
+export async function setMinimumOrder(originalAction: ActionHash, minCents: number | null): Promise<HcRecord> {
+  return callZome("catalog", "set_minimum_order", { original_action: originalAction, min_cents: minCents });
+}
+
+/// How long the store may keep a checked-in driver waiting past an order's
+/// ready time -- `null` for the network's. Orders keep the wait they were
+/// placed under.
+export async function setStoreWait(originalAction: ActionHash, minutes: number | null): Promise<HcRecord> {
+  return callZome("catalog", "set_store_wait", { original_action: originalAction, minutes });
+}
+
+/// Minutes the store adds to its usual prep time while busy; 0 when it isn't.
+export async function setBusy(originalAction: ActionHash, extraMinutes: number): Promise<HcRecord> {
+  return callZome("catalog", "set_busy", { original_action: originalAction, extra_minutes: extraMinutes });
+}
+
 export async function setLeaveAtDoorLimit(originalAction: ActionHash, maxCents: number | null): Promise<HcRecord> {
   return callZome("catalog", "set_leave_at_door_limit", { original_action: originalAction, max_cents: maxCents });
 }

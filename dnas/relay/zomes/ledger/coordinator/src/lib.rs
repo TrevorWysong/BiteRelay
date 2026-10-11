@@ -35,7 +35,7 @@ fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
     let in_hand = in_hand_after(in_hand, &kind)?;
     let signed = i64::try_from(amount).map_err(|_| guest("amount out of range"))?;
     let balance = match kind {
-        LedgerKind::Hold { .. } => {
+        LedgerKind::Hold { .. } | LedgerKind::Stake { .. } => {
             let after = balance - signed;
             let limit = relay_governance::credit_limit_cents() as i64;
             if after < -limit {
@@ -44,7 +44,7 @@ fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
             after
         }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } => balance + signed,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } => balance + signed,
     };
     create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
 }
@@ -331,6 +331,32 @@ pub fn forfeit(input: ForfeitInput) -> ExternResult<ActionHash> {
         return Ok(done);
     }
     append(LedgerKind::Forfeit { hold: input.hold, basis: input.basis }, 0)
+}
+
+/// Sets aside the caller's stake for listing their store (`catalog`, its
+/// original action) -- the network's amount, returned when the listing
+/// comes down (`unstake_listing`). Called by the catalog zome as it lists the
+/// store, so the two commit together.
+#[hdk_extern]
+pub fn stake_listing(catalog: ActionHash) -> ExternResult<ActionHash> {
+    append(LedgerKind::Stake { catalog }, relay_governance::store_listing_stake())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UnstakeInput {
+    pub stake: ActionHash,
+    /// The caller's deletion of the listing the stake backed.
+    pub delisting: ActionHash,
+}
+
+/// Takes a listing stake back, citing the listing's deletion. Called by
+/// the catalog zome as it takes the listing down, so the two commit
+/// together.
+#[hdk_extern]
+pub fn unstake_listing(input: UnstakeInput) -> ExternResult<ActionHash> {
+    let record = get(input.stake.clone(), GetOptions::local())?.ok_or(guest("stake not found"))?;
+    let Some(LedgerEntry { kind: LedgerKind::Stake { .. }, amount, .. }) = entry_of(&record) else { return Err(guest("that isn't a stake")) };
+    append(LedgerKind::Unstake { stake: input.stake, delisting: input.delisting }, amount)
 }
 
 /// Whether the caller has decided this part of a hold yet.

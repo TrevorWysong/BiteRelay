@@ -41,6 +41,13 @@ if (!Number.isInteger(properties.credit_limit_cents) || properties.credit_limit_
 if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uhCAk[A-Za-z0-9_-]{48}$/.test(key))) {
   fail("deploy/properties.json needs issuers: the agent keys (uhCAk...) of whoever credits accounts against real payments.");
 }
+// Collateral -- a driver's stake in the food they carry -- is only real if
+// it's money they deposited: on credit, a throwaway identity could post it,
+// walk away and leave the debt. So a network bundle is prepaid unless its
+// builder deliberately says otherwise.
+if (properties.credit_limit_cents > 0 && process.env.RELAY_ALLOW_CREDIT !== "1") {
+  fail("credit_limit_cents is above 0: drivers could post collateral on credit and walk away from it. Set it to 0, or build with RELAY_ALLOW_CREDIT=1 if you mean to extend credit.");
+}
 if (properties.credit_limit_cents === 0 && properties.issuers.length === 0) {
   fail("With credit_limit_cents 0 and no issuers, nobody could ever have funds -- name at least one issuer.");
 }

@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { detailsOf, setAutoAcceptOrders, setDeliverySubsidyPercent, setLeaveAtDoorLimit, updateCatalogDetails } from "../../../holochain/zomes/catalog";
-import { formatCatalogAddress, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
+import { closeListing, detailsOf, isStoreListed, reopenListing, setAutoAcceptOrders, setBusy, setDeliverySubsidyPercent, setLeaveAtDoorLimit, setMinimumOrder, updateCatalogDetails, setStoreWait } from "../../../holochain/zomes/catalog";
+import { formatCatalogAddress, formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
+import { useResource } from "../../../lib/useResource";
+import { describeError } from "../../../lib/errors";
+import { bytesToHex } from "../../../holochain/decode";
 import { Button, Card, Field, Input, Switch, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
 import { SplitAddressFields } from "../../../components/SplitAddressFields";
 import type { MerchantCatalog } from "../../../holochain/types";
 import { MAX_DESCRIPTION_CHARS, MAX_LABEL_CHARS, MAX_PHONE_CHARS } from "../../../holochain/types";
+import { useTerms } from "../../../store/network";
 
 /// The storefront's details: a read-only summary, or the editor.
 export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; startEditing: boolean; onSaved: () => Promise<void> }) {
@@ -188,8 +192,113 @@ export function LeaveAtDoorCard({ catalog, catalogRef, onSaved }: { catalog: Mer
   );
 }
 
-/// A dollar limit, or none. Seeded from the saved limit when it mounts.
-function LimitEditor({ initialCents, onSave }: { initialCents: number | null; onSave: (cents: number | null) => Promise<void> }) {
+/// The smallest order the store takes, before any promo -- network
+/// validation refuses a smaller one. A goodie bag is priced on its own.
+export function MinimumOrderCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const minimum = catalog.min_order_cents;
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Minimum order</p>
+      <p className="mb-3 text-xs leading-relaxed text-ink-400">Customers see it before they order. Goodie bags aren't affected.</p>
+      <LimitEditor key={minimum ?? "none"} initialCents={minimum} placeholder="None" onSave={async (cents) => {
+        await setMinimumOrder(catalogRef, cents);
+        await onSaved();
+      }} />
+    </Card>
+  );
+}
+
+/// How long the store may keep a checked-in driver waiting past an order's
+/// ready time before they can leave paid -- its own, within the network's
+/// bounds, or the network's. Customers see it at checkout; each order keeps
+/// the wait it was placed under.
+export function StoreWaitCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const terms = useTerms();
+  const [min, max, usual] = [terms.min_store_wait_secs, terms.max_store_wait_secs, terms.store_wait_secs].map((secs) => Math.round(secs / 60));
+  const own = catalog.store_wait_minutes;
+  const [draft, setDraft] = useState(String(own ?? usual));
+  const [saving, setSaving] = useState(false);
+  const minutes = Math.round(Number(draft));
+  const valid = Number.isFinite(minutes) && minutes >= min && minutes <= max;
+
+  async function save(value: number | null) {
+    setSaving(true);
+    try {
+      await setStoreWait(catalogRef, value);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Driver wait</p>
+      <p className="mb-3 text-xs leading-relaxed text-ink-400">
+        How long past an order's ready time a checked-in driver waits before they can call you late. Then you pay their fee, the order goes to another driver, and the customer can cancel for a full refund. Customers see it before they order. {own === null ? `You're using the network's ${usual} minutes.` : ""}
+      </p>
+      <div className="flex items-center gap-2">
+        <Input type="number" min={min} max={max} step={5} value={draft} onChange={(e) => setDraft(e.target.value)} suffix="min" className="w-28" />
+        <Button loading={saving} disabled={!valid || minutes === own} onClick={() => save(minutes)} className="px-4 py-2 text-xs">
+          Save
+        </Button>
+        {own !== null && (
+          <Button variant="ghost" loading={saving} onClick={() => save(null)} className="px-4 py-2 text-xs">
+            Use the network's
+          </Button>
+        )}
+      </div>
+      {!valid && <p className="mt-2 text-xs text-amber-600">Between {min} and {max} minutes.</p>}
+    </Card>
+  );
+}
+
+/// Busy mode: extra minutes on the store's usual prep time while it's
+/// swamped, shown to customers before they order. Off is 0.
+export function BusyCard({ catalog, catalogRef, onSaved }: { catalog: MerchantCatalog; catalogRef: Uint8Array; onSaved: () => Promise<void> }) {
+  const room = useTerms().max_prep_minutes - catalog.prep_minutes;
+  const busy = catalog.busy_extra_minutes > 0;
+  const [draft, setDraft] = useState(String(busy ? catalog.busy_extra_minutes : Math.min(catalog.prep_minutes, room)));
+  const [saving, setSaving] = useState(false);
+  const extra = Math.round(Number(draft));
+  const valid = Number.isFinite(extra) && extra >= 1 && extra <= room;
+
+  async function save(minutes: number) {
+    setSaving(true);
+    try {
+      await setBusy(catalogRef, minutes);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Busy</p>
+      <p className="mb-3 text-xs leading-relaxed text-ink-400">
+        {busy
+          ? `You're busy: orders take ${catalog.prep_minutes + catalog.busy_extra_minutes} minutes instead of ${catalog.prep_minutes}. Customers see it before they order.`
+          : "Swamped? Add time to your usual prep, and customers see the longer wait before they order."}
+      </p>
+      <div className="flex items-center gap-2">
+        <Input type="number" min={1} max={room} step={5} value={draft} onChange={(e) => setDraft(e.target.value)} suffix="min" className="w-28" />
+        <Button loading={saving} disabled={!valid} onClick={() => save(extra)} className="px-4 py-2 text-xs">
+          {busy ? "Update" : "I'm busy"}
+        </Button>
+        {busy && (
+          <Button variant="ghost" loading={saving} onClick={() => save(0)} className="px-4 py-2 text-xs">
+            Not busy
+          </Button>
+        )}
+      </div>
+      {!valid && <p className="mt-2 text-xs text-amber-600">Between 1 and {room} minutes: your prep time plus this can't pass the network's longest.</p>}
+    </Card>
+  );
+}
+
+/// An amount limit, or none. Seeded from the saved limit when it mounts.
+function LimitEditor({ initialCents, placeholder = "No limit", onSave }: { initialCents: number | null; placeholder?: string; onSave: (cents: number | null) => Promise<void> }) {
   const [draft, setDraft] = useState(initialCents === null ? "" : String(fromMinorUnits(initialCents)));
   const [saving, setSaving] = useState(false);
   async function save() {
@@ -203,7 +312,7 @@ function LimitEditor({ initialCents, onSave }: { initialCents: number | null; on
   }
   return (
     <div className="flex items-center gap-2">
-      <Input type="number" min={0} step={5} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="No limit" prefix={currencySymbol()} className="w-32" />
+      <Input type="number" min={0} step={5} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} prefix={currencySymbol()} className="w-32" />
       <Button loading={saving} onClick={save} className="px-4 py-2 text-xs">
         Save
       </Button>
@@ -232,5 +341,63 @@ function SubsidyEditor({ initial, onSave }: { initial: number; onSave: (percent:
         Save
       </Button>
     </div>
+  );
+}
+
+/// Whether customers can find the store, and the deposit that listing it
+/// sets aside -- returned when the listing closes. A closed listing keeps
+/// answering the orders it has; it just isn't offered to new customers.
+export function ListingCard({ catalogRef }: { catalogRef: Uint8Array }) {
+  const stake = useTerms().store_listing_stake;
+  const { data: listed, reload } = useResource(`store-listed:${bytesToHex(catalogRef)}`, () => isStoreListed(catalogRef));
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function act(change: () => Promise<void>) {
+    setSaving(true);
+    setError(null);
+    try {
+      await change();
+      setConfirming(false);
+      await reload();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (listed === undefined) return null;
+  return (
+    <Card className="mb-4 p-4">
+      <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Listing</p>
+      <p className="mb-3 text-xs leading-relaxed text-ink-400">
+        {listed
+          ? `Customers nearby can find this store. Its listing holds a ${formatCents(stake)} deposit, returned if you close it.`
+          : `Customers can't find this store, though it still answers the orders it has. Listing it again sets aside a ${formatCents(stake)} deposit.`}
+      </p>
+      {listed ? (
+        confirming ? (
+          <div className="flex items-center gap-2">
+            <Button variant="danger" loading={saving} onClick={() => act(() => closeListing(catalogRef))} className="px-4 py-2 text-xs">
+              Close listing
+            </Button>
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirming(false)} className="px-4 py-2 text-xs">
+              Keep it
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={() => setConfirming(true)} className="px-4 py-2 text-xs">
+            Close listing…
+          </Button>
+        )
+      ) : (
+        <Button loading={saving} onClick={() => act(() => reopenListing(catalogRef))} className="px-4 py-2 text-xs">
+          List again
+        </Button>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </Card>
   );
 }

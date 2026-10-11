@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, DeclineReason, InHand, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, PinSecret, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, Beacon, DeclineReason, InHand, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, OrderTiming, PinSecret, StoreStep, StoreStepDue, RankedBid, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -32,6 +32,9 @@ export async function requestDelivery(input: {
   door_risk_accepted?: boolean;
   /// A driver of the customer's own: one carrying no other order.
   priority?: boolean;
+  /// Let the app choose a driver from the bids, by the network's rule
+  /// (`rankBids`).
+  auto_match?: boolean;
   /// `null` for a normal cart order. Set only when this delivery redeems a
   /// confirmed goodie-bag claim -- which the customer's conductor does on
   /// its own (`dispatch::claims`).
@@ -75,9 +78,11 @@ export async function cancelOrder(orderOriginalAction: ActionHash): Promise<HcRe
   return callZome("dispatch", "cancel_order", orderOriginalAction);
 }
 
-/// Every forward transition *except* Delivered and PickedUp (gated on
-/// proof -- see `completeDelivery`, `pickUpOrder`) and the customer's claim
-/// (`claimNeverArrived`).
+/// A delivery step by the status it moves to: the driver committing
+/// (`DriverEnRouteToMerchant`), the store starting to cook
+/// (`MerchantConfirmed`), the store checking its driver in
+/// (`DriverAtStore`). Each app does these on its own; this is the manual
+/// path.
 export async function setOrderStatus(orderOriginalAction: ActionHash, nextStatus: DeliveryStatus): Promise<HcRecord> {
   return callZome("dispatch", "set_order_status", { order_original_action: orderOriginalAction, next_status: nextStatus });
 }
@@ -166,15 +171,21 @@ export async function getMyActiveDeliveries(): Promise<ActiveDelivery[]> {
 
 // --- bids ---
 
-/// A driver's bid. It commits the order's required collateral (the value of
-/// its food), which they post to the customer at pickup.
-export async function submitBid(input: { order_ref: ActionHash; eta_seconds: number; price_offer: number }): Promise<HcRecord> {
+/// A driver's bid. If it's accepted, they commit to it with collateral of
+/// the food's value -- theirs again once it's delivered. `to_store_seconds`
+/// is when they'd reach the store: with its ready time, when they're due.
+export async function submitBid(input: { order_ref: ActionHash; eta_seconds: number; to_store_seconds: number; price_offer: number }): Promise<HcRecord> {
   return callZome("dispatch", "submit_bid", input);
 }
 
-/// The driver picking the order up: sets aside their collateral (the food's
-/// value, the store's if it never arrives) and marks it picked up, in one
-/// step. Theirs again once it's delivered.
+/// The bids on an order, best first, by the network's published matching
+/// rule -- what an order set to match automatically accepts.
+export async function rankBids(orderRef: ActionHash): Promise<RankedBid[]> {
+  return callZome("dispatch", "rank_bids", orderRef);
+}
+
+/// The driver picking the order up, on the store's record of handing it to
+/// them. Their app does it on its own as soon as that arrives.
 export async function pickUpOrder(orderOriginalAction: ActionHash): Promise<HcRecord> {
   return callZome("dispatch", "pick_up_order", orderOriginalAction);
 }
@@ -400,4 +411,67 @@ export async function getIssueItems(orderRef: ActionHash): Promise<IssueItems> {
 /// connecting (`store/network`).
 export async function getNetworkTerms(): Promise<NetworkTerms> {
   return callZome("dispatch", "get_network_terms", null);
+}
+
+// --- a delivery's steps, and when they go wrong (`dispatch::deliveries`) ---
+
+/// The deadlines an order is running against.
+export async function getOrderTiming(orderRef: ActionHash): Promise<OrderTiming> {
+  return callZome("dispatch", "get_order_timing", orderRef);
+}
+
+/// The driver committing to an order whose customer accepted their bid --
+/// their app does it on its own; this is the manual path.
+export async function commitToOrder(orderRef: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "commit_to_order", orderRef);
+}
+
+/// The driver dropping an order before pickup, dated by the network's time
+/// source: it opens to bids again.
+export async function dropOrder(orderRef: ActionHash, beacon: Beacon): Promise<HcRecord> {
+  return callZome("dispatch", "drop_order", { order_ref: orderRef, beacon });
+}
+
+/// A checked-in driver calling the store late, with proof of the time.
+export async function callStoreLate(orderRef: ActionHash, beacon: Beacon): Promise<HcRecord> {
+  return callZome("dispatch", "call_store_late", { order_ref: orderRef, beacon });
+}
+
+/// A driver reporting that the store wouldn't check them in.
+export async function reportCheckInRefused(orderRef: ActionHash): Promise<void> {
+  return callZome("dispatch", "report_check_in_refused", orderRef);
+}
+
+/// The customer asking to collect their delivery themselves -- recorded by
+/// the store's app as soon as it's allowed.
+export async function requestCollect(orderRef: ActionHash): Promise<ActionHash> {
+  return callZome("dispatch", "request_collect", orderRef);
+}
+
+/// The customer confirming they've collected it.
+export async function confirmCollected(orderRef: ActionHash): Promise<HcRecord> {
+  return callZome("dispatch", "confirm_collected", orderRef);
+}
+
+/// The store handing a collected order over, against the customer's scanned code.
+export async function handOverCollection(orderRef: ActionHash, code: PinSecret): Promise<HcRecord> {
+  return callZome("dispatch", "hand_over_collection", { order_original_action: orderRef, code });
+}
+
+/// The store recording that a customer who chose to collect never came --
+/// proved past their window by the time source.
+export async function markNotCollected(orderRef: ActionHash, beacon: Beacon): Promise<HcRecord> {
+  return callZome("dispatch", "mark_not_collected", { order_ref: orderRef, beacon });
+}
+
+/// The caller's stores' steps that are due and need proof of the time --
+/// which the store's app takes (`useStoreSteps`).
+export async function getStoreStepsDue(): Promise<StoreStepDue[]> {
+  return callZome("dispatch", "get_store_steps_due", null);
+}
+
+/// Takes one store step, proved past its deadline by `beacon`.
+export async function takeStoreStep(step: StoreStep, orderRef: ActionHash, beacon: Beacon): Promise<HcRecord> {
+  const fn = { MoveDriverOn: "move_driver_on", RecordCollecting: "record_collecting", EndForNoDriver: "end_for_no_driver" }[step];
+  return callZome("dispatch", fn, { order_ref: orderRef, beacon });
 }

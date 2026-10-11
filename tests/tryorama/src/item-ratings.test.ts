@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntilOk, ST_PETE, acceptOrder, handOff, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, handOff, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -67,14 +67,11 @@ await runScenario(async (scenario) => {
   console.log("[PASS] an item review before Delivered is rejected");
 
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await dispatchOf(merchant)("set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" });
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
+  await commitAndCook(driver, merchant, orderRef, all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  await handOff(driver, merchant, orderRef, "MerchantHandoff", all);
+  await collectFromStore(driver, merchant, orderRef, all);
 
-  await dispatchOf(driver)("pick_up_order", orderRef);
   await handOff(driver, customer, orderRef, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
@@ -116,14 +113,11 @@ await runScenario(async (scenario) => {
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("accept_bid", { order_original_action: order2Ref, bid_action: actionHash(bid2Record) });
   await dhtSync(all, customer.cells[0].cell_id[0]);
-  await dispatchOf(merchant)("set_order_status", { order_original_action: order2Ref, next_status: "MerchantConfirmed" });
-  await dhtSync(all, customer.cells[0].cell_id[0]);
-  await dispatchOf(driver)("set_order_status", { order_original_action: order2Ref, next_status: "DriverEnRouteToMerchant" });
+  await commitAndCook(driver, merchant, order2Ref, all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
 
-  await handOff(driver, merchant, order2Ref, "MerchantHandoff", all);
+  await collectFromStore(driver, merchant, order2Ref, all);
 
-  await dispatchOf(driver)("pick_up_order", order2Ref);
   await handOff(driver, customer, order2Ref, "CustomerHandoff", all);
   await dhtSync(all, customer.cells[0].cell_id[0]);
   await dispatchOf(customer)("complete_delivery", { order_original_action: order2Ref });

@@ -118,7 +118,9 @@ await runScenario(async (scenario) => {
   assert.equal(myClaimsA.length, 1);
   const myClaimA = decodeEntry<{ bag_ref: Uint8Array; status: string }>(myClaimsA[0].record);
   assert.ok(bytesEqual(myClaimA.bag_ref, bagRef));
-  assert.equal(myClaimA.status, "Confirmed");
+  // Confirmed -- or already Redeemed, if the customer's app has ordered it
+  // and the store accepted that order.
+  assert.ok(["Confirmed", "Redeemed"].includes(myClaimA.status), `claim is ${myClaimA.status}`);
   console.log("[PASS] get_my_bag_claims discovers the customer's own claim");
 
   // Fulfillment mismatch: this bag supports delivery too, but claiming a

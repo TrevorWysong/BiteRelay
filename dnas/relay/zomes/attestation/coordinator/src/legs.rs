@@ -1,11 +1,21 @@
 //! Recording handoffs, proving them, and reading them back.
 //!
-//! A handoff is proved by its giver -- the store at pickup, the customer at
-//! the door -- in one of three ways: the driver scans the giver's code (a
-//! QR code; `record_leg` with `scanned`), the giver taps to confirm it in
-//! their own app (`acknowledge_leg`), or the driver types in the six digits
-//! the giver reads out (`handoff_by_code`), which the giver's own conductor
-//! checks. A leave-at-door drop-off the customer chose needs none of them.
+//! **At the store** the driver is checked in, then handed the order:
+//!
+//! - *Checking in*: the driver scans the store's code at the counter (or
+//!   types its six digits), which the store's own conductor checks
+//!   (`check_in_at_store`) -- it then records them there
+//!   (`dispatch::ensure_checked_in`). The code is how a driver shows
+//!   they're at the counter; it proves nothing about the food.
+//! - *Handing over*: the store scans the driver's code, or taps to confirm,
+//!   recording it on its own chain (`acknowledge_leg`). Only that counts --
+//!   the store says it handed the food over, so its chain says so too.
+//!
+//! **At the door** the customer proves it: the driver scans their code
+//! (`record_leg` with `scanned`), the customer confirms in their own app
+//! (`acknowledge_leg`), or the driver types the six digits the customer
+//! reads out (`handoff_by_code`), which the customer's conductor checks. A
+//! leave-at-door drop-off the customer chose needs none of them.
 
 use attestation_integrity::*;
 use dispatch_types::DeliveryOrder;
@@ -48,11 +58,10 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
         return Err(guest(problem));
     }
     if let Some(scanned) = &input.scanned {
-        let commitment = match input.kind {
-            LegKind::MerchantHandoff => &order_now.pickup_commitment,
-            LegKind::CustomerHandoff => &order_now.pin_commitment,
-        };
-        if !pin_matches(Some(scanned), commitment) {
+        if input.kind == LegKind::MerchantHandoff {
+            return Err(guest("The store hands the order over by scanning your code."));
+        }
+        if !pin_matches(Some(scanned), &order_now.pin_commitment) {
             return Err(guest("That code isn't for this order."));
         }
     }
@@ -94,10 +103,113 @@ pub fn acknowledge_leg(leg_action: ActionHash) -> ExternResult<Record> {
     if let Some(existing) = my_receipt_for(&leg_action)? {
         return Ok(existing);
     }
+    // The store handing an order over checks its driver in first, if it
+    // hasn't -- in this same commit, so the two stand or fall together.
+    if leg.kind == LegKind::MerchantHandoff {
+        let order = original_action_of(leg.order_ref.clone())?;
+        let (_, current): (_, DeliveryOrder) = resolve_latest_decoded(order.clone(), "DeliveryOrder")?;
+        let driver = match &current.accepted_bid {
+            Some(bid) => resolve_latest(bid.clone())?.entry().to_app_option::<dispatch_types::Bid>().map_err(|e| wasm_error!(e))?.map(|b| b.bidder),
+            None => None,
+        };
+        if driver.as_ref() != Some(&leg.from) {
+            return Err(guest("That driver isn't collecting this order now."));
+        }
+        dispatch::<ActionHash>("ensure_checked_in", order.clone())?;
+    }
+    let is_pickup = leg.kind == LegKind::MerchantHandoff;
     let receipt = ReceiptAttestation { leg: leg_action.clone(), attested_at: sys_time()? };
     let action_hash = create_entry(&EntryTypes::ReceiptAttestation(receipt))?;
     create_link(leg_action, action_hash.clone(), LinkTypes::LegToReceipt, ())?;
+    // The driver's app picks the order up on it.
+    if is_pickup {
+        let _ = dispatch::<()>("notify_handed_over", original_action_of(leg.order_ref)?);
+    }
     get(action_hash, GetOptions::local())?.ok_or(guest("could not read back receipt"))
+}
+
+/// Calls the dispatch zome on this cell.
+fn dispatch<O: serde::de::DeserializeOwned + std::fmt::Debug>(function: &str, input: impl Serialize + std::fmt::Debug) -> ExternResult<O> {
+    match call(CallTargetCell::Local, "dispatch", function.into(), None, input)? {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
+        ZomeCallResponse::NetworkError(message) => Err(guest(&message)),
+        other => Err(guest(&format!("{other:?}"))),
+    }
+}
+
+// --- checking in at the store ---
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CheckInInput {
+    /// The order (any version of it).
+    pub order_ref: ActionHash,
+    /// The store's code: its six digits, scanned or read out.
+    pub code: String,
+}
+
+/// The driver checking in at the store, with its code: asks the store's own
+/// conductor to check it, which checks them in if it's right. Needs the
+/// store's app online -- they're at its counter.
+#[hdk_extern]
+pub fn check_in_at_store(input: CheckInInput) -> ExternResult<()> {
+    let (_, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_ref.clone(), "DeliveryOrder")?;
+    let check: CodeCheck = match call_remote(order.merchant, zome_info()?.name, "confirm_check_in".into(), None, input)? {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
+        _ => return Err(guest("The store's app isn't reachable. Ask them to open it, then try again.")),
+    };
+    match check {
+        // The store dates the check-in, and its wait runs from then: one
+        // dated well off this driver's own clock is refused here, so they
+        // know to report it.
+        CodeCheck::Confirmed(checked_in) => match get(checked_in, GetOptions::network())? {
+            Some(record) if (record.action().timestamp().as_micros() - sys_time()?.as_micros()).unsigned_abs() > relay_governance::clock_tolerance().as_micros() as u64 => {
+                Err(guest("The store's app dated your check-in well off the time. If it keeps you waiting, report it."))
+            }
+            _ => Ok(()),
+        },
+        CodeCheck::Wrong { tries_left: 1 } => Err(guest("That code isn't right. One try left.")),
+        CodeCheck::Wrong { tries_left } => Err(guest(&format!("That code isn't right. {tries_left} tries left."))),
+        CodeCheck::Locked => Err(guest("Too many wrong codes. Ask the store to hand the order over by scanning your code.")),
+        CodeCheck::Refused(reason) => Err(guest(&reason)),
+    }
+}
+
+/// The store's side of `check_in_at_store`, on its own conductor: checks
+/// the code against its own sealed copy, for the order's own driver only,
+/// and checks them in if it's right. Wrong codes count toward the same
+/// limit as any other for the order.
+#[hdk_extern]
+pub fn confirm_check_in(input: CheckInInput) -> ExternResult<CodeCheck> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let order = original_action_of(input.order_ref.clone())?;
+    let (_, current): (_, DeliveryOrder) = resolve_latest_decoded(order.clone(), "DeliveryOrder")?;
+    if current.merchant != me {
+        return Ok(CodeCheck::Refused("That order isn't from this store.".into()));
+    }
+    let driver = match &current.accepted_bid {
+        Some(bid) => resolve_latest(bid.clone())?.entry().to_app_option::<dispatch_types::Bid>().map_err(|e| wasm_error!(e))?.map(|b| b.bidder),
+        None => None,
+    };
+    if driver != Some(call_info()?.provenance) {
+        return Ok(CodeCheck::Refused("Only the order's driver checks in for it.".into()));
+    }
+    let max_attempts = relay_governance::max_code_attempts();
+    let wrong = wrong_attempts(&order)?;
+    if wrong >= max_attempts {
+        return Ok(CodeCheck::Locked);
+    }
+    let sealed = current.sealed_pickup_code.ok_or(guest("this order has no check-in code yet"))?;
+    let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("couldn't open your code"))?;
+    if input.code.trim() != secret.pin {
+        create_entry(&EntryTypes::CodeAttempt(CodeAttempt { order }))?;
+        let tries_left = max_attempts - wrong - 1;
+        return Ok(if tries_left == 0 { CodeCheck::Locked } else { CodeCheck::Wrong { tries_left } });
+    }
+    match dispatch::<ActionHash>("ensure_checked_in", order) {
+        Ok(checked_in) => Ok(CodeCheck::Confirmed(checked_in)),
+        // The order hasn't reached the store's app as it is now, say.
+        Err(_) => Ok(CodeCheck::Refused("The store's app couldn't check you in yet. Try again in a moment.".into())),
+    }
 }
 
 // --- typed codes ---
@@ -119,6 +231,9 @@ pub enum CodeCheck {
     Wrong { tries_left: u32 },
     /// Too many wrong codes for this order: it stops answering.
     Locked,
+    /// It won't check this at all -- and why: the caller isn't the order's
+    /// driver, say, or the order isn't waiting on one.
+    Refused(String),
 }
 
 /// The driver proving a handoff with the six digits the giver read out:
@@ -131,6 +246,9 @@ pub fn handoff_by_code(input: HandoffCodeInput) -> ExternResult<ActionHash> {
     if leg.from != agent_info()?.agent_initial_pubkey {
         return Err(guest("only the driver who made a handoff proves it"));
     }
+    if leg.kind == LegKind::MerchantHandoff {
+        return Err(guest("The store hands the order over by scanning your code, or confirming in its app."));
+    }
     let check: CodeCheck = match call_remote(leg.to, zome_info()?.name, "confirm_by_code".into(), None, input)? {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
         _ => return Err(guest("Their app isn't reachable. Ask them to open it, or scan their code instead.")),
@@ -140,19 +258,25 @@ pub fn handoff_by_code(input: HandoffCodeInput) -> ExternResult<ActionHash> {
         CodeCheck::Wrong { tries_left: 1 } => Err(guest("That code isn't right. One try left.")),
         CodeCheck::Wrong { tries_left } => Err(guest(&format!("That code isn't right. {tries_left} tries left."))),
         CodeCheck::Locked => Err(guest("Too many wrong codes. Scan their code, or ask them to confirm in their app.")),
+        CodeCheck::Refused(reason) => Err(guest(&reason)),
     }
 }
 
 /// The giver's side of `handoff_by_code`, on their own conductor: checks
 /// the code against their own sealed copy and, if it's right, confirms the
 /// handoff. Wrong codes are counted privately; after a few, it stops
-/// answering for that order.
+/// answering for that order. Anyone can call it (handoffs are public), so it
+/// answers only the handoff's own driver -- a stranger can't spend the
+/// giver's tries and lock them out.
 #[hdk_extern]
 pub fn confirm_by_code(input: HandoffCodeInput) -> ExternResult<CodeCheck> {
     let me = agent_info()?.agent_initial_pubkey;
     let leg: Leg = resolve_latest(input.leg.clone())?.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
     if leg.to != me {
         return Err(guest("that handoff isn't to you"));
+    }
+    if call_info()?.provenance != leg.from {
+        return Err(guest("only the driver making a handoff can check its code"));
     }
     let order = original_action_of(leg.order_ref.clone())?;
     // A handful of tries can't find six digits; a million could.
@@ -162,10 +286,12 @@ pub fn confirm_by_code(input: HandoffCodeInput) -> ExternResult<CodeCheck> {
         return Ok(CodeCheck::Locked);
     }
     let (_, current): (_, DeliveryOrder) = resolve_latest_decoded(order.clone(), "DeliveryOrder")?;
-    let sealed = match leg.kind {
-        LegKind::MerchantHandoff => current.sealed_pickup_code.ok_or(guest("this order has no pickup code yet"))?,
-        LegKind::CustomerHandoff => current.sealed_pin,
-    };
+    // At the store, the code checks a driver in (`confirm_check_in`); it
+    // never proves a pickup.
+    if leg.kind == LegKind::MerchantHandoff {
+        return Err(guest("a pickup is confirmed by the store, not a code"));
+    }
+    let sealed = current.sealed_pin;
     let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("couldn't open your code"))?;
     if input.code.trim() != secret.pin {
         create_entry(&EntryTypes::CodeAttempt(CodeAttempt { order }))?;
@@ -268,11 +394,21 @@ fn handoff_proof(order_ref: ActionHash, kind: LegKind) -> ExternResult<Option<Ac
     Ok(None)
 }
 
-/// Proof the store handed the order to the driver -- what
-/// `DeliveryOrder::pickup_proof` cites.
+/// Proof the store handed the order to the caller -- its record of handing
+/// over their pickup leg, what `DeliveryOrder::pickup_proof` cites.
 #[hdk_extern]
 pub fn pickup_proof_for_order(order_ref: ActionHash) -> ExternResult<Option<ActionHash>> {
-    handoff_proof(order_ref, LegKind::MerchantHandoff)
+    let me = agent_info()?.agent_initial_pubkey;
+    for record in get_legs_for_order(order_ref)? {
+        let Some(leg) = record.entry().to_app_option::<Leg>().ok().flatten() else { continue };
+        if leg.kind != LegKind::MerchantHandoff || leg.from != me {
+            continue;
+        }
+        if let Some(receipt) = get_receipt_for_leg(record.action_address().clone())? {
+            return Ok(Some(receipt.action_address().clone()));
+        }
+    }
+    Ok(None)
 }
 
 /// Proof the order reached its customer -- what

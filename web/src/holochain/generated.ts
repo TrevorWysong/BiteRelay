@@ -90,12 +90,41 @@ export type BagClaimFulfillment =
       };
     };
 
-export type BagClaimStatus = "Pending" | "Confirmed";
+export type BagClaimStatus =
+  | "Pending"
+  /**
+   * The store set a bag aside for this customer, for its `hold_minutes`.
+   */
+  | "Confirmed"
+  /**
+   * The store accepted the customer's order for it: sold.
+   */
+  | "Redeemed";
+
+/**
+ * A round of the network's public time source (`relay_governance::TimeSource`):
+ * its number and the signature published for it. A record carrying one
+ * wasn't made before that round was published -- the proof a deadline
+ * claim makes that its deadline has passed.
+ */
+export interface Beacon {
+  round: number;
+  signature: Uint8Array;
+}
 
 export interface Bid {
   order_ref: ActionHash;
   bidder: AgentPubKey;
+  /**
+   * How long until the driver would hand the order to its customer.
+   */
   eta_seconds: number;
+  /**
+   * How long until they'd reach the store -- with the store's ready time,
+   * when they're due there (see `relay_governance::pickup_grace`). At most
+   * `eta_seconds`.
+   */
+  to_store_seconds: number;
   price_offer: number;
   /**
    * What the driver will post as collateral when they pick the order up
@@ -126,7 +155,27 @@ export type Cancellation =
    * (`relay_governance::store_response_window`). Written by the
    * customer's conductor, and only once the window has passed.
    */
-  | "StoreDidNotRespond";
+  | "StoreDidNotRespond"
+  /**
+   * The customer chose to collect it and never came within the
+   * collection window. Written by the store, which keeps the food's
+   * price: it cooked it.
+   */
+  | "NotCollected"
+  /**
+   * The store kept a checked-in driver waiting past the network's wait
+   * (`relay_governance::store_wait`) after its ready time. Written by the
+   * driver, with proof of the time: the customer is refunded, and the
+   * store pays the driver's fee.
+   */
+  | "StoreLate"
+  /**
+   * A driver left after the store had started cooking, and no other came
+   * within the network's window (`relay_governance::replacement_window`).
+   * Written by the store: the customer is refunded, and that driver's
+   * collateral pays for the food.
+   */
+  | "NoDriver";
 
 /**
  * Local UI-facing signal, emitted from `recv_remote_signal` once a remote
@@ -139,6 +188,18 @@ export type CatalogLocalSignal =
   | { ClaimConfirmed: ActionHash };
 
 /**
+ * A customer asking to collect their delivery from the store themselves --
+ * when no driver has it, or its driver is late. The store records it
+ * (`DeliveryStatus::Collecting`), citing this. One per order.
+ */
+export interface CollectRequest {
+  /**
+   * The order's original action.
+   */
+  order: ActionHash;
+}
+
+/**
  * What a store tells the customer when it turns an order down.
  */
 export type DeclineReason =
@@ -149,6 +210,16 @@ export type DeclineReason =
   | "ItemsUnavailable"
   | "TooBusy"
   | "Closed"
+  /**
+   * It redeems a goodie bag whose hold ran out before the order came in
+   * -- the bag went back on sale.
+   */
+  | "BagHoldLapsed"
+  /**
+   * Placed under the store's earlier terms -- its minimum order,
+   * delivery area or fee share -- which had since changed.
+   */
+  | "TermsChanged"
   | "Other";
 
 /**
@@ -297,8 +368,15 @@ export interface DeliveryOrder {
    */
   cancellation: Cancellation | null;
   /**
-   * When the store says the order will be ready -- set when it accepts
-   * the order, never changed after. `None` until then.
+   * How long the store said the kitchen would take, when it accepted the
+   * order -- what drivers and the customer see until it starts cooking.
+   * Never changes after.
+   */
+  prep_minutes: number | null;
+  /**
+   * When the store says the order will be ready: when it started
+   * cooking (once a driver had committed, or the customer chose to
+   * collect it), plus `prep_minutes`. Set once, never changed after.
    */
   ready_by: Timestamp | null;
   /**
@@ -309,19 +387,20 @@ export interface DeliveryOrder {
    */
   food_hold: ActionHash | null;
   /**
-   * The customer's hold for the driver's pay -- their share of the fee,
-   * and their tip (`HoldPurpose::DriverPay`) -- cited by their update
-   * that accepts a bid.
+   * The customer's hold for the current driver's pay -- their share of
+   * the fee, and their tip (`HoldPurpose::DriverPay`) -- cited by their
+   * update that accepts a bid, and gone with that driver.
    */
   driver_pay_hold: ActionHash | null;
   /**
-   * The store's hold for its share of the fee (`HoldPurpose::Subsidy`),
-   * cited by its update that starts preparing the order.
+   * The store's hold for the current driver (`HoldPurpose::Subsidy`): its
+   * share of their fee, and what it owes them if it keeps them waiting --
+   * cited by its update checking them in.
    */
   subsidy_hold: ActionHash | null;
   /**
-   * The driver's collateral hold (`HoldPurpose::Collateral`), cited by
-   * their update that picks the order up.
+   * The current driver's collateral hold (`HoldPurpose::Collateral`),
+   * cited by their update committing to the order.
    */
   collateral_hold: ActionHash | null;
   /**
@@ -334,20 +413,43 @@ export interface DeliveryOrder {
    */
   sealed_pin: XSalsa20Poly1305EncryptedData;
   /**
-   * The store's pickup code's commitment -- set when it accepts the
-   * order, never changed after. Empty until then.
+   * The store's check-in code's commitment -- set when it accepts the
+   * order, never changed after. Empty until then. A driver scans the
+   * code at the counter to be checked in.
    */
   pickup_commitment: Uint8Array;
   /**
-   * The store's pickup code, sealed to the store.
+   * The store's check-in code, sealed to the store.
    */
   sealed_pickup_code: XSalsa20Poly1305EncryptedData | null;
   /**
    * Proof the driver has the food, cited by their update picking it up:
-   * their pickup leg carrying the store's scanned code, or the store's
-   * own `ReceiptAttestation` of that leg. Never changes after.
+   * the store's own `ReceiptAttestation` of their pickup -- it handed the
+   * order over. Never changes after.
    */
   pickup_proof: ActionHash | null;
+  /**
+   * The customer's handover code, as the store scanned it when they
+   * collected the order themselves -- the store's proof they have it.
+   * Set only by that step.
+   */
+  collection_proof: PinSecret | null;
+  /**
+   * The customer's request to collect it themselves, cited by the
+   * store's update recording it -- the customer's consent.
+   */
+  collect_request: ActionHash | null;
+  /**
+   * For an update whose rule turns on a deadline someone else could
+   * dispute -- a driver leaving, or calling the store late: proof of when
+   * it was written, fresh on that update. Later updates carry it forward.
+   */
+  beacon: Beacon | null;
+  /**
+   * The customer letting their app choose a driver from the bids, by the
+   * network's published rule. Fixed when the order is placed.
+   */
+  auto_match: boolean;
 }
 
 export type DeliveryStatus =
@@ -369,13 +471,40 @@ export type DeliveryStatus =
    * Accepted by the store and open to drivers' bids.
    */
   | "Open"
+  /**
+   * The customer has chosen a driver, who has the network's offer window
+   * to commit.
+   */
   | "BidAccepted"
-  | "MerchantConfirmed"
+  /**
+   * The driver has committed -- their collateral set aside -- and is on
+   * their way. The store starts cooking only now, so an order no driver
+   * takes costs nobody anything.
+   */
   | "DriverEnRouteToMerchant"
+  /**
+   * The store is cooking it: `ready_by` is set.
+   */
+  | "MerchantConfirmed"
+  /**
+   * The store has checked the driver in, at the counter -- setting aside
+   * what it owes if it then keeps them waiting (`HoldPurpose::Subsidy`).
+   */
+  | "DriverAtStore"
   | "PickedUp"
   | "Delivered"
   | "Cancelled"
-  | "Disputed";
+  | "Disputed"
+  /**
+   * No driver brought it, so the customer is collecting it from the store
+   * themselves -- at the same food price, since Relay's fees are the same
+   * for both.
+   */
+  | "Collecting"
+  /**
+   * The customer has it, collected from the store. Final.
+   */
+  | "Collected";
 
 /**
  * Local UI-facing signals, emitted from `recv_remote_signal` once a remote
@@ -439,7 +568,15 @@ export type DispatchLocalSignal =
   /**
    * The customer reported items missing or wrong on this order.
    */
-  | { IssueReported: ActionHash };
+  | { IssueReported: ActionHash }
+  /**
+   * The store handed this order over to this agent, its driver.
+   */
+  | { HandedOver: ActionHash }
+  /**
+   * This agent's store's customer asked to collect this order.
+   */
+  | { CollectRequested: ActionHash };
 
 /**
  * Where a delivery goes, in full -- only ever stored sealed (see
@@ -507,6 +644,12 @@ export interface GoodieBag {
   supports_pickup: boolean;
   supports_delivery: boolean;
   created_at: Timestamp;
+  /**
+   * How long a confirmed claim is held for its customer to order it.
+   * Unordered by then, it lapses and the bag goes back on sale -- so
+   * nobody can hold a store's bags without buying them.
+   */
+  hold_minutes: number;
 }
 
 /**
@@ -561,7 +704,7 @@ export interface HoldView {
 
 /**
  * The orders a driver has in hand: those whose collateral they've set
- * aside (by picking them up) and not yet had back or forfeited. The ledger
+ * aside (by committing to them) and not yet had back or forfeited. The ledger
  * carries it from entry to entry like the balance (`ledger_types`), so
  * validation checks it in one step rather than walking the chain; a
  * customer's app counts a driver's assigned orders the same way before
@@ -672,6 +815,11 @@ export interface ItemIssue {
    * The order's original action.
    */
   order: ActionHash;
+  /**
+   * The version of the order showing the customer has it: its delivered
+   * version, or their own update collecting a pickup.
+   */
+  received: ActionHash;
   lines: IssueLine[];
   /**
    * The customer's `IssueEvidence`, sealed to the store.
@@ -777,6 +925,26 @@ export type LedgerKind =
       };
     }
   /**
+   * The author setting aside their store's listing stake, which backs
+   * one listing of `catalog` (its original action) for customers to find.
+   * Debit.
+   */
+  | {
+      Stake: {
+        catalog: ActionHash;
+      };
+    }
+  /**
+   * The author taking their listing stake back, citing `delisting`: their
+   * deletion of the very listing it backed. Credit.
+   */
+  | {
+      Unstake: {
+        stake: ActionHash;
+        delisting: ActionHash;
+      };
+    }
+  /**
    * The author, a driver, conceding their collateral to the store on its
    * decision that the order never arrived (`basis`) -- the store collects
    * it. No change to the author's balance; it settles the order they had
@@ -827,6 +995,14 @@ export interface Leg {
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
 
 /**
+ * The most any single amount may be -- a price, fee, tip, minimum or grant
+ * -- in minor units of the network's currency. Far past any real order, and
+ * small enough that no total of an order's amounts can overflow: 100 lines
+ * of 1,000 units at this price is 10^17, well inside a u64.
+ */
+export const MAX_AMOUNT = 1000000000000;
+
+/**
  * A long description: a store's, an item's, a bag's, a review.
  */
 export const MAX_DESCRIPTION_CHARS = 2000;
@@ -842,6 +1018,11 @@ export const MAX_DIETARY_TAGS = 32;
 export const MAX_LABEL_CHARS = 60;
 
 export const MAX_LICENSE_PLATE_CHARS = 20;
+
+/**
+ * The most units of one item on one line, or in one promo's terms.
+ */
+export const MAX_LINE_QUANTITY = 1000;
 
 /**
  * A name or title: a store's, a menu item's, a goodie bag's.
@@ -974,6 +1155,26 @@ export interface MerchantCatalog {
    */
   leave_at_door_max_cents: number | null;
   /**
+   * The smallest order the store takes, in minor units of its items'
+   * prices before any promo (a goodie bag is priced on its own). `None`:
+   * any size.
+   */
+  min_order_cents: number | null;
+  /**
+   * Minutes the store is adding to its usual prep time while it's busy
+   * -- 0 when it isn't. Customers see the longer wait before ordering.
+   */
+  busy_extra_minutes: number;
+  /**
+   * How long past an order's ready time the store may keep a checked-in
+   * driver waiting before they can call it late -- leaving paid in full
+   * by the store, while the order goes to another driver and its
+   * customer may cancel for a full refund. Part of the terms an order is
+   * placed under; customers see it at checkout. `None`: the network's
+   * (`relay_governance::store_wait`), within its bounds.
+   */
+  store_wait_minutes: number | null;
+  /**
    * How far from `location` this merchant is willing to deliver, in
    * kilometers -- a per-merchant business rule, not a single app-wide
    * constant: a dense-downtown restaurant and a rural one have
@@ -1016,7 +1217,15 @@ export interface NetworkTerms {
    */
   currency: string;
   credit_limit_cents: number;
+  /**
+   * The delivery fee caps checkout suggests, in minor units.
+   */
+  suggested_delivery_fees: number[];
   store_response_secs: number;
+  /**
+   * The most orders a customer may place within one store response window.
+   */
+  max_pending_orders: number;
   /**
    * How long a customer has to report items missing or wrong.
    */
@@ -1030,6 +1239,52 @@ export interface NetworkTerms {
    * decides it.
    */
   claim_grace_secs: number;
+  /**
+   * How long past the store's ready time a driver has to be checked in
+   * before the store's app moves them on, and the customer may collect it.
+   */
+  pickup_grace_secs: number;
+  /**
+   * How long a driver whose bid is accepted has to commit.
+   */
+  offer_secs: number;
+  /**
+   * How long a checked-in driver waits past the ready time before they
+   * may call the store late, for a store that hasn't set its own -- and
+   * the bounds on a store's own.
+   */
+  store_wait_secs: number;
+  min_store_wait_secs: number;
+  max_store_wait_secs: number;
+  /**
+   * How long an order a driver left cooking stays open to another.
+   */
+  replacement_window_secs: number;
+  /**
+   * How long a customer's app collects bids before matching.
+   */
+  bid_window_secs: number;
+  /**
+   * How many times an order may change drivers.
+   */
+  max_driver_changes: number;
+  /**
+   * Deliveries a driver needs for their check-in reports to count.
+   */
+  min_reporter_deliveries: number;
+  /**
+   * What a minute of a driver's arrival time counts for when matching.
+   */
+  minute_value_cents: number;
+  /**
+   * Where apps fetch the network's time source from.
+   */
+  time_relays: string[];
+  time_chain_hash: string;
+  /**
+   * How long a customer collecting an order has to come for it.
+   */
+  collection_window_secs: number;
   /**
    * Wrong handoff codes a giver's app answers per order before it stops.
    */
@@ -1050,6 +1305,15 @@ export interface NetworkTerms {
    */
   max_image_bytes: number;
   goodie_bag_max_days: number;
+  /**
+   * How long a new goodie bag holds a confirmed claim, by default.
+   */
+  default_bag_hold_minutes: number;
+  /**
+   * What listing a store sets aside, in minor units -- returned when it
+   * closes.
+   */
+  store_listing_stake: number;
 }
 
 /**
@@ -1143,6 +1407,47 @@ export interface OrderOutcome {
 export type OrderRole = "Customer" | "Store" | "Driver";
 
 /**
+ * The deadlines an order is running against, for its screens. Each is
+ * `None` where it doesn't apply.
+ */
+export interface OrderTiming {
+  /**
+   * When the accepted driver must have committed by.
+   */
+  offer_ends: Timestamp | null;
+  /**
+   * When the driver is due at the store -- after which the store's app
+   * moves them on, and the customer may collect it.
+   */
+  driver_due: Timestamp | null;
+  /**
+   * When the checked-in driver may call the store late.
+   */
+  store_late_after: Timestamp | null;
+  /**
+   * Whether a driver has called the store late on this order: its
+   * customer may cancel for a full refund.
+   */
+  store_was_late: boolean;
+  /**
+   * When the store's app ends an order no driver came for.
+   */
+  no_driver_after: Timestamp | null;
+  /**
+   * When a customer collecting it must come by.
+   */
+  collect_by: Timestamp | null;
+  /**
+   * Whether its customer may ask to collect it now.
+   */
+  can_collect: boolean;
+  /**
+   * Whether its customer has asked to.
+   */
+  collect_requested: boolean;
+}
+
+/**
  * Where a delivery's food went, as its store decides -- see the module
  * docs.
  */
@@ -1204,6 +1509,11 @@ export interface PickupOrder {
   requester: AgentPubKey;
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
+  /**
+   * The version of the store the order was placed against -- whose
+   * minimum order it was placed under. Validation checks it.
+   */
+  catalog_version: ActionHash;
   /**
    * What was ordered, each line priced at a specific version of its item
    * -- validation recomputes `order_total` from these.
@@ -1292,9 +1602,17 @@ export type Portion =
   | "Tip"
   /**
    * The driver's collateral: back to the driver once the food is
-   * delivered, to the store if it never was (`OrderOutcome`).
+   * delivered, to the store if it never was (`OrderOutcome`), or if they
+   * left it cooked and no other driver came (`Cancellation::NoDriver`).
    */
-  | "Collateral";
+  | "Collateral"
+  /**
+   * The customer's share of the fee, from the store: the driver's if the
+   * store keeps them waiting (`Cancellation::StoreLate`) -- the customer
+   * is refunded, and the driver is still paid in full -- the store's
+   * again otherwise.
+   */
+  | "LateCover";
 
 export interface Profile {
   /**
@@ -1464,6 +1782,21 @@ export interface ProviderCredential {
   photo_data_uri: string;
 }
 
+/**
+ * One bid as the matching rule weighs it.
+ */
+export interface RankedBid {
+  bid: ActionHash;
+  /**
+   * What the rule counts it as, in minor units: lowest wins.
+   */
+  cost: number;
+  /**
+   * Why it can't be chosen now, if it can't.
+   */
+  unavailable: string | null;
+}
+
 export interface RatingSummary {
   count: number;
   rating_sum: number;
@@ -1604,13 +1937,45 @@ export type ReputationEventKind =
       CollateralForfeited: {
         amount: number;
       };
-    };
+    }
+  /**
+   * A driver who left a delivery they'd committed to before picking it
+   * up -- dropping it, or moved on by the store once they were late.
+   * Recorded by the customer, on the version that released them: a
+   * driver's completion rate.
+   */
+  | "DeliveryDropped"
+  /**
+   * A store that kept a checked-in driver waiting past its wait.
+   * Recorded by that driver, on their update leaving it late.
+   */
+  | "StoreLate"
+  /**
+   * A driver's report that a store wouldn't check them in -- which the
+   * network can't check, so it moves no money: the store answers to it
+   * in what drivers and customers see. Recorded by a driver the order's
+   * customer accepted, on a version naming them.
+   */
+  | "CheckInRefused";
 
 export interface ReputationSummary {
   completed_count: number;
   cancelled_by_them_count: number;
   dispute_raised_count: number;
   dispute_resolved_against_count: number;
+  /**
+   * Deliveries the driver left before picking them up.
+   */
+  dropped_count: number;
+  /**
+   * Times a store kept a checked-in driver waiting past the network's wait.
+   */
+  late_count: number;
+  /**
+   * Drivers' reports that a store wouldn't check them in -- from drivers
+   * with enough completed deliveries (`min_reporter_deliveries`).
+   */
+  check_in_refused_count: number;
   total_collateral_forfeited: number;
 }
 
@@ -1708,6 +2073,33 @@ export interface ShareView {
   portion: Portion;
   recipient: AgentPubKey;
   amount: number;
+}
+
+/**
+ * What a store's deliveries call for once a deadline has passed -- the
+ * steps its app takes, with proof of the time (`get_store_steps_due`).
+ */
+export type StoreStep =
+  /**
+   * Move on a committed driver who's late.
+   */
+  | "MoveDriverOn"
+  /**
+   * Record the customer collecting it, moving on their late driver.
+   */
+  | "RecordCollecting"
+  /**
+   * End an order no driver came for.
+   */
+  | "EndForNoDriver";
+
+export interface StoreStepDue {
+  order: ActionHash;
+  step: StoreStep;
+  /**
+   * When it fell due.
+   */
+  due: Timestamp;
 }
 
 /**

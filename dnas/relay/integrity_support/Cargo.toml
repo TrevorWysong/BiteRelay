@@ -11,3 +11,5 @@ hdi.workspace = true
 serde.workspace = true
 holochain_serialized_bytes.workspace = true
 relay_governance.workspace = true
+relay_types.workspace = true
+drand-verify = { version = "0.6.2", default-features = false }

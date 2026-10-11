@@ -7,6 +7,7 @@ export const PORTION_LABEL: Record<Portion, string> = {
   Fee: "Delivery fee",
   Tip: "Tip",
   Collateral: "Driver's collateral",
+  LateCover: "Cover if the store keeps the driver waiting",
 };
 
 function purposeLabel(purpose: HoldPurpose): string {
@@ -24,5 +25,7 @@ export function describeLedgerEntry(entry: LedgerEntry): { label: string; direct
   if ("Hold" in kind) return { label: `Set aside for ${purposeLabel(kind.Hold.purpose)}`, direction: "out" };
   if ("Collect" in kind) return { label: `Collected: ${PORTION_LABEL[kind.Collect.portion].toLowerCase()}`, direction: "in" };
   if ("Waive" in kind) return { label: `Returned to the payer: ${PORTION_LABEL[kind.Waive.portion].toLowerCase()}`, direction: "none" };
-  return { label: "Collateral forfeited: the order never arrived", direction: "none" };
+  if ("Forfeit" in kind) return { label: "Collateral forfeited: the order never arrived", direction: "none" };
+  if ("Stake" in kind) return { label: "Store listing deposit", direction: "out" };
+  return { label: "Store listing deposit returned", direction: "in" };
 }

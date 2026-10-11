@@ -1,16 +1,23 @@
 //! Bid validation: who may bid on an order, and what a bid update may change.
 
 use super::*;
+use relay_integrity_support::original_creation;
 
-pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if &bid.bidder != author {
         return Ok(ValidateCallbackResult::Invalid("a bid can only be authored by its own bidder".into()));
     }
     if bid.eta_seconds == 0 {
         return Ok(ValidateCallbackResult::Invalid("eta_seconds must be greater than zero".into()));
     }
+    if bid.to_store_seconds > bid.eta_seconds {
+        return Ok(ValidateCallbackResult::Invalid("a driver reaches the store before the customer: to_store_seconds is at most eta_seconds".into()));
+    }
     if bid.price_offer == 0 {
         return Ok(ValidateCallbackResult::Invalid("price_offer must be greater than zero".into()));
+    }
+    if let Some(problem) = relay_integrity_support::amount_problem("price_offer", bid.price_offer) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     if bid.status != BidStatus::Open {
         return Ok(ValidateCallbackResult::Invalid("a new bid must start in the Open status".into()));
@@ -52,7 +59,29 @@ pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey) -> ExternResult<
             ));
         }
     }
+    // One bid per driver per order: their offer is their offer. Otherwise a
+    // driver could fill an order's bids with their own, pushing everyone
+    // else's out of sight.
+    let Some(prev_action) = prev_action else { return Ok(ValidateCallbackResult::Invalid("a bid can't open a chain".into())) };
+    if already_bid(author, prev_action, &bid.order_ref, record.action().timestamp())? {
+        return Ok(ValidateCallbackResult::Invalid("a driver bids on an order once".into()));
+    }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// Whether `bidder` already bid on the order `open_version` is a version of
+/// -- every bid on it is on their chain, after it opened (`opened_at`).
+fn already_bid(bidder: &AgentPubKey, chain_top: &ActionHash, open_version: &ActionHash, opened_at: Timestamp) -> ExternResult<bool> {
+    let order = original_creation(open_version.clone())?;
+    let bid_type: ScopedEntryDefIndex = UnitEntryTypes::Bid.try_into()?;
+    for item in entries_since(bidder, chain_top, opened_at, &[bid_type])? {
+        if let Ok(earlier) = Bid::try_from(item) {
+            if original_creation(earlier.order_ref)? == order {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// A bid only ever changes by its bidder withdrawing it -- the order's

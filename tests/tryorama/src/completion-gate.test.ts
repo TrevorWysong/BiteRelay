@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, commitAndCook, pickUp, ST_PETE, testApp, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -63,10 +63,8 @@ await runScenario(async (scenario) => {
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: bidRef });
-  await dispatchOf(customer)("set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" });
   await dhtSync(both, customer.cells[0].cell_id[0]);
-
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
+  await commitAndCook(driver, customer, orderRef, both);
   // The store (the customer runs it here) confirms handing it over.
   const pickupLeg = actionHash(
     await attestationOf(driver)<HcRecord>("record_leg", { order_ref: orderRef, sequence: 0, kind: "MerchantHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }),
@@ -74,7 +72,7 @@ await runScenario(async (scenario) => {
   await dhtSync(both, driver.cells[0].cell_id[0]);
   await attestationOf(customer)("acknowledge_leg", pickupLeg);
   await dhtSync(both, customer.cells[0].cell_id[0]);
-  await dispatchOf(driver)("pick_up_order", orderRef);
+  await pickUp(driver, orderRef);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   // Attempt 1: no attestations at all -- an empty delivery_receipts list

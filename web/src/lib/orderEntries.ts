@@ -2,7 +2,7 @@
 // shared by every screen that lists orders -- customer, merchant, driver.
 import { decodeEntry, bytesToHex, timestampOf } from "../holochain/decode";
 import type { OrderEntry } from "../holochain/zomes/dispatch";
-import type { DeliveryOrder, OrderLine, PickupOrder } from "../holochain/types";
+import type { DeliveryOrder, OrderLine, PickupOrder, DeliveryStatus } from "../holochain/types";
 
 /// `ref` is the order's stable identity (its original action) -- what every
 /// order call and detail route takes; `hex` is the same, as a React key.
@@ -30,7 +30,13 @@ export function itemCount(order: { lines: OrderLine[] }): number {
   return order.lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 
-const TERMINAL = new Set(["Delivered", "PickedUp", "Cancelled"]);
+const TERMINAL = new Set(["Delivered", "Collected", "PickedUp", "Cancelled"]);
+
+/// Whether a delivery reached its customer: brought to them, or collected
+/// from the store when no driver came.
+export function received(status: DeliveryStatus): boolean {
+  return status === "Delivered" || status === "Collected";
+}
 
 /// Finished -- the mirror of the Rust `is_terminal` on both status enums.
 export function isFinished(row: OrderRow): boolean {

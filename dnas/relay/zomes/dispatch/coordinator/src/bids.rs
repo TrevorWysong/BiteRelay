@@ -12,6 +12,9 @@ use relay_coordinator_support::{next_page_cursor, open, original_action_of, reso
 pub struct SubmitBidInput {
     pub order_ref: ActionHash,
     pub eta_seconds: u32,
+    /// How long until they'd reach the store -- when they're due there.
+    #[serde(default)]
+    pub to_store_seconds: u32,
     pub price_offer: u64,
 }
 
@@ -25,6 +28,11 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     if order.status != DeliveryStatus::Open {
         return Err(wasm_error!(WasmErrorInner::Guest("this order isn't open for bids".into())));
     }
+    // One bid per driver per order -- validation's rule, told first.
+    let order_original = original_action_of(input.order_ref.clone())?;
+    if my_bids()?.iter().any(|earlier| original_action_of(earlier.order_ref.clone()).ok().as_ref() == Some(&order_original)) {
+        return Err(wasm_error!(WasmErrorInner::Guest("You've already bid on this order.".into())));
+    }
     if let Err(refusal) = crate::order_queues::get_driver_load(bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
         return Err(wasm_error!(WasmErrorInner::Guest(driver_refusal(refusal))));
     }
@@ -33,6 +41,7 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         order_ref: current.action_address().clone(),
         bidder,
         eta_seconds: input.eta_seconds,
+        to_store_seconds: input.to_store_seconds.min(input.eta_seconds),
         price_offer: input.price_offer,
         // What the driver will post when they pick the order up.
         collateral: required_collateral(&order),
@@ -43,7 +52,6 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     // Under the order's identity, not the exact version bid on (a scheduled
     // order is bid on via the update that opened it), so the customer finds
     // every bid in one place.
-    let order_original = original_action_of(input.order_ref)?;
     create_link(order_original.clone(), bid_hash.clone(), LinkTypes::OrderToBid, ())?;
 
     let _ = send_remote_signal(
@@ -53,6 +61,12 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
 
     get(bid_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back bid".into())))
+}
+
+/// The caller's bids, from their own chain.
+fn my_bids() -> ExternResult<Vec<Bid>> {
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Bid)?).include_entries(true).action_type(ActionType::Create);
+    Ok(query(filter)?.iter().filter_map(|record| record.entry().to_app_option::<Bid>().ok().flatten()).collect())
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -133,6 +147,13 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
                 "the winning bidder has {} outstanding warrant(s) -- pass override_warrants: true to accept anyway",
                 warrants.count
             ))));
+        }
+    }
+
+    // An order changes drivers a bounded number of times.
+    if let Some(version) = dispatch_integrity::lineage::Version::of(order_record.clone()) {
+        if dispatch_integrity::lineage::driver_changes(&version)? >= relay_governance::max_driver_changes() {
+            return Err(wasm_error!(WasmErrorInner::Guest("This order has changed drivers too many times. You can collect it yourself, or cancel it.".into())));
         }
     }
 

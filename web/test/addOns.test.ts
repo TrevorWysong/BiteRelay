@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { offerable, offerRefusal, type Commitment } from "../src/lib/addOns.ts";
+import { offerable, offerRefusal, offerRules, type Commitment } from "../src/lib/addOns.ts";
 import { carryRefusal } from "../src/lib/driverLoad.ts";
 import { encodeGeohash } from "../src/lib/geohash.ts";
 import type { DeliveryOrder, GeoPoint } from "../src/holochain/types.ts";
 
-const TERMS = { max_concurrent_deliveries: 3, add_on_detour_km: 2 };
+const NETWORK = { max_concurrent_deliveries: 3, add_on_detour_km: 2 };
+const TERMS = offerRules(NETWORK, { maxAtOnce: null, takePriority: true, minFeeCents: 0 });
 const HOME: GeoPoint = { lat: 27.7676, lon: -82.6403 };
 // About 1km and 20km north.
 const NEAR: GeoPoint = { lat: 27.7766, lon: -82.6403 };
@@ -20,6 +21,7 @@ function order(fields: { store?: Uint8Array; to?: GeoPoint; priority?: boolean; 
     dropoff_geohash: encodeGeohash(to.lat, to.lon, 6),
     priority: fields.priority ?? false,
     status: fields.status ?? "Open",
+    max_delivery_fee: null,
   } as DeliveryOrder;
 }
 const open = (o: DeliveryOrder) => ({ order: o });
@@ -48,14 +50,14 @@ test("priority orders go only to a driver with nothing on, and alone", () => {
   assert.deepEqual(offerable([open(order({ priority: true }))], delivering, TERMS), []);
   const onPriority = [carrying(order({ priority: true }))];
   assert.deepEqual(offerable([open(order({}))], onPriority, TERMS), []);
-  assert.equal(offerRefusal(onPriority, TERMS.max_concurrent_deliveries), "CarryingPriority");
+  assert.equal(offerRefusal(onPriority, TERMS), "CarryingPriority");
 });
 
 test("nothing more past the network's limit", () => {
   const full = [carrying(order({})), carrying(order({})), carrying(order({}))];
-  assert.equal(offerRefusal(full, TERMS.max_concurrent_deliveries), "AtLimit");
+  assert.equal(offerRefusal(full, TERMS), "AtLimit");
   assert.deepEqual(offerable([open(order({}))], full, TERMS), []);
-  assert.equal(offerRefusal(full.slice(1), TERMS.max_concurrent_deliveries), null);
+  assert.equal(offerRefusal(full.slice(1), TERMS), null);
 });
 
 test("carryRefusal mirrors the network's rule", () => {
@@ -63,4 +65,15 @@ test("carryRefusal mirrors the network's rule", () => {
   assert.equal(carryRefusal({ orders: 1, priority: false }, true, 3), "PriorityGoesAlone");
   assert.equal(carryRefusal({ orders: 1, priority: true }, false, 3), "CarryingPriority");
   assert.equal(carryRefusal({ orders: 3, priority: false }, false, 3), "AtLimit");
+});
+
+test("a driver's own limits narrow what they're offered, never widen it", () => {
+  const one = offerRules(NETWORK, { maxAtOnce: 1, takePriority: false, minFeeCents: 500 });
+  assert.equal(one.maxAtOnce, 1);
+  assert.equal(offerRules(NETWORK, { maxAtOnce: 9, takePriority: true, minFeeCents: 0 }).maxAtOnce, 3, "never past the network's limit");
+  assert.equal(offerRefusal([carrying(order({}))], one), "AtLimit");
+  const cheap = { ...order({}), max_delivery_fee: 300 };
+  const fair = { ...order({}), max_delivery_fee: 600 };
+  const uncapped = { ...order({}), max_delivery_fee: null };
+  assert.deepEqual(offerable([open(cheap), open(fair), open(uncapped), open(order({ priority: true }))], [], one), [open(fair), open(uncapped)]);
 });

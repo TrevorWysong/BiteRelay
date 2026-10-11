@@ -15,7 +15,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, decodeEntry, handOff, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, collectFromStore, commitAndCook, decodeEntry, handOff, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 const FOOD = 1000;
 const FEE = 400;
@@ -71,11 +71,8 @@ await runScenario(async (scenario) => {
     await sync();
     await retryUntilOk(() => call(customer, "dispatch")("accept_bid", { order_original_action: ref, bid_action: bid }));
     await sync();
-    await retryUntilOk(() => call(merchant, "dispatch")("set_order_status", { order_original_action: ref, next_status: "MerchantConfirmed" }));
-    await sync();
-    await call(driver, "dispatch")("set_order_status", { order_original_action: ref, next_status: "DriverEnRouteToMerchant" });
-    await handOff(driver, merchant, ref, "MerchantHandoff", all);
-    await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", ref));
+    await commitAndCook(driver, merchant, ref, all);
+    await collectFromStore(driver, merchant, ref, all);
     await sync();
     return ref;
   }
@@ -115,7 +112,9 @@ await runScenario(async (scenario) => {
     return call(p, "ledger")("create_raw_ledger_entry_for_testing", { kind: { Collect: { hold, portion, basis: notDelivered } }, amount, balance: latest.balance + amount, in_hand: latest.in_hand, previous: latest.hash });
   };
   await assert.rejects(forge(driver, driverPay.hold, "Fee", customerFee), /isn't grounds/, "the driver can't take their fee on an order that never arrived");
-  await assert.rejects(forge(driver, collateral.hold, "Collateral", FOOD), /isn't grounds/, "nor their collateral back");
+  // Refused either way: no grounds -- or, once the driver's app has
+  // forfeited it on the store's decision, already decided.
+  await assert.rejects(forge(driver, collateral.hold, "Collateral", FOOD), /isn't grounds|already been decided/, "nor their collateral back");
 
   await settlesTo(customer, lost, c0);
   await settlesTo(driver, lost, d0 - FOOD);

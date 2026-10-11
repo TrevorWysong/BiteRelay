@@ -14,14 +14,16 @@ mod legs;
 pub use legs::*;
 
 /// A giver checks a typed handoff code on their own conductor, called by the
-/// driver (`legs::confirm_by_code`) -- anyone may ask; only the right code,
-/// within a few tries, gets an answer that counts.
+/// driver (`legs::confirm_by_code`), and a store checks a driver's check-in
+/// code (`legs::confirm_check_in`) -- anyone may ask; each answers only the
+/// order's own driver, and only the right code, within a few tries, counts.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
+    let zome = zome_info()?.name;
     create_cap_grant(CapGrantEntry::new(
-        "confirm_by_code".into(),
+        "codes".into(),
         CapAccess::Unrestricted,
-        GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "confirm_by_code".into())])),
+        GrantedFunctions::Listed(HashSet::from([(zome.clone(), "confirm_by_code".into()), (zome, "confirm_check_in".into())])),
     ))?;
     Ok(InitCallbackResult::Pass)
 }

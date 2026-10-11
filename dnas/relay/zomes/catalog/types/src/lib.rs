@@ -73,6 +73,23 @@ pub struct MerchantCatalog {
     /// this to keep its expensive orders out of that. `None`: no limit.
     #[serde(default)]
     pub leave_at_door_max_cents: Option<u64>,
+    /// The smallest order the store takes, in minor units of its items'
+    /// prices before any promo (a goodie bag is priced on its own). `None`:
+    /// any size.
+    #[serde(default)]
+    pub min_order_cents: Option<u64>,
+    /// Minutes the store is adding to its usual prep time while it's busy
+    /// -- 0 when it isn't. Customers see the longer wait before ordering.
+    #[serde(default)]
+    pub busy_extra_minutes: u16,
+    /// How long past an order's ready time the store may keep a checked-in
+    /// driver waiting before they can call it late -- leaving paid in full
+    /// by the store, while the order goes to another driver and its
+    /// customer may cancel for a full refund. Part of the terms an order is
+    /// placed under; customers see it at checkout. `None`: the network's
+    /// (`relay_governance::store_wait`), within its bounds.
+    #[serde(default)]
+    pub store_wait_minutes: Option<u16>,
     /// How far from `location` this merchant is willing to deliver, in
     /// kilometers -- a per-merchant business rule, not a single app-wide
     /// constant: a dense-downtown restaurant and a rural one have
@@ -233,6 +250,53 @@ pub struct GoodieBag {
     pub supports_pickup: bool,
     pub supports_delivery: bool,
     pub created_at: Timestamp,
+    /// How long a confirmed claim is held for its customer to order it.
+    /// Unordered by then, it lapses and the bag goes back on sale -- so
+    /// nobody can hold a store's bags without buying them.
+    pub hold_minutes: u16,
+}
+
+/// The integrity zome these types belong to -- how another zome's
+/// validation recognises one of its links.
+pub const CATALOG_INTEGRITY_ZOME: &str = "catalog_integrity";
+
+/// What begins the tag of a store's listing link (`GeohashToCatalog`) -- and
+/// only of one: validation refuses it on any other catalog link, so a tag
+/// that starts with it is a listing.
+pub const LISTING_TAG_PREFIX: &[u8] = b"listing:";
+
+/// A store listing's link tag: the stake (`ledger_types::LedgerKind::Stake`)
+/// that backs it.
+pub fn listing_tag(stake: &ActionHash) -> Vec<u8> {
+    [LISTING_TAG_PREFIX, stake.get_raw_39()].concat()
+}
+
+/// The stake a listing's tag names, if it's a listing tag.
+pub fn listing_stake(tag: &[u8]) -> Option<ActionHash> {
+    let raw = tag.strip_prefix(LISTING_TAG_PREFIX)?;
+    ActionHash::try_from_raw_39(raw.to_vec()).ok()
+}
+
+impl MerchantCatalog {
+    /// Whether an order placed under these terms gets more from the store
+    /// than `current` would give it: a lower minimum, a wider delivery
+    /// area, or a larger share of the delivery fee. Anything else about a
+    /// store (its hours, its description, being busy) changes nothing an
+    /// order holds the store to.
+    pub fn offers_more_than(&self, current: &MerchantCatalog) -> bool {
+        self.min_order_cents.unwrap_or(0) < current.min_order_cents.unwrap_or(0)
+            || self.max_delivery_radius_km > current.max_delivery_radius_km
+            || self.delivery_subsidy_percent > current.delivery_subsidy_percent
+    }
+}
+
+impl GoodieBag {
+    /// When a claim the store confirmed at `confirmed_at` lapses, if it's
+    /// still unordered: its hold, plus `answer_window` -- the time a store
+    /// has to accept an order placed at the hold's last moment.
+    pub fn claim_lapses_at(&self, confirmed_at: Timestamp, answer_window: core::time::Duration) -> Timestamp {
+        Timestamp::from_micros(confirmed_at.as_micros() + i64::from(self.hold_minutes) * 60_000_000 + answer_window.as_micros() as i64)
+    }
 }
 
 /// What a customer chose when claiming a bag -- captured once, up front, so
@@ -249,7 +313,10 @@ pub enum BagClaimFulfillment {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BagClaimStatus {
     Pending,
+    /// The store set a bag aside for this customer, for its `hold_minutes`.
     Confirmed,
+    /// The store accepted the customer's order for it: sold.
+    Redeemed,
 }
 
 /// A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
@@ -280,3 +347,33 @@ pub struct BagClaim {
     pub claimed_at: Timestamp,
 }
 
+
+#[cfg(test)]
+mod bag_hold_tests {
+    use super::*;
+
+    fn bag(hold_minutes: u16) -> GoodieBag {
+        GoodieBag {
+            catalog_ref: ActionHash::from_raw_36(vec![0; 36]),
+            title: "Bag".into(),
+            description: String::new(),
+            photo_data_uri: String::new(),
+            original_value_cents: 2000,
+            price_cents: 500,
+            quantity_total: 1,
+            pickup_window_start: Timestamp::from_micros(0),
+            pickup_window_end: Timestamp::from_micros(1),
+            supports_pickup: true,
+            supports_delivery: false,
+            created_at: Timestamp::from_micros(0),
+            hold_minutes,
+        }
+    }
+
+    #[test]
+    fn a_claim_lapses_after_its_hold_and_the_time_to_accept_an_order() {
+        let confirmed = Timestamp::from_micros(1_000_000);
+        let lapses = bag(30).claim_lapses_at(confirmed, core::time::Duration::from_secs(300));
+        assert_eq!(lapses.as_micros(), 1_000_000 + 30 * 60_000_000 + 300_000_000);
+    }
+}

@@ -186,6 +186,8 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
         // Accepted when the template was made (`create_recurring_template`).
         door_risk_accepted: template.dropoff_preference == DropoffPreference::LeaveAtDoor,
         priority: details.priority,
+        // A standing order runs unattended.
+        auto_match: true,
         bag_claim_ref: None,
     })?;
     Ok(())

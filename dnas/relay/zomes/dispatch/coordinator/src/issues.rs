@@ -103,6 +103,21 @@ pub fn report_issue(input: ReportIssueInput) -> ExternResult<Record> {
     if decisions_of(&order)?.settlement.is_some() {
         return Err(guest("The store has already settled this order."));
     }
+    // Each item reported once -- validation's rule, told first.
+    let reported: Vec<ActionHash> = get_issues_for_order(order.clone())?.into_iter().flat_map(|view| view.lines.into_iter().map(|line| line.item_ref)).collect();
+    if input.lines.iter().any(|line| reported.contains(&line.item_ref)) {
+        return Err(guest("You've already reported a problem with one of these items."));
+    }
+    // The version showing they have it -- validation's rule, told first.
+    let latest = resolve_latest(order.clone())?;
+    let received = match (decode_or::<DeliveryOrder>(&latest), decode_or::<PickupOrder>(&latest)) {
+        (Some(delivery), _) => delivery.status == DeliveryStatus::Delivered,
+        (None, Some(pickup)) => pickup.status == PickupStatus::PickedUp,
+        _ => false,
+    };
+    if !received {
+        return Err(guest("You can report a problem once you have your order."));
+    }
     crate::orders::check_note(&input.note)?;
     if let Some(problem) = relay_integrity_support::image_problem(&input.photo_data_uri) {
         return Err(guest(problem));
@@ -110,6 +125,7 @@ pub fn report_issue(input: ReportIssueInput) -> ExternResult<Record> {
     let evidence = IssueEvidence { note: input.note, photo_data_uri: input.photo_data_uri };
     let issue = ItemIssue {
         order: order.clone(),
+        received: latest.action_address().clone(),
         lines: input.lines,
         sealed_for_store: seal_chunked(&terms.merchant, &evidence)?,
     };
@@ -216,10 +232,10 @@ fn store_answer(issue: &ActionHash, merchant: &AgentPubKey) -> ExternResult<Opti
 /// The store's decisions about an order, as its links record them.
 #[derive(Debug, Default)]
 pub(crate) struct Decisions {
-    /// Its outcome: delivered.
-    pub delivered: Option<ActionHash>,
-    /// Its outcome: never delivered.
-    pub not_delivered: Option<ActionHash>,
+    /// Its outcome: delivered -- and the bid that delivered it.
+    pub delivered: Option<(ActionHash, Option<ActionHash>)>,
+    /// Its outcome: never delivered -- and the bid that had it.
+    pub not_delivered: Option<(ActionHash, Option<ActionHash>)>,
     /// Its settlement of the food, and the refund it names.
     pub settlement: Option<(ActionHash, u64)>,
 }
@@ -236,9 +252,10 @@ pub(crate) fn decisions_of(order: &ActionHash) -> ExternResult<Decisions> {
         let Some(hash) = link.target.into_action_hash() else { continue };
         let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
         if let Some(outcome) = decode_or::<OrderOutcome>(&record).filter(|o| &o.order == order) {
+            let bid_at = |version: &ActionHash| get(version.clone(), GetOptions::default()).ok().flatten().and_then(|r| decode_or::<DeliveryOrder>(&r)).and_then(|o| o.accepted_bid);
             match outcome.outcome {
-                Outcome::Delivered { .. } => decisions.delivered = Some(hash),
-                Outcome::NotDelivered { .. } => decisions.not_delivered = Some(hash),
+                Outcome::Delivered { proof } => decisions.delivered = Some((hash, bid_at(&proof))),
+                Outcome::NotDelivered { claim } => decisions.not_delivered = Some((hash, bid_at(&claim))),
             }
         } else if let Some(settlement) = decode_or::<ItemSettlement>(&record).filter(|s| &s.order == order) {
             decisions.settlement = Some((hash, settlement.refund));
@@ -281,7 +298,7 @@ pub fn get_order_decisions(order: ActionHash) -> ExternResult<OrderDecisions> {
     let latest = resolve_latest(order.clone())?;
     let at = latest.action().timestamp().as_micros();
     let (has_it, claimed) = match (decode_or::<DeliveryOrder>(&latest), decode_or::<PickupOrder>(&latest)) {
-        (Some(o), _) => (o.status == DeliveryStatus::Delivered, o.status == DeliveryStatus::Disputed),
+        (Some(o), _) => (matches!(o.status, DeliveryStatus::Delivered | DeliveryStatus::Collected), o.status == DeliveryStatus::Disputed),
         (None, Some(o)) => (o.status == PickupStatus::PickedUp, false),
         _ => (false, false),
     };
@@ -386,7 +403,7 @@ pub fn decide_order(order: ActionHash) -> ExternResult<bool> {
                         }
                         // Finished: off every queue, the driver's included.
                         crate::order_queues::retire(&crate::OrderParties::delivery(&order, &delivery)?)?;
-                        decisions.delivered = Some(hash);
+                        decisions.delivered = Some((hash, delivery.accepted_bid.clone()));
                     }
                     DeliveryStatus::Disputed if now >= latest.action().timestamp().as_micros() + claim_grace_micros() => {
                         not_delivered(&order, &latest, &delivery)?;
@@ -395,7 +412,13 @@ pub fn decide_order(order: ActionHash) -> ExternResult<bool> {
                     _ => {}
                 }
             }
-            decisions.delivered.clone().map(|outcome| (outcome, latest.action().timestamp()))
+            if delivery.status == DeliveryStatus::Collected {
+                // Collected from the store: no driver, so nothing to decide
+                // but the food -- settled on the collection, as a pickup is.
+                Some((latest.action_address().clone(), latest.action().timestamp()))
+            } else {
+                decisions.delivered.clone().map(|(outcome, _)| (outcome, latest.action().timestamp()))
+            }
         }
         (None, Some(pickup)) => (pickup.status == PickupStatus::PickedUp && latest.action().author() == &requester).then(|| (latest.action_address().clone(), latest.action().timestamp())),
         _ => None,

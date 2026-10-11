@@ -14,6 +14,7 @@
 use dispatch_integrity::*;
 use crate::stores::my_stores;
 use hdk::prelude::*;
+use dispatch_integrity::lineage;
 use relay_coordinator_support::{decode_or, original_action_of};
 
 fn guest(message: impl Into<String>) -> WasmError {
@@ -96,14 +97,42 @@ enum Stage {
     Waiting,
     Accepted,
     DriverAssigned,
+    AtStore,
     Other,
+}
+
+/// An order's cancellation, as its holds turn on it -- mirrors
+/// `ledger_integrity::Cancelled`.
+struct Cancelled {
+    version: ActionHash,
+    by: Cancellation,
+    from: Stage,
+    cooking: bool,
+    bid: Option<ActionHash>,
+    liable: Option<ActionHash>,
+}
+
+/// A driver leaving before pickup.
+struct Release {
+    version: ActionHash,
+    bid: ActionHash,
+    /// They'd committed and the store had started cooking: they answer for
+    /// the food until another driver is confirmed.
+    liable: bool,
+    /// They were calling the store late: they leave paid in full by it.
+    store_late: bool,
 }
 
 struct Facts {
     /// The store's decisions (see `issues`).
     decisions: crate::issues::Decisions,
-    /// The order's cancellation, and how far it had got.
-    cancellation: Option<(ActionHash, Cancellation, Stage)>,
+    cancellation: Option<Cancelled>,
+    releases: Vec<Release>,
+    /// The store confirming a later driver: the version, and each bid that
+    /// left before it, now clear.
+    replaced: Vec<(ActionHash, ActionHash)>,
+    /// Whether the order is over: delivered, collected or cancelled.
+    finished: bool,
 }
 
 /// Every version of an order, original first then each update, across any
@@ -119,36 +148,66 @@ fn versions(order: &ActionHash) -> ExternResult<Vec<Record>> {
     Ok(out)
 }
 
+fn delivery_stage(status: &DeliveryStatus) -> Stage {
+    match status {
+        DeliveryStatus::Scheduled | DeliveryStatus::Placed => Stage::Waiting,
+        DeliveryStatus::Open | DeliveryStatus::Collecting => Stage::Accepted,
+        DeliveryStatus::BidAccepted | DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed => Stage::DriverAssigned,
+        DeliveryStatus::DriverAtStore => Stage::AtStore,
+        _ => Stage::Other,
+    }
+}
+
 fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
     let all = versions(order)?;
     let Some(original) = all.first() else { return Ok(None) };
     let delivery = decode_or::<DeliveryOrder>(original).is_some();
-    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None };
-    for version in &all {
-        let prior = match &version.action().data {
-            ActionData::Update(update) => all.iter().find(|r| r.action_address() == &update.original_action_address),
-            _ => None,
-        };
-        let (cancellation, stage) = if delivery {
-            let Some(o) = decode_or::<DeliveryOrder>(version) else { continue };
-            let stage = prior.and_then(decode_or::<DeliveryOrder>).map(|p| match p.status {
-                DeliveryStatus::Scheduled | DeliveryStatus::Placed => Stage::Waiting,
-                DeliveryStatus::Open => Stage::Accepted,
-                DeliveryStatus::BidAccepted | DeliveryStatus::MerchantConfirmed | DeliveryStatus::DriverEnRouteToMerchant => Stage::DriverAssigned,
-                _ => Stage::Other,
-            });
-            (o.cancellation, stage)
-        } else {
-            let Some(o) = decode_or::<PickupOrder>(version) else { continue };
-            let stage = prior.and_then(decode_or::<PickupOrder>).map(|p| match p.status {
+    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None, releases: Vec::new(), replaced: Vec::new(), finished: false };
+    let prior_of = |record: &Record| match &record.action().data {
+        ActionData::Update(update) => all.iter().find(|r| r.action_address() == &update.original_action_address),
+        _ => None,
+    };
+    for record in &all {
+        let prior = prior_of(record);
+        if !delivery {
+            let Some(o) = decode_or::<PickupOrder>(record) else { continue };
+            facts.finished |= o.status.is_terminal();
+            let from = prior.and_then(decode_or::<PickupOrder>).map(|p| match p.status {
                 PickupStatus::Placed => Stage::Waiting,
                 PickupStatus::MerchantConfirmed | PickupStatus::ReadyForPickup => Stage::Accepted,
                 _ => Stage::Other,
             });
-            (o.cancellation, stage)
-        };
-        if let (Some(cancellation), Some(stage)) = (cancellation, stage) {
-            facts.cancellation = Some((version.action_address().clone(), cancellation, stage));
+            if let (Some(by), Some(from)) = (o.cancellation, from) {
+                let cooking = from == Stage::Accepted;
+                facts.cancellation = Some(Cancelled { version: record.action_address().clone(), by, from, cooking, bid: None, liable: None });
+            }
+            continue;
+        }
+        let (Some(version), Some(prior)) = (lineage::Version::of(record.clone()), prior.and_then(|p| lineage::Version::of(p.clone()))) else { continue };
+        facts.finished |= version.order.status.is_terminal();
+        if let Some(bid) = version.released(&prior) {
+            let store_late = lineage::is_store_late_release(&version, &prior)?;
+            facts.releases.push(Release { version: record.action_address().clone(), liable: version.released_liable(&prior).is_some(), store_late, bid });
+        }
+        if lineage::confirms_driver(&version, &prior) {
+            let confirmed = version.order.accepted_bid.clone();
+            lineage::find_back(version.clone(), |v, p| {
+                if let Some(bid) = p.and_then(|p| v.released(p)).filter(|bid| Some(bid) != confirmed.as_ref()) {
+                    facts.replaced.push((record.action_address().clone(), bid));
+                }
+                None::<()>
+            })?;
+        }
+        if let (Some(by), true) = (version.order.cancellation.clone(), prior.order.status != DeliveryStatus::Cancelled) {
+            let liable = if by == Cancellation::NoDriver { lineage::liable_release(&prior)?.map(|(_, bid)| bid) } else { None };
+            facts.cancellation = Some(Cancelled {
+                version: record.action_address().clone(),
+                by,
+                from: delivery_stage(&prior.order.status),
+                cooking: prior.order.ready_by.is_some(),
+                bid: prior.order.accepted_bid.clone(),
+                liable,
+            });
         }
     }
     Ok(Some(facts))
@@ -188,60 +247,116 @@ enum Decision {
     Collect(ActionHash),
     Waive,
     /// Concede it, on this basis -- a driver's collateral for an order that
-    /// never arrived, which frees them to carry another.
+    /// never arrived, or that they left cooking with no driver after them;
+    /// it frees them to carry another.
     Forfeit(ActionHash),
 }
 
 /// The rules in `ledger_integrity::validate_collect`, from the caller's
-/// side: what they're owed, and on what.
-fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -> ExternResult<Option<Decision>> {
+/// side: what they're owed, and on what -- or, where they're owed nothing
+/// and the order's over, giving it back.
+fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -> Option<Decision> {
     let recipient = &share.recipient == me;
     let payer = &hold.payer == me;
-    let d = &facts.decisions;
-    // Once the store has decided, its decision settles the part.
-    let decided = match share.portion {
-        Portion::Food => match (&d.settlement, &d.not_delivered) {
-            (Some((settlement, refund)), _) => {
-                let mine = if recipient { share.amount.saturating_sub(*refund) } else if payer { *refund } else { 0 };
-                Some((mine > 0).then(|| Decision::Collect(settlement.clone())))
-            }
-            (None, Some(outcome)) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
-            (None, None) => None,
-        },
-        Portion::Collateral => match (&d.delivered, &d.not_delivered) {
-            (Some(outcome), _) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
-            (None, Some(outcome)) if recipient => Some(Some(Decision::Collect(outcome.clone()))),
-            (None, Some(outcome)) => Some(payer.then(|| Decision::Forfeit(outcome.clone()))),
-            _ => None,
-        },
-        Portion::Fee | Portion::Tip => match (&d.delivered, &d.not_delivered) {
-            (Some(outcome), _) => Some(recipient.then(|| Decision::Collect(outcome.clone()))),
-            (None, Some(outcome)) => Some(payer.then(|| Decision::Collect(outcome.clone()))),
-            _ => None,
-        },
+    let hold_bid = match &hold.purpose {
+        HoldPurpose::Food => None,
+        HoldPurpose::DriverPay { bid } | HoldPurpose::Subsidy { bid } | HoldPurpose::Collateral { bid } => Some(bid),
     };
-    if let Some(decision) = decided {
-        return Ok(decision);
-    }
-    if recipient {
-        if let Some((version, by, stage)) = &facts.cancellation {
-            let owed = *by == Cancellation::ByCustomer
-                && match share.portion {
-                    Portion::Food => matches!(stage, Stage::Accepted | Stage::DriverAssigned),
-                    Portion::Fee => *stage == Stage::DriverAssigned && matches!(hold.purpose, HoldPurpose::DriverPay { .. }),
-                    _ => false,
-                };
-            return Ok(Some(if owed { Decision::Collect(version.clone()) } else { Decision::Waive }));
+    let ours = |bid: &Option<ActionHash>| hold_bid.is_some() && bid.as_ref() == hold_bid;
+    let collect = |basis: &ActionHash| Some(Decision::Collect(basis.clone()));
+    let d = &facts.decisions;
+    let released = facts.releases.iter().find(|r| Some(&r.bid) == hold_bid);
+    let cancelled = facts.cancellation.as_ref();
+    match (&hold.purpose, share.portion) {
+        (HoldPurpose::Food, _) => {
+            if let Some((settlement, refund)) = &d.settlement {
+                let mine = if recipient { share.amount.saturating_sub(*refund) } else if payer { *refund } else { 0 };
+                return (mine > 0).then(|| Decision::Collect(settlement.clone()));
+            }
+            if let Some((outcome, _)) = &d.not_delivered {
+                return payer.then(|| Decision::Collect(outcome.clone()));
+            }
+            let c = cancelled?;
+            match c.by {
+                Cancellation::ByCustomer if recipient => Some(if c.cooking && !matches!(c.from, Stage::Waiting | Stage::Other) { Decision::Collect(c.version.clone()) } else { Decision::Waive }),
+                Cancellation::NotCollected if recipient => collect(&c.version),
+                Cancellation::StoreLate | Cancellation::NoDriver if payer => collect(&c.version),
+                Cancellation::ByStore(_) | Cancellation::StoreDidNotRespond if recipient => Some(Decision::Waive),
+                _ => None,
+            }
         }
-        return Ok(None);
-    }
-    if payer {
-        let waivers: Vec<WaiverWire> = ledger("waivers_for_hold", hold.hold.clone())?;
-        if let Some(waiver) = waivers.into_iter().find(|w| w.portion == share.portion && w.by == share.recipient) {
-            return Ok(Some(Decision::Collect(waiver.waiver)));
+        (HoldPurpose::DriverPay { .. } | HoldPurpose::Subsidy { .. }, portion) => {
+            if let Some((outcome, bid)) = &d.delivered {
+                if ours(bid) {
+                    // The driver is paid; the store's late cover goes back.
+                    return match portion {
+                        Portion::LateCover => payer.then(|| Decision::Collect(outcome.clone())),
+                        _ => recipient.then(|| Decision::Collect(outcome.clone())),
+                    };
+                }
+            }
+            if let Some((outcome, bid)) = &d.not_delivered {
+                if ours(bid) {
+                    return payer.then(|| Decision::Collect(outcome.clone()));
+                }
+            }
+            if let Some(release) = released {
+                // Called late, the store pays them in full; otherwise what
+                // was set aside for them goes back.
+                if release.store_late && matches!(hold.purpose, HoldPurpose::Subsidy { .. }) {
+                    return recipient.then(|| Decision::Collect(release.version.clone()));
+                }
+                return if payer { collect(&release.version) } else { recipient.then_some(Decision::Waive) };
+            }
+            let c = cancelled.filter(|c| ours(&c.bid))?;
+            let store_fee = matches!(hold.purpose, HoldPurpose::Subsidy { .. });
+            match (&c.by, store_fee) {
+                (Cancellation::StoreLate, false) if payer => collect(&c.version),
+                (Cancellation::StoreLate, true) if recipient => collect(&c.version),
+                (Cancellation::ByStore(_), true) if recipient && c.from == Stage::AtStore => collect(&c.version),
+                (Cancellation::ByCustomer, false) if recipient && portion == Portion::Fee && matches!(c.from, Stage::DriverAssigned | Stage::AtStore) => collect(&c.version),
+                _ if recipient => Some(Decision::Waive),
+                _ => None,
+            }
+        }
+        (HoldPurpose::Collateral { .. }, _) => {
+            if let Some((outcome, bid)) = &d.delivered {
+                if ours(bid) {
+                    return payer.then(|| Decision::Collect(outcome.clone()));
+                }
+            }
+            if let Some((outcome, bid)) = &d.not_delivered {
+                if ours(bid) {
+                    return if recipient { collect(outcome) } else { payer.then(|| Decision::Forfeit(outcome.clone())) };
+                }
+            }
+            if let Some((version, _)) = facts.replaced.iter().find(|(_, bid)| Some(bid) == hold_bid) {
+                return payer.then(|| Decision::Collect(version.clone()));
+            }
+            if let Some(release) = released.filter(|r| r.store_late) {
+                return payer.then(|| Decision::Collect(release.version.clone()));
+            }
+            if let Some(c) = cancelled {
+                if c.by == Cancellation::StoreLate && ours(&c.bid) {
+                    return payer.then(|| Decision::Collect(c.version.clone()));
+                }
+                if c.by == Cancellation::NoDriver && ours(&c.liable) {
+                    return if recipient { collect(&c.version) } else { payer.then(|| Decision::Forfeit(c.version.clone())) };
+                }
+            }
+            // The store gives back the collateral of a driver who doesn't
+            // answer for the food: one who left before it was cooking, or
+            // any whose order ended another way.
+            let not_liable = released.is_some_and(|r| !r.liable) || facts.finished;
+            (recipient && not_liable).then_some(Decision::Waive)
         }
     }
-    Ok(None)
+}
+
+/// A part its recipient has given back, for its payer to collect.
+fn waived(hold: &HoldWire, share: &ShareWire) -> ExternResult<Option<Decision>> {
+    let waivers: Vec<WaiverWire> = ledger("waivers_for_hold", hold.hold.clone())?;
+    Ok(waivers.into_iter().find(|w| w.portion == share.portion && w.by == share.recipient).map(|w| Decision::Collect(w.waiver)))
 }
 
 /// Settles what the caller can on one order; returns how many parts it
@@ -268,7 +383,11 @@ pub(crate) fn settle(order: &ActionHash) -> ExternResult<u32> {
             if already {
                 continue;
             }
-            let outcome = match decide(&me, hold, share, &facts)? {
+            let decision = match decide(&me, hold, share, &facts) {
+                None if hold.payer == me => waived(hold, share)?,
+                decided => decided,
+            };
+            let outcome = match decision {
                 Some(Decision::Collect(basis)) => ledger::<_, ActionHash>("collect", CollectWire { hold: hold.hold.clone(), portion: share.portion, basis }).map(|_| ()),
                 Some(Decision::Waive) => ledger::<_, ActionHash>("waive", DecideWire { hold: hold.hold.clone(), portion: share.portion }).map(|_| {
                     if !returned.contains(&hold.payer) {

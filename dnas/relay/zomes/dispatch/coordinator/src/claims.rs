@@ -101,9 +101,40 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 dropoff_preference: Default::default(),
                 door_risk_accepted: false,
                 priority: false,
+                // Nobody is at checkout to choose a driver.
+                auto_match: true,
                 bag_claim_ref: Some(claim_ref),
             })?;
         }
     }
     Ok(())
+}
+
+/// Whether the goodie-bag claim an order cites (`claim_ref`, the store's
+/// confirmation) has lapsed by the caller's -- the store's -- own clock:
+/// its hold ran out before the order could be accepted, and the bag went
+/// back on sale. An order's own timestamp is its customer's word, so the
+/// store's clock is what counts.
+pub(crate) fn bag_hold_lapsed(claim_ref: &ActionHash) -> ExternResult<bool> {
+    let confirmation = get(claim_ref.clone(), GetOptions::default())?.ok_or(guest("couldn't read the goodie bag claim"))?;
+    let claim: BagClaim = decode_or(&confirmation).ok_or(guest("that isn't a goodie bag claim"))?;
+    let bag: GoodieBag = get(claim.bag_ref, GetOptions::default())?.and_then(|r| decode_or(&r)).ok_or(guest("couldn't read the goodie bag"))?;
+    Ok(sys_time()? >= bag.claim_lapses_at(confirmation.action().timestamp(), relay_governance::store_response_window()))
+}
+
+/// The store accepting an order that redeems a goodie-bag claim: refused
+/// if the claim lapsed, and otherwise recorded as sold, in the same commit
+/// as the acceptance.
+pub(crate) fn redeem_bag_claim(claim_ref: &ActionHash) -> ExternResult<()> {
+    if bag_hold_lapsed(claim_ref)? {
+        return Err(guest("This goodie bag's hold ran out before the order came in, so it went back on sale. Decline the order."));
+    }
+    match call(CallTargetCell::Local, "catalog", "redeem_claim".into(), None, claim_ref.clone())? {
+        ZomeCallResponse::Ok(_) => Ok(()),
+        other => Err(guest(&format!("couldn't record the goodie bag as sold: {other:?}"))),
+    }
+}
+
+fn guest(message: &str) -> WasmError {
+    wasm_error!(WasmErrorInner::Guest(message.into()))
 }

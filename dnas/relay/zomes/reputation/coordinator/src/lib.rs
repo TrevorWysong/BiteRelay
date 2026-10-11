@@ -14,7 +14,7 @@
 //! doc comment for why.
 
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest;
+use relay_coordinator_support::{original_action_of, resolve_latest};
 use std::collections::BTreeMap;
 use reputation_integrity::*;
 
@@ -83,6 +83,13 @@ pub struct ReputationSummary {
     pub cancelled_by_them_count: u32,
     pub dispute_raised_count: u32,
     pub dispute_resolved_against_count: u32,
+    /// Deliveries the driver left before picking them up.
+    pub dropped_count: u32,
+    /// Times a store kept a checked-in driver waiting past the network's wait.
+    pub late_count: u32,
+    /// Drivers' reports that a store wouldn't check them in -- from drivers
+    /// with enough completed deliveries (`min_reporter_deliveries`).
+    pub check_in_refused_count: u32,
     pub total_collateral_forfeited: u64,
 }
 
@@ -90,25 +97,53 @@ pub struct ReputationSummary {
 /// use this alone to decide whether to accept a bid; check the agent's real
 /// activity chain and any outstanding warrants first. Each kind of event
 /// counts once per recorder per order.
+/// `event_tag`'s code for a driver's report that a store wouldn't check them
+/// in.
+const CHECK_IN_REFUSED: u8 = 7;
+
 #[hdk_extern]
 pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
     let (base, event_link) = event_links(&target);
-    let mut events: BTreeMap<(AgentPubKey, u8, Vec<u8>), u64> = BTreeMap::new();
+    // Each order counts once per kind of event, whoever recorded it: two of
+    // an order's parties can each record the same fact (a cancellation), and
+    // it's still one fact.
+    let mut events: BTreeMap<(u8, Vec<u8>), u64> = BTreeMap::new();
+    // A driver's report that a store wouldn't check them in counts only if
+    // they've completed enough deliveries -- a throwaway identity's reports
+    // don't. Each reporter is looked up once.
+    let mut seasoned: BTreeMap<AgentPubKey, bool> = BTreeMap::new();
     for link in get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())? {
         let tag = link.tag.into_inner();
         if tag.len() != 1 + 8 + 39 {
             continue;
         }
+        if tag[0] == CHECK_IN_REFUSED {
+            let reporter = link.author.clone();
+            let counts = match seasoned.get(&reporter) {
+                Some(counts) => *counts,
+                None => {
+                    let counts = get_reputation_summary(ReputationTarget::Driver(reporter.clone()))?.completed_count >= relay_governance::min_reporter_deliveries();
+                    seasoned.insert(reporter, counts);
+                    counts
+                }
+            };
+            if !counts {
+                continue;
+            }
+        }
         let amount = u64::from_be_bytes(tag[1..9].try_into().expect("checked length"));
-        events.entry((link.author, tag[0], tag[9..].to_vec())).or_insert(amount);
+        events.entry((tag[0], tag[9..].to_vec())).or_insert(amount);
     }
     let mut summary = ReputationSummary::default();
-    for ((_, code, _), amount) in events {
+    for ((code, _), amount) in events {
         match code {
             0 => summary.completed_count += 1,
             1 => summary.cancelled_by_them_count += 1,
             2 => summary.dispute_raised_count += 1,
             3 => summary.dispute_resolved_against_count += 1,
+            5 => summary.dropped_count += 1,
+            6 => summary.late_count += 1,
+            CHECK_IN_REFUSED => summary.check_in_refused_count += 1,
             4 => summary.total_collateral_forfeited += amount,
             _ => {}
         }
@@ -155,10 +190,9 @@ fn my_reviews_for_order(order_original_action: &ActionHash) -> ExternResult<Vec<
 /// check is a fast-fail
 /// convenience; `validate_review` is what actually enforces it.
 ///
-/// One review per target per order, same as DoorDash/Uber Eats -- checked
-/// here against the caller's own `OrderToReview` links. A coordinator-level
-/// rule (the same trust tier as `confirm_claim`'s quantity count): counting
-/// sibling links isn't something `validate()` can do deterministically.
+/// One review per target per order, same as DoorDash/Uber Eats --
+/// validation walks the author's chain for an earlier one
+/// (`reputation_integrity::validate_review`); checked here first to say so.
 #[hdk_extern]
 pub fn submit_review(input: SubmitReviewInput) -> ExternResult<Record> {
     if input.rating < 1 || input.rating > 5 {
@@ -279,6 +313,14 @@ pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> 
     if input.rating < 1 || input.rating > 5 {
         return Err(wasm_error!(WasmErrorInner::Guest("rating must be between 1 and 5".into())));
     }
+    // Once per item per order -- validation's rule, told first.
+    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ItemReview)?).include_entries(true))?;
+    let reviewed = mine.iter().filter_map(|r| r.entry().to_app_option::<ItemReview>().ok().flatten()).any(|earlier| {
+        earlier.item_ref == input.item_ref && original_action_of(earlier.order_ref).is_ok_and(|order| order == input.order_original_action)
+    });
+    if reviewed {
+        return Err(wasm_error!(WasmErrorInner::Guest("You've already rated this item from this order.".into())));
+    }
     let order_record = resolve_latest(input.order_original_action.clone())?;
     let author = agent_info()?.agent_initial_pubkey;
     let created_at = sys_time()?;
@@ -329,6 +371,14 @@ pub fn get_item_reviews(input: ItemReviewsInput) -> ExternResult<ReviewsPage> {
 #[cfg(feature = "test-utils")]
 mod test_utils {
     use hdk::prelude::*;
-    use reputation_integrity::LinkTypes;
+    use reputation_integrity::{EntryTypes, LinkTypes, Review};
     relay_coordinator_support::raw_link_test_externs!(StoreToEvent, DriverToEvent, CustomerToEvent, StoreToReview, DriverToReview, OrderToReview, ItemToReview);
+
+    /// Writes a review exactly as given, past the coordinator's checks --
+    /// what a modified client could -- so a test can prove what validation
+    /// refuses.
+    #[hdk_extern]
+    pub fn create_raw_review_for_testing(review: Review) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::Review(review))
+    }
 }

@@ -67,6 +67,7 @@ await runScenario(async (scenario) => {
       requester: customer.agentPubKey,
       merchant: merchant.agentPubKey,
       catalog_ref: store,
+      catalog_version: store,
       lines: [{ item_ref: soup, priced_version: soup, quantity: 1 }],
       order_total: 800,
       status: "Placed",
@@ -115,7 +116,7 @@ await runScenario(async (scenario) => {
   const force = (readyBy: number | null) =>
     call(merchant, "dispatch")("force_pickup_update_for_testing", { order_original_action: forced, next_status: "MerchantConfirmed", cancellation: null, ready_by: readyBy });
   await assert.rejects(force(null), /accepting an order must say when it'll be ready/);
-  await assert.rejects(force(Date.now() * 1000 + 5 * 60 * MINUTE), /within four hours/);
+  await assert.rejects(force(Date.now() * 1000 + 5 * 60 * MINUTE), /within the longest prep time the network allows/);
   await force(Date.now() * 1000 + 20 * MINUTE);
-  console.log("[PASS] validation requires a ready time on acceptance, within four hours");
+  console.log("[PASS] validation requires a ready time on acceptance, within the network's longest prep time");
 });

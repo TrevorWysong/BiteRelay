@@ -48,3 +48,9 @@ export async function getHandoffEvidence(leg: ActionHash): Promise<HandoffEviden
 export async function handoffByCode(leg: ActionHash, code: string): Promise<ActionHash> {
   return callZome("attestation", "handoff_by_code", { leg, code });
 }
+
+/// The driver checking in at the store with its code (scanned or typed),
+/// which the store's own app checks -- it needs the store's app online.
+export async function checkInAtStore(orderRef: ActionHash, code: string): Promise<void> {
+  return callZome("attestation", "check_in_at_store", { order_ref: orderRef, code });
+}

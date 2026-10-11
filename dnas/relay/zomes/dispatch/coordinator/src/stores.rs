@@ -38,17 +38,28 @@ pub(crate) fn my_stores() -> ExternResult<Vec<ActionHash>> {
 }
 
 /// When an order the store accepts now will be ready: `prep_minutes` from
-/// now if the store chose a time for it, else its usual prep time.
+/// now if the store chose a time for it, else its usual prep time, plus
+/// its busy extra while it's busy.
 pub(crate) fn ready_by(catalog_ref: &ActionHash, prep_minutes: Option<u16>) -> ExternResult<Timestamp> {
+    let prep = prep_time(catalog_ref, prep_minutes)?;
+    Ok(Timestamp::from_micros(sys_time()?.as_micros() + prep as i64 * 60 * 1_000_000))
+}
+
+/// The prep time a store quotes: `prep_minutes`, or its usual time (and any
+/// extra while it's busy) -- within the network's longest.
+pub(crate) fn prep_time(catalog_ref: &ActionHash, prep_minutes: Option<u16>) -> ExternResult<u16> {
     let prep = match prep_minutes {
         Some(minutes) => minutes,
-        None => current_catalog(catalog_ref)?.prep_minutes,
+        None => {
+            let store = current_catalog(catalog_ref)?;
+            store.prep_minutes.saturating_add(store.busy_extra_minutes)
+        }
     };
     let max = relay_governance::max_prep_minutes();
     if prep == 0 || prep > max {
         return Err(wasm_error!(WasmErrorInner::Guest(format!("prep time must be between 1 and {max} minutes"))));
     }
-    Ok(Timestamp::from_micros(sys_time()?.as_micros() + prep as i64 * 60 * 1_000_000))
+    Ok(prep)
 }
 
 /// Why `catalog` isn't taking orders at `at` (microseconds since the

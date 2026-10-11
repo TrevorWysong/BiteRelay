@@ -42,8 +42,24 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
         // The customer's conductor places the order that redeems it
         // (`dispatch::claims`) -- woken now rather than at the next sweep.
         RemoteSignal::ClaimConfirmed { claim_hash } => {
+            // Anyone can send this. The upkeep it wakes reads every claim
+            // from the network and is idempotent, so waking it is harmless
+            // -- and the confirmation may simply not have reached us yet.
             let _ = call(CallTargetCell::Local, "dispatch", "schedule_order_upkeep".into(), None, ());
-            emit_signal(LocalSignal::ClaimConfirmed(claim_hash))
+            // The screen is told only of a confirmation it can see: this
+            // customer's claim, confirmed by the sender.
+            if confirmed_by(&claim_hash, &call_info()?.provenance)? {
+                emit_signal(LocalSignal::ClaimConfirmed(claim_hash))?;
+            }
+            Ok(())
         }
     }
+}
+
+/// Whether `claim_hash` is the caller's own claim, confirmed by `sender`.
+fn confirmed_by(claim_hash: &ActionHash, sender: &AgentPubKey) -> ExternResult<bool> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let Some(record) = get(claim_hash.clone(), GetOptions::default())? else { return Ok(false) };
+    let claim = relay_coordinator_support::decode_or::<catalog_integrity::BagClaim>(&record);
+    Ok(record.action().author() == sender && claim.is_some_and(|c| c.customer == me && c.status == catalog_integrity::BagClaimStatus::Confirmed))
 }

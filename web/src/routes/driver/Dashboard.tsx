@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, setOrderStatus, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, dropOrder, commitToOrder, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { Sheet } from "../../components/Sheet";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
 import { planRoute } from "../../lib/route";
@@ -14,7 +15,8 @@ import { OrderStatusTimeline } from "../../components/OrderStatus";
 import { StarRating } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
 import { HandoffStep } from "./HandoffStep";
-import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
+import { StoreCheckIn, StorePickup } from "./AtTheStore";
+import { averageRating, getRatingSummary, getReputationSummary } from "../../holochain/zomes/reputation";
 import { formatCents, formatEta, formatClockTime, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
@@ -22,7 +24,13 @@ import { useResource } from "../../lib/useResource";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
-import { offerable, offerRefusal, type Commitment } from "../../lib/addOns";
+import { offerable, offerRefusal, offerRules, type Commitment } from "../../lib/addOns";
+import { estimateTrip } from "../../lib/eta";
+import { autoBidPrice, skipsStore } from "../../lib/autoBid";
+import { currentBeacon } from "../../lib/timeSource";
+import { useClock } from "../../lib/useClock";
+import { useDriverSettings } from "../../store/roleSettings";
+import { DriverSettingsCard } from "./DriverSettingsCard";
 import { useTerms } from "../../store/network";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
@@ -31,13 +39,20 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], stri
   MeetOutside: "Meet outside",
 };
 
-// Live location is only meaningful once the driver has actually started
-// moving on this delivery -- not while still waiting on the merchant to
-// confirm prep. 8s matches the "a few seconds, not sub-second" cadence
-// named in tracking.rs's own doc comment -- fast enough to feel live,
-// far below anything that would stress signal delivery the way a tighter
-// interval could.
-const TRACKED_STATUSES: DeliveryStatus[] = ["MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
+// Live location is only meaningful once the driver has committed and is
+// moving on this delivery. 8s matches the "a few seconds, not sub-second"
+// cadence named in tracking.rs's own doc comment -- fast enough to feel
+// live, far below anything that would stress signal delivery the way a
+// tighter interval could.
+const TRACKED_STATUSES: DeliveryStatus[] = ["DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore", "PickedUp"];
+/// Before the driver has the food -- when they can still drop a delivery.
+const BEFORE_PICKUP: DeliveryStatus[] = ["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"];
+/// On the way to the store, not yet checked in.
+const ON_THE_WAY: DeliveryStatus[] = ["DriverEnRouteToMerchant", "MerchantConfirmed"];
+
+/// Orders this device has bid on automatically, so a poll never bids twice
+/// (the network refuses a second bid regardless).
+const autoBidOn = new Set<string>();
 const LOCATION_BROADCAST_MS = 8000;
 
 /// Browser geolocation, throttled client-side (there's no way to
@@ -112,14 +127,42 @@ export function DriverDashboard() {
     { pollMs: POLL.signalled, refreshOn: (s) => "BidAccepted" in s || "BidReleased" in s || isOrderSignal(s) },
   );
 
-  // Open orders near the driver -- only read while online.
+  /// Bids on each newly offered order the driver's rule takes, at their
+  /// rate -- skipping stores other drivers keep reporting.
+  async function bidAutomatically(offered: OrderRow[]) {
+    const { autoBid, limits, travelSpeedKmh } = useDriverSettings.getState();
+    if (!autoBid.on) return;
+    const commitmentsNow: Commitment[] = activeOrders.map((row) => ({ order: row.order, dropoff: dropoffPoint(row) }));
+    for (const { hash: orderRef, order } of offerable(offered, commitmentsNow, offerRules(terms, limits))) {
+      const key = bytesToHex(orderRef);
+      if (autoBidOn.has(key)) continue;
+      autoBidOn.add(key);
+      try {
+        const [catalog, store] = await Promise.all([getCatalog(order.catalog_ref), getReputationSummary({ Store: order.catalog_ref })]);
+        if (skipsStore(store.check_in_refused_count, autoBid)) continue;
+        const storeAt = decodeEntry<MerchantCatalog>(catalog).location;
+        const dropoffAt = geohashCenter(order.dropoff_geohash);
+        const price = autoBidPrice(distanceKm(location, storeAt) + distanceKm(storeAt, dropoffAt), order.max_delivery_fee, { rule: autoBid, minFeeCents: limits.minFeeCents });
+        if (price === null) continue;
+        const trip = estimateTrip({ from: location, store: storeAt, dropoff: dropoffAt, speedKmh: travelSpeedKmh, readyBy: order.ready_by, prepMinutes: order.prep_minutes, nowMs: Date.now() });
+        await submitBid({ order_ref: orderRef, eta_seconds: trip.etaMinutes * 60, to_store_seconds: trip.toStoreMinutes * 60, price_offer: price });
+      } catch {
+        // Already bid, or the order moved on: nothing to do.
+      }
+    }
+  }
+
+  // Open orders near the driver -- only read while online. With "bid for
+  // me" on, each newly offered one is bid on as it's read.
   const { data: nearby } = useResource(
     online ? `driver-nearby:${geohash}` : null,
     async (): Promise<OrderRow[]> => {
       const rows = (await getOpenOrdersNear(geohash)).map((r) => ({ hash: actionHash(r), order: decodeEntry<DeliveryOrder>(r) }));
       // A requester/merchant can't deliver their own order (validate_new_bid
       // rejects it) -- hidden here so they never see a Bid button for one.
-      return rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey));
+      const offered = rows.filter(({ order }) => !bytesEqual(order.requester, driverKey) && !bytesEqual(order.merchant, driverKey));
+      await bidAutomatically(offered);
+      return offered;
     },
     // Drivers find orders by looking, never by announcing where they are
     // (see dispatch `matching`) -- so while online, look often, and keep
@@ -131,13 +174,14 @@ export function DriverDashboard() {
     setOnline(!online);
   }
 
-  async function placeBid(orderRef: Uint8Array, etaMinutes: number, feeCents: number) {
+  async function placeBid(orderRef: Uint8Array, trip: { etaMinutes: number; toStoreMinutes: number }, feeCents: number) {
     setBidding(bytesToHex(orderRef));
     setError(null);
     try {
       await submitBid({
         order_ref: orderRef,
-        eta_seconds: etaMinutes * 60,
+        eta_seconds: trip.etaMinutes * 60,
+        to_store_seconds: Math.min(trip.toStoreMinutes, trip.etaMinutes) * 60,
         price_offer: feeCents,
       });
     } catch (err) {
@@ -167,10 +211,12 @@ export function DriverDashboard() {
   }
   // What this driver has taken on decides what they're offered: add-ons on
   // their way while they're delivering, nothing past their limit.
+  const ownLimits = useDriverSettings((s) => s.limits);
+  const rules = offerRules(terms, ownLimits);
   const commitments: Commitment[] = activeOrders.map((row) => ({ order: row.order, dropoff: dropoffPoint(row) }));
-  const refusal = offerRefusal(commitments, terms.max_concurrent_deliveries);
+  const refusal = offerRefusal(commitments, rules);
   const sortedNearby = online && nearby
-    ? offerable(nearby, commitments, terms).sort((a, b) => {
+    ? offerable(nearby, commitments, rules).sort((a, b) => {
         const aSame = sameMerchantHexes.has(bytesToHex(a.order.catalog_ref));
         const bSame = sameMerchantHexes.has(bytesToHex(b.order.catalog_ref));
         if (aSame !== bSame) return aSame ? -1 : 1;
@@ -203,6 +249,8 @@ export function DriverDashboard() {
           <Power size={20} />
         </motion.button>
       </Card>
+
+      <DriverSettingsCard />
 
       <AnimatePresence initial={false}>
         {activeOrders.length > 0 && (
@@ -249,10 +297,11 @@ export function DriverDashboard() {
                 <BidCard
                   order={order}
                   loading={bidding === bytesToHex(hash)}
-                  onBid={(eta, fee) => placeBid(hash, eta, fee)}
+                  onBid={(trip, fee) => placeBid(hash, trip, fee)}
                   sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
                   nearbyDropoffKm={nearestActiveDropoffKm(order)}
-                  detourKm={terms.add_on_detour_km}
+                  detourKm={rules.detourKm}
+                  location={location}
                 />
               </motion.div>
             ))}
@@ -264,7 +313,7 @@ export function DriverDashboard() {
         <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
           {refusal === "CarryingPriority"
             ? "You're on a priority delivery, which goes on its own. New orders show up again once it's delivered."
-            : `You have ${terms.max_concurrent_deliveries} orders, the most at once. New orders show up again once you deliver one.`}
+            : `You have ${rules.maxAtOnce} order${rules.maxAtOnce === 1 ? "" : "s"}, the most you take at once. New orders show up again once you deliver one.`}
         </p>
       )}
 
@@ -321,16 +370,20 @@ function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: Ge
 }
 
 function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; location: { lat: number; lon: number }; onAdvanced: () => Promise<void> }) {
+  const terms = useTerms();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const [dropping, setDropping] = useState(false);
   useLocationBroadcast(row.hash, TRACKED_STATUSES.includes(row.order.status));
+  // A driver leaving an order the store has started cooking answers for the
+  // food until another driver takes it on.
+  const cooking = row.order.ready_by !== null;
 
-  async function headToStore() {
+  async function run(step: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
     try {
-      await setOrderStatus(row.hash, "DriverEnRouteToMerchant");
+      await step();
       await onAdvanced();
     } catch (err) {
       setError(describeError(err));
@@ -339,12 +392,17 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
     }
   }
 
+  const drop = () =>
+    run(async () => {
+      await dropOrder(row.hash, await currentBeacon());
+      setDropping(false);
+    });
+  const commit = () => run(() => commitToOrder(row.hash));
+
   return (
     <Card className="border-2 border-relay-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
-      {row.order.ready_by !== null && (row.order.status === "BidAccepted" || row.order.status === "MerchantConfirmed" || row.order.status === "DriverEnRouteToMerchant") && (
-        <p className="mt-2 text-xs text-ink-500">Food ready at the store by {formatClockTime(row.order.ready_by)}.</p>
-      )}
+      {row.order.ready_by !== null && BEFORE_PICKUP.includes(row.order.status) && <p className="mt-2 text-xs text-ink-500">Food ready at the store by {formatClockTime(row.order.ready_by)}.</p>}
       {row.dropoff?.recipient && <p className="mt-2 text-sm font-semibold text-ink-900 dark:text-ink-50">Deliver to {row.dropoff.recipient}</p>}
       <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
       {row.dropoff?.notes && (
@@ -368,19 +426,46 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         </div>
       </div>
       <div className="mt-4">
-        {row.order.status === "MerchantConfirmed" && (
-          <Button className="w-full" loading={busy} onClick={headToStore}>
-            Head to merchant
-          </Button>
+        {row.order.status === "BidAccepted" && (
+          <div className="flex flex-col gap-2">
+            <p className="text-center text-xs text-ink-400">You got it. Your app is committing you, setting aside {formatCents(row.order.order_total)} collateral until it's delivered.</p>
+            <Button variant="secondary" className="w-full" loading={busy} onClick={commit}>
+              Commit now
+            </Button>
+          </div>
         )}
-        {row.order.status === "DriverEnRouteToMerchant" && <HandoffStep kind="pickup" orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
-        {(row.order.status === "PickedUp" || row.order.status === "Disputed") && <HandoffStep kind="dropoff" orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
-        {row.order.status === "BidAccepted" && <p className="text-center text-xs text-ink-400">Waiting for the merchant to confirm prep…</p>}
+        {ON_THE_WAY.includes(row.order.status) && <StoreCheckIn orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
+        {row.order.status === "DriverAtStore" && <StorePickup orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
+        {(row.order.status === "PickedUp" || row.order.status === "Disputed") && <HandoffStep orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
       </div>
       <div className="mt-4">
         <ChatPanel orderRef={row.hash} title="Chat with customer" />
       </div>
+      {BEFORE_PICKUP.includes(row.order.status) && (
+        <button onClick={() => setDropping(true)} className="mt-3 w-full text-center text-xs font-medium text-ink-400 hover:text-ink-600">
+          Can't make it? Drop this delivery
+        </button>
+      )}
       {error && <p className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
+      <Sheet
+        open={dropping}
+        onClose={() => setDropping(false)}
+        title="Drop this delivery?"
+        subtitle="It goes back to drivers nearby, and you're not paid for it. Dropped deliveries show on your record, which customers see when choosing a bid."
+        footer={
+          <Button variant="danger" loading={busy} onClick={drop} className="w-full">
+            Drop it
+          </Button>
+        }
+      >
+        {cooking ? (
+          <p className="text-sm leading-relaxed text-ink-500">
+            The store has started cooking it. If no other driver takes it on within {Math.round(terms.replacement_window_secs / 60)} minutes, your {formatCents(row.order.order_total)} collateral pays the store for the food. If the store hasn't checked you in when you're there, report it instead.
+          </p>
+        ) : (
+          <p className="text-sm leading-relaxed text-ink-500">The store hasn't started cooking it, so your collateral comes back.</p>
+        )}
+      </Sheet>
     </Card>
   );
 }
@@ -392,16 +477,31 @@ function BidCard({
   sameMerchant,
   nearbyDropoffKm,
   detourKm,
+  location,
 }: {
   order: DeliveryOrder;
   loading: boolean;
-  onBid: (etaMinutes: number, feeCents: number) => void;
+  onBid: (trip: { etaMinutes: number; toStoreMinutes: number }, feeCents: number) => void;
   sameMerchant?: boolean;
   nearbyDropoffKm?: number | null;
   /// How near another drop-off counts as on the way (the network's add-on detour).
   detourKm: number;
+  /// Where the driver is, for the ETA estimate.
+  location: GeoPoint;
 }) {
-  const [eta, setEta] = useState(15);
+  // The ETA starts as an estimate -- there, waiting for the kitchen if need
+  // be, then on to the drop-off at the driver's usual speed -- until they
+  // type their own.
+  const speedKmh = useDriverSettings((s) => s.travelSpeedKmh);
+  const storeHex = bytesToHex(order.catalog_ref);
+  const { data: storeAt = null } = useResource(`store-location:${storeHex}`, async () => decodeEntry<MerchantCatalog>(await getCatalog(order.catalog_ref)).location);
+  const now = useClock(30_000);
+  const estimate = storeAt && estimateTrip({ from: location, store: storeAt, dropoff: geohashCenter(order.dropoff_geohash), speedKmh, readyBy: order.ready_by, prepMinutes: order.prep_minutes, nowMs: now.getTime() });
+  const [typedEta, setEta] = useState<number | null>(null);
+  const eta = typedEta ?? estimate?.etaMinutes ?? null;
+  // How the store treats drivers: kept them waiting, or refused to check
+  // them in -- other drivers' records of it.
+  const { data: store = null } = useResource(`store-record:${storeHex}`, () => getReputationSummary({ Store: order.catalog_ref }));
   // The customer's cap, which no bid may exceed -- the driver lowers it to compete.
   const [fee, setFee] = useState(order.max_delivery_fee ?? 0);
   return (
@@ -410,7 +510,7 @@ function BidCard({
         <p className="flex items-baseline gap-1 text-sm font-bold text-ink-900 dark:text-ink-50">
           <StatNumber className="text-base">{formatCents(order.order_total)}</StatNumber> order
         </p>
-        <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>
+        {eta !== null && <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>}
       </div>
       {sameMerchant ? (
         <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-relay-600">
@@ -436,14 +536,19 @@ function BidCard({
         </p>
       )}
       <CustomerHistory customer={order.requester} />
-      {/* The bid commits it; validation requires it at pickup. */}
+      {store && (store.late_count > 0 || store.check_in_refused_count > 0) && (
+        <p className="mt-1 text-xs font-semibold text-amber-600">
+          This store has kept drivers waiting {store.late_count} time{store.late_count === 1 ? "" : "s"}, and {store.check_in_refused_count} reported it wouldn't check them in.
+        </p>
+      )}
+      {/* Validation requires it when they commit. */}
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
-        <ShieldCheck size={12} /> You'll set aside {formatCents(order.order_total)} collateral from pickup until delivery.
+        <ShieldCheck size={12} /> If you're chosen, you set aside {formatCents(order.order_total)} collateral until it's delivered.
       </p>
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">
           ETA (min)
-          <Input type="number" min={1} value={eta} onChange={(e) => setEta(Number(e.target.value))} className="mt-1 py-1.5 text-sm" />
+          <Input type="number" min={1} value={eta ?? ""} onChange={(e) => setEta(Math.max(1, Math.round(Number(e.target.value))))} className="mt-1 py-1.5 text-sm" />
         </label>
         <label className="flex-1 text-xs text-ink-400">
           Your fee
@@ -457,7 +562,7 @@ function BidCard({
             className="mt-1 py-1.5 text-sm"
           />
         </label>
-        <Button className="mt-4 px-4 py-2 text-xs" loading={loading} onClick={() => onBid(eta, fee)}>
+        <Button className="mt-4 px-4 py-2 text-xs" loading={loading} disabled={eta === null} onClick={() => eta !== null && onBid({ etaMinutes: eta, toStoreMinutes: Math.min(estimate?.toStoreMinutes ?? eta, eta) }, fee)}>
           Bid
         </Button>
       </div>

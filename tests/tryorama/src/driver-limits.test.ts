@@ -2,8 +2,9 @@
 // it -- here with a network limit of one, so each rule shows in a few steps:
 //
 // - a driver at their limit can't take on another order: their app won't
-//   bid, a customer's won't accept them, and validation refuses the pickup
-//   (the ledger counts the orders in hand, entry to entry, like a balance);
+//   bid, a customer's won't accept them, and validation refuses their
+//   commitment (the ledger counts the orders in hand, entry to entry, like a
+//   balance);
 // - a priority order goes to a driver with nothing else, and alone;
 // - a driver can't hide what they've taken on from customers;
 // - an order that never arrives frees its driver once they forfeit its
@@ -11,7 +12,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, handOff, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, agentAsLinkBase, collectFromStore, commitAndCook, handOff, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 const FOOD = 1000;
 
@@ -60,21 +61,18 @@ await runScenario(async (scenario) => {
   console.log("[PASS] a driver at their limit isn't given another order");
 
   // The driver can't hide their load.
-  const [link] = await call(driver, "dispatch")<Uint8Array[]>("test_get_link_hashes", { link_type: "DriverToActiveDelivery", base: driver.agentPubKey });
+  const [link] = await call(driver, "dispatch")<Uint8Array[]>("test_get_link_hashes", { link_type: "DriverToActiveDelivery", base: agentAsLinkBase(driver.agentPubKey) });
   await assert.rejects(call(driver, "dispatch")("test_delete_link", link), /only the order's requester or merchant/, "a driver can't take an order off their own queue");
   console.log("[PASS] a driver can't hide what they've taken on");
 
   // Out for delivery: one in hand.
-  await retryUntilOk(() => call(merchant, "dispatch")("set_order_status", { order_original_action: first, next_status: "MerchantConfirmed" }));
-  await sync();
-  await call(driver, "dispatch")("set_order_status", { order_original_action: first, next_status: "DriverEnRouteToMerchant" });
-  await handOff(driver, merchant, first, "MerchantHandoff", all);
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", first));
+  await commitAndCook(driver, merchant, first, all);
+  await collectFromStore(driver, merchant, first, all);
   await sync();
   const inHand = await latestLedgerEntry(driver);
   assert.deepEqual(inHand.in_hand, { orders: 1, priority: false }, "the driver's ledger counts the order in hand");
 
-  // A modified app picking up a second anyway: validation refuses it.
+  // A modified app committing to a second anyway: validation refuses it.
   const forged = call(driver, "ledger")("create_raw_ledger_entry_for_testing", {
     kind: { Hold: { order: second, purpose: { Collateral: { bid: secondBid } } } },
     amount: FOOD,
@@ -82,8 +80,8 @@ await runScenario(async (scenario) => {
     in_hand: { orders: 2, priority: false },
     previous: inHand.hash,
   });
-  await assert.rejects(forged, /no more orders at once than the network allows/, "the network refuses a pickup past the limit");
-  console.log("[PASS] validation counts the orders in hand and refuses a pickup past the limit");
+  await assert.rejects(forged, /no more orders at once than the network allows/, "the network refuses a commitment past the limit");
+  console.log("[PASS] validation counts the orders in hand and refuses a commitment past the limit");
 
   // ===== Priority =====
   const priority = await openOrder(true);

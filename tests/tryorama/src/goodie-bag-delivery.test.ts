@@ -134,8 +134,10 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] validate_new_order rejects a Pickup-claimed bag_claim_ref");
 
+  // A bag of its own: a customer claims each bag once.
+  const bagRefD = await makeBag(2);
   const deliveryClaimRecord = await catalogOf(customer)<HcRecord>("claim_goodie_bag", {
-    bag_ref: bagRefC,
+    bag_ref: bagRefD,
     fulfillment: { Delivery: { dropoff: ST_PETE, max_delivery_fee: 300 } },
   });
   const deliveryClaimRef = actionHash(deliveryClaimRecord);
@@ -147,7 +149,7 @@ await runScenario(async (scenario) => {
     dispatchOf(customer)("request_pickup_order", {
       merchant: merchant.agentPubKey,
       catalog_ref: catalogRef,
-      items: [{ item_ref: bagRefC, quantity: 1 }],
+      items: [{ item_ref: bagRefD, quantity: 1 }],
       order_total: 500,
       bag_claim_ref: deliveryClaimRefConfirmed,
     }),

@@ -11,7 +11,7 @@ import { Skeleton } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";
 import { NewStoreForm } from "./NewStore";
-import { AutoAcceptCard, DeliverySubsidyCard, LeaveAtDoorCard, StoreDetailsCard } from "./catalog/StoreDetailsCard";
+import { AutoAcceptCard, BusyCard, DeliverySubsidyCard, LeaveAtDoorCard, ListingCard, MinimumOrderCard, StoreDetailsCard, StoreWaitCard } from "./catalog/StoreDetailsCard";
 import { HoursCard } from "./catalog/HoursCard";
 import { PromoCodesCard } from "./catalog/PromoCodesCard";
 import { MenuSection } from "./catalog/MenuSection";
@@ -110,6 +110,10 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
         </motion.div>
         <motion.div variants={fadeSlideUp}>
           <AutoAcceptCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          <BusyCard key={catalog.busy_extra_minutes} catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          <MinimumOrderCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          <StoreWaitCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          <ListingCard catalogRef={catalogRef} />
           <LeaveAtDoorCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
         </motion.div>
         <motion.div variants={fadeSlideUp}>

@@ -1,4 +1,4 @@
-import { Check, ChefHat, CircleDot, PackageCheck, Bike, ShoppingBag, Store, XCircle, AlertTriangle, Clock } from "lucide-react";
+import { Check, ChefHat, CircleDot, PackageCheck, Bike, ShoppingBag, Store, XCircle, AlertTriangle, Clock, MapPin } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import type { Cancellation, DeliveryStatus, PickupStatus } from "../holochain/types";
@@ -6,19 +6,31 @@ import { cancellationText } from "../lib/storeAnswers";
 import { Badge } from "./ui";
 import { fadeSlideUp } from "../lib/motion";
 
+/// The kitchen starts once a driver has committed, so an order no driver
+/// takes costs nobody anything.
 const STEPS: { status: DeliveryStatus; label: string }[] = [
   { status: "Placed", label: "Order placed" },
   { status: "Open", label: "Store accepted · finding a driver" },
-  { status: "BidAccepted", label: "Driver assigned" },
-  { status: "MerchantConfirmed", label: "Prep confirmed" },
-  { status: "DriverEnRouteToMerchant", label: "Driver en route to pickup" },
+  { status: "BidAccepted", label: "Driver found" },
+  { status: "DriverEnRouteToMerchant", label: "Driver on the way to the store" },
+  { status: "MerchantConfirmed", label: "Being prepared" },
+  { status: "DriverAtStore", label: "Driver at the store" },
   { status: "PickedUp", label: "Picked up" },
   { status: "Delivered", label: "Delivered" },
+];
+
+/// The path when no driver brought it and the customer collects it.
+const COLLECT_STEPS: { status: DeliveryStatus; label: string }[] = [
+  { status: "Placed", label: "Order placed" },
+  { status: "Open", label: "Store accepted" },
+  { status: "Collecting", label: "You're collecting it" },
+  { status: "Collected", label: "Collected" },
 ];
 
 export function statusTone(status: DeliveryStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
   switch (status) {
     case "Delivered":
+    case "Collected":
       return "success";
     case "Cancelled":
       return "neutral";
@@ -80,12 +92,14 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
     );
   }
 
-  const currentIndex = STEPS.findIndex((s) => s.status === status);
-  const icons = [CircleDot, Store, Check, ChefHat, Bike, PackageCheck, Check];
+  const collecting = status === "Collecting" || status === "Collected";
+  const steps = collecting ? COLLECT_STEPS : STEPS;
+  const currentIndex = steps.findIndex((s) => s.status === status);
+  const icons = collecting ? [CircleDot, Store, ShoppingBag, Check] : [CircleDot, Store, Check, Bike, ChefHat, MapPin, PackageCheck, Check];
 
   return (
     <ol className="relative flex flex-col gap-0">
-      {STEPS.map((step, i) => {
+      {steps.map((step, i) => {
         const Icon = icons[i];
         const done = i < currentIndex;
         const active = i === currentIndex;
@@ -103,7 +117,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
               >
                 <Icon size={16} />
               </motion.div>
-              {i < STEPS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div className="relative mt-1 w-0.5 flex-1 overflow-hidden bg-ink-100 dark:bg-ink-800" style={{ minHeight: 24 }}>
                   <motion.div
                     className="absolute inset-x-0 top-0 bg-relay-400"

@@ -21,7 +21,7 @@ These values are part of the DNA hash. Everyone on a network must install a bund
 
 - **Network seed.** A name for the network, such as `relay-2026`. Change it to start a fresh network.
 - **Store response window** (`store_response_secs`, default 300). How long a store has to accept an order before the customer's conductor cancels it.
-- **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order on credit and walk away. Packaging refuses to run without it.
+- **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order -- or post a driver's collateral -- on credit and walk away. Packaging refuses to run without it, and refuses anything above 0 unless built with `RELAY_ALLOW_CREDIT=1`.
 - **Report window** (`report_window_secs`, default 7200). How long a customer has, once they have their order, to report missing or wrong items. The store's payment for the food waits until it ends; the driver is paid as soon as the store's app records the delivery. The store has the final say on each report: its app refunds those it accepts or never answers and settles the rest. Nobody else reviews them.
 - **Issuers** (`issuers`). The agent keys allowed to put money into the network: the stand-in for a payment processor crediting an account against a real card payment. With a credit limit of 0, nobody can pay for anything until an issuer credits them, so packaging requires at least one. They need keys generated on a conductor you operate before the bundle is built. An issuer calls `ledger::issue_grant` once a payment clears; the recipient's app collects it.
 
@@ -38,6 +38,22 @@ Every other setting is optional, and the defaults suit most networks. Set only t
 | `default_delivery_radius_km` | 8 | A new store's delivery radius. |
 | `max_delivery_radius_km` | 50 | The furthest any store may deliver. Validation checks every order's drop-off area against its store's radius. |
 | `default_delivery_subsidy_percent` | 50 | A new store's share of each delivery fee. |
+| `suggested_delivery_fees` | `[400, 600, 900, 1200]` | The delivery fee caps checkout suggests, in minor units of `currency`. Set them with the currency. |
+| `store_listing_stake` | 2000 | What listing a store for customers to find sets aside from its owner's balance, in minor units -- returned when the listing closes. Every listing is backed by money while it stands, so nobody can fill a neighbourhood with fake stores. With a credit limit of 0, a store needs funds before it can list. |
+| `max_pending_orders` | 5 | The most orders a customer may place within one store response window. An order costs nothing until a store accepts it, so this keeps one identity from burying a store's queue. |
+| `default_bag_hold_minutes` | 30 | How long a new goodie bag holds a confirmed claim for its customer to order, unless the store sets its own. |
+| `offer_secs` | 45 | How long a driver whose bid is accepted has to commit (set aside their collateral) before the store's app offers the order to another. |
+| `pickup_grace_secs` | 900 | How long past when a committed driver is due at the store (its ready time, or as soon as they could arrive from when it confirmed them) before the store's app moves them on and the customer may collect it themselves. A driver may drop an order any time before pickup. |
+| `store_wait_secs` | 900 | How long a checked-in driver waits past the store's ready time before they may call it late, for a store that hasn't set its own (`store_wait_minutes`, part of each order's terms). Late, the driver leaves paid in full by the store, the order goes to another driver, and the customer may cancel for a full refund. |
+| `min_store_wait_secs` | 300 | The shortest wait a store may set. |
+| `max_store_wait_secs` | 2700 | The longest wait a store may set. |
+| `replacement_window_secs` | 900 | How long an order a driver left after the store started cooking stays open to another driver before the store's app ends it: the customer is refunded and that driver's collateral pays for the food. |
+| `max_driver_changes` | 6 | How many times an order may change drivers (each one leaving or moved on). Past it, the order can only be collected or cancelled -- which bounds the history validation walks. |
+| `min_reporter_deliveries` | 3 | Completed deliveries a driver needs before their report that a store wouldn't check them in counts on the store's record. |
+| `bid_window_secs` | 30 | How long a customer's app collects bids, from the first, before matching automatically. |
+| `minute_value_cents` | 10 | What each minute of a bid's ETA counts for in the published matching rule, in minor units. |
+| `time_source` | drand quicknet | The public time source deadline claims are proved against: `{ public_key (hex, BLS G2), genesis_secs, period_secs, relays, chain_hash }`. Validation checks a round's signature against the key alone; apps fetch rounds from the relays. |
+| `collection_window_secs` | 3600 | How long a customer collecting a delivery themselves has to come for it, before the store may record it uncollected and keep the food's price. |
 | `max_concurrent_deliveries` | 3 | The most orders a driver may carry at once. Validation refuses a pickup past it, and a priority order is always carried alone. |
 | `add_on_detour_km` | 2 | While delivering, a driver is offered only orders from a store they're still to collect from, or going within this distance of one of their drop-offs. |
 | `max_image_bytes` | 300000 | The largest photo, in bytes of its data URI. Every peer that stores an entry stores its photos. |

@@ -134,16 +134,14 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         dietary_tags: Vec::new(),
         auto_accept_orders: false,
         leave_at_door_max_cents: None,
+        min_order_cents: None,
+        busy_extra_minutes: 0,
+        store_wait_minutes: None,
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
 
-    create_link(
-        geohash_anchor_path(&geohash)?.path_entry_hash()?,
-        action_hash.clone(),
-        LinkTypes::GeohashToCatalog,
-        (),
-    )?;
+    list(&action_hash, &geohash)?;
 
     get(action_hash, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back published catalog".into())))
@@ -194,6 +192,61 @@ pub struct SetLeaveAtDoorLimitInput {
 pub fn set_leave_at_door_limit(input: SetLeaveAtDoorLimitInput) -> ExternResult<Record> {
     let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.leave_at_door_max_cents = input.max_cents;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetMinimumOrderInput {
+    pub original_action: ActionHash,
+    /// `None` for any size.
+    pub min_cents: Option<u64>,
+}
+
+/// The smallest order the store takes -- see
+/// `MerchantCatalog::min_order_cents`.
+#[hdk_extern]
+pub fn set_minimum_order(input: SetMinimumOrderInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.min_order_cents = input.min_cents;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetStoreWaitInput {
+    pub original_action: ActionHash,
+    /// `None` for the network's.
+    pub minutes: Option<u16>,
+}
+
+/// How long the store may keep a checked-in driver waiting past an order's
+/// ready time -- see `MerchantCatalog::store_wait_minutes`. Orders keep the
+/// wait they were placed under.
+#[hdk_extern]
+pub fn set_store_wait(input: SetStoreWaitInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.store_wait_minutes = input.minutes;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetBusyInput {
+    pub original_action: ActionHash,
+    /// Minutes to add to the usual prep time; 0 when the rush is over.
+    pub extra_minutes: u16,
+}
+
+/// The store saying it's busy (or not any more) -- see
+/// `MerchantCatalog::busy_extra_minutes`.
+#[hdk_extern]
+pub fn set_busy(input: SetBusyInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.busy_extra_minutes = input.extra_minutes;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
@@ -381,6 +434,15 @@ pub fn get_my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<Item
             ItemVersions { item_ref, name, versions }
         })
         .collect())
+}
+
+/// Every version of one of the caller's own stores, oldest first, from their
+/// source chain -- what a store checks the terms an order cites against
+/// (`dispatch::pricing::terms_outdated`). Empty if the caller didn't write it.
+#[hdk_extern]
+pub fn get_my_store_versions(catalog_ref: ActionHash) -> ExternResult<Vec<ItemVersion>> {
+    let records = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::MerchantCatalog)?).include_entries(true))?;
+    Ok(item_versions(&catalog_ref, &records).iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect())
 }
 
 /// One version of a promo code, as a store checks an order's promo against
@@ -665,6 +727,21 @@ mod test_utils {
     use catalog_integrity::{EntryTypes, LinkTypes, MerchantCatalog};
     relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo);
 
+    /// Writes a goodie-bag claim exactly as given, past the coordinator's
+    /// checks -- so a test can prove what validation refuses.
+    #[hdk_extern]
+    pub fn create_raw_bag_claim_for_testing(claim: catalog_integrity::BagClaim) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::BagClaim(claim))
+    }
+
+    /// The anchor a store's listing sits under -- so a test can try forged
+    /// listings where real ones go.
+    #[hdk_extern]
+    pub fn listing_anchor_for_testing(catalog_ref: ActionHash) -> ExternResult<AnyLinkableHash> {
+        let (_, catalog): (_, MerchantCatalog) = relay_coordinator_support::resolve_latest_decoded(catalog_ref, "MerchantCatalog")?;
+        Ok(super::geohash_anchor_path(&catalog.geohash)?.path_entry_hash()?.into())
+    }
+
     #[derive(Serialize, Deserialize, Debug)]
     pub struct RawCatalogUpdate {
         pub original_action: ActionHash,
@@ -677,4 +754,65 @@ mod test_utils {
     pub fn update_raw_catalog_for_testing(input: RawCatalogUpdate) -> ExternResult<ActionHash> {
         update_entry(input.original_action, &EntryTypes::MerchantCatalog(input.catalog))
     }
+}
+
+// --- listing a store for customers to find ---
+
+/// Lists a store (its original action) under its area, backed by a stake
+/// from the owner's balance (`ledger::stake_listing`) -- in this same call,
+/// so the two commit together.
+fn list(catalog_ref: &ActionHash, geohash: &str) -> ExternResult<ActionHash> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "ledger", "stake_listing".into(), None, catalog_ref.clone())? else {
+        return Err(wasm_error!(WasmErrorInner::Guest(
+            "Listing a store sets aside a deposit from your balance, returned when you close it. Add funds to list it.".into()
+        )));
+    };
+    let stake: ActionHash = io.decode().map_err(|e| wasm_error!(e))?;
+    create_link(geohash_anchor_path(geohash)?.path_entry_hash()?, catalog_ref.clone(), LinkTypes::GeohashToCatalog, LinkTag::new(listing_tag(&stake)))
+}
+
+/// The caller's listing of their store, if it's listed: the link, and the
+/// stake that backs it.
+fn my_listing(catalog_ref: &ActionHash) -> ExternResult<Option<(Link, ActionHash)>> {
+    let (_, catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref.clone(), "MerchantCatalog")?;
+    let me = agent_info()?.agent_initial_pubkey;
+    let anchor = geohash_anchor_path(&catalog.geohash)?.path_entry_hash()?;
+    let target = AnyLinkableHash::from(catalog_ref.clone());
+    Ok(get_links(LinkQuery::try_new(anchor, LinkTypes::GeohashToCatalog)?, GetStrategy::Local)?
+        .into_iter()
+        .filter(|link| link.author == me && link.target == target)
+        .find_map(|link| listing_stake(&link.tag.0).map(|stake| (link, stake))))
+}
+
+/// Whether the caller's store is listed for customers to find.
+#[hdk_extern]
+pub fn is_store_listed(catalog_ref: ActionHash) -> ExternResult<bool> {
+    Ok(my_listing(&catalog_ref)?.is_some())
+}
+
+/// Takes the caller's store out of customers' listings and returns its
+/// stake, in one commit. The store keeps answering the orders it has.
+#[hdk_extern]
+pub fn close_listing(catalog_ref: ActionHash) -> ExternResult<()> {
+    let Some((link, stake)) = my_listing(&catalog_ref)? else { return Err(wasm_error!(WasmErrorInner::Guest("This store isn't listed.".into()))) };
+    let delisting = delete_link(link.create_link_hash, GetOptions::default())?;
+    #[derive(Serialize, Debug)]
+    struct UnstakeWire {
+        stake: ActionHash,
+        delisting: ActionHash,
+    }
+    match call(CallTargetCell::Local, "ledger", "unstake_listing".into(), None, UnstakeWire { stake, delisting })? {
+        ZomeCallResponse::Ok(_) => Ok(()),
+        other => Err(wasm_error!(WasmErrorInner::Guest(format!("couldn't return the listing deposit: {other:?}")))),
+    }
+}
+
+/// Lists the caller's store again, with a fresh stake.
+#[hdk_extern]
+pub fn reopen_listing(catalog_ref: ActionHash) -> ExternResult<()> {
+    if my_listing(&catalog_ref)?.is_some() {
+        return Ok(());
+    }
+    let (_, catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref.clone(), "MerchantCatalog")?;
+    list(&catalog_ref, &catalog.geohash).map(|_| ())
 }

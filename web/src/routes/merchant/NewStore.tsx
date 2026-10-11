@@ -10,6 +10,8 @@ import { Button, Card, Field, Input } from "../../components/ui";
 import { SplitAddressFields } from "../../components/SplitAddressFields";
 import { describeError } from "../../lib/errors";
 import { MAX_NAME_CHARS } from "../../holochain/types";
+import { formatCents } from "../../lib/format";
+import { useTerms } from "../../store/network";
 
 /// Publishing a storefront -- the same form whether it's a merchant's very
 /// first store (rendered inline by Catalog.tsx when they have none yet) or
@@ -17,6 +19,7 @@ import { MAX_NAME_CHARS } from "../../holochain/types";
 /// `/merchant/stores/new` route). Each publish is a fully independent
 /// store: its own menu, promos, goodie bags, order queue and ratings.
 export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
+  const stake = useTerms().store_listing_stake;
   const navigate = useNavigate();
   const location = useSession((s) => s.location);
   const setLocation = useSession((s) => s.setLocation);
@@ -86,6 +89,11 @@ export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
           onAddressChange={(a) => setAddressDraft({ address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip })}
           streetLabel="Pickup location"
         />
+        {stake > 0 && (
+          <p className="text-xs leading-relaxed text-ink-400">
+            Listing a store sets aside a {formatCents(stake)} deposit from your balance, returned when you close it. It keeps the neighbourhood's listings real.
+          </p>
+        )}
         {error && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
         <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
           {firstStore ? "Publish catalog" : "Publish store"}

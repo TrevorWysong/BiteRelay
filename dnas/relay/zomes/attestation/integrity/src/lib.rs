@@ -100,14 +100,14 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
     if &leg.to != expected_counterparty {
         return invalid("a handoff is with the order's own store or customer");
     }
-    // A scanned code is the giver's: the store's at pickup, the customer's
-    // at the door.
+    // A scanned code proves a handoff at the door: the customer's. At the
+    // store, the code is how a driver is checked in -- they know it, so it
+    // proves nothing about the food. The store's own record does.
     if leg.revealed_pin.is_some() {
-        let commitment = match leg.kind {
-            LegKind::MerchantHandoff => &order.pickup_commitment,
-            LegKind::CustomerHandoff => &order.pin_commitment,
-        };
-        if !pin_matches(leg.revealed_pin.as_ref(), commitment) {
+        if leg.kind == LegKind::MerchantHandoff {
+            return invalid("a pickup is proved by the store's record of handing it over, not a code");
+        }
+        if !pin_matches(leg.revealed_pin.as_ref(), &order.pin_commitment) {
             return invalid("a scanned code must match the order's");
         }
     }
@@ -122,17 +122,9 @@ fn validate_leg(leg: &Leg, author: &AgentPubKey) -> ExternResult<ValidateCallbac
     valid()
 }
 
-/// Whether `revealed` opens `commitment`: `sha256(pin || salt)`.
+/// Whether `revealed` opens `commitment` (see `PinSecret::opens`).
 pub fn pin_matches(revealed: Option<&PinSecret>, commitment: &[u8]) -> bool {
-    use sha2::{Digest, Sha256};
-    let Some(secret) = revealed else { return false };
-    if commitment.len() != 32 {
-        return false;
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(secret.pin.as_bytes());
-    hasher.update(&secret.salt);
-    hasher.finalize().as_slice() == commitment
+    revealed.is_some_and(|secret| secret.opens(commitment))
 }
 
 /// A handoff's acknowledgment, signed by the person who received it (or

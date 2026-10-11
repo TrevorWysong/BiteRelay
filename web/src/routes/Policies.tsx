@@ -71,7 +71,7 @@ function PolicyBody({ terms }: { terms: NetworkTerms }) {
           <Section key={section.id} index={i + 1} section={section} />
         ))}
         <Terms index={sections.length + 1} terms={terms} />
-        <Risks index={sections.length + 2} />
+        <Risks index={sections.length + 2} terms={terms} />
         <Changes index={sections.length + 3} />
       </div>
 
@@ -177,7 +177,7 @@ function Terms({ index, terms }: { index: number; terms: NetworkTerms }) {
   );
 }
 
-function Risks({ index }: { index: number }) {
+function Risks({ index, terms }: { index: number; terms: NetworkTerms }) {
   return (
     <motion.section variants={fadeSlideUp}>
       <Heading index={index} id="risks" title="Risks and disclaimers" />
@@ -187,7 +187,7 @@ function Risks({ index }: { index: number }) {
           Please read these before you rely on Relay for anything that matters to you.
         </p>
         <ol className="flex flex-col gap-3">
-          {policyRisks().map((risk, i) => (
+          {policyRisks(terms).map((risk, i) => (
             <li key={risk} className="flex gap-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
               <span className="w-4 shrink-0 text-right text-xs tabular-nums leading-relaxed text-ink-400">{i + 1}.</span>
               {risk}
