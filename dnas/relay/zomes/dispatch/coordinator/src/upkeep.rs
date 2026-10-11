@@ -186,6 +186,13 @@ fn tend_order(entry: &OrderEntry, now: DueAt, window: i64) -> ExternResult<Optio
                 }
                 DeliveryStatus::Placed => Ok(Some(written_at + window)),
                 DeliveryStatus::Open if order.auto_match => Ok(crate::matching::auto_match(&order_ref, &order, now)?.map(|due| due.as_micros())),
+                // The driver committed: they get the address, in a call of its
+                // own (`deliveries::share_address`).
+                _ if crate::deliveries::address_owed(&order) => {
+                    let zome = zome_info()?.name;
+                    call(CallTargetCell::Local, zome, "share_address".into(), None, order_ref)?;
+                    Ok(None)
+                }
                 _ => Ok(None),
             }
         }

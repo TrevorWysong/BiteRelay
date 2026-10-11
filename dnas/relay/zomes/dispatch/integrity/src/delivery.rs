@@ -190,6 +190,8 @@ struct Step {
     picking_up: bool,
     /// A driver leaving before pickup -- see `transition_requirement`.
     releasing: bool,
+    /// The customer sharing their address with their committed driver.
+    sharing: bool,
     collecting: bool,
     collected: bool,
     completing: bool,
@@ -207,6 +209,7 @@ impl Step {
             checking_in: *prior == MerchantConfirmed && *next == DriverAtStore,
             picking_up: *prior == DriverAtStore && *next == PickedUp,
             releasing: prior_has_driver && matches!(next, Open | Collecting),
+            sharing: prior == next,
             collecting: *prior != Collecting && *next == Collecting,
             collected: *prior == Collecting && *next == Collected,
             completing: matches!(prior, PickedUp | Disputed) && *next == Delivered,
@@ -302,15 +305,20 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
 
     // The driver: set when the customer accepts their bid (with the
     // address sealed to them), gone when they leave, otherwise fixed.
+    // The driver: set when the customer accepts their bid, gone when they
+    // leave, otherwise fixed. Their copy of the address: shared, once, only
+    // after they've committed -- by an update that changes nothing else.
     let driver_ok = if step.accepting {
-        prior.accepted_bid.is_none() && order.accepted_bid.is_some() && prior.driver_dropoff.is_none() && order.driver_dropoff.is_some()
+        prior.accepted_bid.is_none() && order.accepted_bid.is_some() && order.driver_dropoff.is_none()
     } else if step.releasing {
         order.accepted_bid.is_none() && order.driver_dropoff.is_none()
+    } else if step.sharing {
+        prior.accepted_bid == order.accepted_bid && prior.collateral_hold.is_some() && prior.driver_dropoff.is_none() && order.driver_dropoff.is_some()
     } else {
         prior.accepted_bid == order.accepted_bid && prior.driver_dropoff == order.driver_dropoff
     };
     if !driver_ok {
-        return Ok(Some("accepted_bid and driver_dropoff are set when a bid is accepted, cleared when its driver leaves, and otherwise never change".into()));
+        return Ok(Some("the driver is set when a bid is accepted and gone when they leave; the address is shared with them once, after they've committed".into()));
     }
 
     // The money behind each step, set aside by whoever owes it and cited by
@@ -356,7 +364,7 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
 
     // An order changes drivers a bounded number of times: past it, it can
     // only be collected or cancelled.
-    if step.accepting && lineage::driver_changes(&prior_version)? >= relay_governance::max_driver_changes() {
+    if step.accepting && !lineage::driver_changes(&prior_version)?.allow_another() {
         return Ok(Some("this order has changed drivers as many times as the network allows".into()));
     }
 
@@ -436,10 +444,17 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
             return Ok(Some("a store can't move on a driver it's checked in".into()));
         }
     }
-    // Confirming a driver: never after ending the order for want of one --
-    // the driver who answered for the food would be cleared by this, and
-    // charged by that.
-    if step.cooking && lineage::wrote(author, prev_action, &order_original, |v, p| v.order.cancellation == Some(Cancellation::NoDriver) && p.order.status != DeliveryStatus::Cancelled)? {
+    // A customer can't cancel while a driver who left it cooking answers for
+    // it -- the store would be paid for the food twice, by the customer and
+    // by that driver. They wait for another driver (refunded in full if none
+    // comes in time), or collect it.
+    if order.status == DeliveryStatus::Cancelled && cancelled_from.is_some() && is_requester && lineage::liable_release(&prior_version)?.is_some() {
+        return Ok(Some("a driver who left this order cooking answers for it until another takes it on or the window ends: wait, or collect it yourself".into()));
+    }
+    // Confirming a driver, or recording the customer collecting it: never
+    // after ending the order for want of a driver -- the driver who answered
+    // for the food would be cleared by this, and charged by that.
+    if (step.cooking || (step.collecting && is_merchant)) && lineage::wrote(author, prev_action, &order_original, |v, p| v.order.cancellation == Some(Cancellation::NoDriver) && p.order.status != DeliveryStatus::Cancelled)? {
         return Ok(Some("a store that ended an order for want of a driver can't confirm another".into()));
     }
     // Checking a driver in: never one it's moved on.
@@ -580,6 +595,13 @@ fn no_driver_problem(prior: &Version, store: &AgentPubKey, chain_top: &ActionHas
     let confirmed_later = |v: &Version, p: &Version| Ok(lineage::confirms_driver(v, p) && v.order.accepted_bid.as_ref() != Some(&bid) && lineage::descends_from(v, &release_hash)?);
     if lineage::wrote_where(store, chain_top, order_original, confirmed_later)? {
         return Ok(Some("the store has confirmed another driver for this order"));
+    }
+    // A store that ended the order another way -- calling it off, or
+    // recording the customer collecting it -- can't also end it on a
+    // driver's account: each would settle that driver's collateral.
+    let ended_otherwise = |v: &Version, p: &Version| (v.order.status == DeliveryStatus::Cancelled && p.order.status != DeliveryStatus::Cancelled) || (v.order.status == DeliveryStatus::Collecting && p.order.status != DeliveryStatus::Collecting);
+    if lineage::wrote(store, chain_top, order_original, ended_otherwise)? {
+        return Ok(Some("the store has already ended this order another way"));
     }
     // A driver the store checked in came for the food: whatever followed,
     // they never answer for it.

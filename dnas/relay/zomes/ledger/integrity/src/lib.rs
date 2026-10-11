@@ -444,11 +444,14 @@ enum Basis {
     /// A part waived back to its payer.
     Waived { by: AgentPubKey, hold: ActionHash, portion: Portion },
     /// The driver behind `bid` leaving before pickup -- by their own choice
-    /// or the store's -- and whether they were calling the store late
-    /// (`lineage::is_store_late_release`): then they leave paid in full.
-    Released { bid: ActionHash, store_late: bool },
-    /// The store confirming another driver after the one behind `bid` left:
-    /// someone else is bringing the food, so they no longer answer for it.
+    /// or the store's -- whether they were calling the store late
+    /// (`lineage::is_store_late_release`), when they leave paid in full, and
+    /// whether they left from the counter, checked in: then the store's own
+    /// chain says they came for the food, and they never answer for it.
+    Released { bid: ActionHash, store_late: bool, at_store: bool },
+    /// After the driver behind `bid` left, the store confirming another
+    /// driver or recording the customer collecting it: someone else is
+    /// getting the food to them, so the first no longer answers for it.
     Replaced { bid: ActionHash },
 }
 
@@ -551,15 +554,18 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
     }
     let Some(version) = Version::of(record) else { return Ok(Err("that isn't a basis for collecting")) };
     let Some(prior) = version.prior()? else { return Ok(Err("that version of the order doesn't entitle anyone to collect")) };
-    // A driver leaving.
-    if let Some(bid) = version.released(&prior) {
-        if matches!(version.order.status, DeliveryStatus::Open | DeliveryStatus::Collecting) {
-            return Ok(Ok(Basis::Released { bid, store_late: lineage::is_store_late_release(&version, &prior)? }));
-        }
+    // A driver leaving -- this hold's.
+    let released = version.released(&prior).filter(|_| matches!(version.order.status, DeliveryStatus::Open | DeliveryStatus::Collecting));
+    if let Some(bid) = released.clone().filter(|bid| Some(bid) == bid_of(&hold.purpose)) {
+        let at_store = prior.order.status == DeliveryStatus::DriverAtStore;
+        return Ok(Ok(Basis::Released { bid, store_late: lineage::is_store_late_release(&version, &prior)?, at_store }));
     }
-    // The store confirming a later driver than the one this hold is for.
+    // The store confirming a later driver than the one this hold is for, or
+    // recording the customer collecting it.
     if let Some(bid) = bid_of(&hold.purpose) {
-        if lineage::confirms_driver(&version, &prior) && version.order.accepted_bid.as_ref() != Some(bid) && version.author() == &hold.terms.merchant {
+        let collecting = version.order.status == DeliveryStatus::Collecting && prior.order.status != DeliveryStatus::Collecting;
+        let replacing = lineage::confirms_driver(&version, &prior) || collecting;
+        if replacing && version.order.accepted_bid.as_ref() != Some(bid) && version.author() == &hold.terms.merchant {
             let left_earlier = lineage::find_back(version.clone(), |v, p| p.and_then(|p| v.released(p)).filter(|b| b == bid))?.is_some();
             // (The store's own chain shows it never ended the order on that
             // driver's account: `dispatch_integrity`'s no-driver rule.)
@@ -653,8 +659,11 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
         // for the food.
         // A driver who called the store late leaves paid in full by it, with
         // their collateral: they came for the food.
-        (Portion::Fee | Portion::LateCover, Basis::Released { bid, store_late: true }) if store_fee => is_recipient && hold_bid == Some(&bid),
-        (Portion::Collateral, Basis::Released { bid, store_late: true }) => is_payer && hold_bid == Some(&bid),
+        (Portion::Fee | Portion::LateCover, Basis::Released { bid, store_late: true, .. }) if store_fee => is_recipient && hold_bid == Some(&bid),
+        // A driver who left from the counter, checked in, has their
+        // collateral back on leaving: the store's chain says they came, so
+        // nothing can charge them for the food.
+        (Portion::Collateral, Basis::Released { bid, at_store: true, .. }) => is_payer && hold_bid == Some(&bid),
         (Portion::Fee | Portion::Tip | Portion::LateCover, Basis::Released { bid, .. }) => is_payer && hold_bid == Some(&bid) && (!driver_pay || customer_refund(false)?),
         (Portion::Collateral, Basis::Replaced { bid }) => is_payer && hold_bid == Some(&bid),
         (_, Basis::Released { .. } | Basis::Replaced { .. }) => false,
@@ -667,8 +676,12 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
                 _ => false,
             },
             // A store calling it off with the driver at its counter pays them
-            // as if it had kept them waiting.
-            Cancellation::ByStore(_) => is_recipient && store_fee && c.from == Stage::AtStore && ours(&c.bid),
+            // as if it had kept them waiting; and every driver's collateral is
+            // theirs again -- the store ended it, on its own chain.
+            Cancellation::ByStore(_) => match portion {
+                Portion::Collateral => is_payer,
+                _ => is_recipient && store_fee && c.from == Stage::AtStore && ours(&c.bid),
+            },
             // A customer who chose to collect it and never came still owes
             // the food the store made.
             Cancellation::NotCollected => portion == Portion::Food && is_recipient,

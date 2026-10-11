@@ -152,6 +152,9 @@ impl DeliveryStatus {
             // (`CollectRequest`), when no driver has it or its driver is late
             // -- recorded by the store, which hands it over.
             (Open | BidAccepted | DriverEnRouteToMerchant | MerchantConfirmed, Collecting) => Some(Merchant),
+            // The customer sharing their address with a driver who's committed
+            // -- no change of status (see `DeliveryOrder::driver_dropoff`).
+            (DriverEnRouteToMerchant, DriverEnRouteToMerchant) | (MerchantConfirmed, MerchantConfirmed) | (DriverAtStore, DriverAtStore) | (PickedUp, PickedUp) => Some(Requester),
             // Collected -- on the customer's word, or the store's scan of
             // their handover code.
             (Collecting, Collected) => Some(RequesterOrMerchant),
@@ -290,9 +293,11 @@ pub struct DeliveryOrder {
     /// The exact drop-off and the customer's drop-off notes
     /// (`DropoffDetails`), sealed to the customer themselves.
     pub sealed_dropoff: XSalsa20Poly1305EncryptedData,
-    /// The same details sealed to the driver -- set when the customer accepts
-    /// their bid, so only the driver doing the delivery ever learns the exact
-    /// address.
+    /// The same details sealed to the driver -- shared by the customer's app
+    /// once the driver has committed (their collateral set aside), so only a
+    /// driver with something at stake ever learns the exact address: a
+    /// throwaway identity can't win a bid just to harvest it. Gone with the
+    /// driver.
     pub driver_dropoff: Option<XSalsa20Poly1305EncryptedData>,
     /// The customer's note for the kitchen, sealed to the store. `None` when
     /// there isn't one.

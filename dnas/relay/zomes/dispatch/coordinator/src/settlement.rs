@@ -34,6 +34,14 @@ struct PlaceHoldWire {
     purpose: HoldPurpose,
 }
 
+/// What the caller can still set aside: their balance, plus how far below
+/// zero the network lets it go.
+pub(crate) fn spendable() -> ExternResult<i128> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let balance: i64 = ledger("get_balance", me)?;
+    Ok(i128::from(balance) + i128::from(relay_governance::credit_limit_cents()))
+}
+
 /// Sets aside what the caller owes for `purpose` on an order -- `None` if
 /// nothing's owed. Fails if the caller can't cover it.
 pub(crate) fn place_hold(order: &ActionHash, purpose: HoldPurpose) -> ExternResult<Option<ActionHash>> {
@@ -121,6 +129,8 @@ struct Release {
     liable: bool,
     /// They were calling the store late: they leave paid in full by it.
     store_late: bool,
+    /// They left from the counter, checked in: their collateral is theirs.
+    at_store: bool,
 }
 
 struct Facts {
@@ -187,9 +197,11 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
         facts.finished |= version.order.status.is_terminal();
         if let Some(bid) = version.released(&prior) {
             let store_late = lineage::is_store_late_release(&version, &prior)?;
-            facts.releases.push(Release { version: record.action_address().clone(), liable: version.released_liable(&prior).is_some(), store_late, bid });
+            let at_store = prior.order.status == DeliveryStatus::DriverAtStore;
+            facts.releases.push(Release { version: record.action_address().clone(), liable: version.released_liable(&prior).is_some(), store_late, at_store, bid });
         }
-        if lineage::confirms_driver(&version, &prior) {
+        let collecting = version.order.status == DeliveryStatus::Collecting && prior.order.status != DeliveryStatus::Collecting;
+        if lineage::confirms_driver(&version, &prior) || collecting {
             let confirmed = version.order.accepted_bid.clone();
             lineage::find_back(version.clone(), |v, p| {
                 if let Some(bid) = p.and_then(|p| v.released(p)).filter(|bid| Some(bid) != confirmed.as_ref()) {
@@ -333,8 +345,11 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
             if let Some((version, _)) = facts.replaced.iter().find(|(_, bid)| Some(bid) == hold_bid) {
                 return payer.then(|| Decision::Collect(version.clone()));
             }
-            if let Some(release) = released.filter(|r| r.store_late) {
+            if let Some(release) = released.filter(|r| r.at_store) {
                 return payer.then(|| Decision::Collect(release.version.clone()));
+            }
+            if let Some(c) = cancelled.filter(|c| matches!(c.by, Cancellation::ByStore(_))) {
+                return payer.then(|| Decision::Collect(c.version.clone()));
             }
             if let Some(c) = cancelled {
                 if c.by == Cancellation::StoreLate && ours(&c.bid) {

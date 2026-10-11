@@ -87,8 +87,10 @@ pub struct ReputationSummary {
     pub dropped_count: u32,
     /// Times a store kept a checked-in driver waiting past the network's wait.
     pub late_count: u32,
+    /// Offers a driver let lapse, or turned down, without committing.
+    pub lapsed_count: u32,
     /// Drivers' reports that a store wouldn't check them in -- from drivers
-    /// with enough completed deliveries (`min_reporter_deliveries`).
+    /// who've delivered for enough different stores (`min_reporter_stores`).
     pub check_in_refused_count: u32,
     pub total_collateral_forfeited: u64,
 }
@@ -100,6 +102,21 @@ pub struct ReputationSummary {
 /// `event_tag`'s code for a driver's report that a store wouldn't check them
 /// in.
 const CHECK_IN_REFUSED: u8 = 7;
+/// `event_tag`'s code for a completed order.
+const COMPLETED: u8 = 0;
+
+/// How many different stores have recorded a completed delivery by
+/// `driver` -- each store records its own, so each is a different agent.
+fn stores_delivered_for(driver: &AgentPubKey) -> ExternResult<u32> {
+    let (base, event_link) = event_links(&ReputationTarget::Driver(driver.clone()));
+    let mut stores: Vec<AgentPubKey> = Vec::new();
+    for link in get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())? {
+        if link.tag.0.first() == Some(&COMPLETED) && !stores.contains(&link.author) {
+            stores.push(link.author);
+        }
+    }
+    Ok(stores.len() as u32)
+}
 
 #[hdk_extern]
 pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
@@ -122,7 +139,7 @@ pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<Reputati
             let counts = match seasoned.get(&reporter) {
                 Some(counts) => *counts,
                 None => {
-                    let counts = get_reputation_summary(ReputationTarget::Driver(reporter.clone()))?.completed_count >= relay_governance::min_reporter_deliveries();
+                    let counts = stores_delivered_for(&reporter)? >= relay_governance::min_reporter_stores();
                     seasoned.insert(reporter, counts);
                     counts
                 }
@@ -143,6 +160,7 @@ pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<Reputati
             3 => summary.dispute_resolved_against_count += 1,
             5 => summary.dropped_count += 1,
             6 => summary.late_count += 1,
+            8 => summary.lapsed_count += 1,
             CHECK_IN_REFUSED => summary.check_in_refused_count += 1,
             4 => summary.total_collateral_forfeited += amount,
             _ => {}

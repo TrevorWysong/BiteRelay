@@ -268,9 +268,11 @@ export interface DeliveryOrder {
    */
   sealed_dropoff: XSalsa20Poly1305EncryptedData;
   /**
-   * The same details sealed to the driver -- set when the customer accepts
-   * their bid, so only the driver doing the delivery ever learns the exact
-   * address.
+   * The same details sealed to the driver -- shared by the customer's app
+   * once the driver has committed (their collateral set aside), so only a
+   * driver with something at stake ever learns the exact address: a
+   * throwaway identity can't win a bid just to harvest it. Gone with the
+   * driver.
    */
   driver_dropoff: XSalsa20Poly1305EncryptedData | null;
   /**
@@ -1269,9 +1271,10 @@ export interface NetworkTerms {
    */
   max_driver_changes: number;
   /**
-   * Deliveries a driver needs for their check-in reports to count.
+   * Different stores a driver must have delivered for before their
+   * check-in reports count.
    */
-  min_reporter_deliveries: number;
+  min_reporter_stores: number;
   /**
    * What a minute of a driver's arrival time counts for when matching.
    */
@@ -1956,7 +1959,13 @@ export type ReputationEventKind =
    * in what drivers and customers see. Recorded by a driver the order's
    * customer accepted, on a version naming them.
    */
-  | "CheckInRefused";
+  | "CheckInRefused"
+  /**
+   * A driver whose bid was accepted who never committed -- they let the
+   * offer lapse, or turned it down. Recorded by the customer, on the
+   * version releasing them: what automatic matching weighs.
+   */
+  | "OfferLapsed";
 
 export interface ReputationSummary {
   completed_count: number;
@@ -1972,8 +1981,12 @@ export interface ReputationSummary {
    */
   late_count: number;
   /**
+   * Offers a driver let lapse, or turned down, without committing.
+   */
+  lapsed_count: number;
+  /**
    * Drivers' reports that a store wouldn't check them in -- from drivers
-   * with enough completed deliveries (`min_reporter_deliveries`).
+   * who've delivered for enough different stores (`min_reporter_stores`).
    */
   check_in_refused_count: number;
   total_collateral_forfeited: number;

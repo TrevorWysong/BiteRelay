@@ -46,6 +46,8 @@ interface DriverStats {
   completedCount: number;
   /// Deliveries they left before picking them up.
   droppedCount: number;
+  /// Offers they let lapse, or turned down, without committing.
+  lapsedCount: number;
   avgRating: number;
   reviewCount: number;
   displayName: string | null;
@@ -68,7 +70,7 @@ async function fetchDriverStats(agent: Uint8Array): Promise<DriverStats> {
     getProfileForAgent(agent),
   ]);
   const displayName = profileRecord ? decodeEntry<Profile>(profileRecord).display_name : null;
-  return { completedCount: summary.completed_count, droppedCount: summary.dropped_count, avgRating: averageRating(rating) ?? 0, reviewCount: rating.count, displayName: displayName || null };
+  return { completedCount: summary.completed_count, droppedCount: summary.dropped_count, lapsedCount: summary.lapsed_count, avgRating: averageRating(rating) ?? 0, reviewCount: rating.count, displayName: displayName || null };
 }
 
 /// A bid's bidder, with their warrant count and driver track record.
@@ -456,6 +458,7 @@ export function OrderDetail() {
                             )}
                             <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
                             {stats.droppedCount > 0 && <span className="text-xs text-amber-600">· {stats.droppedCount} dropped</span>}
+                            {stats.lapsedCount > 0 && <span className="text-xs text-ink-400">· {stats.lapsedCount} not taken up</span>}
                           </div>
                         )}
                         {load && <p className="mt-1 text-xs text-ink-400">{describeLoad(load)}</p>}

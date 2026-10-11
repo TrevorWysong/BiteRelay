@@ -404,6 +404,7 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
       <OrderStatusTimeline status={row.order.status} />
       {row.order.ready_by !== null && BEFORE_PICKUP.includes(row.order.status) && <p className="mt-2 text-xs text-ink-500">Food ready at the store by {formatClockTime(row.order.ready_by)}.</p>}
       {row.dropoff?.recipient && <p className="mt-2 text-sm font-semibold text-ink-900 dark:text-ink-50">Deliver to {row.dropoff.recipient}</p>}
+      {!row.dropoff && row.order.status === "BidAccepted" && <p className="mt-2 text-xs text-ink-400">You'll see the customer's address once you've committed to it.</p>}
       <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
       {row.dropoff?.notes && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">

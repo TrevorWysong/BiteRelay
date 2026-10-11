@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, open, original_action_of, resolve_latest_decoded, resolve_links_to_records, seal};
+use relay_coordinator_support::{next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitBidInput {
@@ -152,7 +152,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
 
     // An order changes drivers a bounded number of times.
     if let Some(version) = dispatch_integrity::lineage::Version::of(order_record.clone()) {
-        if dispatch_integrity::lineage::driver_changes(&version)? >= relay_governance::max_driver_changes() {
+        if !dispatch_integrity::lineage::driver_changes(&version)?.allow_another() {
             return Err(wasm_error!(WasmErrorInner::Guest("This order has changed drivers too many times. You can collect it yourself, or cancel it.".into())));
         }
     }
@@ -163,11 +163,13 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         return Err(wasm_error!(WasmErrorInner::Guest(customer_refusal(refusal).into())));
     }
 
-    // The driver learns the exact drop-off only now: the customer opens
-    // their own sealed copy and seals it again for this driver alone.
+    // The driver learns the exact drop-off only once they've committed (see
+    // `deliveries::share_address`); accepting them needs the customer's own
+    // copy, which only the customer can open.
     let me = agent_info()?.agent_initial_pubkey;
-    let dropoff: DropoffDetails = open(&me, &order.sealed_dropoff)?.ok_or(wasm_error!(WasmErrorInner::Guest("only the customer can accept a bid on their order".into())))?;
-    order.driver_dropoff = Some(seal(&winning_bid.bidder, &dropoff)?);
+    if order.requester != me {
+        return Err(wasm_error!(WasmErrorInner::Guest("only the customer can accept a bid on their order".into())));
+    }
     order.status = DeliveryStatus::BidAccepted;
     order.accepted_bid = Some(input.bid_action.clone());
     // The driver's pay -- the customer's share of the fee, and their tip --

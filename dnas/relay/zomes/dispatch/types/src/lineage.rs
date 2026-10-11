@@ -298,18 +298,35 @@ pub fn store_was_late(from: &Version) -> ExternResult<bool> {
     }
 }
 
-/// How many drivers have left the order by `from` (inclusive) -- dropped
-/// it, or been moved on.
-pub fn driver_changes(from: &Version) -> ExternResult<u32> {
-    let mut changes = 0;
+/// The drivers who've left the order by `from` (inclusive): how many had
+/// committed to it, and how many offers there were in all.
+pub fn driver_changes(from: &Version) -> ExternResult<DriverChanges> {
+    let mut changes = DriverChanges::default();
     let mut current = from.clone();
     while let Some(prior) = current.prior()? {
         if current.released(&prior).is_some() {
-            changes += 1;
+            changes.offers += 1;
+            if prior.order.collateral_hold.is_some() {
+                changes.committed += 1;
+            }
         }
         current = prior;
     }
     Ok(changes)
+}
+
+/// See `driver_changes`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DriverChanges {
+    pub committed: u32,
+    pub offers: u32,
+}
+
+impl DriverChanges {
+    /// Whether the order may take on another driver.
+    pub fn allow_another(self) -> bool {
+        self.committed < relay_governance::max_driver_changes() && self.offers < relay_governance::max_offers_per_order()
+    }
 }
 
 /// What the store refunds a customer who collected their delivery

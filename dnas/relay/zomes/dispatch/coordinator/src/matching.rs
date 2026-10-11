@@ -75,7 +75,7 @@ pub struct RankedBid {
 ///
 /// > its price, plus each minute until the driver would hand it over at
 /// > the network's `minute_value_cents`, plus its price again in the share
-/// > of the driver's committed deliveries they've dropped
+/// > of the orders they took on that they dropped or let lapse
 ///
 /// -- so a faster driver can win at a higher price, and a driver who
 /// drops orders has to bid lower to win. Ties go to the earlier bid. A bid
@@ -108,7 +108,12 @@ fn ranked(order_ref: &ActionHash, latest: &Record, order: &dispatch_integrity::D
     let minute_value = relay_governance::minute_value_cents();
     let max = relay_governance::max_concurrent_deliveries();
     let mut ranked = Vec::new();
-    for link in get_links(LinkQuery::try_new(order_ref.clone(), LinkTypes::OrderToBid)?, GetStrategy::default())? {
+    // The earliest bids, up to the network's limit: a flood of later ones
+    // costs nothing to weigh.
+    let mut links = get_links(LinkQuery::try_new(order_ref.clone(), LinkTypes::OrderToBid)?, GetStrategy::default())?;
+    links.sort_by_key(|link| link.timestamp);
+    links.truncate(relay_governance::max_ranked_bids() as usize);
+    for link in links {
         let Some(bid_ref) = link.target.into_action_hash() else { continue };
         let Ok(record) = resolve_latest(bid_ref.clone()) else { continue };
         let Some(bid) = decode_or::<Bid>(&record) else { continue };
@@ -116,8 +121,9 @@ fn ranked(order_ref: &ActionHash, latest: &Record, order: &dispatch_integrity::D
             continue;
         }
         let summary = driver_record(&bid.bidder)?;
-        let attempts = u64::from(summary.completed_count) + u64::from(summary.dropped_count);
-        let reliability = bid.price_offer.saturating_mul(u64::from(summary.dropped_count)).checked_div(attempts).unwrap_or(0);
+        let failed = u64::from(summary.dropped_count) + u64::from(summary.lapsed_count);
+        let attempts = u64::from(summary.completed_count) + failed;
+        let reliability = bid.price_offer.saturating_mul(failed).checked_div(attempts).unwrap_or(0);
         let minutes = u64::from(bid.eta_seconds).div_ceil(60);
         let cost = bid.price_offer.saturating_add(minutes.saturating_mul(minute_value)).saturating_add(reliability);
         let unavailable = if order.max_delivery_fee.is_some_and(|cap| bid.price_offer > cap) {
@@ -140,6 +146,8 @@ fn ranked(order_ref: &ActionHash, latest: &Record, order: &dispatch_integrity::D
 struct DriverRecord {
     completed_count: u32,
     dropped_count: u32,
+    #[serde(default)]
+    lapsed_count: u32,
 }
 
 #[derive(Serialize, Debug)]
@@ -162,7 +170,7 @@ pub(crate) fn auto_match(order_ref: &ActionHash, order: &dispatch_integrity::Del
     // Past the network's limit on driver changes, only its customer can
     // decide what happens next.
     if let Some(version) = dispatch_integrity::lineage::Version::of(latest.clone()) {
-        if dispatch_integrity::lineage::driver_changes(&version)? >= relay_governance::max_driver_changes() {
+        if !dispatch_integrity::lineage::driver_changes(&version)?.allow_another() {
             return Ok(None);
         }
     }

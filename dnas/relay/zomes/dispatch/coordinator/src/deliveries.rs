@@ -106,6 +106,34 @@ pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
     write(&record, order)
 }
 
+// --- the customer shares their address ---
+
+/// The customer's app sharing their exact drop-off with a driver who's
+/// committed -- sealed to that driver alone. Done as soon as it hears they
+/// have (`upkeep`), never before: a driver with nothing at stake never
+/// learns where anyone lives.
+#[hdk_extern]
+pub fn share_address(order_ref: ActionHash) -> ExternResult<Record> {
+    let order_ref = original_action_of(order_ref)?;
+    let (record, mut order) = current(&order_ref)?;
+    let me = me()?;
+    if order.requester != me {
+        return Err(guest("Only the order's customer shares its address."));
+    }
+    if order.collateral_hold.is_none() || order.driver_dropoff.is_some() {
+        return Err(guest("There's no committed driver waiting for the address."));
+    }
+    let Some((_, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver.")) };
+    let dropoff: DropoffDetails = relay_coordinator_support::open(&me, &order.sealed_dropoff)?.ok_or(guest("couldn't open your address"))?;
+    order.driver_dropoff = Some(relay_coordinator_support::seal(&bid.bidder, &dropoff)?);
+    write(&record, order)
+}
+
+/// Whether the customer's app owes this order's driver the address.
+pub(crate) fn address_owed(order: &DeliveryOrder) -> bool {
+    order.collateral_hold.is_some() && order.driver_dropoff.is_none() && matches!(order.status, DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed | DeliveryStatus::DriverAtStore | DeliveryStatus::PickedUp)
+}
+
 // --- the store cooks, and checks the driver in ---
 
 /// The store starting on an order its driver has committed to -- or, if
@@ -741,6 +769,8 @@ pub(crate) fn record_what_changed(version: &Record, order_ref: &ActionHash, rele
         };
         if *committed && !store_late {
             record_drop(driver, order_ref, version.action_address())?;
+        } else if !committed {
+            record_reputation_event(driver, ReputationTargetWire::Driver(driver.clone()), order_ref.clone(), ReputationEventKindWire::OfferLapsed, version.action_address().clone())?;
         }
     }
     if order.status == DeliveryStatus::Collected && author == &order.merchant {

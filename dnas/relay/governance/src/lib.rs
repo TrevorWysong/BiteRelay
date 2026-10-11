@@ -96,7 +96,11 @@ pub struct RelayDnaProperties {
     #[serde(default)]
     pub max_driver_changes: Option<u32>,
     #[serde(default)]
-    pub min_reporter_deliveries: Option<u32>,
+    pub max_offers_per_order: Option<u32>,
+    #[serde(default)]
+    pub max_ranked_bids: Option<u32>,
+    #[serde(default)]
+    pub min_reporter_stores: Option<u32>,
     #[serde(default)]
     pub max_store_wait_secs: Option<u64>,
     #[serde(default)]
@@ -298,18 +302,31 @@ pub fn replacement_window() -> Duration {
     Duration::from_secs(setting(|p| p.replacement_window_secs, 15 * 60))
 }
 
-/// How many times an order may change drivers -- each driver who leaves it,
-/// or is moved on, is one. Past it, the order can only be collected or
-/// cancelled: an order's history is bounded, so checking it stays cheap.
+/// How many committed drivers may leave an order -- dropping it, or moved on
+/// once late. Past it, the order can only be collected or cancelled.
 pub fn max_driver_changes() -> u32 {
     setting(|p| p.max_driver_changes, 6).max(1)
 }
 
-/// How many deliveries a driver must have completed for their report that a
-/// store wouldn't check them in to count on its record -- so a throwaway
-/// identity can't bury a competitor in reports.
-pub fn min_reporter_deliveries() -> u32 {
-    setting(|p| p.min_reporter_deliveries, 3)
+/// How many bids an order's customer may accept in all, counting offers a
+/// driver let lapse without committing -- so an order's history stays
+/// bounded, and checking it cheap, however many throwaway drivers bid.
+pub fn max_offers_per_order() -> u32 {
+    setting(|p| p.max_offers_per_order, 20).max(max_driver_changes())
+}
+
+/// How many different stores a driver must have completed deliveries for
+/// before their report that a store wouldn't check them in counts on its
+/// record -- so a throwaway identity, or a ring of them trading among
+/// themselves, can't bury a competitor in reports.
+pub fn min_reporter_stores() -> u32 {
+    setting(|p| p.min_reporter_stores, 3)
+}
+
+/// How many of an order's bids its customer's app weighs, earliest first --
+/// so a flood of bids from throwaway drivers can't slow it down.
+pub fn max_ranked_bids() -> u32 {
+    setting(|p| p.max_ranked_bids, 30).max(1)
 }
 
 /// How long a customer's app collects bids, from the first, before matching

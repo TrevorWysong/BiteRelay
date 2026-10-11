@@ -153,7 +153,8 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       points: [
         `Drivers bid on your order with their fee and when they'd get it to you. ${spoken(t.bid_window_secs)} after the first bid, your app takes the best one.`,
         `The best bid is the lowest fee once each minute until delivery counts as ${formatCents(t.minute_value_cents)} and the driver's dropped orders count against them: a faster driver can win at a higher fee, and one who drops orders has to bid lower to win.`,
-        "Bids over your fee cap, from a driver who left your order before, or from one who can't take another order right now, aren't chosen.",
+        "Bids over your fee cap, from a driver who left your order before, or from one who can't take another order right now, aren't chosen. Offers a driver lets lapse count against them like dropped orders.",
+        "A driver sees your exact address only once they've committed to your order, with their collateral set aside.",
         "Choose \"I'll choose\" at checkout to see every bid and accept one yourself.",
         `Once chosen, a driver has ${spoken(t.offer_secs)} to commit, as on DoorDash. Drivers can have their app bid for them at their own rate, skipping stores other drivers report.`,
       ],
@@ -175,6 +176,7 @@ export function policySections(t: NetworkTerms): PolicySection[] {
         `If you choose to collect it and don't come within ${spoken(t.collection_window_secs)}, the store keeps the price of the food it made. If you cancel while a driver is on the way and nobody's late, you pay for the food and the driver's fee, as on any app.`,
         "Every deadline that costs someone else if it's claimed early (a driver leaving, a store moving a driver on, calling a store late, ending an order no driver came for, keeping the food of a customer who never came) is proved against a public time source run by independent organisations, so nobody can claim one early.",
         `An order can change drivers at most ${t.max_driver_changes} times. After that you can collect it or cancel it.`,
+        "While a driver who left your order cooking answers for it, you can't cancel it: wait for another driver (you're refunded in full if none comes in time) or collect it yourself.",
       ],
       effects: [
         { who: "customers", good: "No driver, a no-show, or a slow store never costs you anything.", bad: "If you choose to collect and don't, or cancel while it's on its way, you pay for the food." },
@@ -254,7 +256,7 @@ export function policyRisks(t: NetworkTerms): string[] {
     "When a customer and driver disagree about a delivery, the store decides. A store could side with a customer against a driver who did deliver; it gains nothing by it, and its decision is public, but the network can't overturn it. Drivers are protected by handing over against the customer's code.",
     "An order left at the door is delivered once it's left. If it's taken after that, the customer bears the loss, as with a parcel left without a signature.",
     "Nothing forces a store to answer a report about missing items before it settles the order; a store that settles early, or declines unfairly, answers to its reviews.",
-    `A store could refuse to check a driver in, then collect that driver's collateral if they leave and no one else comes. The network can't tell a store that won't check drivers in from a driver who never arrived, so it sides with the store, the party with the most to lose. Drivers can report it; reports from drivers with at least ${t.min_reporter_deliveries} deliveries show on the store's record, and drivers' apps can skip reported stores.`,
+    `A store could refuse to check a driver in, then collect that driver's collateral if they leave and no one else comes. The network can't tell a store that won't check drivers in from a driver who never arrived, so it sides with the store, the party with the most to lose. Drivers can report it; reports from drivers who've delivered for at least ${t.min_reporter_stores} different stores show on the store's record, and drivers' apps can skip reported stores.`,
     "Balances are credits issued by this network's issuers. What a balance is worth outside Relay depends on those issuers, not on Relay.",
     "Everything you publish is permanent and copied across the network. Reviews, ratings and order records can't be deleted.",
     "Which store a customer key ordered from, and roughly where, is public. Using one identity for everything links those orders together.",

@@ -376,6 +376,17 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     }
     let original = original_action_of(order_original_action.clone())?;
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
+    // A store checks its driver in by setting aside their whole fee (its
+    // share, and the customer's again in case it keeps them waiting). It
+    // must be able to: a store that can't would leave its driver unable to
+    // check in, and answering for food it may have made.
+    let float = order.max_delivery_fee.unwrap_or_else(|| relay_governance::suggested_delivery_fees().into_iter().max().unwrap_or(0));
+    let spendable = crate::settlement::spendable()?;
+    if spendable < i128::from(float) {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "Your balance can't cover a driver's fee for this order (up to {float} cents), which you set aside when you check them in. Add funds, then accept it."
+        ))));
+    }
     // The store's own limit on what may be left at a door.
     let limit = current_catalog(&order.catalog_ref)?.leave_at_door_max_cents;
     if order.dropoff_preference == DropoffPreference::LeaveAtDoor && limit.is_some_and(|max| order.order_total > max) {
@@ -472,8 +483,9 @@ pub struct NetworkTerms {
     pub bid_window_secs: u64,
     /// How many times an order may change drivers.
     pub max_driver_changes: u32,
-    /// Deliveries a driver needs for their check-in reports to count.
-    pub min_reporter_deliveries: u32,
+    /// Different stores a driver must have delivered for before their
+    /// check-in reports count.
+    pub min_reporter_stores: u32,
     /// What a minute of a driver's arrival time counts for when matching.
     pub minute_value_cents: u64,
     /// Where apps fetch the network's time source from.
@@ -519,7 +531,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         replacement_window_secs: relay_governance::replacement_window().as_secs(),
         bid_window_secs: relay_governance::bid_window().as_secs(),
         max_driver_changes: relay_governance::max_driver_changes(),
-        min_reporter_deliveries: relay_governance::min_reporter_deliveries(),
+        min_reporter_stores: relay_governance::min_reporter_stores(),
         minute_value_cents: relay_governance::minute_value_cents(),
         time_relays: relay_governance::time_source().relays,
         time_chain_hash: relay_governance::time_source().chain_hash,
@@ -564,6 +576,13 @@ pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> 
 #[hdk_extern]
 pub fn cancel_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let latest = resolve_latest(order_original_action.clone())?;
+    if let Some(version) = dispatch_integrity::lineage::Version::of(latest.clone()) {
+        if dispatch_integrity::lineage::liable_release(&version)?.is_some() {
+            return Err(wasm_error!(WasmErrorInner::Guest(
+                "Your driver left your order while it was cooking, so they answer for it: wait for another driver (you're refunded in full if none comes), or collect it yourself.".into()
+            )));
+        }
+    }
     let store_late = dispatch_integrity::lineage::Version::of(latest).map(|v| dispatch_integrity::lineage::store_was_late(&v)).transpose()?.unwrap_or(false);
     cancel_delivery(order_original_action, if store_late { Cancellation::StoreLate } else { Cancellation::ByCustomer })
 }
@@ -630,6 +649,7 @@ pub(crate) enum ReputationEventKindWire {
     DeliveryDropped,
     StoreLate,
     CheckInRefused,
+    OfferLapsed,
 }
 
 /// Best-effort reputation bookkeeping shared by every completion/dispute

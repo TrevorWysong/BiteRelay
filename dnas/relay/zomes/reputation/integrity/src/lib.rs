@@ -65,6 +65,10 @@ pub enum ReputationEventKind {
     /// in what drivers and customers see. Recorded by a driver the order's
     /// customer accepted, on a version naming them.
     CheckInRefused,
+    /// A driver whose bid was accepted who never committed -- they let the
+    /// offer lapse, or turned it down. Recorded by the customer, on the
+    /// version releasing them: what automatic matching weighs.
+    OfferLapsed,
 }
 
 /// Append-only by design (see architecture plan §2): a single mutable
@@ -457,6 +461,7 @@ fn validate_event(event: &ReputationEvent, author: &AgentPubKey) -> ExternResult
         // A driver who left because the store was late didn't drop it.
         (ReputationEventKind::DeliveryDropped, None) => at_driver && order.released_driver.as_ref() == Some(&subject) && order.released_committed && order.called_late_by.is_none() && author == &order.requester,
         (ReputationEventKind::StoreLate, None) => at_store && order.called_late_by.as_ref() == Some(author),
+        (ReputationEventKind::OfferLapsed, None) => at_driver && order.released_driver.as_ref() == Some(&subject) && !order.released_committed && author == &order.requester,
         (ReputationEventKind::CheckInRefused, None) => at_store && (order.driver.as_ref() == Some(author) || order.released_driver.as_ref() == Some(author)),
         (ReputationEventKind::DisputeRaised, None) => at_driver && order.claimed && version.action().author() == author && author == &order.requester,
         (ReputationEventKind::DisputeResolvedAgainst, Some(Outcome::NotDelivered { .. })) => at_driver && by_store,
@@ -598,6 +603,7 @@ pub fn event_tag(kind: &ReputationEventKind, order_original: &ActionHash) -> Lin
         ReputationEventKind::DeliveryDropped => (5, 0),
         ReputationEventKind::StoreLate => (6, 0),
         ReputationEventKind::CheckInRefused => (7, 0),
+        ReputationEventKind::OfferLapsed => (8, 0),
     };
     let mut bytes = vec![code];
     bytes.extend_from_slice(&amount.to_be_bytes());

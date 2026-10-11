@@ -49,7 +49,9 @@ Every other setting is optional, and the defaults suit most networks. Set only t
 | `max_store_wait_secs` | 2700 | The longest wait a store may set. |
 | `replacement_window_secs` | 900 | How long an order a driver left after the store started cooking stays open to another driver before the store's app ends it: the customer is refunded and that driver's collateral pays for the food. |
 | `max_driver_changes` | 6 | How many times an order may change drivers (each one leaving or moved on). Past it, the order can only be collected or cancelled -- which bounds the history validation walks. |
-| `min_reporter_deliveries` | 3 | Completed deliveries a driver needs before their report that a store wouldn't check them in counts on the store's record. |
+| `max_offers_per_order` | 20 | How many bids an order's customer may accept in all, counting offers drivers let lapse -- so a ring of throwaway drivers can't exhaust an order, and its history stays bounded. |
+| `max_ranked_bids` | 30 | How many of an order's bids its customer's app weighs, earliest first, so a flood of bids can't slow matching. |
+| `min_reporter_stores` | 3 | How many different stores a driver must have completed deliveries for before their report that a store wouldn't check them in counts on the store's record. |
 | `bid_window_secs` | 30 | How long a customer's app collects bids, from the first, before matching automatically. |
 | `minute_value_cents` | 10 | What each minute of a bid's ETA counts for in the published matching rule, in minor units. |
 | `time_source` | drand quicknet | The public time source deadline claims are proved against: `{ public_key (hex, BLS G2), genesis_secs, period_secs, relays, chain_hash }`. Validation checks a round's signature against the key alone; apps fetch rounds from the relays. |
