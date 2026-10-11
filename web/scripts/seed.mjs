@@ -12,6 +12,7 @@
 // screen's dev identity picker lists them so you can sign in as anyone.
 import { readFileSync } from "node:fs";
 import { AppWebsocket } from "@holochain/client";
+import { decode } from "@msgpack/msgpack";
 import { SERVED_HAPP, WS_OPTIONS, appInterfacePort, connectAdmin } from "./lib/devEnv.mjs";
 import { WORLD } from "./lib/world.mjs";
 
@@ -52,6 +53,25 @@ async function eventually(label, fn, attempts = 40, delayMs = 500) {
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
+}
+
+/// A delivery's status as `agent` reads it.
+async function statusOf(agent, orderRef) {
+  const record = await agent.call("dispatch", "get_order", orderRef);
+  return decode(record.entry.Present.entry).status;
+}
+
+/// A step each party's own app also takes as soon as it can -- the driver
+/// committing, the store cooking, the driver picking up: done here too, and
+/// done if their app already did it.
+async function stepOrDone(label, fn, alreadyDone) {
+  return eventually(label, async () => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!alreadyDone.test(String(err?.message ?? err))) throw err;
+    }
+  });
 }
 
 async function createAgent(adminWs, appPort, happBytes, person) {
@@ -134,6 +154,7 @@ async function seedStore(store, owner, center) {
 
 /// One handoff of a delivery: the driver records it, the other party
 /// acknowledges it -- what the driver's, store's and customer's screens do.
+/// At the store, acknowledging checks the driver in, too.
 async function attestLeg(driver, orderRef, sequence, kind, to, location) {
   const leg = hash(await eventually(`record ${kind}`, () => driver.call("attestation", "record_leg", { order_ref: orderRef, sequence, kind, to: to.key, geo_at_completion: location })));
   await eventually(`acknowledge ${kind}`, () => to.call("attestation", "acknowledge_leg", leg));
@@ -171,11 +192,14 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "BidAccepted")) return orderRef;
   await eventually("accept bid", () => customer.call("dispatch", "accept_bid", { order_original_action: orderRef, bid_action: bidRef }));
   if (!reached(DELIVERY_STEPS, order.until, "MerchantConfirmed")) return orderRef;
-  await eventually("confirm prep", () => store.owner.call("dispatch", "set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" }));
+  // The driver commits, then the store starts cooking.
+  await stepOrDone("commit", () => driver.call("dispatch", "commit_to_order", orderRef), /already committed/);
+  await stepOrDone("start cooking", () => store.owner.call("dispatch", "start_cooking", orderRef), /isn't waiting on the kitchen/);
   if (!reached(DELIVERY_STEPS, order.until, "PickedUp")) return orderRef;
-  await eventually("en route", () => driver.call("dispatch", "set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" }));
   await attestLeg(driver, orderRef, 0, "MerchantHandoff", store.owner, store.location);
-  await eventually("picked up", () => driver.call("dispatch", "pick_up_order", orderRef));
+  await eventually("picked up", async () => {
+    if ((await statusOf(driver, orderRef)) !== "PickedUp") await driver.call("dispatch", "pick_up_order", orderRef);
+  });
   if (!reached(DELIVERY_STEPS, order.until, "Delivered")) return orderRef;
   await attestLeg(driver, orderRef, 1, "CustomerHandoff", customer, dropoff);
   await eventually("complete delivery", () => customer.call("dispatch", "complete_delivery", { order_original_action: orderRef }));
