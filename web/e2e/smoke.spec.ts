@@ -38,7 +38,7 @@ test("a merchant sees their order queue and manages their menu and promos", asyn
 
 test("a customer's order waits on the store, which can accept or decline it", async ({ page }) => {
   const tacos = store("tacos");
-  await signInAs(page, "lee");
+  await signInAs(page, "ana");
   await page.getByText(tacos.name, { exact: true }).first().click();
   await page.getByRole("button", { name: `Add ${tacos.menu[0].name}` }).click();
   await page.getByRole("link", { name: "Cart" }).click();
@@ -63,5 +63,6 @@ test("a driver goes online and sees the nearby order feed", async ({ page }) => 
   await expect(page.getByText("You're offline")).toBeVisible();
   await page.getByRole("button", { name: "Go online" }).click();
   await expect(page.getByText("You're online")).toBeVisible();
-  await expect(page.getByText("Nearby open orders")).toBeVisible();
+  // Nearby orders -- or, with deliveries already on, add-ons on the way.
+  await expect(page.getByText(/^(Nearby open orders|Add-ons on your way)$/)).toBeVisible();
 });

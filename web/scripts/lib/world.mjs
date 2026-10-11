@@ -9,6 +9,9 @@ export const WORLD = {
     { slug: "dana", name: "Dana Reyes", roles: ["Provider"], bio: "Full-time courier." },
     { slug: "sam", name: "Sam Patel", roles: ["Requester"], addresses: [{ label: "Home", at: [0.6, -0.9] }, { label: "Work", at: [-1.8, 1.1] }] },
     { slug: "lee", name: "Lee Chen", roles: ["Requester"], addresses: [{ label: "Home", at: [1.4, 0.7] }] },
+    // A customer with nothing on order yet: the others each have as many
+    // waiting on stores as the network allows at once.
+    { slug: "ana", name: "Ana Silva", roles: ["Requester"], addresses: [{ label: "Home", at: [0.9, 0.2] }] },
   ],
   stores: [
     {
