@@ -160,6 +160,9 @@ async function attestLeg(driver, orderRef, sequence, kind, to, location) {
   await eventually(`acknowledge ${kind}`, () => to.call("attestation", "acknowledge_leg", leg));
 }
 
+/// The deliveries each seeded driver has taken on so far.
+const driverOrders = new Map();
+
 const DELIVERY_STEPS = ["Placed", "Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];
 const PICKUP_STEPS = ["Placed", "MerchantConfirmed", "ReadyForPickup", "PickedUp"];
 const reached = (steps, until, step) => steps.indexOf(until) >= steps.indexOf(step);
@@ -192,8 +195,21 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "BidAccepted")) return orderRef;
   await eventually("accept bid", () => customer.call("dispatch", "accept_bid", { order_original_action: orderRef, bid_action: bidRef }));
   if (!reached(DELIVERY_STEPS, order.until, "MerchantConfirmed")) return orderRef;
-  // The driver commits, then the store starts cooking.
-  await stepOrDone("commit", () => driver.call("dispatch", "commit_to_order", orderRef), /already committed/);
+  // The driver commits, then the store starts cooking. A delivery they
+  // finished frees its place only once its money has settled, which their
+  // app does in its own time: settled here first, and waited for.
+  await eventually(
+    "commit",
+    async () => {
+      for (const earlier of driverOrders.get(driver) ?? []) await driver.call("dispatch", "settle_order", earlier).catch(() => 0);
+      await driver.call("dispatch", "commit_to_order", orderRef).catch((err) => {
+        if (!/already committed/.test(String(err?.message ?? err))) throw err;
+      });
+    },
+    240,
+    500,
+  );
+  driverOrders.set(driver, [...(driverOrders.get(driver) ?? []), orderRef]);
   await stepOrDone("start cooking", () => store.owner.call("dispatch", "start_cooking", orderRef), /isn't waiting on the kitchen/);
   if (!reached(DELIVERY_STEPS, order.until, "PickedUp")) return orderRef;
   await attestLeg(driver, orderRef, 0, "MerchantHandoff", store.owner, store.location);
