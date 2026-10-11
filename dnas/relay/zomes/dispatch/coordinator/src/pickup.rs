@@ -7,9 +7,9 @@
 //! `orders.rs`/`disputes.rs` do for the much larger delivery vertical.
 
 use crate::upkeep;
-use crate::stores::{closed_reason, current_catalog, ready_by};
+use crate::stores::{closed_reason, current_catalog_version, ready_by};
 use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, my_name, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
-use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
+use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItemInput};
 use crate::settlement;
 use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
@@ -50,10 +50,14 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     if let Some(claim_ref) = &input.bag_claim_ref {
         ensure_claim_confirmed(claim_ref)?;
     }
+    order_queues::ensure_order_rate()?;
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+    // The store as it is now: the terms this order is placed under.
+    let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
+    ensure_store_minimum(&catalog, &priced)?;
     // Open now -- a goodie bag runs on its own pickup window instead.
     if input.bag_claim_ref.is_none() {
-        if let Some(reason) = closed_reason(&current_catalog(&input.catalog_ref)?, requested_at.as_micros()) {
+        if let Some(reason) = closed_reason(&catalog, requested_at.as_micros()) {
             return Err(wasm_error!(WasmErrorInner::Guest(reason)));
         }
     }
@@ -64,6 +68,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         requester: requester.clone(),
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
+        catalog_version,
         lines: priced.lines,
         order_total: priced.order_total,
         status: PickupStatus::Placed,
@@ -107,6 +112,10 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
+    ensure_current_terms(&order_original_action, &order.catalog_ref, &order.catalog_version)?;
+    if let Some(claim_ref) = &order.bag_claim_ref {
+        crate::claims::redeem_bag_claim(claim_ref)?;
+    }
     let original = relay_coordinator_support::original_action_of(order_original_action.clone())?;
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);

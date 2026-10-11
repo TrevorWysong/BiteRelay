@@ -26,7 +26,7 @@ interface IssueView {
 await runScenario(async (scenario) => {
   const [customer, merchant, stranger] = await setupPlayersWithProperties(scenario, 3, () => ({ report_window_secs: REPORT_WINDOW_SECS }));
   const all = [customer, merchant, stranger];
-  for (const p of all) await useTestCoordinators(p, ["dispatch"]);
+  for (const p of all) await useTestCoordinators(p, ["dispatch", "catalog", "reputation"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
   const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
   const balance = (p: typeof customer) => call(p, "ledger")<number>("get_balance", p.agentPubKey);
@@ -92,6 +92,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] only the customer reports, only items on the order, never more than ordered");
 
   const missingBread = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Missing" }], note: "Only one bread in the bag", photo_data_uri: FULL_SIZE_PHOTO }));
+  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Wrong" }] }), /each item on an order is reported once/, "an item already reported can't be reported again");
   const wrongStew = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ item_ref: stew, quantity: 1, kind: "Wrong" }], note: "This is soup", photo_data_uri: "" }));
   await sync();
   const seenByStore = await retryUntil(() => call(merchant, "dispatch")<IssueView[]>("get_issues_for_order", order), (issues) => issues.length === 2);
@@ -124,6 +125,16 @@ await runScenario(async (scenario) => {
   await assert.rejects(settlement(merchant, { refund: 0, issues: [] }), /settled once/, "and it's settled once");
   await assert.rejects(call(customer, "dispatch")("report_issue", { order, lines: [{ item_ref: stew, quantity: 1, kind: "Missing" }], note: "", photo_data_uri: "" }), /already settled/, "a report after that comes too late");
   console.log("[PASS] the store has the final say: what it accepts is refunded, what it declines isn't");
+
+  // ===== Reviews, once each =====
+  await call(customer, "reputation")("submit_review", { target: { Store: store }, order_original_action: order, rating: 5, comment: "" });
+  await assert.rejects(call(customer, "reputation")("submit_review", { target: { Store: store }, order_original_action: order, rating: 1, comment: "" }), /already rated/);
+  await assert.rejects(
+    call(customer, "reputation")("create_raw_review_for_testing", { target: { Store: store }, author: customer.agentPubKey, order_ref: collected, rating: 1, comment: "", created_at: Date.now() * 1000 }),
+    /each reviewed once/,
+    "a customer reviews an order's store once, so nobody buries a store's reviews",
+  );
+  console.log("[PASS] an order's store is reviewed once");
 
   // ===== A report the store ignores =====
   const customerThen = await balance(customer);

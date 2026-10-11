@@ -25,17 +25,24 @@ impl OrderUpdate<'_> {
         let elapsed_micros = self.written_at.as_micros() - self.prior_written_at.as_micros();
         elapsed_micros < store_response_window().as_micros() as i64
     }
+
 }
 
 /// Where an order being cancelled was cancelled from, as far as these rules
 /// care.
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CancelledFrom {
     /// Waiting for the store to accept it.
     Placed,
     /// A pickup its customer says they can't get -- only the store, giving
     /// their money back, cancels it from here.
     Disputed,
+    /// A delivery its customer chose to collect themselves.
+    Collecting,
+    /// A delivery whose driver the store has checked in.
+    AtStore,
+    /// A delivery open to drivers' bids.
+    Open,
     Elsewhere,
 }
 
@@ -56,13 +63,20 @@ pub(crate) fn check_cancellation(update: &OrderUpdate<'_>, cancelled_from: Optio
         Cancellation::ByCustomer => update.author == update.requester,
         Cancellation::ByStore(_) => update.author == update.merchant,
         Cancellation::StoreDidNotRespond => update.author == update.requester && from == CancelledFrom::Placed && !update.within_response_window(),
+        // Its window is proved with the delivery's other rules.
+        Cancellation::NotCollected => update.author == update.merchant && from == CancelledFrom::Collecting,
+        // Their conditions are checked with the delivery's other rules.
+        Cancellation::StoreLate => update.author == update.requester && from != CancelledFrom::Placed && from != CancelledFrom::Collecting,
+        Cancellation::NoDriver => update.author == update.merchant && from == CancelledFrom::Open,
     };
     (!allowed).then(|| format!("{reason:?} isn't a cancellation this author can give here"))
 }
 
-/// `ready_by` across one update: set when the store accepts the order
-/// (`accepting`), to a time after the acceptance and within the longest a
-/// kitchen may promise, and never changed after. `None` if valid.
+/// A pickup's `ready_by` across one update: set when the store accepts the
+/// order (`accepting`), to a time after the acceptance and within the
+/// longest a kitchen may promise, and never changed after. `None` if valid.
+/// (A delivery's is set when the store starts cooking -- see
+/// `delivery::check_cooking`.)
 pub(crate) fn check_ready_by(update: &OrderUpdate<'_>, accepting: bool, prior: Option<Timestamp>, next: Option<Timestamp>) -> Option<&'static str> {
     if !accepting {
         return (prior != next).then_some("ready_by is set once, when the store accepts the order");

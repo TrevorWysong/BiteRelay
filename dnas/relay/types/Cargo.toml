@@ -7,4 +7,5 @@ version.workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
+sha2 = { version = "0.10", default-features = false }
 serde.workspace = true

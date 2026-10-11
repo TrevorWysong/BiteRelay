@@ -18,18 +18,43 @@ export interface Commitment {
 }
 
 /// The statuses before a driver has collected an order.
-const NOT_YET_COLLECTED: DeliveryOrder["status"][] = ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant"];
+const NOT_YET_COLLECTED: DeliveryOrder["status"][] = ["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"];
 
 /// What a driver has taken on.
 export function loadOf(commitments: Commitment[]): InHand {
   return { orders: commitments.length, priority: commitments.some((c) => c.order.priority) };
 }
 
+/// What decides a driver's offers: the network's limits, narrowed by the
+/// driver's own.
+export interface OfferRules {
+  /// The most orders at once: the network's, or the driver's own if lower.
+  maxAtOnce: number;
+  /// How near a remaining drop-off an add-on may go.
+  detourKm: number;
+  /// Whether the driver takes priority orders.
+  takePriority: boolean;
+  /// The lowest fee cap the driver wants to see, in minor units.
+  minFeeCents: number;
+}
+
+export function offerRules(
+  terms: { max_concurrent_deliveries: number; add_on_detour_km: number },
+  own: { maxAtOnce: number | null; takePriority: boolean; minFeeCents: number },
+): OfferRules {
+  return {
+    maxAtOnce: Math.min(terms.max_concurrent_deliveries, own.maxAtOnce ?? terms.max_concurrent_deliveries),
+    detourKm: terms.add_on_detour_km,
+    takePriority: own.takePriority,
+    minFeeCents: own.minFeeCents,
+  };
+}
+
 /// Why a driver with `commitments` is offered nothing more -- `null` if
 /// they're offered something.
-export function offerRefusal(commitments: Commitment[], max: number): CarryRefusal | null {
+export function offerRefusal(commitments: Commitment[], rules: OfferRules): CarryRefusal | null {
   // A standard order is the easiest to add: if even that can't be, nothing can.
-  return carryRefusal(loadOf(commitments), false, max);
+  return carryRefusal(loadOf(commitments), false, rules.maxAtOnce);
 }
 
 /// Whether `order` is on the way for a driver already delivering
@@ -43,11 +68,20 @@ function onTheWay(order: DeliveryOrder, commitments: Commitment[], detourKm: num
   );
 }
 
+/// Whether an order pays enough for the driver: its fee cap, if it has one,
+/// reaches their minimum.
+function paysEnough(order: DeliveryOrder, minFeeCents: number): boolean {
+  return order.max_delivery_fee === null || order.max_delivery_fee >= minFeeCents;
+}
+
 /// The open orders a driver with `commitments` is offered.
-export function offerable<T extends { order: DeliveryOrder }>(open: T[], commitments: Commitment[], terms: { max_concurrent_deliveries: number; add_on_detour_km: number }): T[] {
+export function offerable<T extends { order: DeliveryOrder }>(open: T[], commitments: Commitment[], rules: OfferRules): T[] {
   const load = loadOf(commitments);
   return open.filter(
     ({ order }) =>
-      carryRefusal(load, order.priority, terms.max_concurrent_deliveries) === null && (commitments.length === 0 || onTheWay(order, commitments, terms.add_on_detour_km)),
+      (rules.takePriority || !order.priority) &&
+      paysEnough(order, rules.minFeeCents) &&
+      carryRefusal(load, order.priority, rules.maxAtOnce) === null &&
+      (commitments.length === 0 || onTheWay(order, commitments, rules.detourKm)),
   );
 }

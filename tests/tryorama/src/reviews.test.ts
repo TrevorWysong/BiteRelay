@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -82,12 +82,9 @@ await runScenario(async (scenario) => {
   console.log("[PASS] validate() rejects a review from anyone but the order's requester");
 
   // --- Drive the order to Delivered. ---
-  await dispatchOf(merchant)("set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" });
+  await commitAndCook(driver, merchant, orderRef, all);
   await sync();
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
-  await sync();
-  await handOff(driver, merchant, orderRef, "MerchantHandoff", all);
-  await dispatchOf(driver)("pick_up_order", orderRef);
+  await collectFromStore(driver, merchant, orderRef, all);
   await handOff(driver, customer, orderRef, "CustomerHandoff", all);
   await sync();
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });

@@ -82,7 +82,7 @@ await runScenario(async (scenario) => {
   // --- Catalog: a menu only lists the store's own items. ---
   await rejects(rawLink(merchant, "catalog", "CatalogToMenuItem", storeB, itemA), /under its own catalog/, "an item can't be listed in another store's menu, even by the owner");
   await rejects(rawLink(attacker, "catalog", "CatalogToMenuItem", storeA, itemA), /by its author/, "a stranger can't link items into a menu");
-  await rejects(rawLink(attacker, "catalog", "OwnerToCatalog", agentAsLinkBase(attacker.agentPubKey), storeA), /only be linked by its owner/, "a stranger can't claim someone's store");
+  await rejects(rawLink(attacker, "catalog", "OwnerToCatalog", agentAsLinkBase(attacker.agentPubKey), storeA), /linked from its owner, by its owner/, "a stranger can't claim someone's store");
   await rejects(rawDelete(attacker, "catalog", "CatalogToMenuItem", storeA), /only a link's own author may delete it/, "a stranger can't remove a menu item");
   console.log("[PASS] catalog: menus and store ownership links can't be forged or removed by others");
 

@@ -10,6 +10,16 @@
 //! - **A store's new orders.** A store set to auto-accept accepts each one
 //!   as it arrives, declining any priced from an outdated menu. A goodie-bag
 //!   order, whose claim the store already confirmed, is accepted either way.
+//! - **A customer's driver.** For an order set to match automatically, the
+//!   best bid by the network's published rule is accepted once the bid
+//!   window has run (`matching::auto_match`).
+//! - **A store's deliveries.** Each committed driver is confirmed (the
+//!   kitchen starts), one out of time is moved on, a customer's request to
+//!   collect is recorded once it's allowed, and an order no driver came for
+//!   is ended (`deliveries::tend_store_delivery`).
+//! - **A driver's deliveries.** Each order whose customer accepted their
+//!   bid is committed to, and each the store has handed over is picked up
+//!   (`deliveries::tend_driver_deliveries`).
 //!
 //! Each runs soon after what calls for it (the customer placing an order;
 //! the store's `OrderPlaced` signal), and from a once-a-minute sweep
@@ -36,7 +46,70 @@ const SWEEP_CRON: &str = "0 * * * * * *";
 pub fn tend_orders_periodically(_: Option<Schedule>) -> Option<Schedule> {
     let _ = tend_customer_orders();
     let _ = answer_store_orders();
+    let _ = tend_store_deliveries();
+    let _ = crate::deliveries::tend_driver_deliveries();
     Some(Schedule::Persisted(SWEEP_CRON.into()))
+}
+
+/// A moment past a deadline, so the update's own timestamp is clearly
+/// beyond it.
+const SLACK: Duration = Duration::from_secs(1);
+
+// --- a store's deliveries ---
+
+/// Asks the conductor to tend the caller's stores' deliveries now
+/// (`tend_my_stores`). Called when one of them changes.
+pub(crate) fn tend_my_stores_soon() -> ExternResult<()> {
+    schedule("tend_my_stores")
+}
+
+/// Tends the caller's stores' deliveries, then runs again when the next one
+/// falls due.
+#[hdk_extern(infallible)]
+pub fn tend_my_stores(_: Option<Schedule>) -> Option<Schedule> {
+    match tend_store_deliveries() {
+        Ok(Some(wait)) => Some(Schedule::Ephemeral(wait + SLACK)),
+        _ => None,
+    }
+}
+
+/// Tends every delivery at the caller's stores; returns how long until the
+/// next one needs tending, if any does.
+fn tend_store_deliveries() -> ExternResult<Option<Duration>> {
+    let now = sys_time()?;
+    let mut next: Option<Timestamp> = None;
+    for store in my_stores()? {
+        for entry in get_active_orders_for_store(store)? {
+            let Some(order) = decode_or::<DeliveryOrder>(&entry.record).filter(|_| entry.kind == OrderKind::Delivery) else { continue };
+            // One order failing (still gossiping, say) mustn't hold up the
+            // rest; the next run tries it again.
+            if let Ok(Some(due)) = crate::deliveries::tend_store_delivery(&entry.original_action, &entry.record, &order, now) {
+                next = Some(next.map_or(due, |earliest| earliest.min(due)));
+            }
+        }
+    }
+    Ok(next.map(|due| Duration::from_micros(due.as_micros().saturating_sub(now.as_micros()).max(0) as u64)))
+}
+
+// --- a driver's deliveries ---
+
+/// Asks the conductor to tend the caller's deliveries now
+/// (`tend_my_deliveries`). Called when their bid is accepted, or the store
+/// hands an order over.
+pub(crate) fn tend_my_deliveries_soon() -> ExternResult<()> {
+    schedule("tend_my_deliveries")
+}
+
+/// The signal can outrun what it's about, so this retries with backoff
+/// until it's moved something on; the minute sweep covers anything later.
+#[hdk_extern(infallible)]
+pub fn tend_my_deliveries(previous: Option<Schedule>) -> Option<Schedule> {
+    let moved = crate::deliveries::tend_driver_deliveries().is_ok_and(|n| n > 0);
+    let next = match previous {
+        Some(Schedule::Ephemeral(after)) => after * 2,
+        _ => FIRST_RETRY,
+    };
+    (!moved && next <= LAST_RETRY).then_some(Schedule::Ephemeral(next))
 }
 
 // --- a customer's orders ---
@@ -58,9 +131,6 @@ pub fn schedule_order_upkeep(_: ()) -> ExternResult<()> {
 /// next one falls due.
 #[hdk_extern(infallible)]
 pub fn tend_my_orders(_: Option<Schedule>) -> Option<Schedule> {
-    // A moment past the deadline, so the cancellation's own timestamp is
-    // clearly beyond it.
-    const SLACK: Duration = Duration::from_secs(1);
     match tend_customer_orders() {
         Ok(Some(wait)) => Some(Schedule::Ephemeral(wait + SLACK)),
         _ => None,
@@ -115,6 +185,7 @@ fn tend_order(entry: &OrderEntry, now: DueAt, window: i64) -> ExternResult<Optio
                     Ok(None)
                 }
                 DeliveryStatus::Placed => Ok(Some(written_at + window)),
+                DeliveryStatus::Open if order.auto_match => Ok(crate::matching::auto_match(&order_ref, &order, now)?.map(|due| due.as_micros())),
                 _ => Ok(None),
             }
         }
@@ -198,29 +269,37 @@ struct WaitingOrder {
     bag_claim_ref: Option<ActionHash>,
     promo_code_ref: Option<ActionHash>,
     bag_order: bool,
+    catalog_ref: ActionHash,
+    /// The store terms it was placed under.
+    catalog_version: ActionHash,
 }
 
 impl WaitingOrder {
     fn from_entry(entry: &OrderEntry) -> Option<Self> {
-        let (lines, bag_claim_ref, promo_code_ref) = match entry.kind {
+        let (lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version) = match entry.kind {
             OrderKind::Delivery => {
                 let order = decode_or::<DeliveryOrder>(&entry.record).filter(|o| o.status == DeliveryStatus::Placed)?;
-                (order.lines, order.bag_claim_ref, order.promo_code_ref)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version)
             }
             OrderKind::Pickup => {
                 let order = decode_or::<PickupOrder>(&entry.record).filter(|o| o.status == PickupStatus::Placed)?;
-                (order.lines, order.bag_claim_ref, order.promo_code_ref)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version)
             }
         };
-        Some(Self { kind: entry.kind, bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref })
+        Some(Self { kind: entry.kind, bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version })
     }
 
     /// Accepts it, with the store's usual prep time -- or declines it if
-    /// the store is closed (a goodie bag runs on its own window) or it's
-    /// priced from an outdated menu.
+    /// the store is closed (a goodie bag runs on its own window), it
+    /// redeems a goodie bag whose hold lapsed, it was placed under the
+    /// store's earlier terms, or it's priced from an outdated menu.
     fn answer(&self, order_ref: &ActionHash, open_now: bool) -> ExternResult<()> {
         let decline = if !open_now && !self.bag_order {
             Some(DeclineReason::Closed)
+        } else if self.bag_claim_ref.as_ref().map(crate::claims::bag_hold_lapsed).transpose()?.unwrap_or(false) {
+            Some(DeclineReason::BagHoldLapsed)
+        } else if crate::pricing::terms_outdated(order_ref, &self.catalog_ref, &self.catalog_version)? {
+            Some(DeclineReason::TermsChanged)
         } else if outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref(), self.promo_code_ref.as_ref())?.is_some() {
             Some(DeclineReason::OutdatedPrices)
         } else {

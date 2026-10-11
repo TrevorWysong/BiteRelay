@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -65,7 +65,6 @@ await runScenario(async (scenario) => {
   await customer_acceptBidAndAdvance();
   async function customer_acceptBidAndAdvance() {
     await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: bidRef });
-    await dispatchOf(customer)("set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" });
   }
   console.log("[PASS] Bid accepted; merchant confirmed prep");
 
@@ -75,14 +74,13 @@ await runScenario(async (scenario) => {
   // merchant) advances the order themselves -- this is the authorization
   // fix in dispatch_integrity's validate_order_transition: it used to only
   // allow the requester/merchant to update the order at all.
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
+  await commitAndCook(driver, customer, orderRef, both);
 
   // The driver records collecting the order; the store (the customer runs
   // it here) acknowledges handing it over.
-  await handOff(driver, customer, orderRef, "MerchantHandoff", both);
+  await collectFromStore(driver, customer, orderRef, both);
   console.log("[PASS] Store handoff recorded by the driver and acknowledged by the store");
 
-  await dispatchOf(driver)("pick_up_order", orderRef);
 
   // The driver records handing it over. Until the customer acknowledges
   // receiving it, the delivery can't complete.

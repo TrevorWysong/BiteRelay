@@ -6,7 +6,7 @@
 
 use crate::order_queues::my_completions_at;
 use catalog_types::{order_total, BagClaim, GoodieBag, MenuItem, PricedLine, PromoCode};
-use relay_coordinator_support::original_action_of;
+use relay_coordinator_support::{decode_or, original_action_of};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
@@ -22,6 +22,18 @@ pub(crate) struct PricedOrder {
     pub lines: Vec<OrderLine>,
     pub order_total: u64,
     pub loyalty_proof: Vec<ActionHash>,
+    /// The menu items' price before any promo -- what a store's minimum
+    /// order is measured against. `None` for a goodie bag, priced on its own.
+    pub menu_subtotal: Option<u64>,
+}
+
+/// Refuses an order below its store's minimum (`min_order_cents`) --
+/// validation's rule (`dispatch_integrity::checks`), told first.
+pub(crate) fn ensure_store_minimum(store: &catalog_types::MerchantCatalog, priced: &PricedOrder) -> ExternResult<()> {
+    match (store.min_order_cents, priced.menu_subtotal) {
+        (Some(min), Some(subtotal)) if subtotal < min => Err(guest("This order is below the store's minimum. Add a little more to place it.".into())),
+        _ => Ok(()),
+    }
 }
 
 /// Prices an order at `catalog_ref`. A goodie-bag order (`bag_claim_ref`)
@@ -55,6 +67,7 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
         lines: vec![OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref, quantity: 1 }],
         order_total: bag.price_cents,
         loyalty_proof: Vec::new(),
+        menu_subtotal: None,
     })
 }
 
@@ -93,7 +106,8 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput
     let loyalty_proof: Vec<ActionHash> = if needed > 0 { my_completions_at(catalog_ref)?.into_iter().take(needed).collect() } else { Vec::new() };
     let total = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
         .ok_or(guest("this order doesn't meet the promo code's requirement".into()))?;
-    Ok(PricedOrder { lines, order_total: total, loyalty_proof })
+    let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
+    Ok(PricedOrder { lines, order_total: total, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
 }
 
 /// How long the store still honours an order priced just before one of its
@@ -145,24 +159,72 @@ pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_cla
     // Read only if some line isn't at its current price.
     let mut placement = None;
     for (line, history) in lines.iter().zip(histories) {
-        let versions = &history.versions;
-        if versions.last().is_some_and(|current| current.action == line.priced_version) {
+        if history.versions.last().is_some_and(|current| current.action == line.priced_version) {
             continue;
         }
         let placed_at = match placement {
             Some(at) => at,
             None => *placement.insert(placement_time(order_ref)?),
         };
-        // When the version the line names was replaced, if it's this item's.
-        let replaced_at = versions.iter().position(|v| v.action == line.priced_version).and_then(|i| versions.get(i + 1)).map(|next| next.written_at);
-        let raced = replaced_at.is_some_and(|changed| changed > placed_at);
-        let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= price_change_grace_secs();
-        if !(raced && recent) {
+        if !honoured(&history.versions, &line.priced_version, placed_at)? {
             let name = if history.name.is_empty() { "An item".to_string() } else { history.name };
             return Ok(Some(name));
         }
     }
     Ok(None)
+}
+
+/// Whether an order placed at `placed_at`, citing version `cited` of
+/// something with `versions` (oldest first), is still honoured: it's the
+/// current version, or the order raced its replacement, recently (within
+/// `price_change_grace`).
+fn honoured(versions: &[ItemVersionWire], cited: &ActionHash, placed_at: Timestamp) -> ExternResult<bool> {
+    if versions.last().is_some_and(|current| &current.action == cited) {
+        return Ok(true);
+    }
+    // When the cited version was replaced, if it's one of these.
+    let replaced_at = versions.iter().position(|v| &v.action == cited).and_then(|i| versions.get(i + 1)).map(|next| next.written_at);
+    let raced = replaced_at.is_some_and(|changed| changed > placed_at);
+    let recent = sys_time()?.as_seconds_and_nanos().0 - placed_at.as_seconds_and_nanos().0 <= price_change_grace_secs();
+    Ok(raced && recent)
+}
+
+/// Whether the store terms an order cites (`catalog_version`) give it more
+/// than the store's current terms do -- a lower minimum, a wider delivery
+/// area, a larger share of the fee -- and the order didn't just race the
+/// change. Validation can check only that it's a version of the store, not
+/// that it's current; so, as with prices, the store checks it against its
+/// own chain before accepting. Terms no more generous than today's are
+/// honoured whatever version they're from: a store's version changes for
+/// many reasons (its hours, being busy) that change nothing an order holds
+/// it to, and a customer's view of it can lag a little.
+pub(crate) fn terms_outdated(order_ref: &ActionHash, catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<bool> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_store_versions".into(), None, catalog_ref.clone())? else {
+        return Err(guest("reading your store's history failed".into()));
+    };
+    let versions: Vec<ItemVersionWire> = io.decode().map_err(|e| wasm_error!(e))?;
+    let (Some(cited), Some(current)) = (store_at(catalog_version)?, versions.last().map(|v| store_at(&v.action)).transpose()?.flatten()) else {
+        // Not one of this store's versions at all.
+        return Ok(true);
+    };
+    if !cited.offers_more_than(&current) {
+        return Ok(false);
+    }
+    Ok(!honoured(&versions, catalog_version, placement_time(order_ref)?)?)
+}
+
+/// The store as of one of its versions.
+fn store_at(version: &ActionHash) -> ExternResult<Option<catalog_types::MerchantCatalog>> {
+    Ok(get(version.clone(), GetOptions::local())?.and_then(|record| decode_or(&record)))
+}
+
+/// Refuses an order placed under store terms that had already changed --
+/// see `terms_outdated`.
+pub(crate) fn ensure_current_terms(order_ref: &ActionHash, catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<()> {
+    if terms_outdated(order_ref, catalog_ref, catalog_version)? {
+        return Err(guest("This order was placed under your store's earlier terms (its minimum, delivery area or fee share), so it can't be accepted -- decline it.".into()));
+    }
+    Ok(())
 }
 
 /// Mirrors `catalog::PromoVersion` over the zome-call boundary.

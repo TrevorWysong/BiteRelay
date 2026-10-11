@@ -6,9 +6,9 @@
 
 use crate::matching::open_order_anchor_path;
 use crate::order_queues::{self, OrderParties};
-use crate::pricing::{ensure_priced_from_current_menu, price_order, OrderItemInput};
+use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItemInput};
 use crate::settlement;
-use crate::stores::{closed_reason, current_catalog, current_catalog_version, ready_by};
+use crate::stores::{closed_reason, current_catalog, current_catalog_version};
 use crate::upkeep;
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -58,6 +58,10 @@ pub struct RequestDeliveryInput {
     /// `DeliveryOrder::priority`).
     #[serde(default)]
     pub priority: bool,
+    /// Let the app choose a driver from the bids, by the network's published
+    /// rule (`matching::rank_bids`) -- or `false` to choose yourself.
+    #[serde(default)]
+    pub auto_match: bool,
     /// `None` means this is a normal order, not a claimed goodie bag's
     /// delivery. `Some` is set by the customer's own client immediately
     /// after their `BagClaim` is confirmed (see `catalog::confirm_claim`'s
@@ -72,7 +76,7 @@ pub struct RequestDeliveryInput {
 /// for drivers nearby to find (`matching::get_open_orders_near`) -- nothing
 /// before the store's acceptance is ever discoverable. The listing links the
 /// accepting version (validation checks it's Open).
-fn publish_to_open_anchor(opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
+pub(crate) fn publish_to_open_anchor(opened: &ActionHash, dropoff_geohash: &str, now: Timestamp) -> ExternResult<()> {
     let bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     create_link(open_order_anchor_path(dropoff_geohash, bucket)?.path_entry_hash()?, opened.clone(), LinkTypes::OpenOrderGeohashAnchor, ())?;
     Ok(())
@@ -221,6 +225,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     if let Some(claim_ref) = &input.bag_claim_ref {
         ensure_claim_confirmed(claim_ref)?;
     }
+    order_queues::ensure_order_rate()?;
     let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
     let merchant = input.merchant.clone();
 
@@ -229,6 +234,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // and its share of the delivery fee, which this order records as the
     // split it was placed under.
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
+    ensure_store_minimum(&catalog, &priced)?;
     let distance = relay_types::distance_km(catalog.location, input.dropoff);
     if distance > catalog.max_delivery_radius_km {
         return Err(wasm_error!(WasmErrorInner::Guest(format!(
@@ -289,6 +295,11 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         pickup_commitment: Vec::new(),
         sealed_pickup_code: None,
         pickup_proof: None,
+        collection_proof: None,
+        prep_minutes: None,
+        collect_request: None,
+        beacon: None,
+        auto_match: input.auto_match,
     };
     let action_hash = create_entry(&EntryTypes::DeliveryOrder(order))?;
     // The food is paid for up front, in this same commit: the store can't
@@ -342,7 +353,8 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
 pub struct AcceptOrderInput {
     pub order_original_action: ActionHash,
     /// How long the kitchen expects this one to take; the store's usual
-    /// prep time if `None`. Recorded as the order's `ready_by`.
+    /// prep time if `None`. For a delivery it starts once a driver commits
+    /// (`deliveries::start_cooking`); for a pickup, now.
     #[serde(default)]
     pub prep_minutes: Option<u16>,
 }
@@ -358,6 +370,10 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
+    ensure_current_terms(&order_original_action, &order.catalog_ref, &order.catalog_version)?;
+    if let Some(claim_ref) = &order.bag_claim_ref {
+        crate::claims::redeem_bag_claim(claim_ref)?;
+    }
     let original = original_action_of(order_original_action.clone())?;
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
     // The store's own limit on what may be left at a door.
@@ -365,11 +381,12 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     if order.dropoff_preference == DropoffPreference::LeaveAtDoor && limit.is_some_and(|max| order.order_total > max) {
         return Err(wasm_error!(WasmErrorInner::Guest("This order is over your limit for leaving at the door -- decline it, or ask the customer to have it handed over.".into())));
     }
-    // The store's pickup code, for the driver collecting it.
+    // The store's check-in code, for the driver collecting it.
     let code = crate::pin::new_code()?;
     order.pickup_commitment = code.commitment;
     order.sealed_pickup_code = Some(code.sealed);
-    order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
+    // The kitchen starts once a driver commits: the prep time is quoted now.
+    order.prep_minutes = Some(crate::stores::prep_time(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
@@ -397,49 +414,24 @@ pub struct SetOrderStatusInput {
     pub next_status: DeliveryStatus,
 }
 
-/// Covers every other forward transition in the order lifecycle (merchant
-/// confirming prep, driver picking up, cancellation) -- the integrity zome's
-/// `can_transition_to` table is what actually enforces which transitions
-/// are legal, so this stays a thin wrapper. Delivered is deliberately
-/// excluded -- see `complete_delivery`, which is the gated path for that
-/// specific transition and additionally requires proof of both handoffs.
+/// A step in a delivery, by the status it moves to -- each routed to the
+/// function that does that step with what it needs (its hold, its proof):
+/// the driver committing, the store cooking, the store checking the driver
+/// in. Every other step has its own function, which says what it records.
 #[hdk_extern]
 pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
-    if input.next_status == DeliveryStatus::Open {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "use accept_delivery_order to open an order to drivers -- it checks the order's prices first".into()
-        )));
+    let order = input.order_original_action;
+    match input.next_status {
+        DeliveryStatus::DriverEnRouteToMerchant => crate::deliveries::commit_to_order(order),
+        DeliveryStatus::MerchantConfirmed => crate::deliveries::start_cooking(order),
+        DeliveryStatus::DriverAtStore => {
+            let checked_in = crate::deliveries::ensure_checked_in(order)?;
+            get(checked_in, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the order".into())))
+        }
+        other => Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "{other:?} is recorded by its own step: accept_delivery_order, accept_bid, drop_order, pick_up_order, complete_delivery, cancel_order or decline_order"
+        )))),
     }
-    if input.next_status == DeliveryStatus::Cancelled {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "use cancel_order or decline_order to cancel an order -- they record why".into()
-        )));
-    }
-    if input.next_status == DeliveryStatus::PickedUp {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "use pick_up_order to pick an order up -- it posts the driver's collateral".into()
-        )));
-    }
-    if input.next_status == DeliveryStatus::Delivered {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "use complete_delivery to mark an order Delivered -- it verifies leg attestations first".into()
-        )));
-    }
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
-    // A store starting on a delivery sets aside its share of the driver's
-    // fee, in this same commit.
-    // (Anyone else asking is refused by validation, with the reason why.)
-    if order.status == DeliveryStatus::BidAccepted && input.next_status == DeliveryStatus::MerchantConfirmed && order.merchant == agent_info()?.agent_initial_pubkey {
-        let bid = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
-        order.subsidy_hold = settlement::place_hold(&input.order_original_action, HoldPurpose::Subsidy { bid })?;
-    }
-    order.status = input.next_status;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
-    if order.status.is_terminal() {
-        order_queues::retire(&OrderParties::delivery(&input.order_original_action, &order)?)?;
-    }
-    get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated order".into())))
 }
 
 /// The rules this network runs by, as its DNA sets them. The app reads them
@@ -451,7 +443,11 @@ pub struct NetworkTerms {
     /// The ISO 4217 code every amount is in, in its minor units.
     pub currency: String,
     pub credit_limit_cents: u64,
+    /// The delivery fee caps checkout suggests, in minor units.
+    pub suggested_delivery_fees: Vec<u64>,
     pub store_response_secs: u64,
+    /// The most orders a customer may place within one store response window.
+    pub max_pending_orders: u32,
     /// How long a customer has to report items missing or wrong.
     pub report_window_secs: u64,
     /// However late a report comes, how long the store has to answer it.
@@ -459,6 +455,32 @@ pub struct NetworkTerms {
     /// How long a customer's "never arrived" stands before the store's app
     /// decides it.
     pub claim_grace_secs: u64,
+    /// How long past the store's ready time a driver has to be checked in
+    /// before the store's app moves them on, and the customer may collect it.
+    pub pickup_grace_secs: u64,
+    /// How long a driver whose bid is accepted has to commit.
+    pub offer_secs: u64,
+    /// How long a checked-in driver waits past the ready time before they
+    /// may call the store late, for a store that hasn't set its own -- and
+    /// the bounds on a store's own.
+    pub store_wait_secs: u64,
+    pub min_store_wait_secs: u64,
+    pub max_store_wait_secs: u64,
+    /// How long an order a driver left cooking stays open to another.
+    pub replacement_window_secs: u64,
+    /// How long a customer's app collects bids before matching.
+    pub bid_window_secs: u64,
+    /// How many times an order may change drivers.
+    pub max_driver_changes: u32,
+    /// Deliveries a driver needs for their check-in reports to count.
+    pub min_reporter_deliveries: u32,
+    /// What a minute of a driver's arrival time counts for when matching.
+    pub minute_value_cents: u64,
+    /// Where apps fetch the network's time source from.
+    pub time_relays: Vec<String>,
+    pub time_chain_hash: String,
+    /// How long a customer collecting an order has to come for it.
+    pub collection_window_secs: u64,
     /// Wrong handoff codes a giver's app answers per order before it stops.
     pub max_code_attempts: u32,
     pub default_prep_minutes: u16,
@@ -471,6 +493,11 @@ pub struct NetworkTerms {
     /// The most an inline image may take, in bytes of its data URI.
     pub max_image_bytes: u64,
     pub goodie_bag_max_days: u64,
+    /// How long a new goodie bag holds a confirmed claim, by default.
+    pub default_bag_hold_minutes: u16,
+    /// What listing a store sets aside, in minor units -- returned when it
+    /// closes.
+    pub store_listing_stake: u64,
 }
 
 #[hdk_extern]
@@ -478,10 +505,25 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
     Ok(NetworkTerms {
         currency: relay_governance::currency(),
         credit_limit_cents: relay_governance::credit_limit_cents(),
+        suggested_delivery_fees: relay_governance::suggested_delivery_fees(),
         store_response_secs: relay_governance::store_response_window().as_secs(),
+        max_pending_orders: relay_governance::max_pending_orders(),
         report_window_secs: relay_governance::report_window().as_secs(),
         answer_grace_secs: relay_governance::answer_grace().as_secs(),
         claim_grace_secs: relay_governance::claim_grace().as_secs(),
+        pickup_grace_secs: relay_governance::pickup_grace().as_secs(),
+        offer_secs: relay_governance::offer_window().as_secs(),
+        store_wait_secs: relay_governance::store_wait().as_secs(),
+        min_store_wait_secs: relay_governance::min_store_wait().as_secs(),
+        max_store_wait_secs: relay_governance::max_store_wait().as_secs(),
+        replacement_window_secs: relay_governance::replacement_window().as_secs(),
+        bid_window_secs: relay_governance::bid_window().as_secs(),
+        max_driver_changes: relay_governance::max_driver_changes(),
+        min_reporter_deliveries: relay_governance::min_reporter_deliveries(),
+        minute_value_cents: relay_governance::minute_value_cents(),
+        time_relays: relay_governance::time_source().relays,
+        time_chain_hash: relay_governance::time_source().chain_hash,
+        collection_window_secs: relay_governance::collection_window().as_secs(),
         max_code_attempts: relay_governance::max_code_attempts(),
         default_prep_minutes: relay_governance::default_prep_minutes(),
         max_prep_minutes: relay_governance::max_prep_minutes(),
@@ -490,39 +532,40 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         add_on_detour_km: relay_governance::add_on_detour_km(),
         max_image_bytes: relay_governance::max_image_bytes() as u64,
         goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
+        default_bag_hold_minutes: relay_governance::default_bag_hold_minutes(),
+        store_listing_stake: relay_governance::store_listing_stake(),
     })
 }
 
-/// The driver picking the order up from the store: they set aside their
-/// collateral -- the value of the food they now carry -- in the same commit
-/// (validation requires both together), on proof the store handed it over.
-/// It's theirs again once the store decides it was delivered, the store's
-/// if it decides it never was.
+/// The driver picking the order up, on the store's record of handing it to
+/// them. Their app does it as soon as that record reaches it
+/// (`deliveries::tend_driver_deliveries`).
 #[hdk_extern]
 pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
-    if order.status != DeliveryStatus::DriverEnRouteToMerchant {
-        return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once its driver is at the store".into())));
+    if order.status != DeliveryStatus::DriverAtStore {
+        return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once the store has checked its driver in".into())));
     }
-    let bid = order.accepted_bid.clone().ok_or(wasm_error!(WasmErrorInner::Guest("this order has no driver".into())))?;
     let proof = call(CallTargetCell::Local, "attestation", "pickup_proof_for_order".into(), None, order_original_action.clone())?;
     let proof: Option<ActionHash> = match proof {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
         _ => None,
     };
-    order.pickup_proof = Some(proof.ok_or(wasm_error!(WasmErrorInner::Guest("Scan the store's code, or have them confirm they've handed it over.".into())))?);
-    order.collateral_hold = settlement::place_hold(&order_original_action, HoldPurpose::Collateral { bid })?;
+    order.pickup_proof = Some(proof.ok_or(wasm_error!(WasmErrorInner::Guest("Have the store scan your code, or confirm they've handed it over.".into())))?);
     order.status = DeliveryStatus::PickedUp;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back picked-up order".into())))
 }
 
-/// The customer withdrawing their delivery. Validation allows it until the
-/// driver picks it up; the app offers it until the store starts preparing.
+/// The customer withdrawing their delivery, until a driver picks it up --
+/// for a full refund if the store has kept a driver waiting
+/// (`Cancellation::StoreLate`), else owing what's been started for them.
 #[hdk_extern]
 pub fn cancel_order(order_original_action: ActionHash) -> ExternResult<Record> {
-    cancel_delivery(order_original_action, Cancellation::ByCustomer)
+    let latest = resolve_latest(order_original_action.clone())?;
+    let store_late = dispatch_integrity::lineage::Version::of(latest).map(|v| dispatch_integrity::lineage::store_was_late(&v)).transpose()?.unwrap_or(false);
+    cancel_delivery(order_original_action, if store_late { Cancellation::StoreLate } else { Cancellation::ByCustomer })
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -584,6 +627,9 @@ pub(crate) enum ReputationEventKindWire {
     DisputeRaised,
     DisputeResolvedAgainst,
     CollateralForfeited { amount: u64 },
+    DeliveryDropped,
+    StoreLate,
+    CheckInRefused,
 }
 
 /// Best-effort reputation bookkeeping shared by every completion/dispute

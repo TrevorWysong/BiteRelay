@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp } from "./helpers.js";
+import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp, decodeEntry } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -58,6 +58,7 @@ await runScenario(async (scenario) => {
       requester: customer.agentPubKey,
       merchant: merchant.agentPubKey,
       catalog_ref: storeA,
+      catalog_version: storeA,
       lines: [{ item_ref: bag, priced_version: bag, quantity: 1 }],
       order_total: 500,
       status: "Placed",
@@ -101,11 +102,13 @@ await runScenario(async (scenario) => {
   // --- A listed bag's terms are fixed; only its presentation can change. ---
   await assert.rejects(
     call(merchant, "catalog")("create_goodie_bag", bagInput({ pickup_window_end: Date.now() * 1000 + 8 * 86_400 * 1_000_000 })),
-    /within 7 days/,
-    "a bag can't stay listed for more than a week",
+    /ends too long after it's listed/,
+    "a bag can't stay listed longer than the network allows",
   );
-  const listing = bagInput();
-  const termsBag = actionHash(await call(merchant, "catalog")<HcRecord>("create_goodie_bag", listing));
+  const termsRecord = await call(merchant, "catalog")<HcRecord>("create_goodie_bag", bagInput());
+  const termsBag = actionHash(termsRecord);
+  // An update replaces the whole bag, so it starts from the bag as listed.
+  const listing = decodeEntry<Record<string, unknown>>(termsRecord);
   await assert.rejects(
     call(merchant, "catalog")("update_goodie_bag", { original_action: termsBag, bag: { ...listing, price_cents: 100 } }),
     /may only change its title, description or photo/,

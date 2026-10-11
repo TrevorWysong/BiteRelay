@@ -28,6 +28,13 @@ pub enum LedgerKind {
     /// (an order cancelled before they were owed it). No change to the
     /// author's balance; the payer collects it.
     Waive { hold: ActionHash, portion: Portion },
+    /// The author setting aside their store's listing stake, which backs
+    /// one listing of `catalog` (its original action) for customers to find.
+    /// Debit.
+    Stake { catalog: ActionHash },
+    /// The author taking their listing stake back, citing `delisting`: their
+    /// deletion of the very listing it backed. Credit.
+    Unstake { stake: ActionHash, delisting: ActionHash },
     /// The author, a driver, conceding their collateral to the store on its
     /// decision that the order never arrived (`basis`) -- the store collects
     /// it. No change to the author's balance; it settles the order they had

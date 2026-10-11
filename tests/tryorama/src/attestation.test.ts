@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, pickUp, retryUntilOk, ST_PETE, testApp, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver, stranger] = await scenario.addPlayersWithApps([
@@ -39,10 +39,7 @@ await runScenario(async (scenario) => {
   await sync();
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
-  await call(merchant, "dispatch")("set_order_status", { order_original_action: order, next_status: "MerchantConfirmed" });
-  await sync();
-  await call(driver, "dispatch")("set_order_status", { order_original_action: order, next_status: "DriverEnRouteToMerchant" });
-  await sync();
+  await commitAndCook(driver, merchant, order, all);
   // The version of the order naming this driver -- what a handoff cites.
   const current = actionHash(await call(driver, "dispatch")<HcRecord>("get_order", order));
   const leg = (fields: Record<string, unknown>) => ({
@@ -80,7 +77,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] the store acknowledges the driver's pickup on its own chain, once");
 
   // --- Each side writes in its own time: no shared session to fail. ---
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", order));
+  await pickUp(driver, order);
   const dropoff = actionHash(await call(driver, "attestation")<HcRecord>("record_leg", { order_ref: order, sequence: 1, kind: "CustomerHandoff", to: customer.agentPubKey, geo_at_completion: ST_PETE }));
   const legs = await call(customer, "attestation")<HcRecord[]>("get_legs_for_order", order);
   assert.ok(legs.length >= 1, "the customer finds the order's handoffs");

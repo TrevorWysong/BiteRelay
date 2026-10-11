@@ -14,20 +14,11 @@ use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{open, resolve_latest_decoded, seal};
 use relay_integrity_support::limits::HANDOFF_CODE_DIGITS;
-use sha2::{Digest, Sha256};
 
 /// A fresh handoff code: its commitment, and the code sealed to the caller.
 pub(crate) struct NewCode {
     pub commitment: Vec<u8>,
     pub sealed: XSalsa20Poly1305EncryptedData,
-}
-
-/// The commitment to a code: `sha256(pin || salt)`.
-pub(crate) fn commit(secret: &PinSecret) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(secret.pin.as_bytes());
-    hasher.update(&secret.salt);
-    hasher.finalize().to_vec()
 }
 
 /// A fresh handoff code for the caller -- the customer's for a new
@@ -37,7 +28,7 @@ pub(crate) fn new_code() -> ExternResult<NewCode> {
     let number = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % 10u32.pow(HANDOFF_CODE_DIGITS);
     let secret = PinSecret { pin: format!("{number:0width$}", width = HANDOFF_CODE_DIGITS as usize), salt: bytes[4..20].to_vec() };
     let me = agent_info()?.agent_initial_pubkey;
-    Ok(NewCode { commitment: commit(&secret), sealed: seal(&me, &secret)? })
+    Ok(NewCode { commitment: secret.commitment(), sealed: seal(&me, &secret)? })
 }
 
 /// The caller's handoff code for a delivery -- the customer's, to show the

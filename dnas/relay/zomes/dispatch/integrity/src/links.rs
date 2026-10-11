@@ -49,12 +49,13 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
             )
         }
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision => validate_issue_link(&link),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest => validate_issue_link(&link),
     }
 }
 
-/// Only the order's store publishes it for discovery -- in the same step that
-/// accepts it -- only in its Open form, and only under its own dropoff
+/// An order is published for discovery by whoever opens it -- its store,
+/// accepting it, or whoever releases its driver -- only in its Open form,
+/// and only under its own dropoff
 /// cell's anchor for when it was published. That time isn't recorded on the
 /// entry, but it's never after this link and at most moments before it, so
 /// it falls in this link's bucket or the one before.
@@ -62,8 +63,11 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
     // Anchors are computed, never walked: only orders are linked under one.
     let Some(record) = linked_record(link.target)? else { return invalid("an open-order anchor links only orders") };
     let Some(order) = decode::<DeliveryOrder>(&record) else { return invalid("target is not a DeliveryOrder") };
-    if link.author != &order.merchant || order.status != DeliveryStatus::Open {
-        return invalid("only an order's store may publish it for discovery, once it has accepted it");
+    // Whoever opened this version publishes it: the store accepting the
+    // order, or -- after a driver leaves it -- whoever released them (the
+    // version's own validation checked they could).
+    if link.author != record.action().author() || order.status != DeliveryStatus::Open {
+        return invalid("an open order is published by whoever opened that version of it");
     }
     let bucket = relay_types::time_bucket(link.timestamp.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     let allowed = [bucket, bucket - 1].map(|b| path_hash(open_order_anchor(&order.dropoff_geohash, b)));
@@ -78,7 +82,7 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision => invalid("an order's issues and its settlement are a permanent record"),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest => invalid("an order's issues, requests and settlement are a permanent record"),
         _ => validate_queue_link_delete(link),
     }
 }
@@ -97,6 +101,7 @@ fn validate_issue_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallback
     let written_by_author = record.action().author() == link.author;
     let expected_base: Option<AnyLinkableHash> = match link.link_type {
         LinkTypes::OrderToIssue => decode::<ItemIssue>(&record).map(|i| i.order.into()),
+        LinkTypes::OrderToCollectRequest => decode::<CollectRequest>(&record).map(|r| r.order.into()),
         LinkTypes::IssueToResponse => decode::<IssueResponse>(&record).map(|r| r.issue.into()),
         LinkTypes::OrderToDecision => match (decode::<OrderOutcome>(&record), decode::<ItemSettlement>(&record)) {
             (Some(outcome), _) => Some(outcome.order.into()),

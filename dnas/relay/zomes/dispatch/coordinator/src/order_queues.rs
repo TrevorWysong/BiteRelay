@@ -120,6 +120,19 @@ pub(crate) fn retire(order: &OrderParties) -> ExternResult<()> {
     Ok(())
 }
 
+/// Takes an order off one driver's queue -- the driver it was released
+/// from, by its customer (a driver can't edit their own queue: it's how
+/// customers see what they've taken on).
+pub(crate) fn unqueue_driver(order_ref: &ActionHash, driver: &AgentPubKey) -> ExternResult<()> {
+    let target: AnyLinkableHash = order_ref.clone().into();
+    for link in get_links(LinkQuery::try_new(driver.clone(), LinkTypes::DriverToActiveDelivery)?, GetStrategy::default())? {
+        if link.target == target {
+            delete_link(link.create_link_hash, GetOptions::default())?;
+        }
+    }
+    Ok(())
+}
+
 /// The order's current state as a queue entry, with when it was placed and
 /// whether it's still in progress. `None` if the target isn't an order.
 fn classify(original_action: ActionHash) -> Option<(OrderEntry, Timestamp, bool)> {
@@ -253,6 +266,23 @@ fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
     Ok(out)
 }
 
+/// Refuses another order while the caller has placed as many as the network
+/// allows within one store response window -- validation's rule
+/// (`dispatch_integrity::checks::check_order_rate`), told first.
+pub(crate) fn ensure_order_rate() -> ExternResult<()> {
+    let since = sys_time()?.as_micros() - relay_governance::store_response_window().as_micros() as i64;
+    let recent = my_order_actions()?
+        .iter()
+        .filter(|(_, record)| matches!(record.action().data, ActionData::Create(_)) && record.action().timestamp().as_micros() >= since)
+        .count();
+    if recent >= relay_governance::max_pending_orders() as usize {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "You've placed {recent} orders that stores are still answering, the most at once. You can place another once one's answered."
+        ))));
+    }
+    Ok(())
+}
+
 /// How many of the caller's orders at `catalog_ref` they've completed --
 /// what loyalty rewards ("your 6th order is 15% off") count, both kinds.
 #[hdk_extern]
@@ -274,7 +304,7 @@ pub(crate) fn my_completions_at(catalog_ref: &ActionHash) -> ExternResult<Vec<Ac
         }
         let Ok(latest) = resolve_latest(record.action_address().clone()) else { continue };
         let completed = match kind {
-            OrderKind::Delivery => decode_or::<DeliveryOrder>(&latest).is_some_and(|o| o.status == DeliveryStatus::Delivered),
+            OrderKind::Delivery => decode_or::<DeliveryOrder>(&latest).is_some_and(|o| matches!(o.status, DeliveryStatus::Delivered | DeliveryStatus::Collected)),
             OrderKind::Pickup => decode_or::<PickupOrder>(&latest).is_some_and(|o| o.status == PickupStatus::PickedUp),
         };
         if completed {
@@ -334,16 +364,22 @@ pub struct ActiveDelivery {
 /// enforces the same limit on what they actually pick up (`InHand`).
 #[hdk_extern]
 pub fn get_driver_load(driver: AgentPubKey) -> ExternResult<InHand> {
-    let mut orders: Vec<ActionHash> = get_links(LinkQuery::try_new(driver, LinkTypes::DriverToActiveDelivery)?, GetStrategy::default())?
+    let mut orders: Vec<ActionHash> = get_links(LinkQuery::try_new(driver.clone(), LinkTypes::DriverToActiveDelivery)?, GetStrategy::default())?
         .into_iter()
         .filter_map(|link| link.target.into_action_hash())
         .collect();
     orders.sort();
     orders.dedup();
-    Ok(orders.into_iter().filter_map(classify).filter(|(_, _, active)| *active).fold(InHand::default(), |load, (entry, _, _)| InHand {
-        orders: load.orders + 1,
-        priority: load.priority || decode_or::<DeliveryOrder>(&entry.record).is_some_and(|order| order.priority),
-    }))
+    // Only orders that are still theirs: one a driver left reopens, active
+    // but no longer theirs, until its customer takes it off their queue.
+    let mut load = InHand::default();
+    for (entry, _, active) in orders.into_iter().filter_map(classify) {
+        let Some(order) = decode_or::<DeliveryOrder>(&entry.record) else { continue };
+        if active && driven_by(&order, &driver)? {
+            load = InHand { orders: load.orders + 1, priority: load.priority || order.priority };
+        }
+    }
+    Ok(load)
 }
 
 /// The caller's in-progress deliveries, oldest first. Replaces walking
@@ -358,9 +394,19 @@ pub fn get_my_active_deliveries(_: ()) -> ExternResult<Vec<ActiveDelivery>> {
         let (Some(order_ref), Ok(accepting)) = (link.target.into_action_hash(), ActionHash::try_from_raw_39(link.tag.0.clone())) else { continue };
         let Some((order, requested_at, true)) = classify(order_ref) else { continue };
         let Some(bid_ref) = get(accepting, GetOptions::default())?.and_then(|r| decode_or::<DeliveryOrder>(&r)).and_then(|o| o.accepted_bid) else { continue };
+        // Still theirs: the order's current driver is still this bid's.
+        if decode_or::<DeliveryOrder>(&order.record).and_then(|o| o.accepted_bid).as_ref() != Some(&bid_ref) {
+            continue;
+        }
         let Ok(bid) = resolve_latest(bid_ref) else { continue };
         deliveries.push((ActiveDelivery { order, bid }, requested_at));
     }
     deliveries.sort_by_key(|(_, requested_at)| *requested_at);
     Ok(deliveries.into_iter().map(|(d, _)| d).collect())
+}
+
+/// Whether `driver` is the order's current driver.
+fn driven_by(order: &DeliveryOrder, driver: &AgentPubKey) -> ExternResult<bool> {
+    let Some(bid_ref) = &order.accepted_bid else { return Ok(false) };
+    Ok(resolve_latest(bid_ref.clone())?.entry().to_app_option::<Bid>().ok().flatten().is_some_and(|bid| &bid.bidder == driver))
 }

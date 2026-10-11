@@ -23,6 +23,8 @@
 use hdi::hash_path::path::Path;
 use hdi::prelude::*;
 
+pub mod beacon;
+pub mod chain;
 pub mod limits;
 mod sealed;
 pub use sealed::{max_sealed_image_bytes, sealed_chunks_problem, sealed_problem, SealedChunks};
@@ -144,6 +146,17 @@ pub fn image_problem(uri: &str) -> Option<&'static str> {
         return Some("an image's data must be base64");
     }
     None
+}
+
+/// Why an amount is out of bounds, if it is: more than any single amount
+/// may be (`limits::MAX_AMOUNT`).
+pub fn amount_problem(field: &'static str, amount: u64) -> Option<String> {
+    (amount > limits::MAX_AMOUNT).then(|| format!("{field} is more than any amount may be"))
+}
+
+/// Why a quantity is out of bounds, if it is: more than `limits::MAX_LINE_QUANTITY`.
+pub fn quantity_problem(field: &'static str, quantity: u32) -> Option<String> {
+    (quantity > limits::MAX_LINE_QUANTITY).then(|| format!("{field} is more than {} units", limits::MAX_LINE_QUANTITY))
 }
 
 /// Why a piece of text is unacceptable, if it is: longer than `max_chars`

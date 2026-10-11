@@ -14,15 +14,23 @@ import {
   setOrderStatus,
   decideNotDelivered,
   getMyPickupCode,
+  getOrderTiming,
   getOrderDecisions,
+  handOverCollection,
+  markNotCollected,
 } from "../../holochain/zomes/dispatch";
-import { isFinished, itemCount, mergeNewestFirst } from "../../lib/orderEntries";
+import { QrScanner } from "../../components/QrScanner";
+import { decodeHandoverCode, decodePickupCode } from "../../lib/handoverCode";
+import { isFinished, itemCount, mergeNewestFirst, received } from "../../lib/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/merchantQueue";
 import { useResource } from "../../lib/useResource";
 import { describeError } from "../../lib/errors";
+import { useClock } from "../../lib/useClock";
 import { DECLINE_REASONS, responseDeadlineMs } from "../../lib/storeAnswers";
 import { useTerms } from "../../store/network";
+import { useStoreSteps } from "../../lib/storeSteps";
+import { currentBeacon } from "../../lib/timeSource";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
@@ -59,6 +67,7 @@ const PREP_CHOICES = [5, 10, 15, 20, 30, 45, 60];
 export function MerchantOrders() {
   const navigate = useNavigate();
   const stores = useMyStores();
+  useStoreSteps((stores?.length ?? 0) > 0);
   const [filter, setFilter] = useState(ALL_STORES);
   const [tab, setTab] = useState<"active" | "history">("active");
 
@@ -276,19 +285,29 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
   const note = (text: string) => <p className="mt-2 text-xs text-ink-400">{text}</p>;
   if (row.kind === "Delivery") {
     switch (row.order.status) {
-      case "BidAccepted":
-        return button("Confirm prep started", (ref) => setOrderStatus(ref, "MerchantConfirmed"));
       case "Open":
-        return note("Waiting for a driver to be assigned.");
+        return note("Finding a driver. You'll start cooking once one is on the way.");
+      case "BidAccepted":
+        return note("A driver has been found, and is committing to it. If they don't, your app offers it to another.");
+      case "DriverEnRouteToMerchant":
+        return (
+          <>
+            {note("A driver is on the way. Your app starts the clock on cooking as soon as it hears.")}
+            {button("Start cooking", (ref) => setOrderStatus(ref, "MerchantConfirmed"))}
+          </>
+        );
       case "Scheduled":
         return note("Scheduled for later -- it comes to you to accept at its requested time.");
       case "MerchantConfirmed":
-      case "DriverEnRouteToMerchant":
-        return <PickupHandoff orderHex={row.hex} orderRef={row.ref} />;
+        return <PickupHandoff orderHex={row.hex} orderRef={row.ref} checkedIn={false} />;
+      case "DriverAtStore":
+        return <PickupHandoff orderHex={row.hex} orderRef={row.ref} checkedIn />;
       case "PickedUp":
         return note("Out for delivery.");
       case "Disputed":
         return <NeverArrivedClaim orderHex={row.hex} orderRef={row.ref} />;
+      case "Collecting":
+        return <CollectionHandoff row={row} />;
       default:
         return null;
     }
@@ -320,6 +339,7 @@ interface HistoryState {
 /// (history doesn't change under you), and each "Load more" only reads the
 /// next page of each store that still has one.
 function OrderHistory({ stores, storeLabel, scope }: ListProps) {
+  const terms = useTerms();
   const [loadingMore, setLoadingMore] = useState(false);
   const { data, mutate } = useResource<HistoryState>(`merchant-history:${storesKey(stores)}`, () => fetchHistoryPages(stores, null));
   const hasMore = !!data && Object.values(data.cursors).some((cursor) => cursor !== null);
@@ -344,7 +364,7 @@ function OrderHistory({ stores, storeLabel, scope }: ListProps) {
     <div className="flex flex-col gap-3">
       {data.rows.map((row) => (
         <OrderCard key={row.hex} row={row} storeLabel={storeLabel(row.storeHex)} showTime>
-          {mayHaveOpenIssues(row) && <OrderIssues orderRef={row.ref} role="store" />}
+          {mayHaveOpenIssues(row, terms) && <OrderIssues orderRef={row.ref} role="store" />}
         </OrderCard>
       ))}
       {hasMore && (
@@ -364,14 +384,14 @@ async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Tim
   };
 }
 
-/// A day covers an order's 2-hour issue window and the time a store has to
-/// answer a late report, with room to spare; older orders aren't checked,
+/// Whether a finished order may still have reports to answer: completed
+/// (its latest version, `writtenAt`) within the network's report window
+/// plus the store's grace to answer a late one. Older orders aren't checked,
 /// which keeps a long history cheap to show.
-const ISSUE_LOOKBACK_MICROS = 24 * 60 * 60 * 1_000_000;
-
-function mayHaveOpenIssues(row: QueueRow): boolean {
-  const completed = row.kind === "Delivery" ? row.order.status === "Delivered" : row.order.status === "PickedUp";
-  return completed && Date.now() * 1000 - row.order.requested_at < ISSUE_LOOKBACK_MICROS;
+function mayHaveOpenIssues(row: QueueRow, terms: { report_window_secs: number; answer_grace_secs: number }): boolean {
+  const completed = row.kind === "Delivery" ? received(row.order.status) : row.order.status === "PickedUp";
+  const openForMicros = (terms.report_window_secs + terms.answer_grace_secs) * 1_000_000;
+  return completed && Date.now() * 1000 - row.writtenAt < openForMicros;
 }
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {
@@ -406,36 +426,68 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
   );
 }
 
-/// Handing the order to its driver: the store's pickup code to show them,
-/// and -- once the driver has recorded the pickup -- a tap to confirm it
-/// instead. Either proves the driver has the food, and the driver's
-/// collateral covers it from then on.
-function PickupHandoff({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
-  const [confirming, setConfirming] = useState(false);
+/// The driver at the counter: the store's check-in code for them to scan as
+/// they arrive, then the store scanning *their* code as it hands the order
+/// over -- or confirming the pickup they've recorded. Handing it over checks
+/// them in too, if they hadn't. Checked in, the driver is owed their fee if
+/// the store keeps them waiting past the network's wait.
+function PickupHandoff({ orderHex, orderRef, checkedIn }: { orderHex: string; orderRef: Uint8Array; checkedIn: boolean }) {
+  const terms = useTerms();
+  const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { data: code } = useResource(`pickup-code:${orderHex}`, () => getMyPickupCode(orderRef));
+  const { data: code } = useResource(checkedIn ? null : `pickup-code:${orderHex}`, () => getMyPickupCode(orderRef));
   const { data: pickup, reload } = useResource(`unconfirmed-pickup:${orderHex}`, () => unconfirmedPickup(orderRef), { pollMs: POLL.signalled });
-  async function confirm() {
-    setConfirming(true);
+  const { data: timing = null } = useResource(checkedIn ? `order-timing:${orderHex}:at-store` : null, () => getOrderTiming(orderRef));
+
+  async function handOver(leg: Uint8Array) {
+    setBusy(true);
     setError(null);
     try {
-      await acknowledgeLeg(pickup!);
+      await acknowledgeLeg(leg);
+      setScanning(false);
       await reload();
     } catch (err) {
       setError(describeError(err));
     } finally {
-      setConfirming(false);
+      setBusy(false);
     }
   }
+
+  function scanned(text: string) {
+    const parsed = decodePickupCode(text);
+    if (!parsed || parsed.orderHex !== orderHex) {
+      setError("That isn't this order's driver code.");
+      return;
+    }
+    void handOver(parsed.leg);
+  }
+
   return (
     <div className="mt-3 flex flex-col gap-2">
+      {checkedIn ? (
+        <p className="text-xs text-ink-400">
+          The driver is checked in.
+          {timing?.store_late_after != null && ` If it isn't ready by ${formatClockTime(timing.store_late_after)}, they can call you late: the customer is refunded and you pay their fee.`}
+        </p>
+      ) : (
+        <p className="text-xs text-ink-400">Cooking. The driver scans this code at your counter to check in; scanning theirs hands the order over.</p>
+      )}
       {code && <HandoverCode orderRef={orderRef} secret={code} giver="store" />}
+      {scanning ? (
+        <QrScanner onScan={scanned} />
+      ) : (
+        <Button className="w-full py-2 text-xs" loading={busy} onClick={() => setScanning(true)}>
+          Hand it over: scan the driver's code
+        </Button>
+      )}
       {pickup && (
-        <Button className="w-full py-2 text-xs" loading={confirming} onClick={confirm}>
+        <Button variant="ghost" className="w-full py-2 text-xs" loading={busy} onClick={() => handOver(pickup)}>
           Confirm handed to driver
         </Button>
       )}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <p className="text-[11px] text-ink-400">Wait {Math.round(terms.store_wait_secs / 60)} minutes past the ready time and a checked-in driver may call you late.</p>
     </div>
   );
 }
@@ -486,5 +538,61 @@ function ForTheStore({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8
       {data.customer_name && <p className="mt-1 text-xs font-semibold text-ink-700 dark:text-ink-200">For {data.customer_name}</p>}
       {data.kitchen_note && <p className="mt-1 text-xs italic text-ink-500">"{data.kitchen_note}"</p>}
     </>
+  );
+}
+
+/// A delivery no driver brought, which its customer is collecting: the
+/// store scans their code to hand it over -- or, once the collection window
+/// has passed without them, records it uncollected and keeps the food's
+/// price.
+function CollectionHandoff({ row }: { row: QueueRow }) {
+  const windowSecs = useTerms().collection_window_secs;
+  const now = useClock(30_000);
+  const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const overdue = now.getTime() * 1000 >= row.writtenAt + windowSecs * 1_000_000;
+
+  async function act(change: () => Promise<unknown>) {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await change();
+      setScanning(false);
+    } catch (err) {
+      setProblem(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function scanned(text: string) {
+    const code = decodeHandoverCode(text);
+    if (!code || code.orderHex !== row.hex) {
+      setProblem("That isn't this order's code.");
+      return;
+    }
+    void act(() => handOverCollection(row.ref, code.secret));
+  }
+
+  return (
+    <div className="mt-3">
+      <p className="text-xs text-ink-400">No driver came, so the customer is collecting it. Scan their code when they arrive.</p>
+      {scanning ? (
+        <div className="mt-2">
+          <QrScanner onScan={scanned} />
+        </div>
+      ) : (
+        <Button className="mt-2 w-full py-2 text-xs" loading={busy} onClick={() => setScanning(true)}>
+          Scan their code
+        </Button>
+      )}
+      {overdue && (
+        <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={busy} onClick={() => act(async () => markNotCollected(row.ref, await currentBeacon()))}>
+          They never came
+        </Button>
+      )}
+      {problem && <p className="mt-2 text-xs text-red-600">{problem}</p>}
+    </div>
   );
 }

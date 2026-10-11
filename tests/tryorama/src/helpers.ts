@@ -88,8 +88,10 @@ export async function retryUntil<T>(fn: () => Promise<T>, done: (value: T) => bo
 
 /// DNA properties every test network runs with, beneath any a test sets: a
 /// report window short enough to wait out, so a store's payment for the
-/// food settles within a test.
-export const TEST_PROPERTIES = { report_window_secs: 2 };
+/// food settles within a test; and no store listing stake, so a store
+/// starts at a zero balance like every account. A test of either sets its
+/// own.
+export const TEST_PROPERTIES = { report_window_secs: 2, store_listing_stake: 0 };
 
 /// The `RoleSettings` installing with `properties` (merged over
 /// `TEST_PROPERTIES`). Discovered against the real admin API: it's tagged
@@ -253,4 +255,77 @@ export async function latestLedgerEntry(player: PlayerApp): Promise<{ hash: Uint
   if (!latest) return { hash: null, balance: 0, in_hand: EMPTY_HANDS };
   const entry = decodeEntry<{ balance: number; in_hand: InHand }>(latest);
   return { hash: actionHash(latest), balance: entry.balance, in_hand: entry.in_hand };
+}
+
+/// The order's status as `player` reads it.
+export async function deliveryStatus(player: PlayerApp, orderRef: Uint8Array): Promise<string> {
+  const record = await player.cells[0].callZome<HcRecord>({ zome_name: "dispatch", fn_name: "get_order", payload: orderRef });
+  return decodeEntry<{ status: string }>(record).status;
+}
+
+/// Runs `step`, accepting `alreadyDone` as success -- each app does its own
+/// steps as soon as it hears, so a test doing the same step may find it
+/// done.
+async function stepOrDone(step: () => Promise<unknown>, alreadyDone: RegExp): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    if (!alreadyDone.test(String(err))) throw err;
+  }
+}
+
+/// The driver whose bid was accepted committing to the order (their
+/// collateral set aside), then the store starting to cook it. Each one's
+/// app does its step on its own; this does them too, so a test needn't
+/// wait, and checks the order ends up cooking.
+export async function commitAndCook(driver: PlayerApp, store: PlayerApp, orderRef: Uint8Array, players: PlayerApp[]): Promise<void> {
+  await retryUntilOk(() =>
+    stepOrDone(() => driver.cells[0].callZome({ zome_name: "dispatch", fn_name: "commit_to_order", payload: orderRef }), /already committed/),
+  );
+  await dhtSync(players, driver.cells[0].cell_id[0]);
+  await retryUntilOk(() =>
+    stepOrDone(() => store.cells[0].callZome({ zome_name: "dispatch", fn_name: "start_cooking", payload: orderRef }), /isn't waiting on the kitchen/),
+  );
+  await dhtSync(players, store.cells[0].cell_id[0]);
+  await retryUntil(() => deliveryStatus(driver, orderRef), (s) => ["MerchantConfirmed", "DriverAtStore", "PickedUp"].includes(s));
+}
+
+/// The store handing the order to its driver -- the driver's pickup leg,
+/// acknowledged by the store, which checks them in if it hadn't -- and the
+/// driver picking it up on that record (their app does so on its own too).
+/// Returns the pickup leg.
+export async function collectFromStore(driver: PlayerApp, store: PlayerApp, orderRef: Uint8Array, players: PlayerApp[]): Promise<Uint8Array> {
+  const leg = await handOff(driver, store, orderRef, "MerchantHandoff", players);
+  await pickUp(driver, orderRef);
+  await dhtSync(players, driver.cells[0].cell_id[0]);
+  return leg;
+}
+
+/// The driver picking up an order the store has handed over -- or finding
+/// their app already has.
+export async function pickUp(driver: PlayerApp, orderRef: Uint8Array): Promise<void> {
+  await retryUntilOk(async () => {
+    if ((await deliveryStatus(driver, orderRef)) === "PickedUp") return;
+    await driver.cells[0].callZome({ zome_name: "dispatch", fn_name: "pick_up_order", payload: orderRef });
+  });
+}
+
+/// The network's default time source (drand quicknet) -- what deadline
+/// claims prove the time with. Tests fetch its current round, as apps do.
+const TIME_RELAYS = ["https://api.drand.sh", "https://drand.cloudflare.com"];
+const TIME_CHAIN = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971";
+
+/// The time source's current round.
+export async function currentBeacon(): Promise<{ round: number; signature: Uint8Array }> {
+  for (const relay of TIME_RELAYS) {
+    try {
+      const response = await fetch(`${relay}/${TIME_CHAIN}/public/latest`);
+      if (!response.ok) continue;
+      const { round, signature } = (await response.json()) as { round: number; signature: string };
+      return { round, signature: Uint8Array.from(Buffer.from(signature, "hex")) };
+    } catch {
+      // The next relay.
+    }
+  }
+  throw new Error("couldn't reach the time source");
 }

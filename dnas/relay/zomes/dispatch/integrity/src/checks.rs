@@ -10,7 +10,7 @@
 
 use super::*;
 use catalog_types::{order_total, BagClaimStatus, GoodieBag, MenuItem, PricedLine};
-use relay_integrity_support::limits::MAX_ORDER_LINES;
+use relay_integrity_support::limits::{MAX_LINE_QUANTITY, MAX_ORDER_LINES};
 use relay_integrity_support::{decode, original_creation};
 use std::collections::BTreeSet;
 
@@ -24,6 +24,18 @@ pub(crate) struct OrderPricing<'a> {
     pub bag_claim_ref: Option<&'a ActionHash>,
     pub loyalty_proof: &'a [ActionHash],
     pub placed_at: Timestamp,
+    /// The store's minimum order, as it stood when the order was placed.
+    pub min_subtotal: Option<u64>,
+}
+
+/// The store version an order cites (`catalog_version`) -- the terms it
+/// was placed under -- or why it can't be: it must be a version of the
+/// order's own store.
+pub(crate) fn store_version(catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<Result<MerchantCatalog, String>> {
+    if &original_creation(catalog_version.clone())? != catalog_ref {
+        return Ok(Err("catalog_version must be a version of the order's own store".into()));
+    }
+    Ok(decode::<MerchantCatalog>(&must_get_valid_record(catalog_version.clone())?).ok_or_else(|| "catalog_version must be a store".into()))
 }
 
 /// `order_total` must be exactly what the order's lines cost at the item
@@ -39,8 +51,8 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     if order.lines.is_empty() || order.lines.len() > MAX_ORDER_LINES {
         return Ok(Some(format!("an order has between 1 and {MAX_ORDER_LINES} lines")));
     }
-    if order.lines.iter().any(|line| line.quantity == 0) {
-        return Ok(Some("every line must have a quantity of at least one".into()));
+    if order.lines.iter().any(|line| line.quantity == 0 || line.quantity > MAX_LINE_QUANTITY) {
+        return Ok(Some(format!("every line has between one and {MAX_LINE_QUANTITY} units")));
     }
     let distinct: BTreeSet<_> = order.lines.iter().map(|line| &line.item_ref).collect();
     if distinct.len() != order.lines.len() {
@@ -63,6 +75,12 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
             return Ok(Some("every item must be on this store's menu".into()));
         }
         priced.push(PricedLine { item_ref: line.item_ref.clone(), unit_price: item.price_cents, quantity: line.quantity });
+    }
+    if let Some(min) = order.min_subtotal {
+        let subtotal: u64 = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
+        if subtotal < min {
+            return Ok(Some("the order is below the store's minimum".into()));
+        }
     }
 
     let promo = match order.promo_code_ref {
@@ -128,7 +146,7 @@ fn count_completed_orders(requester: &AgentPubKey, catalog_ref: &ActionHash, pro
             return Ok(Err("loyalty_proof must be order completions".into()));
         }
         let completed_here = if let Some(order) = decode::<DeliveryOrder>(&record) {
-            &order.requester == requester && order.status == DeliveryStatus::Delivered && &order.catalog_ref == catalog_ref
+            &order.requester == requester && matches!(order.status, DeliveryStatus::Delivered | DeliveryStatus::Collected) && &order.catalog_ref == catalog_ref
         } else if let Some(order) = decode::<PickupOrder>(&record) {
             &order.requester == requester && order.status == PickupStatus::PickedUp && &order.catalog_ref == catalog_ref
         } else {
@@ -211,20 +229,8 @@ pub(crate) fn check_bag_claim(claim_ref: &ActionHash, requester: &AgentPubKey, c
 /// the customer's chain) and `chain_top` (inclusive) on `requester`'s chain
 /// already redeems it, citing any version of it.
 fn already_redeemed(requester: &AgentPubKey, chain_top: &ActionHash, claim_origin: &ActionHash) -> ExternResult<bool> {
-    let order_types: [ScopedEntryDefIndex; 2] = [UnitEntryTypes::DeliveryOrder.try_into()?, UnitEntryTypes::PickupOrder.try_into()?];
-    let activity = must_get_agent_activity(requester.clone(), ChainFilter::until_hash(chain_top.clone(), claim_origin.clone()))?;
-    for item in activity {
-        let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
-        let EntryType::App(def) = &create.entry_type else { continue };
-        if !order_types.iter().any(|t| t.zome_index == def.zome_index && t.zome_type == def.entry_index) {
-            continue;
-        }
-        let entry = match item.cached_entry {
-            Some(entry) => entry,
-            None => must_get_entry(create.entry_hash.clone())?.content,
-        };
-        let Entry::App(bytes) = entry else { continue };
-        let bytes = SerializedBytes::from(bytes);
+    let orders = entries_created(requester, ChainFilter::until_hash(chain_top.clone(), claim_origin.clone()), &order_types()?)?;
+    for bytes in orders {
         let cited = DeliveryOrder::try_from(bytes.clone())
             .ok()
             .and_then(|o| o.bag_claim_ref)
@@ -236,4 +242,16 @@ fn already_redeemed(requester: &AgentPubKey, chain_top: &ActionHash, claim_origi
         }
     }
     Ok(false)
+}
+
+/// Why a customer can't place another order now, if they can't: they've
+/// placed as many as the network allows within one store response window
+/// (`relay_governance::max_pending_orders`), counting back from this one's
+/// time `at` -- which can't be earlier than the chain before it.
+pub(crate) fn check_order_rate(requester: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<Option<String>> {
+    let Some(prev_action) = prev_action else { return Ok(None) };
+    let window = relay_governance::store_response_window().as_micros() as i64;
+    let since = Timestamp::from_micros(at.as_micros() - window);
+    let placed = entries_since(requester, prev_action, since, &order_types()?)?.len();
+    Ok((placed >= relay_governance::max_pending_orders() as usize).then(|| "you've placed as many orders as the network allows at once; wait for a store to answer".into()))
 }

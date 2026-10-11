@@ -11,11 +11,14 @@
 //!   only on the customer's claim, made after the driver's proven pickup,
 //!   and never by a store that cancelled the order;
 //! - a settlement's refund is never more than the issues it cites are worth
-//!   of what the customer paid.
+//!   of what the customer paid -- plus, for a delivery its customer
+//!   collected themselves, the store's share of the fee it would have paid a
+//!   driver, which it must refund (`collection_compensation`).
 
 use super::*;
 use crate::claims::wrote_update_of;
 use dispatch_types::{claimed_value, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome};
+use relay_integrity_support::chain::wrote_since;
 use relay_integrity_support::{decode, original_creation};
 
 /// An order's terms an issue is judged against: its parties, and each line
@@ -57,12 +60,29 @@ pub(crate) fn order_for_issues(order: &ActionHash) -> ExternResult<Option<OrderF
     Ok(Some(OrderForIssues { requester, merchant, order_total, lines: priced, delivery }))
 }
 
-pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+/// A customer's report of items missing or wrong: theirs, once they have
+/// the order, about items on it -- each item reported once, so an order's
+/// reports are bounded by its lines and no item is claimed twice.
+pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     let Some(terms) = order_for_issues(&issue.order)? else {
         return invalid("an issue is reported about an order, by its original action");
     };
     if author != &terms.requester {
         return invalid("only the order's customer reports issues with it");
+    }
+    let received = if terms.delivery {
+        version_of::<DeliveryOrder>(&issue.order, &issue.received)?.is_some_and(|(_, v)| matches!(v.status, DeliveryStatus::Delivered | DeliveryStatus::Collected))
+    } else {
+        version_of::<PickupOrder>(&issue.order, &issue.received)?.is_some_and(|(record, v)| v.status == PickupStatus::PickedUp && record.action().author() == author)
+    };
+    if !received {
+        return invalid("an issue is reported once the customer has the order, citing the version that shows it");
+    }
+    let Some(prev) = prev_action else { return invalid("an issue can't open a chain") };
+    let placed = must_get_action(issue.order.clone())?.hashed.content.header.timestamp;
+    let reported_again = |earlier: &ItemIssue| earlier.order == issue.order && earlier.lines.iter().any(|old| issue.lines.iter().any(|new| new.item_ref == old.item_ref));
+    if wrote_since::<ItemIssue>(author, prev, placed, UnitEntryTypes::ItemIssue.try_into()?, reported_again)? {
+        return invalid("each item on an order is reported once");
     }
     if issue.lines.is_empty() {
         return invalid("an issue names at least one item");
@@ -82,36 +102,6 @@ pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey) -> Ex
     require(bounded, "an issue's evidence may hold a note and at most one photo, within the network's image limit")
 }
 
-/// Whether `author` already wrote an entry of `entry_type` on their chain
-/// between `since` and `chain_top` for which `matches` holds.
-fn already_wrote<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
-    author: &AgentPubKey,
-    chain_top: &ActionHash,
-    since: Timestamp,
-    unit: UnitEntryTypes,
-    matches: impl Fn(&T) -> bool,
-) -> ExternResult<bool> {
-    if must_get_action(chain_top.clone())?.hashed.content.header.timestamp < since {
-        return Ok(false);
-    }
-    let wanted = EntryType::try_from(unit)?;
-    for item in must_get_agent_activity(author.clone(), ChainFilter::until_timestamp(chain_top.clone(), since).include_cached_entries())? {
-        let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
-        if create.entry_type != wanted {
-            continue;
-        }
-        let entry = match item.cached_entry {
-            Some(entry) => entry,
-            None => must_get_entry(create.entry_hash.clone())?.content,
-        };
-        let Entry::App(bytes) = entry else { continue };
-        if T::try_from(SerializedBytes::from(bytes)).is_ok_and(|e| matches(&e)) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 pub(crate) fn validate_issue_response(response: &IssueResponse, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     let issue_record = must_get_valid_record(response.issue.clone())?;
     let Some(issue) = decode::<ItemIssue>(&issue_record) else { return invalid("a response answers an issue") };
@@ -125,7 +115,7 @@ pub(crate) fn validate_issue_response(response: &IssueResponse, author: &AgentPu
         return invalid("an answer comes after the issue it answers");
     }
     let Some(prev) = prev_action else { return invalid("a response can't open a chain") };
-    let answered = already_wrote::<IssueResponse>(author, prev, issue_record.action().timestamp(), UnitEntryTypes::IssueResponse, |r| r.issue == response.issue)?;
+    let answered = wrote_since::<IssueResponse>(author, prev, issue_record.action().timestamp(), UnitEntryTypes::IssueResponse.try_into()?, |r| r.issue == response.issue)?;
     require(!answered, "a store answers each issue once")
 }
 
@@ -157,7 +147,7 @@ pub(crate) fn validate_outcome(outcome: &OrderOutcome, author: &AgentPubKey, at:
         return invalid("an outcome is decided after its order was placed");
     }
     let Some(prev) = prev_action else { return invalid("an outcome can't open a chain") };
-    let decided = already_wrote::<OrderOutcome>(author, prev, placed, UnitEntryTypes::OrderOutcome, |o| o.order == outcome.order)?;
+    let decided = wrote_since::<OrderOutcome>(author, prev, placed, UnitEntryTypes::OrderOutcome.try_into()?, |o| o.order == outcome.order)?;
     if decided {
         return invalid("an order's outcome is decided once");
     }
@@ -181,6 +171,19 @@ pub(crate) fn validate_outcome(outcome: &OrderOutcome, author: &AgentPubKey, at:
     }
 }
 
+/// What the store owes a customer who collected their delivery
+/// (`collected`, its Collected version): its share of the last accepted
+/// driver's fee, or of the customer's cap if no driver was ever accepted.
+fn compensation(collected: Record, version: DeliveryOrder) -> ExternResult<u64> {
+    let (percent, total, cap) = (version.delivery_subsidy_percent, version.order_total, version.max_delivery_fee);
+    let last_bid = dispatch_types::lineage::find_back(dispatch_types::lineage::Version { record: collected, order: version }, |v, _| v.order.accepted_bid.clone())?;
+    let fee = match last_bid {
+        Some(bid) => decode::<Bid>(&must_get_valid_record(bid)?).map(|b| b.price_offer),
+        None => cap,
+    };
+    Ok(dispatch_types::collection_compensation(fee, percent, total))
+}
+
 pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     let Some(terms) = order_for_issues(&settlement.order)? else { return invalid("a settlement is for an order, by its original action") };
     if author != &terms.merchant {
@@ -190,15 +193,23 @@ pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPub
     if at < placed {
         return invalid("a settlement comes after its order was placed");
     }
-    // That the customer has the order.
-    let has_it = if terms.delivery {
+    // That the customer has the order -- and, collected from the store,
+    // what the store owes them for coming.
+    let (has_it, owed) = if terms.delivery {
         let record = must_get_valid_record(settlement.basis.clone())?;
-        decode::<OrderOutcome>(&record).is_some_and(|o| o.order == settlement.order && matches!(o.outcome, Outcome::Delivered { .. }))
+        let delivered = decode::<OrderOutcome>(&record).is_some_and(|o| o.order == settlement.order && matches!(o.outcome, Outcome::Delivered { .. }));
+        match version_of::<DeliveryOrder>(&settlement.order, &settlement.basis)? {
+            Some((record, version)) if !delivered && version.status == DeliveryStatus::Collected => (true, compensation(record, version)?),
+            _ => (delivered, 0),
+        }
     } else {
-        version_of::<PickupOrder>(&settlement.order, &settlement.basis)?.is_some_and(|(record, v)| v.status == PickupStatus::PickedUp && record.action().author() == &terms.requester)
+        (version_of::<PickupOrder>(&settlement.order, &settlement.basis)?.is_some_and(|(record, v)| v.status == PickupStatus::PickedUp && record.action().author() == &terms.requester), 0)
     };
     if !has_it {
-        return invalid("a settlement cites that the customer has the order: its delivered outcome, or their collecting it");
+        return invalid("a settlement cites that the customer has the order: its delivered outcome, or its collection");
+    }
+    if settlement.refund < owed {
+        return invalid("a delivery its customer collected refunds them the store's share of the fee it would have paid a driver");
     }
     let mut claimed: Vec<(ActionHash, u32)> = Vec::new();
     for (i, issue_ref) in settlement.issues.iter().enumerate() {
@@ -215,10 +226,10 @@ pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPub
         }
         claimed.extend(issue.lines.iter().map(|l| (l.item_ref.clone(), l.quantity)));
     }
-    if settlement.refund > claimed_value(&terms.lines, terms.order_total, &claimed) {
+    if settlement.refund > claimed_value(&terms.lines, terms.order_total, &claimed).saturating_add(owed).min(terms.order_total) {
         return invalid("a refund can't exceed what the cited issues are worth");
     }
     let Some(prev) = prev_action else { return invalid("a settlement can't open a chain") };
-    let again = already_wrote::<ItemSettlement>(author, prev, placed, UnitEntryTypes::ItemSettlement, |s| s.order == settlement.order)?;
+    let again = wrote_since::<ItemSettlement>(author, prev, placed, UnitEntryTypes::ItemSettlement.try_into()?, |s| s.order == settlement.order)?;
     require(!again, "an order is settled once")
 }

@@ -122,8 +122,9 @@ function toLocalInput(d: Date) {
 
 /// Seeded once on mount with a window starting in an hour and lasting two.
 function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreated: () => Promise<void> }) {
-  // The longest a bag may stay listed -- validation refuses longer.
-  const maxDays = useTerms().goodie_bag_max_days;
+  // The longest a bag may stay listed -- validation refuses longer -- and
+  // how long a confirmed claim is held, unless the store says otherwise.
+  const { goodie_bag_max_days: maxDays, default_bag_hold_minutes: defaultHold } = useTerms();
   const [form, setForm] = useState(() => {
     const start = new Date(Date.now() + 60 * 60 * 1000);
     return {
@@ -137,6 +138,7 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
       end: toLocalInput(new Date(start.getTime() + 2 * 60 * 60 * 1000)),
       supports_pickup: true,
       supports_delivery: false,
+      holdMinutes: defaultHold,
     };
   });
   const [saving, setSaving] = useState(false);
@@ -159,7 +161,9 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
             ? "The pickup window must end after it starts."
             : endMs - openedAt > maxDays * DAY_MS
               ? `The pickup window must end within ${maxDays} days.`
-              : null;
+              : !(form.holdMinutes >= 1 && form.holdMinutes * 60_000 <= maxDays * DAY_MS)
+                ? "Hold a claim for at least a minute."
+                : null;
 
   async function save() {
     if (problem) return;
@@ -177,6 +181,7 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
         pickup_window_end: endMs * 1000,
         supports_pickup: form.supports_pickup,
         supports_delivery: form.supports_delivery,
+        hold_minutes: form.holdMinutes,
       });
       await onCreated();
     } finally {
@@ -205,9 +210,15 @@ function NewBagForm({ catalogRef, onCreated }: { catalogRef: Uint8Array; onCreat
       <Field label="Description">
         <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="What's usually in it? (optional -- contents vary by day)" />
       </Field>
-      <Field label="Quantity available">
-        <Input type="number" min={1} step={1} value={form.quantity_total} onChange={(e) => set({ quantity_total: Number(e.target.value) })} />
-      </Field>
+      <div className="flex gap-2">
+        <Field label="Quantity available">
+          <Input type="number" min={1} step={1} value={form.quantity_total} onChange={(e) => set({ quantity_total: Number(e.target.value) })} />
+        </Field>
+        <Field label="Hold a claim for (min)">
+          <Input type="number" min={1} step={1} value={form.holdMinutes} onChange={(e) => set({ holdMinutes: Math.round(Number(e.target.value)) })} />
+        </Field>
+      </div>
+      <p className="text-[11px] text-ink-400">A bag you confirm is held for its customer this long. If they haven't ordered it by then, it goes back on sale.</p>
       <div className="flex gap-2">
         <Field label="Pickup window starts">
           <Input type="datetime-local" value={form.start} onChange={(e) => set({ start: e.target.value })} />

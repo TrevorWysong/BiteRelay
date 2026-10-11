@@ -5,10 +5,11 @@
 //! `validate` into the same wasm binary fails to link.
 
 use hdi::prelude::*;
-pub use relay_types::PinSecret;
+pub use relay_types::{Beacon, PinSecret};
 use relay_types::GeoPoint;
 
 mod issues;
+pub mod lineage;
 mod settlement;
 
 /// How precisely a delivery's drop-off is published (`dropoff_geohash`): a
@@ -32,13 +33,28 @@ pub enum DeliveryStatus {
     Placed,
     /// Accepted by the store and open to drivers' bids.
     Open,
+    /// The customer has chosen a driver, who has the network's offer window
+    /// to commit.
     BidAccepted,
-    MerchantConfirmed,
+    /// The driver has committed -- their collateral set aside -- and is on
+    /// their way. The store starts cooking only now, so an order no driver
+    /// takes costs nobody anything.
     DriverEnRouteToMerchant,
+    /// The store is cooking it: `ready_by` is set.
+    MerchantConfirmed,
+    /// The store has checked the driver in, at the counter -- setting aside
+    /// what it owes if it then keeps them waiting (`HoldPurpose::Subsidy`).
+    DriverAtStore,
     PickedUp,
     Delivered,
     Cancelled,
     Disputed,
+    /// No driver brought it, so the customer is collecting it from the store
+    /// themselves -- at the same food price, since Relay's fees are the same
+    /// for both.
+    Collecting,
+    /// The customer has it, collected from the store. Final.
+    Collected,
 }
 
 /// Who is allowed to *author* a given transition -- deliberately a separate
@@ -64,13 +80,18 @@ pub enum RequiredAuthor {
     /// The requester or the accepted provider -- completing a delivery, on
     /// proof the customer has it.
     RequesterOrProvider,
+    /// The store or the accepted provider -- a driver leaving an order, by
+    /// their own choice or the store's.
+    MerchantOrProvider,
+    /// Any of the three.
+    AnyParty,
 }
 
 impl DeliveryStatus {
     /// Finished from the store's point of view -- it leaves the store's
     /// active queue (see `dispatch_integrity::store_queue`).
     pub fn is_terminal(&self) -> bool {
-        matches!(self, DeliveryStatus::Delivered | DeliveryStatus::Cancelled)
+        matches!(self, DeliveryStatus::Delivered | DeliveryStatus::Collected | DeliveryStatus::Cancelled)
     }
 
     /// The order lifecycle's allowed forward transitions *and* who is
@@ -100,14 +121,23 @@ impl DeliveryStatus {
             // customer can do.
             (Open, BidAccepted) => Some(Requester),
             (Open, Cancelled) => Some(RequesterOrMerchant),
-            // The store starting to prepare it.
-            (BidAccepted, MerchantConfirmed) => Some(Merchant),
-            (BidAccepted, Cancelled) => Some(RequesterOrMerchant),
-            (MerchantConfirmed, Cancelled) => Some(RequesterOrMerchant),
-            (DriverEnRouteToMerchant, Cancelled) => Some(RequesterOrMerchant),
-            // Once accepted, the provider reports their own physical progress.
-            (MerchantConfirmed, DriverEnRouteToMerchant) => Some(AcceptedProvider),
-            (DriverEnRouteToMerchant, PickedUp) => Some(AcceptedProvider),
+            // The driver committing, with their collateral; then the store
+            // cooking; then the store checking them in at the counter; then
+            // the driver collecting it, on the store's record of handing it
+            // over.
+            (BidAccepted, DriverEnRouteToMerchant) => Some(AcceptedProvider),
+            (DriverEnRouteToMerchant, MerchantConfirmed) => Some(Merchant),
+            (MerchantConfirmed, DriverAtStore) => Some(Merchant),
+            (DriverAtStore, PickedUp) => Some(AcceptedProvider),
+            // Before it's picked up, either side can call it off -- and a
+            // driver kept waiting can call the store late.
+            (BidAccepted | DriverEnRouteToMerchant | MerchantConfirmed, Cancelled) => Some(RequesterOrMerchant),
+            (DriverAtStore, Cancelled) => Some(AnyParty),
+            // A driver leaving before pickup: dropping it, or -- before
+            // they're checked in -- the store moving it on from a driver who
+            // didn't commit in time, or is late. It's open to bids again.
+            (BidAccepted | DriverEnRouteToMerchant | MerchantConfirmed, Open) => Some(MerchantOrProvider),
+            (DriverAtStore, Open) => Some(AcceptedProvider),
             // Completing it, on proof the customer has it (see
             // `attestation_types::dropoff_proof`) -- by the customer, or by
             // the driver holding that proof. Final: a delivered order can't
@@ -118,6 +148,16 @@ impl DeliveryStatus {
             // up late can still complete it with proof.
             (PickedUp, Disputed) => Some(Requester),
             (Disputed, Delivered) => Some(RequesterOrProvider),
+            // The customer collecting it themselves, at their request
+            // (`CollectRequest`), when no driver has it or its driver is late
+            // -- recorded by the store, which hands it over.
+            (Open | BidAccepted | DriverEnRouteToMerchant | MerchantConfirmed, Collecting) => Some(Merchant),
+            // Collected -- on the customer's word, or the store's scan of
+            // their handover code.
+            (Collecting, Collected) => Some(RequesterOrMerchant),
+            // Cancelled by the customer (who still owes the food), or
+            // recorded uncollected by the store once the window has passed.
+            (Collecting, Cancelled) => Some(RequesterOrMerchant),
             _ => None,
         }
     }
@@ -135,6 +175,20 @@ pub enum Cancellation {
     /// (`relay_governance::store_response_window`). Written by the
     /// customer's conductor, and only once the window has passed.
     StoreDidNotRespond,
+    /// The customer chose to collect it and never came within the
+    /// collection window. Written by the store, which keeps the food's
+    /// price: it cooked it.
+    NotCollected,
+    /// The store kept a checked-in driver waiting past the network's wait
+    /// (`relay_governance::store_wait`) after its ready time. Written by the
+    /// driver, with proof of the time: the customer is refunded, and the
+    /// store pays the driver's fee.
+    StoreLate,
+    /// A driver left after the store had started cooking, and no other came
+    /// within the network's window (`relay_governance::replacement_window`).
+    /// Written by the store: the customer is refunded, and that driver's
+    /// collateral pays for the food.
+    NoDriver,
 }
 
 /// What a store tells the customer when it turns an order down.
@@ -145,6 +199,12 @@ pub enum DeclineReason {
     ItemsUnavailable,
     TooBusy,
     Closed,
+    /// It redeems a goodie bag whose hold ran out before the order came in
+    /// -- the bag went back on sale.
+    BagHoldLapsed,
+    /// Placed under the store's earlier terms -- its minimum order,
+    /// delivery area or fee share -- which had since changed.
+    TermsChanged,
     Other,
 }
 
@@ -314,8 +374,14 @@ pub struct DeliveryOrder {
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]
     pub cancellation: Option<Cancellation>,
-    /// When the store says the order will be ready -- set when it accepts
-    /// the order, never changed after. `None` until then.
+    /// How long the store said the kitchen would take, when it accepted the
+    /// order -- what drivers and the customer see until it starts cooking.
+    /// Never changes after.
+    #[serde(default)]
+    pub prep_minutes: Option<u16>,
+    /// When the store says the order will be ready: when it started
+    /// cooking (once a driver had committed, or the customer chose to
+    /// collect it), plus `prep_minutes`. Set once, never changed after.
     #[serde(default)]
     pub ready_by: Option<Timestamp>,
     /// The customer's hold for the food (`settlement::HoldPurpose::Food`),
@@ -324,17 +390,18 @@ pub struct DeliveryOrder {
     /// changes after.
     #[serde(default)]
     pub food_hold: Option<ActionHash>,
-    /// The customer's hold for the driver's pay -- their share of the fee,
-    /// and their tip (`HoldPurpose::DriverPay`) -- cited by their update
-    /// that accepts a bid.
+    /// The customer's hold for the current driver's pay -- their share of
+    /// the fee, and their tip (`HoldPurpose::DriverPay`) -- cited by their
+    /// update that accepts a bid, and gone with that driver.
     #[serde(default)]
     pub driver_pay_hold: Option<ActionHash>,
-    /// The store's hold for its share of the fee (`HoldPurpose::Subsidy`),
-    /// cited by its update that starts preparing the order.
+    /// The store's hold for the current driver (`HoldPurpose::Subsidy`): its
+    /// share of their fee, and what it owes them if it keeps them waiting --
+    /// cited by its update checking them in.
     #[serde(default)]
     pub subsidy_hold: Option<ActionHash>,
-    /// The driver's collateral hold (`HoldPurpose::Collateral`), cited by
-    /// their update that picks the order up.
+    /// The current driver's collateral hold (`HoldPurpose::Collateral`),
+    /// cited by their update committing to the order.
     #[serde(default)]
     pub collateral_hold: Option<ActionHash>,
     /// The customer's handoff code's commitment, `sha256(pin || salt)` (see
@@ -342,18 +409,47 @@ pub struct DeliveryOrder {
     pub pin_commitment: Vec<u8>,
     /// The customer's code, sealed to themselves -- what their app shows.
     pub sealed_pin: XSalsa20Poly1305EncryptedData,
-    /// The store's pickup code's commitment -- set when it accepts the
-    /// order, never changed after. Empty until then.
+    /// The store's check-in code's commitment -- set when it accepts the
+    /// order, never changed after. Empty until then. A driver scans the
+    /// code at the counter to be checked in.
     #[serde(default)]
     pub pickup_commitment: Vec<u8>,
-    /// The store's pickup code, sealed to the store.
+    /// The store's check-in code, sealed to the store.
     #[serde(default)]
     pub sealed_pickup_code: Option<XSalsa20Poly1305EncryptedData>,
     /// Proof the driver has the food, cited by their update picking it up:
-    /// their pickup leg carrying the store's scanned code, or the store's
-    /// own `ReceiptAttestation` of that leg. Never changes after.
+    /// the store's own `ReceiptAttestation` of their pickup -- it handed the
+    /// order over. Never changes after.
     #[serde(default)]
     pub pickup_proof: Option<ActionHash>,
+    /// The customer's handover code, as the store scanned it when they
+    /// collected the order themselves -- the store's proof they have it.
+    /// Set only by that step.
+    #[serde(default)]
+    pub collection_proof: Option<PinSecret>,
+    /// The customer's request to collect it themselves, cited by the
+    /// store's update recording it -- the customer's consent.
+    #[serde(default)]
+    pub collect_request: Option<ActionHash>,
+    /// For an update whose rule turns on a deadline someone else could
+    /// dispute -- a driver leaving, or calling the store late: proof of when
+    /// it was written, fresh on that update. Later updates carry it forward.
+    #[serde(default)]
+    pub beacon: Option<Beacon>,
+    /// The customer letting their app choose a driver from the bids, by the
+    /// network's published rule. Fixed when the order is placed.
+    #[serde(default)]
+    pub auto_match: bool,
+}
+
+/// A customer asking to collect their delivery from the store themselves --
+/// when no driver has it, or its driver is late. The store records it
+/// (`DeliveryStatus::Collecting`), citing this. One per order.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+pub struct CollectRequest {
+    /// The order's original action.
+    pub order: ActionHash,
 }
 
 #[hdk_entry_helper]
@@ -361,7 +457,13 @@ pub struct DeliveryOrder {
 pub struct Bid {
     pub order_ref: ActionHash,
     pub bidder: AgentPubKey,
+    /// How long until the driver would hand the order to its customer.
     pub eta_seconds: u32,
+    /// How long until they'd reach the store -- with the store's ready time,
+    /// when they're due there (see `relay_governance::pickup_grace`). At most
+    /// `eta_seconds`.
+    #[serde(default)]
+    pub to_store_seconds: u32,
     pub price_offer: u64,
     /// What the driver will post as collateral when they pick the order up
     /// -- always `settlement::required_collateral` of the order (validated).
@@ -463,6 +565,9 @@ pub struct PickupOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
+    /// The version of the store the order was placed against -- whose
+    /// minimum order it was placed under. Validation checks it.
+    pub catalog_version: ActionHash,
     /// What was ordered, each line priced at a specific version of its item
     /// -- validation recomputes `order_total` from these.
     pub lines: Vec<OrderLine>,

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntilOk, ST_PETE, acceptOrder, handOff, retryUntil, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -203,14 +203,11 @@ await runScenario(async (scenario) => {
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: bidRef, override_warrants: false });
-  await dispatchOf(customer)("set_order_status", { order_original_action: orderRef, next_status: "MerchantConfirmed" });
-  await dhtSync(both, customer.cells[0].cell_id[0]);
-  await dispatchOf(driver)("set_order_status", { order_original_action: orderRef, next_status: "DriverEnRouteToMerchant" });
+  await commitAndCook(driver, customer, orderRef, both);
 
   const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
-  await handOff(driver, customer, orderRef, "MerchantHandoff", both);
+  await collectFromStore(driver, customer, orderRef, both);
 
-  await dispatchOf(driver)("pick_up_order", orderRef);
   await handOff(driver, customer, orderRef, "CustomerHandoff", both);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 

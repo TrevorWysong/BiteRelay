@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag, type FulfillmentInput } from "../../holochain/zomes/catalog";
-import { averageRating, getRatingSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
+import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { useResource } from "../../lib/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { useSession } from "../../store/session";
@@ -87,6 +87,9 @@ function StorePage({ hash }: { hash: string }) {
   // owner, so a multi-store owner's other locations (or their driving)
   // never bleed into this page.
   const { data: rating } = useResource(`store-rating:${hash}`, () => getRatingSummary({ Store: catalogHash }));
+  // How it treats drivers: times it kept one waiting (each refunded its
+  // customer), and drivers' reports it wouldn't check them in.
+  const { data: record = null } = useResource(`store-record:${hash}`, () => getReputationSummary({ Store: catalogHash }));
   const { data: reviewFeed, mutate: mutateReviews } = useResource<{ reviews: Review[]; before: Timestamp | null }>(`store-reviews:${hash}`, () =>
     getReviewsFor({ Store: catalogHash }).then((page) => ({ reviews: page.reviews.map((r) => decodeEntry<Review>(r)), before: page.next_before })),
   );
@@ -207,6 +210,10 @@ function StorePage({ hash }: { hash: string }) {
             {status?.label}
           </span>
           {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
+          {catalog.busy_extra_minutes > 0 && <span className="font-semibold text-amber-600">Busy · about {catalog.prep_minutes + catalog.busy_extra_minutes} min to prepare</span>}
+          {record && record.late_count > 0 && <span className="font-semibold text-amber-600">Kept drivers waiting {record.late_count}×</span>}
+          {record && record.check_in_refused_count > 0 && <span className="font-semibold text-amber-600">{record.check_in_refused_count} driver report{record.check_in_refused_count === 1 ? "" : "s"}</span>}
+          {catalog.min_order_cents !== null && <span>{formatCents(catalog.min_order_cents)} minimum</span>}
           {formatCatalogAddress(catalog) && (
             <span className="flex items-center gap-1">
               <MapPin size={12} /> {formatCatalogAddress(catalog)}

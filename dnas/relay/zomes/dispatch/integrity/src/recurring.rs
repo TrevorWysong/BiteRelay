@@ -90,6 +90,10 @@ pub(crate) fn validate_new_recurring_template(template: &RecurringOrderTemplate,
             "a recurring order template can only be authored by its own requester".into(),
         ));
     }
+    let amounts = [("tip_cents", Some(template.tip_cents)), ("max_delivery_fee", template.max_delivery_fee)];
+    if let Some(problem) = amounts.into_iter().find_map(|(field, amount)| amount.and_then(|a| relay_integrity_support::amount_problem(field, a))) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
     if template.item_refs.is_empty() || template.item_refs.len() > MAX_TEMPLATE_ITEMS {
         return Ok(ValidateCallbackResult::Invalid(format!("a recurring order has between 1 and {MAX_TEMPLATE_ITEMS} items")));
     }

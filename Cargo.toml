@@ -49,3 +49,7 @@ ledger_types = { path = "dnas/relay/zomes/ledger/types" }
 [profile.release]
 opt-level = "z"
 lto = true
+# Arithmetic that overflows fails (and so does the validation or call doing
+# it) instead of wrapping silently. Amounts are bounded so it shouldn't
+# happen (`integrity_support::limits::MAX_AMOUNT`); this keeps any slip safe.
+overflow-checks = true

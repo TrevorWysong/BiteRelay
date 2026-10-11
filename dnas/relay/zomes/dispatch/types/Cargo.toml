@@ -12,3 +12,5 @@ serde.workspace = true
 holochain_serialized_bytes.workspace = true
 relay_types.workspace = true
 relay_integrity_support.workspace = true
+relay_governance.workspace = true
+catalog_types.workspace = true

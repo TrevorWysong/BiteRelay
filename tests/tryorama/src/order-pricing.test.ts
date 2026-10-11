@@ -31,6 +31,7 @@ await runScenario(async (scenario) => {
       requester: customer.agentPubKey,
       merchant: merchant.agentPubKey,
       catalog_ref: store,
+      catalog_version: store,
       lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 2 }],
       order_total: 2400,
       status: "Placed",
@@ -56,7 +57,7 @@ await runScenario(async (scenario) => {
     /only appear on one line/,
     "an item appears on one line",
   );
-  await assert.rejects(raw({ lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 0 }], order_total: 0 }), /quantity of at least one/, "a line orders at least one");
+  await assert.rejects(raw({ lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 0 }], order_total: 0 }), /between one and \d+ units/, "a line orders at least one");
   console.log("[PASS] every line must be a real item from this store, priced from its own versions");
 
   // Validation sees records as they were, so it can't tell an older version
@@ -72,6 +73,6 @@ await runScenario(async (scenario) => {
   await sync();
   await assert.rejects(raw({ promo_code_ref: loyalty, order_total: 2160 }), /loyalty_proof must list exactly the 1 completed orders/, "a loyalty discount needs its proof");
   const someOrder = actionHash(await raw({}));
-  await assert.rejects(raw({ promo_code_ref: loyalty, order_total: 2160, loyalty_proof: [someOrder] }), /customer's own order completions/, "placing an order isn't completing one");
+  await assert.rejects(raw({ promo_code_ref: loyalty, order_total: 2160, loyalty_proof: [someOrder] }), /loyalty_proof must be order completions/, "placing an order isn't completing one");
   console.log("[PASS] a loyalty discount is only accepted with real completions as proof");
 });

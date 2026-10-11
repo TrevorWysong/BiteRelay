@@ -21,20 +21,21 @@ export interface AppNotification {
 const deliveryText: Record<OrderRole, Partial<Record<DeliveryStatus, string>>> = {
   Customer: {
     Open: "The store accepted your order. Finding you a driver.",
-    MerchantConfirmed: "The store is preparing your order.",
-    DriverEnRouteToMerchant: "Your driver is heading to the store.",
+    DriverEnRouteToMerchant: "Your driver is on the way to the store, and the kitchen is starting on your order.",
+    DriverAtStore: "Your driver is at the store.",
     PickedUp: "Your driver picked up your order and is on the way.",
+    Collecting: "Your order is waiting at the store for you to collect.",
     Disputed: "You've told the store your order never arrived.",
   },
   Store: {
-    BidAccepted: "A driver is assigned. Start preparing the order.",
-    DriverEnRouteToMerchant: "The driver is on the way to pick up an order.",
+    DriverEnRouteToMerchant: "A driver is on the way. Start cooking.",
     PickedUp: "The driver picked up an order.",
     Delivered: "An order was delivered.",
     Disputed: "A customer says their order never arrived.",
   },
   Driver: {
     MerchantConfirmed: "The store is preparing your delivery.",
+    DriverAtStore: "You're checked in. The store hands it over by scanning your code.",
     Delivered: "Delivery complete. You're paid once the store's app records it.",
     Disputed: "The customer says their order never arrived. Deliver it with their code, or the store refunds them.",
   },
@@ -58,6 +59,8 @@ function cancelledText(role: OrderRole, change: OrderChange): string {
   if (role === "Customer") return cancellationText(cancellation);
   if (cancellation === "ByCustomer") return "The customer cancelled an order.";
   if (cancellation === "StoreDidNotRespond") return "An order wasn't accepted in time and was cancelled.";
+  if (cancellation === "StoreLate") return role === "Driver" ? "The customer cancelled after the store ran late." : "A customer cancelled an order you kept their driver waiting on. They're refunded in full.";
+  if (cancellation === "NoDriver") return role === "Driver" ? "No driver took on the order you left, so your collateral paid for the food." : "No driver came for an order. Its last driver's collateral pays for the food.";
   return role === "Driver" ? "A delivery was cancelled." : "An order was cancelled.";
 }
 
@@ -81,6 +84,12 @@ export function notificationFor(signal: LocalSignal): AppNotification | null {
   }
   if ("BidAccepted" in signal) {
     return { title: "Delivery assigned", body: "Your bid was accepted. Head to the store.", tag: `bid-${bytesToHex(signal.BidAccepted)}`, route: "/driver", urgent: true };
+  }
+  if ("HandedOver" in signal) {
+    return { title: "Order handed over", body: "The store handed you the order. Head to the customer.", tag: `order-${bytesToHex(signal.HandedOver)}`, route: "/driver", urgent: false };
+  }
+  if ("CollectRequested" in signal) {
+    return { title: "A customer is collecting", body: "A customer is coming to collect their delivery themselves.", tag: `order-${bytesToHex(signal.CollectRequested)}`, route: "/merchant", urgent: false };
   }
   if ("ChatMessage" in signal) {
     return { title: "New message", body: signal.ChatMessage.text, tag: `chat-${bytesToHex(signal.ChatMessage.order_ref)}`, route: "/", urgent: false };

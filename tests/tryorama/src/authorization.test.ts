@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, commitAndCook, deliveryStatus, ST_PETE, testApp } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -74,11 +74,9 @@ await runScenario(async (scenario) => {
   );
   console.log("[PASS] Accepted provider cannot drive the merchant-side MerchantConfirmed transition");
 
-  // The requester/merchant side still works as before.
-  const confirmedRecord = await dispatchOf(customer)<HcRecord>("set_order_status", {
-    order_original_action: orderRef,
-    next_status: "MerchantConfirmed",
-  });
-  assert.ok(confirmedRecord, "the requester/merchant should still be able to confirm prep");
-  console.log("[PASS] Requester/merchant can still drive their own transitions");
+  // Each side still drives its own: the driver commits, the store (the
+  // customer runs it here) starts cooking.
+  await commitAndCook(driver, customer, orderRef, both);
+  assert.equal(await deliveryStatus(customer, orderRef), "MerchantConfirmed", "the driver commits and the store cooks");
+  console.log("[PASS] Each party can still drive their own transitions");
 });

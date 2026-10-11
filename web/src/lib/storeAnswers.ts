@@ -11,6 +11,8 @@ export const DECLINE_REASONS: readonly { reason: DeclineReason; label: string }[
   { reason: "ItemsUnavailable", label: "Items unavailable" },
   { reason: "Closed", label: "Closed" },
   { reason: "OutdatedPrices", label: "Prices changed" },
+  { reason: "BagHoldLapsed", label: "Goodie bag hold ran out" },
+  { reason: "TermsChanged", label: "Store terms changed" },
   { reason: "Other", label: "Other" },
 ];
 
@@ -26,6 +28,8 @@ const STORE_REASONS: Record<DeclineReason, string> = {
   ItemsUnavailable: "The store is out of something you ordered.",
   Closed: "The store is closed.",
   OutdatedPrices: "The store's prices changed since you ordered. Your cart has the new prices if you'd like to order again.",
+  BagHoldLapsed: "The store's hold on your goodie bag ran out before your order arrived, so it went back on sale.",
+  TermsChanged: "The store changed its minimum order, delivery area or fee share since you ordered. Your cart has its current terms if you'd like to order again.",
   Other: "The store couldn't take this order.",
 };
 
@@ -38,5 +42,11 @@ export function cancellationText(cancellation: Cancellation | null): string {
       return "You cancelled this order.";
     case "StoreDidNotRespond":
       return "The store didn't respond in time, so this order was cancelled. You weren't charged.";
+    case "NotCollected":
+      return "You chose to collect this order and didn't, so the store kept its price for the food it made.";
+    case "StoreLate":
+      return "You cancelled after the store kept your driver waiting too long. You're refunded in full.";
+    case "NoDriver":
+      return "Your driver left your order and no other driver came, so it was cancelled. You're refunded in full.";
   }
 }

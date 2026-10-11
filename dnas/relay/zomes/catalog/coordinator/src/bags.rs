@@ -36,8 +36,44 @@ fn claim_anchor_path(bag_ref: &ActionHash) -> ExternResult<hdi::hash_path::path:
     Path::from(claim_path(bag_ref)).typed(LinkTypes::BagToClaim)
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateGoodieBagInput {
+    pub catalog_ref: ActionHash,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub photo_data_uri: String,
+    pub original_value_cents: u64,
+    pub price_cents: u64,
+    pub quantity_total: u32,
+    pub pickup_window_start: Timestamp,
+    pub pickup_window_end: Timestamp,
+    pub supports_pickup: bool,
+    pub supports_delivery: bool,
+    pub created_at: Timestamp,
+    /// See `GoodieBag::hold_minutes`; the network's default if left out.
+    #[serde(default)]
+    pub hold_minutes: Option<u16>,
+}
+
 #[hdk_extern]
-pub fn create_goodie_bag(bag: GoodieBag) -> ExternResult<Record> {
+pub fn create_goodie_bag(input: CreateGoodieBagInput) -> ExternResult<Record> {
+    let bag = GoodieBag {
+        catalog_ref: input.catalog_ref,
+        title: input.title,
+        description: input.description,
+        photo_data_uri: input.photo_data_uri,
+        original_value_cents: input.original_value_cents,
+        price_cents: input.price_cents,
+        quantity_total: input.quantity_total,
+        pickup_window_start: input.pickup_window_start,
+        pickup_window_end: input.pickup_window_end,
+        supports_pickup: input.supports_pickup,
+        supports_delivery: input.supports_delivery,
+        created_at: input.created_at,
+        hold_minutes: input.hold_minutes.unwrap_or_else(relay_governance::default_bag_hold_minutes),
+    };
     let catalog_ref = bag.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::GoodieBag(bag))?;
     create_link(bag_anchor_path(&catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
@@ -126,6 +162,11 @@ pub enum FulfillmentInput {
 #[hdk_extern]
 pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
     let customer = agent_info()?.agent_initial_pubkey;
+    // One claim per customer per bag -- validation's rule, told first.
+    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::BagClaim)?).include_entries(true).action_type(ActionType::Create))?;
+    if mine.iter().filter_map(decode_or::<BagClaim>).any(|claim| claim.bag_ref == input.bag_ref) {
+        return Err(wasm_error!(WasmErrorInner::Guest("You've already claimed this goodie bag.".into())));
+    }
     let fulfillment = match input.fulfillment {
         FulfillmentInput::Pickup => BagClaimFulfillment::Pickup,
         FulfillmentInput::Delivery { dropoff, max_delivery_fee } => BagClaimFulfillment::Delivery { sealed_dropoff: seal(&customer, &dropoff)?, max_delivery_fee },
@@ -212,31 +253,32 @@ pub fn list_pending_claims_for_merchant(catalog_ref: ActionHash) -> ExternResult
     Ok(pending)
 }
 
+/// Whether a claim (its latest version) still holds one of its bag's
+/// `quantity_total` at `now`: sold, or confirmed and not yet lapsed.
+fn holds_a_bag(claim_record: &Record, bag: &GoodieBag, now: Timestamp) -> bool {
+    match decode_or::<BagClaim>(claim_record).map(|claim| claim.status) {
+        Some(BagClaimStatus::Redeemed) => true,
+        Some(BagClaimStatus::Confirmed) => now < bag.claim_lapses_at(claim_record.action().timestamp(), relay_governance::store_response_window()),
+        _ => false,
+    }
+}
+
 /// Confirms a claim -- the merchant-authored half of the two-agent split
-/// (see this module's own doc comment). Re-derives the current `Confirmed`
-/// count for this bag via a `get_links` walk and refuses past
-/// `quantity_total`: coordinator-level trust, not independently
-/// re-verifiable inside deterministic `validate()` (the same honestly-named
-/// tier as `order_total`'s own arithmetic -- see `validate_claim_confirmation`'s
-/// own doc comment for why that check isn't duplicated there).
+/// (see this module's own doc comment) -- if the bag has one left: every
+/// sold claim, and every confirmed one still within its hold, counts.
+/// Counted on the store's own conductor (validation can't count a bag's
+/// claims), and the store is the only one who can confirm, so it can't be
+/// skipped; a claim whose hold runs out unordered goes back on sale, and
+/// the store refuses an order for it after that (`dispatch` acceptance).
 #[hdk_extern]
 pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     let (record, mut claim): (_, BagClaim) = resolve_latest_decoded(claim_ref, "BagClaim")?;
     let (_, bag): (_, GoodieBag) = resolve_latest_decoded(claim.bag_ref.clone(), "GoodieBag")?;
 
-    let confirmed_count = list_claims_for_bag(claim.bag_ref.clone())?
-        .iter()
-        .filter(|r| {
-            matches!(
-                r.entry().to_app_option::<BagClaim>(),
-                Ok(Some(c)) if c.status == BagClaimStatus::Confirmed
-            )
-        })
-        .count() as u32;
-    if confirmed_count >= bag.quantity_total {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "this bag's quantity_total has already been fully claimed".into()
-        )));
+    let now = sys_time()?;
+    let taken = list_claims_for_bag(claim.bag_ref.clone())?.iter().filter(|r| holds_a_bag(r, &bag, now)).count() as u32;
+    if taken >= bag.quantity_total {
+        return Err(wasm_error!(WasmErrorInner::Guest("This bag is sold out.".into())));
     }
 
     claim.status = BagClaimStatus::Confirmed;
@@ -245,6 +287,20 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     let _ = send_remote_signal(crate::signals::RemoteSignal::ClaimConfirmed { claim_hash: updated.clone() }, vec![customer]);
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back confirmed claim".into())))
+}
+
+/// The store recording that a confirmed claim was ordered -- called by its
+/// acceptance of the order (`dispatch`), so the bag stays sold. Safe to
+/// repeat.
+#[hdk_extern]
+pub fn redeem_claim(claim_ref: ActionHash) -> ExternResult<Record> {
+    let (record, mut claim): (_, BagClaim) = resolve_latest_decoded(claim_ref, "BagClaim")?;
+    if claim.status == BagClaimStatus::Redeemed {
+        return Ok(record);
+    }
+    claim.status = BagClaimStatus::Redeemed;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::BagClaim(claim))?;
+    get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back redeemed claim".into())))
 }
 
 /// The longest a goodie bag may stay listed, in microseconds.

@@ -32,6 +32,15 @@ pub const MAX_TIME_ZONE_CHARS: usize = 64;
 /// Digits in a handoff code -- what a giver reads out, and a driver types.
 pub const HANDOFF_CODE_DIGITS: u32 = 6;
 
+/// The most any single amount may be -- a price, fee, tip, minimum or grant
+/// -- in minor units of the network's currency. Far past any real order, and
+/// small enough that no total of an order's amounts can overflow: 100 lines
+/// of 1,000 units at this price is 10^17, well inside a u64.
+pub const MAX_AMOUNT: u64 = 1_000_000_000_000;
+/// The most units of one item on one line, or in one promo's terms.
+pub const MAX_LINE_QUANTITY: u32 = 1_000;
+const _: () = assert!((MAX_ORDER_LINES as u64) * (MAX_LINE_QUANTITY as u64) * MAX_AMOUNT * 100 < u64::MAX);
+
 /// Lines on one order -- distinct items.
 pub const MAX_ORDER_LINES: usize = 100;
 /// Units a recurring order places each time.

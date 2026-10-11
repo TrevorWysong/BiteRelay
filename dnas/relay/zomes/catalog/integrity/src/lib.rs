@@ -4,7 +4,8 @@
 
 use hdi::prelude::*;
 use relay_integrity_support::limits::*;
-use relay_integrity_support::{first_problem, image_problem, text_problem};
+use relay_integrity_support::{amount_problem, first_problem, image_problem, text_problem};
+use relay_integrity_support::chain::wrote_since;
 use relay_integrity_support::{classify, decode, invalid, Checked};
 
 mod links;
@@ -16,7 +17,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
+pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -62,19 +63,19 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::MenuItem(item) => validate_menu_item(&item, action.author()),
             EntryTypes::PromoCode(promo) => validate_new_promo_code(&promo, action.author()),
             EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author(), action.timestamp()),
-            EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp()),
+            EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog_update(&catalog, action.author(), &action.original_action_address),
             EntryTypes::MenuItem(item) => validate_menu_item_update(&item, action.author(), &action.original_action_address),
             EntryTypes::PromoCode(promo) => validate_promo_code_update(&promo, action.author(), &action.original_action_address),
             EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author(), &action.original_action_address),
-            EntryTypes::BagClaim(claim) => validate_claim_confirmation(&claim, action.author(), &action.original_action_address),
+            EntryTypes::BagClaim(claim) => validate_claim_update(&claim, action.author(), &action.original_action_address),
         },
         // A store's menu, promos and bags are retired by updating them
         // (unavailable, inactive), never deleted: orders and reviews cite them.
         Checked::Delete { .. } => invalid("catalog entries can't be deleted"),
-        Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action),
         Checked::DeleteLink { original, action, .. } => links::validate_delete_link(original.author(), action.author()),
         Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
@@ -160,6 +161,22 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
     if catalog.prep_minutes == 0 || catalog.prep_minutes > max_prep {
         return Ok(ValidateCallbackResult::Invalid(format!("prep_minutes must be between 1 and {max_prep}")));
     }
+    if catalog.prep_minutes.saturating_add(catalog.busy_extra_minutes) > max_prep {
+        return Ok(ValidateCallbackResult::Invalid(format!("prep time with the busy extra must be at most {max_prep} minutes")));
+    }
+    if let Some(minutes) = catalog.store_wait_minutes {
+        let (min, max) = (relay_governance::min_store_wait().as_secs() / 60, relay_governance::max_store_wait().as_secs() / 60);
+        if !(min..=max).contains(&u64::from(minutes)) {
+            return Ok(ValidateCallbackResult::Invalid(format!("a store's wait for drivers must be between {min} and {max} minutes")));
+        }
+    }
+    let store_amounts = [("min_order_cents", catalog.min_order_cents), ("leave_at_door_max_cents", catalog.leave_at_door_max_cents)];
+    if let Some(problem) = store_amounts.into_iter().find_map(|(field, amount)| amount.and_then(|a| amount_problem(field, a))) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
+    if catalog.min_order_cents == Some(0) {
+        return Ok(ValidateCallbackResult::Invalid("a minimum order is more than nothing -- leave it unset for none".into()));
+    }
     if let Some(problem) = dietary_tags_problem(&catalog.dietary_tags) {
         return Ok(ValidateCallbackResult::Invalid(problem));
     }
@@ -183,6 +200,9 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
     }
     if item.price_cents == 0 {
         return Ok(ValidateCallbackResult::Invalid("price_cents must be greater than zero".into()));
+    }
+    if let Some(problem) = amount_problem("price_cents", item.price_cents) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     // `catalog_ref` is always the catalog's *original* creation action
     // (set once at add_menu_item time, immutable thereafter), so
@@ -212,12 +232,12 @@ fn owner_of_catalog(catalog_ref: &ActionHash) -> ExternResult<AgentPubKey> {
 fn validate_requirement(requirement: &PromoRequirement) -> Option<&'static str> {
     match requirement {
         PromoRequirement::None => None,
-        PromoRequirement::MinimumSpend(cents) if *cents == 0 => {
-            Some("MinimumSpend must be greater than zero")
+        PromoRequirement::MinimumSpend(cents) if *cents == 0 || *cents > MAX_AMOUNT => {
+            Some("MinimumSpend must be more than nothing, and at most the most any amount may be")
         }
         PromoRequirement::MinimumSpend(_) => None,
-        PromoRequirement::MinimumItemQuantity { quantity, .. } if *quantity == 0 => {
-            Some("MinimumItemQuantity's quantity must be greater than zero")
+        PromoRequirement::MinimumItemQuantity { quantity, .. } if *quantity == 0 || *quantity > MAX_LINE_QUANTITY => {
+            Some("MinimumItemQuantity's quantity must be between one and the most on a line")
         }
         PromoRequirement::MinimumItemQuantity { .. } => None,
         PromoRequirement::LoyaltyOrderCount(count) if *count == 0 => {
@@ -233,16 +253,16 @@ fn validate_reward(reward: &PromoReward) -> Option<&'static str> {
             Some("PercentOffSubtotal must be between 1 and 100")
         }
         PromoReward::PercentOffSubtotal(_) => None,
-        PromoReward::FlatOffSubtotal(cents) if *cents == 0 => {
-            Some("FlatOffSubtotal must be greater than zero")
+        PromoReward::FlatOffSubtotal(cents) if *cents == 0 || *cents > MAX_AMOUNT => {
+            Some("FlatOffSubtotal must be more than nothing, and at most the most any amount may be")
         }
         PromoReward::FlatOffSubtotal(_) => None,
-        PromoReward::FreeItem { quantity, .. } if *quantity == 0 => {
-            Some("FreeItem's quantity must be greater than zero")
+        PromoReward::FreeItem { quantity, .. } if *quantity == 0 || *quantity > MAX_LINE_QUANTITY => {
+            Some("FreeItem's quantity must be between one and the most on a line")
         }
         PromoReward::FreeItem { .. } => None,
-        PromoReward::PercentOffItem { percent, quantity, .. } if *percent == 0 || *percent > 100 || *quantity == 0 => {
-            Some("PercentOffItem's percent must be between 1 and 100 and quantity must be greater than zero")
+        PromoReward::PercentOffItem { percent, quantity, .. } if *percent == 0 || *percent > 100 || *quantity == 0 || *quantity > MAX_LINE_QUANTITY => {
+            Some("PercentOffItem's percent must be between 1 and 100, and its quantity between one and the most on a line")
         }
         PromoReward::PercentOffItem { .. } => None,
     }
@@ -370,6 +390,9 @@ fn validate_bag_fields(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<Va
     if bag.price_cents == 0 {
         return Ok(ValidateCallbackResult::Invalid("price_cents must be greater than zero".into()));
     }
+    if let Some(problem) = amount_problem("original_value_cents", bag.original_value_cents) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
     if bag.price_cents > bag.original_value_cents {
         return Ok(ValidateCallbackResult::Invalid(
             "price_cents must not exceed original_value_cents -- a goodie bag is a discount, not a markup".into(),
@@ -377,6 +400,10 @@ fn validate_bag_fields(bag: &GoodieBag, author: &AgentPubKey) -> ExternResult<Va
     }
     if bag.quantity_total == 0 {
         return Ok(ValidateCallbackResult::Invalid("quantity_total must be greater than zero".into()));
+    }
+    let max_hold_minutes = relay_governance::goodie_bag_max_lifetime().as_secs() / 60;
+    if bag.hold_minutes == 0 || u64::from(bag.hold_minutes) > max_hold_minutes {
+        return Ok(ValidateCallbackResult::Invalid("a bag holds a confirmed claim for at least a minute, and no longer than a bag may be listed".into()));
     }
     if bag.pickup_window_end <= bag.pickup_window_start {
         return Ok(ValidateCallbackResult::Invalid(
@@ -415,7 +442,8 @@ fn validate_goodie_bag_update(bag: &GoodieBag, author: &AgentPubKey, original_ac
         && prior.pickup_window_end == bag.pickup_window_end
         && prior.supports_pickup == bag.supports_pickup
         && prior.supports_delivery == bag.supports_delivery
-        && prior.created_at == bag.created_at;
+        && prior.created_at == bag.created_at
+        && prior.hold_minutes == bag.hold_minutes;
     if !terms_unchanged {
         return Ok(ValidateCallbackResult::Invalid(
             "a goodie bag update may only change its title, description or photo".into(),
@@ -424,7 +452,7 @@ fn validate_goodie_bag_update(bag: &GoodieBag, author: &AgentPubKey, original_ac
     validate_bag_fields(bag, author)
 }
 
-fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey, claimed: Timestamp) -> ExternResult<ValidateCallbackResult> {
+fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey, claimed: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if (claim.claimed_at.as_micros() - claimed.as_micros()).abs() > clock_tolerance_micros() {
         return Ok(ValidateCallbackResult::Invalid("claimed_at must match when the claim was actually made".into()));
     }
@@ -462,20 +490,26 @@ fn validate_new_claim(claim: &BagClaim, author: &AgentPubKey, claimed: Timestamp
             "this bag does not support the claimed fulfillment method".into(),
         ));
     }
+    // One claim per customer per bag, so nobody can flood a store's claims
+    // or hold more than one of a bag at a time.
+    let Some(prev) = prev_action else { return Ok(ValidateCallbackResult::Invalid("a claim can't open a chain".into())) };
+    if wrote_since::<BagClaim>(author, prev, bag_record.action().timestamp(), UnitEntryTypes::BagClaim.try_into()?, |earlier| earlier.bag_ref == claim.bag_ref)? {
+        return Ok(ValidateCallbackResult::Invalid("a customer claims a goodie bag once".into()));
+    }
     Ok(ValidateCallbackResult::Valid)
 }
 
-/// The merchant confirming a claim -- author must be the bag's own catalog
-/// owner (the single authoritative party for this scarce resource, see
-/// `BagClaim`'s own doc comment), the prior status must be `Pending`, and
-/// nothing but `status` may change. Deliberately does **not** attempt to
+/// The store moving a claim on -- confirming it (`Pending` to `Confirmed`)
+/// or recording its order (`Confirmed` to `Redeemed`). Only the bag's own
+/// catalog owner (the single authoritative party for this scarce resource,
+/// see `BagClaim`'s own doc comment), and nothing but `status` may change. Deliberately does **not** attempt to
 /// re-derive "have fewer than `quantity_total` claims already been
 /// confirmed for this bag" here -- counting sibling claims is exactly the
 /// non-deterministic `get_links` walk this codebase already names as a
 /// known, accepted gap for `order_total`/`dietary_tags` (see those doc
 /// comments); `catalog::confirm_claim`'s own re-derived count is
 /// coordinator-level trust, same tier as those.
-fn validate_claim_confirmation(claim: &BagClaim, author: &AgentPubKey, original_action_hash: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+fn validate_claim_update(claim: &BagClaim, author: &AgentPubKey, original_action_hash: &ActionHash) -> ExternResult<ValidateCallbackResult> {
     let bag_record = must_get_valid_record(claim.bag_ref.clone())?;
     let Ok(Some(bag)) = bag_record.entry().to_app_option::<GoodieBag>() else {
         return Ok(ValidateCallbackResult::Invalid("bag_ref does not point at a GoodieBag entry".into()));
@@ -490,16 +524,17 @@ fn validate_claim_confirmation(claim: &BagClaim, author: &AgentPubKey, original_
     let Ok(Some(prior)) = prior_record.entry().to_app_option::<BagClaim>() else {
         return Ok(ValidateCallbackResult::Invalid("original_action_hash does not point at a BagClaim entry".into()));
     };
-    if prior.status != BagClaimStatus::Pending {
-        return Ok(ValidateCallbackResult::Invalid("only a Pending claim can be confirmed".into()));
-    }
-    if claim.status != BagClaimStatus::Confirmed {
-        return Ok(ValidateCallbackResult::Invalid("a claim confirmation must set status to Confirmed".into()));
+    let step = matches!(
+        (prior.status, claim.status),
+        (BagClaimStatus::Pending, BagClaimStatus::Confirmed) | (BagClaimStatus::Confirmed, BagClaimStatus::Redeemed)
+    );
+    if !step {
+        return Ok(ValidateCallbackResult::Invalid("a claim is confirmed while pending, and redeemed once confirmed".into()));
     }
     let unchanged = prior.bag_ref == claim.bag_ref && prior.customer == claim.customer && prior.fulfillment == claim.fulfillment && prior.claimed_at == claim.claimed_at;
     if !unchanged {
         return Ok(ValidateCallbackResult::Invalid(
-            "a claim confirmation may only change status -- every other field must stay the same".into(),
+            "a claim update may only change status -- every other field must stay the same".into(),
         ));
     }
     Ok(ValidateCallbackResult::Valid)

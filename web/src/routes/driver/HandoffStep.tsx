@@ -1,13 +1,14 @@
-// The driver at a handoff -- collecting from the store, or handing over to
-// the customer. The giver proves it one of three ways: the driver scans
-// their code, types the digits they read out (their app checks them),
-// or they confirm in their own app. An order the customer chose to have
-// left at the door needs only the drop-off and a photo.
+// The driver handing an order to its customer. The customer proves it one
+// of three ways: the driver scans their code, types the digits they read
+// out (their app checks them), or they confirm in their own app. An order
+// the customer chose to have left at the door needs only the drop-off and
+// a photo. (At the store, the store records the handover -- see
+// `AtTheStore`.)
 import { useCallback, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, DoorOpen, ScanLine, Smartphone } from "lucide-react";
 import { handoffByCode, recordLeg } from "../../holochain/zomes/attestation";
-import { completeDelivery, pickUpOrder } from "../../holochain/zomes/dispatch";
+import { completeDelivery } from "../../holochain/zomes/dispatch";
 import { actionHash, bytesToHex } from "../../holochain/decode";
 import { HANDOFF_CODE_DIGITS, type DeliveryOrder, type GeoPoint, type PinSecret } from "../../holochain/types";
 import { decodeHandoverCode, matchesCommitment } from "../../lib/handoverCode";
@@ -17,18 +18,13 @@ import { PhotoInput } from "../../components/PhotoInput";
 import { QrScanner } from "../../components/QrScanner";
 import { Sheet } from "../../components/Sheet";
 
-type Kind = "pickup" | "dropoff";
-
-const COPY: Record<Kind, { giver: string; scan: string; confirm: string; done: string }> = {
-  pickup: { giver: "the store", scan: "Scan the store's code", confirm: "Picked up", done: "Waiting for the store to confirm in their app." },
-  dropoff: { giver: "the customer", scan: "Scan their code", confirm: "Complete delivery", done: "Waiting for the customer to confirm in their app." },
-};
+const COPY = { giver: "the customer", scan: "Scan their code", confirm: "Complete delivery", done: "Waiting for the customer to confirm in their app." };
 
 /// A proof just written on the giver's chain takes a moment to reach this
 /// conductor; the step it completes is retried until it has.
 const RETRY_DELAYS_MS = [1500, 3000, 6000];
 
-export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind: Kind; orderRef: Uint8Array; order: DeliveryOrder; location: GeoPoint; onDone: () => Promise<void> }) {
+export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: Uint8Array; order: DeliveryOrder; location: GeoPoint; onDone: () => Promise<void> }) {
   const [photo, setPhoto] = useState("");
   const [code, setCode] = useState("");
   const [scanned, setScanned] = useState<PinSecret | null>(null);
@@ -41,9 +37,9 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const copy = COPY[kind];
-  const leftAtDoor = kind === "dropoff" && order.dropoff_preference === "LeaveAtDoor";
-  const commitment = kind === "pickup" ? order.pickup_commitment : order.pin_commitment;
+  const copy = COPY;
+  const leftAtDoor = order.dropoff_preference === "LeaveAtDoor";
+  const commitment = order.pin_commitment;
   const orderHex = bytesToHex(orderRef);
 
   const onScan = useCallback(
@@ -65,9 +61,9 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
   async function record(extra: { scanned?: PinSecret; left_at_door?: boolean }): Promise<Uint8Array> {
     const record = await recordLeg({
       order_ref: orderRef,
-      sequence: kind === "pickup" ? 0 : 1,
-      kind: kind === "pickup" ? "MerchantHandoff" : "CustomerHandoff",
-      to: kind === "pickup" ? order.merchant : order.requester,
+      sequence: 1,
+      kind: "CustomerHandoff",
+      to: order.requester,
       geo_at_completion: location,
       photo_data_uri: photo,
       ...extra,
@@ -80,7 +76,7 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
   async function complete() {
     for (let attempt = 0; ; attempt++) {
       try {
-        await (kind === "pickup" ? pickUpOrder(orderRef) : completeDelivery(orderRef));
+        await completeDelivery(orderRef);
         return;
       } catch (err) {
         if (attempt >= RETRY_DELAYS_MS.length) throw err;
@@ -122,8 +118,7 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
       if (!leg) await record({});
       setWaitingForGiver(true);
     });
-  // For a pickup, the driver completes it once the store has confirmed; a
-  // customer who confirms completes the delivery themselves.
+  // A customer who confirms completes the delivery themselves.
   const checkAgain = () => run(complete);
 
   if (leftAtDoor) {
@@ -153,7 +148,7 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
             <CheckCircle2 size={28} className="shrink-0 text-green-600" />
             <div>
               <p className="text-sm font-bold text-green-800 dark:text-green-200">Code verified</p>
-              <p className="text-xs text-green-700/80 dark:text-green-300/80">{kind === "pickup" ? "You're set to go." : "You're paid as soon as you confirm."}</p>
+              <p className="text-xs text-green-700/80 dark:text-green-300/80">You're paid as soon as you confirm.</p>
             </div>
           </motion.div>
         ) : waitingForGiver ? (
@@ -179,7 +174,7 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
         )}
       </AnimatePresence>
 
-      {kind === "dropoff" && !waitingForGiver && (
+      {!waitingForGiver && (
         <div>
           <p className="mb-2 text-xs font-semibold text-ink-500">Photo at drop-off (optional)</p>
           <PhotoInput value={photo} onChange={setPhoto} shape="banner" className="w-full" />
@@ -201,12 +196,12 @@ export function HandoffStep({ kind, orderRef, order, location, onDone }: { kind:
             {copy.confirm}
           </Button>
           <button onClick={askGiverToConfirm} disabled={busy} className="-mt-1 text-center text-xs font-semibold text-ink-500 underline-offset-4 hover:underline disabled:opacity-50">
-            {kind === "pickup" ? "The store will confirm in their app" : "They'll confirm in their app"}
+            They'll confirm in their app
           </button>
         </>
       )}
 
-      <Sheet open={scanning} onClose={() => setScanning(false)} title={copy.scan} subtitle={kind === "pickup" ? "It's on their order screen." : "It's under their code, on their order screen."}>
+      <Sheet open={scanning} onClose={() => setScanning(false)} title={copy.scan} subtitle="It's under their code, on their order screen.">
         <QrScanner onScan={onScan} />
         <AnimatePresence>
           {scanProblem && (

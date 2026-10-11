@@ -10,13 +10,17 @@
 //!   accept an order without it.
 //! - **Driver pay** -- the customer's share of the delivery fee and their
 //!   tip, when they accept a driver's bid.
-//! - **Subsidy** -- the store's share of the delivery fee, when it confirms
-//!   it's preparing a delivery.
-//! - **Collateral** -- the driver's, the value of the food, when they pick
-//!   it up.
+//! - **Collateral** -- the driver's, the value of the food, when they
+//!   commit to the order -- before the store starts cooking it, so a driver
+//!   who leaves it cooked and uncollected has covered it.
+//! - **Subsidy** -- the store's, when it checks the driver in: its share of
+//!   the delivery fee, and the customer's share again (`LateCover`), paid
+//!   to the driver only if the store then keeps them waiting.
 //!
 //! Each part of a hold has one recipient, who decides it: they collect it
-//! (with proof they're owed it) or waive it back to whoever paid.
+//! (with proof they're owed it) or waive it back to whoever paid -- except
+//! where a decision only one chain can make returns it (see
+//! `ledger_integrity`).
 
 use super::{Bid, DeliveryOrder, PickupOrder};
 use hdi::prelude::*;
@@ -41,8 +45,14 @@ pub enum Portion {
     /// The customer's tip, to the driver.
     Tip,
     /// The driver's collateral: back to the driver once the food is
-    /// delivered, to the store if it never was (`OrderOutcome`).
+    /// delivered, to the store if it never was (`OrderOutcome`), or if they
+    /// left it cooked and no other driver came (`Cancellation::NoDriver`).
     Collateral,
+    /// The customer's share of the fee, from the store: the driver's if the
+    /// store keeps them waiting (`Cancellation::StoreLate`) -- the customer
+    /// is refunded, and the driver is still paid in full -- the store's
+    /// again otherwise.
+    LateCover,
 }
 
 /// A part of a hold: who it's for, and how much.
@@ -100,6 +110,15 @@ pub fn split_delivery_fee(fee: u64, store_percent: u8) -> (u64, u64) {
     (store, fee - store)
 }
 
+/// What a customer who collects a delivery themselves is refunded of the
+/// food's price: the store's share of the fee it would have paid a driver
+/// -- `fee`, the last driver's accepted bid, or the customer's cap if no
+/// driver was ever accepted -- so the store pays the same either way. Never
+/// more than the food cost.
+pub fn collection_compensation(fee: Option<u64>, store_percent: u8, order_total: u64) -> u64 {
+    fee.map_or(0, |fee| split_delivery_fee(fee, store_percent).0).min(order_total)
+}
+
 /// The collateral a driver must post to deliver `order`: the value of the
 /// food they'll be carrying, so a driver who never delivers it has covered
 /// what the store handed over.
@@ -120,8 +139,8 @@ pub fn hold_terms(terms: &OrderTerms, purpose: &HoldPurpose, bid: Option<&Bid>) 
             (terms.requester.clone(), vec![(Portion::Fee, bid.bidder.clone(), customer_share), (Portion::Tip, bid.bidder.clone(), terms.tip_cents)])
         }
         (HoldPurpose::Subsidy { .. }, Some(bid)) if terms.delivery => {
-            let (store_share, _) = split_delivery_fee(bid.price_offer, terms.delivery_subsidy_percent);
-            (terms.merchant.clone(), vec![(Portion::Fee, bid.bidder.clone(), store_share)])
+            let (store_share, customer_share) = split_delivery_fee(bid.price_offer, terms.delivery_subsidy_percent);
+            (terms.merchant.clone(), vec![(Portion::Fee, bid.bidder.clone(), store_share), (Portion::LateCover, bid.bidder.clone(), customer_share)])
         }
         (HoldPurpose::Collateral { .. }, Some(bid)) if terms.delivery => (bid.bidder.clone(), vec![(Portion::Collateral, terms.merchant.clone(), bid.collateral)]),
         _ => return None,
@@ -177,7 +196,14 @@ mod tests {
     }
 
     fn bid(price_offer: u64) -> Bid {
-        Bid { order_ref: ActionHash::from_raw_36(vec![9; 36]), bidder: agent(3), eta_seconds: 600, price_offer, collateral: 2000, status: super::super::BidStatus::Open, created_at: Timestamp::from_micros(0) }
+        Bid { order_ref: ActionHash::from_raw_36(vec![9; 36]), bidder: agent(3), eta_seconds: 600, to_store_seconds: 300, price_offer, collateral: 2000, status: super::super::BidStatus::Open, created_at: Timestamp::from_micros(0) }
+    }
+
+    #[test]
+    fn a_collecting_customer_gets_the_stores_share_of_the_fee() {
+        assert_eq!(collection_compensation(Some(500), 50, 2000), 250);
+        assert_eq!(collection_compensation(None, 50, 2000), 0, "no fee to share");
+        assert_eq!(collection_compensation(Some(5000), 100, 2000), 2000, "never more than the food");
     }
 
     #[test]
@@ -202,7 +228,12 @@ mod tests {
         assert_eq!(payer, agent(1));
         assert_eq!(hold_amount(&shares), 251 + 300);
         let (store, shares) = hold_terms(&terms(), &HoldPurpose::Subsidy { bid: b.order_ref.clone() }, Some(&b)).unwrap();
-        assert_eq!((store, hold_amount(&shares)), (agent(2), 250));
+        assert_eq!(store, agent(2));
+        assert_eq!(
+            shares,
+            vec![Share { portion: Portion::Fee, recipient: agent(3), amount: 250 }, Share { portion: Portion::LateCover, recipient: agent(3), amount: 251 }],
+            "the store's share, and the customer's again in case it keeps the driver waiting"
+        );
     }
 
     #[test]
@@ -232,7 +263,7 @@ mod tests {
 }
 
 /// The orders a driver has in hand: those whose collateral they've set
-/// aside (by picking them up) and not yet had back or forfeited. The ledger
+/// aside (by committing to them) and not yet had back or forfeited. The ledger
 /// carries it from entry to entry like the balance (`ledger_types`), so
 /// validation checks it in one step rather than walking the chain; a
 /// customer's app counts a driver's assigned orders the same way before

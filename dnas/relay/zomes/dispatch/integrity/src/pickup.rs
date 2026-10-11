@@ -5,7 +5,7 @@ use super::*;
 use crate::holds::{check_hold, terms_of, ExpectedHold};
 use dispatch_types::HoldPurpose;
 use crate::store_answer::{check_cancellation, check_ready_by, CancelledFrom, OrderUpdate};
-use crate::checks::{check_bag_claim, check_pricing, ClaimedFor, OrderPricing};
+use crate::checks::{check_bag_claim, check_order_rate, check_pricing, store_version, ClaimedFor, OrderPricing};
 use crate::claims::resolve_original_creation;
 
 /// `PickupOrder`'s sibling of `validate_new_order` -- same shape, minus
@@ -30,6 +30,10 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
     if let Some(reason) = check_merchant_owns_catalog(&order.merchant, &order.catalog_ref)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
+    let store = match store_version(&order.catalog_ref, &order.catalog_version)? {
+        Ok(store) => store,
+        Err(reason) => return Ok(ValidateCallbackResult::Invalid(reason)),
+    };
     let sealed = [("kitchen_note", order.kitchen_note.as_ref()), ("sealed_customer_name", order.sealed_customer_name.as_ref())];
     if let Some(reason) = sealed.into_iter().find_map(|(field, value)| value.and_then(|v| relay_integrity_support::sealed_problem(field, v, relay_integrity_support::limits::MAX_SEALED_BYTES))) {
         return Ok(ValidateCallbackResult::Invalid(reason));
@@ -43,8 +47,12 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
         bag_claim_ref: order.bag_claim_ref.as_ref(),
         loyalty_proof: &order.loyalty_proof,
         placed_at: action_timestamp,
+        min_subtotal: store.min_order_cents,
     };
     if let Some(reason) = check_pricing(pricing)? {
+        return Ok(ValidateCallbackResult::Invalid(reason));
+    }
+    if let Some(reason) = check_order_rate(author, action_timestamp, prev_action)? {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
     if let Some(claim_ref) = &order.bag_claim_ref {
@@ -84,7 +92,7 @@ pub(crate) fn validate_pickup_order_transition(
         RequiredAuthor::RequesterOrMerchant => is_requester_or_merchant,
         // Never produced by PickupStatus::transition_requirement -- there is
         // no driver at all for this entry type.
-        RequiredAuthor::AcceptedProvider | RequiredAuthor::RequesterOrProvider => false,
+        RequiredAuthor::AcceptedProvider | RequiredAuthor::RequesterOrProvider | RequiredAuthor::MerchantOrProvider | RequiredAuthor::AnyParty => false,
     };
     if !authorized {
         return Ok(ValidateCallbackResult::Invalid(format!(
@@ -130,6 +138,7 @@ pub(crate) fn validate_pickup_order_transition(
     let unchanged = prior.requester == order.requester
         && prior.merchant == order.merchant
         && prior.catalog_ref == order.catalog_ref
+        && prior.catalog_version == order.catalog_version
         && prior.lines == order.lines
         && prior.loyalty_proof == order.loyalty_proof
         && prior.order_total == order.order_total

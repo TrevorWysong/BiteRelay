@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, ST_PETE, useTestCoordinators, waitForSignal, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, ST_PETE, testApp, useTestCoordinators, waitForSignal } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
@@ -65,17 +65,17 @@ await runScenario(async (scenario) => {
   assert.equal((await call(driver, "dispatch")<HcRecord[]>("get_open_orders_near", dropoff_geohash)).length, 1, "drivers see it once it's accepted");
   console.log("[PASS] the store accepts an order placed just before its price changed, and only then do drivers see it");
 
-  // ...and once a driver is assigned, only the store starts preparing it.
+  // ...and once a driver has committed, only the store starts preparing it.
   const bidRef = actionHash(await bid());
   await sync();
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bidRef });
   await sync();
   await assert.rejects(
     call(customer, "dispatch")("set_order_status", { order_original_action: order, next_status: "MerchantConfirmed" }),
-    /requires author role Merchant/,
+    /Only the order's store cooks it/,
     "the customer can't confirm on the store's behalf",
   );
-  await call(merchant, "dispatch")("set_order_status", { order_original_action: order, next_status: "MerchantConfirmed" });
+  await commitAndCook(driver, merchant, order, all);
   assert.equal(await status(merchant, "get_order", order), "MerchantConfirmed");
   console.log("[PASS] only the store confirms it's preparing a delivery");
 
@@ -105,6 +105,7 @@ await runScenario(async (scenario) => {
       requester: customer.agentPubKey,
       merchant: merchant.agentPubKey,
       catalog_ref: store,
+      catalog_version: store,
       lines: [{ item_ref: burgerV1, priced_version: burgerV1, quantity: 1 }],
       order_total: 1000,
       status: "Placed",

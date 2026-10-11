@@ -1,8 +1,12 @@
 // Proves every handoff is proved by whoever hands the order over:
 //
-// - a driver can't pick an order up without the store's proof -- its
-//   scanned code, or its own confirmation -- and validation refuses a
-//   pickup that cites anything else;
+// - at the store, a driver checks in with the store's code, which the
+//   store's own conductor checks (and stops answering after a few wrong
+//   tries), and only for the order's driver -- the code shows they're at
+//   the counter, never that they have the food;
+// - a driver picks an order up only on the store's own record of handing it
+//   over -- its scan of the driver's code, or its confirmation -- and
+//   validation refuses a pickup that cites anything else;
 // - at the door, the customer's scanned code, the six digits they read out
 //   (checked by their own conductor, which stops answering after a few
 //   wrong tries), or their own confirmation completes the delivery;
@@ -14,7 +18,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, decodeEntry, FULL_SIZE_PHOTO, handOff, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, collectFromStore, commitAndCook, decodeEntry, FULL_SIZE_PHOTO, pickUp, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 const PHOTO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -52,45 +56,52 @@ await runScenario(async (scenario) => {
     await sync();
     await retryUntilOk(() => call(customer, "dispatch")("accept_bid", { order_original_action: ref, bid_action: bid }));
     await sync();
-    await retryUntilOk(() => call(merchant, "dispatch")("set_order_status", { order_original_action: ref, next_status: "MerchantConfirmed" }));
-    await sync();
-    await call(driver, "dispatch")("set_order_status", { order_original_action: ref, next_status: "DriverEnRouteToMerchant" });
-    await sync();
+    await commitAndCook(driver, merchant, ref, all);
     return ref;
   }
   const leg = (ref: Uint8Array, kind: "MerchantHandoff" | "CustomerHandoff", extra: Record<string, unknown> = {}) =>
     call(driver, "attestation")<HcRecord>("record_leg", { order_ref: ref, sequence: kind === "MerchantHandoff" ? 0 : 1, kind, to: kind === "MerchantHandoff" ? merchant.agentPubKey : customer.agentPubKey, geo_at_completion: ST_PETE, ...extra });
   const wrong = (secret: PinSecret) => ({ pin: secret.pin === "000000" ? "111111" : "000000", salt: secret.salt });
 
-  // ===== Pickup =====
+  // ===== Checking in =====
   const order = await toTheStore();
   const unproven = actionHash(await leg(order, "MerchantHandoff"));
-  await assert.rejects(call(driver, "dispatch")("pick_up_order", order), /store's code/, "no pickup on the driver's say-so");
+  await assert.rejects(call(driver, "dispatch")("pick_up_order", order), /once the store has checked its driver in/, "no pickup before the store checks the driver in");
+  const checkInCode = await call(merchant, "dispatch")<PinSecret | null>("get_my_pickup_code", order);
+  assert.ok(checkInCode, "the store's app has its check-in code");
+  assert.equal(await call(driver, "dispatch")("get_my_pickup_code", order), null, "nobody else can read it");
+  await assert.rejects(call(customer, "attestation")("check_in_at_store", { order_ref: order, code: checkInCode.pin }), /Only the order's driver checks in for it/, "only the order's driver checks in for it");
+  await assert.rejects(call(driver, "attestation")("check_in_at_store", { order_ref: order, code: wrong(checkInCode).pin }), /4 tries left/, "a wrong code is counted");
+  await retryUntilOk(() => call(driver, "attestation")("check_in_at_store", { order_ref: order, code: checkInCode.pin }));
+  await sync();
+  assert.equal(await status(order), "DriverAtStore");
+  console.log("[PASS] a driver checks in with the store's code, which the store's own conductor checks");
+
+  // ===== Pickup =====
+  await assert.rejects(call(driver, "dispatch")("pick_up_order", order), /Have the store scan your code/, "checked in isn't handed over");
   await assert.rejects(
     call(driver, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "PickedUp", delivery_receipts: [] }),
-    /needs proof the store handed it over/,
+    /needs the store's record of handing it over/,
     "validation refuses a pickup with no proof",
   );
   await assert.rejects(
     call(driver, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "PickedUp", delivery_receipts: [], pickup_proof: unproven }),
-    /only with the store's scanned code/,
-    "nor one citing the driver's own unproved record",
+    /the store's record of handing the order over/,
+    "nor one citing the driver's own record",
   );
-  const pickupCode = await call(merchant, "dispatch")<PinSecret | null>("get_my_pickup_code", order);
-  assert.ok(pickupCode, "the store's app has its pickup code");
-  assert.equal(await call(driver, "dispatch")("get_my_pickup_code", order), null, "nobody else can read it");
-  await assert.rejects(leg(order, "MerchantHandoff", { scanned: wrong(pickupCode) }), /isn't for this order/, "a guessed code is refused");
-  await leg(order, "MerchantHandoff", { scanned: pickupCode });
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", order));
+  await assert.rejects(leg(order, "MerchantHandoff", { scanned: checkInCode }), /The store hands the order over by scanning your code/, "the check-in code proves nothing about the food");
+  await assert.rejects(call(driver, "attestation")("handoff_by_code", { leg: unproven, code: checkInCode.pin }), /confirming in its app|scanning your code/, "nor typed in");
+  await retryUntilOk(() => call(merchant, "attestation")("acknowledge_leg", unproven));
+  await sync();
+  await pickUp(driver, order);
   await sync();
   assert.equal(await status(order), "PickedUp");
-  console.log("[PASS] a driver picks up only on the store's proof: its scanned code");
+  console.log("[PASS] a driver picks up only on the store's own record of handing it over");
 
   const confirmedPickup = await toTheStore();
-  await handOff(driver, merchant, confirmedPickup, "MerchantHandoff", all);
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", confirmedPickup));
-  await sync();
-  console.log("[PASS] ...or the store's own confirmation");
+  await collectFromStore(driver, merchant, confirmedPickup, all);
+  assert.equal(await status(confirmedPickup), "PickedUp");
+  console.log("[PASS] ...which checks the driver in too, if they hadn't");
 
   // ===== Drop-off =====
   await assert.rejects(call(driver, "dispatch")("complete_delivery", { order_original_action: order }), /no proof yet/, "no delivery without proof");
@@ -128,9 +139,7 @@ await runScenario(async (scenario) => {
     "the door is the customer's choice, and their risk to accept",
   );
   const door = await toTheStore({ dropoff_preference: "LeaveAtDoor", door_risk_accepted: true });
-  await handOff(driver, merchant, door, "MerchantHandoff", all);
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", door));
-  await sync();
+  await collectFromStore(driver, merchant, door, all);
   await assert.rejects(leg(door, "CustomerHandoff", { left_at_door: true }), /Take a photo/, "the driver photographs where they left it");
   const doorstep = actionHash(await leg(door, "CustomerHandoff", { left_at_door: true, photo_data_uri: FULL_SIZE_PHOTO }));
   await retryUntilOk(() => call(driver, "dispatch")("complete_delivery", { order_original_action: door }));
@@ -143,9 +152,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] an order left at the door, as the customer chose, is delivered once it's left -- with a full-size photo");
 
   const handToMe = await toTheStore();
-  await handOff(driver, merchant, handToMe, "MerchantHandoff", all);
-  await retryUntilOk(() => call(driver, "dispatch")("pick_up_order", handToMe));
-  await sync();
+  await collectFromStore(driver, merchant, handToMe, all);
   await assert.rejects(leg(handToMe, "CustomerHandoff", { left_at_door: true, photo_data_uri: PHOTO }), /only a drop-off the customer chose/, "a driver can't leave an order the customer wanted handed over");
   console.log("[PASS] only an order the customer chose to have left at the door is left there");
 
