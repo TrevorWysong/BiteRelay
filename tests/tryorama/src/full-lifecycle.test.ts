@@ -103,7 +103,7 @@ await runScenario(async (scenario) => {
   // settle payment + record reputation as a side effect of the same call.
   await assert.rejects(
     dispatchOf(customer)("set_order_status", { order_original_action: orderRef, next_status: "Delivered" }),
-    /use complete_delivery/,
+    /recorded by its own step: .*complete_delivery/,
     "set_order_status must refuse to mark Delivered directly",
   );
 

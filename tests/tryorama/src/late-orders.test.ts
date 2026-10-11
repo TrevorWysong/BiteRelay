@@ -111,7 +111,7 @@ await runScenario(async (scenario) => {
   await driving(potato, first);
   assert.equal(await balance(first), -FOOD, "committing holds the driver's collateral");
   await assert.rejects(call(customer, "dispatch")("release_raw_for_testing", { order_original_action: potato }), /requires author role/, "a customer can't move a driver on");
-  await assert.rejects(call(merchant, "dispatch")("release_raw_for_testing", { order_original_action: potato }), /only once they've missed their offer or are late/, "nor can the store before they're due");
+  await assert.rejects(call(merchant, "dispatch")("release_raw_for_testing", { order_original_action: potato, beacon: await currentBeacon() }), /only once they've missed their offer or are late/, "nor can the store before they're due");
   await assert.rejects(call(first, "dispatch")("release_raw_for_testing", { order_original_action: potato }), /fresh proof of the time/, "a driver leaving says when");
   await drop(potato, first);
   assert.equal(await deliveryStatus(customer, potato), "Open", "dropped, it opens to bids again");

@@ -112,11 +112,13 @@ await runScenario(async (scenario) => {
   const cooking = actionHash(await call(customer, "dispatch")<HcRecord>("get_order", branched));
   // On one branch the customer cancels (owing the driver their fee); on
   // another, from the same version, the driver leaves.
-  await call(customer, "dispatch")("branch_order_for_testing", { version: cooking, next_status: "Cancelled", cancellation: "ByCustomer" });
-  const release = await call(other, "dispatch")<Uint8Array>("branch_order_for_testing", { version: cooking, next_status: "Open", release: true, beacon: await currentBeacon() });
+  // (Each app writes on its own too, so a write can lose the race for its
+  // chain's head; retried.)
+  await retryUntilOk(() => call(customer, "dispatch")("branch_order_for_testing", { version: cooking, next_status: "Cancelled", cancellation: "ByCustomer" }));
+  const release = await retryUntilOk(async () => call(other, "dispatch")<Uint8Array>("branch_order_for_testing", { version: cooking, next_status: "Open", release: true, beacon: await currentBeacon() }));
   await sync();
-  const holds = await call(customer, "ledger")<{ hold: Uint8Array; payer: Uint8Array; purpose: Record<string, unknown> }[]>("holds_for_order", branched);
-  const driverPay = holds.find((h) => "DriverPay" in h.purpose);
+  const holds = await call(customer, "ledger")<{ hold: Uint8Array; payer: Uint8Array; purpose: string | Record<string, unknown> }[]>("holds_for_order", branched);
+  const driverPay = holds.find((h) => typeof h.purpose === "object" && "DriverPay" in h.purpose);
   assert.ok(driverPay, "the customer set aside the driver's pay");
   const last = await latestLedgerEntry(customer);
   await assert.rejects(
