@@ -24,6 +24,33 @@ A card issuer and a HoloFuel issuer are two rows on the same roster. Orders, esc
   - HOT (the 2018 token) converts 1:1 to HoloFuel. Unyt ran a technical migration test in April 2026, and Holo planned the migration for 1 November 2026, with final participation terms still pending in September ([The Block](https://www.theblock.co/price/248502/holo-hot-usd), [Holo blog](https://blog.holo.host/i/ha2gtr4RkYV/json/)).
 - **What I couldn't confirm:** public developer documentation for Unyt's integration APIs. So the HoloFuel half below names *what* the integration needs, and confirming the *how* with Unyt is the first step.
 
+## Status: HoloFuel on hold
+
+**Decided 2026-10-11:** build cards (and bank transfer) first. HoloFuel waits until it has launched and Unyt has published how apps integrate with it; then it's worth a short exploratory build. Nothing in the cards-first work blocks it: `Redeem` and the issuer service are shared by both payment methods.
+
+**Look into it when** any of these happens:
+- HoloFuel launches for third-party apps, after the HOT migration;
+- Unyt publishes developer documentation or an integration example;
+- someone at Unyt can answer the questions under "What to ask Unyt".
+
+**What to ask Unyt:**
+1. **Checking payments:** can a Relay conductor read and check a HoloFuel payment directly, by calling Unyt's app on the same conductor? If so, adding funds in HoloFuel needs no trusted issuer, the one way to make the money as decentralized as the rest of Relay.
+2. **Relay's money as a Unyt currency:** could Relay's dollar credits be a currency in Unyt, convertible to HoloFuel, instead of our own ledger plus an issuer?
+3. **Linking identities:** how a HoloFuel payment names a Relay account (a payment note, or a signed link between the two keys).
+4. **Value:** whether HoloFuel has a reference rate, and how closely it tracks hosting costs.
+5. **Legal:** whether Unyt or Holo handles identity checks and exchange to dollars.
+6. **Availability:** when third-party apps can use it, and at what cost.
+
+## Why mutual credit matters
+
+HoloFuel is mutual credit, not a fixed-supply token: credit is created when someone spends it and settled when they deliver value back, and it's backed by hosting capacity. That changes the picture:
+- **Steadier value.** It's meant to track hosting costs, not swing with speculation, though it isn't pegged to the dollar.
+- **Lighter tax burden.** If its value holds, spending it gives about zero gain each time. It might also be treated like barter-exchange units rather than property. That's unsettled, so ask a tax adviser.
+- **The same kind of system as Relay's ledger.** Each person keeps their own signed ledger, and `credit_limit_cents` lets a balance go below zero: that's mutual credit, which is why networks default to prepaid. Connecting the two is a closer fit than bridging to a blockchain.
+- **Credit for trusted drivers, later.** Mutual credit sets limits by contribution. Drivers with long, clean records could post collateral partly on credit, which makes driving cheaper to start.
+
+Unchanged: customers and drivers pay rent and groceries in dollars, so a swap between HoloFuel and dollars is still needed, along with its legal questions.
+
 ## Options for HoloFuel
 
 | Option | How it works | Trade-offs |
@@ -86,10 +113,9 @@ Credits are fungible. If customers top up by card and drivers cash out in HoloFu
 ## What to build
 1. **Cards first:** the `Redeem` ledger work and the Stripe issuer service, per `CARD_PAYMENTS.md`. Most customers need cards.
 2. **Generalize the issuer service:** `issuer_terms` in governance, and multi-rail Add funds and Cash out screens.
-3. **HoloFuel:** a HoloFuel rail plugin, once Unyt's integration path is confirmed (key linking, payment references, rate source), then a pilot with HoloFuel top-ups and cash-outs.
+3. **HoloFuel (on hold):** a short exploratory build once it launches and Unyt's integration is public (see "Status"); then a HoloFuel payment plugin and a pilot.
 4. **Several issuers:** published reserves and outstanding credits.
 
 ## Open questions for you
-- **Operator:** will one operator run both rails at launch? Recommended; nothing to settle between issuers.
-- **HoloFuel model:** HoloFuel as a rail into USD networks (A), a HoloFuel-native community network (C), or both?
-- **Unyt:** do you have a contact there, to confirm how a hApp receives and verifies HoloFuel payments and links identities?
+- **Operator:** will one operator run both payment methods at launch? Recommended; nothing to settle between issuers.
+- **HoloFuel model:** decide once it launches (see "Status").
