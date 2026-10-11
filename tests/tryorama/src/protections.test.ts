@@ -87,8 +87,10 @@ await runScenario(async (scenario) => {
   await call(driver, "dispatch")("drop_order", { order_ref: order, beacon: await currentBeacon() });
   await sync();
   await assert.rejects(call(customer, "dispatch")("cancel_order", order), /answer for it/, "the customer is told to wait or collect it");
+  // Carrying the drop's time proof forward, as any later step does.
+  const { beacon } = decodeEntry<{ beacon: unknown }>(await call(customer, "dispatch")<HcRecord>("get_order", order));
   await assert.rejects(
-    call(customer, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "Cancelled", delivery_receipts: [], cancellation: "ByCustomer" }),
+    call(customer, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "Cancelled", delivery_receipts: [], cancellation: "ByCustomer", beacon }),
     /answers for it until another takes it on/,
     "nor can a modified app cancel it",
   );

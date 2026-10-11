@@ -557,6 +557,13 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
     // A driver leaving -- this hold's.
     let released = version.released(&prior).filter(|_| matches!(version.order.status, DeliveryStatus::Open | DeliveryStatus::Collecting));
     if let Some(bid) = released.clone().filter(|bid| Some(bid) == bid_of(&hold.purpose)) {
+        // The store moving them on by recording the customer collecting it:
+        // the food reaches the customer another way, so the driver no longer
+        // answers for it.
+        let collecting = version.order.status == DeliveryStatus::Collecting && version.author() == &hold.terms.merchant;
+        if collecting && matches!(hold.purpose, HoldPurpose::Collateral { .. }) {
+            return Ok(Ok(Basis::Replaced { bid }));
+        }
         let at_store = prior.order.status == DeliveryStatus::DriverAtStore;
         return Ok(Ok(Basis::Released { bid, store_late: lineage::is_store_late_release(&version, &prior)?, at_store }));
     }
