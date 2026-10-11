@@ -203,7 +203,7 @@ await runScenario(async (scenario) => {
       requirement: { MinimumItemQuantity: { item_ref: menuItemRef, quantity: 0 } },
       reward: { PercentOffSubtotal: 10 },
     }),
-    /MinimumItemQuantity's quantity must be greater than zero/,
+    /MinimumItemQuantity's quantity must be between one and the most on a line/,
     "a zero-quantity MinimumItemQuantity requirement must be rejected",
   );
   console.log("[PASS] a zero-quantity item requirement is rejected");

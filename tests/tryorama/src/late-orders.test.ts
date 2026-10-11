@@ -1,6 +1,7 @@
-// Proves who pays when an order doesn't go to plan -- what DoorDash smooths
-// over from the middle, done here by the order's own parties, with a
-// customer never paying for food they didn't get unless they chose to:
+// Proves who pays when a driver leaves an order or a store runs late --
+// what DoorDash smooths over from the middle, done here by the order's own
+// parties, with a customer never paying for food they didn't get unless
+// they chose to:
 //
 // - hot potato: a driver who leaves an order the store started cooking
 //   answers for its food until another driver takes it on -- then they're
@@ -9,14 +10,11 @@
 //   called late -- proved against the public time source: the driver leaves
 //   paid in full by the store, the order reopens to another driver, and its
 //   customer may cancel for a full refund;
-// - if no driver takes it on in time, the store's app ends it: the customer
-//   is refunded and the last driver's collateral pays for the food;
-// - a customer can ask to collect it; once their driver is late, the
-//   store's app records it, and the store refunds its share of the fee;
 // - only a driver or the store moves a driver on, the store only once
-//   they're late, and a driver only with proof of the time; a driver's
-//   report that the store wouldn't check them in moves no money but shows
-//   on the store's record.
+//   they're late, and a driver only with proof of the time.
+//
+// No driver coming at all, and the customer collecting it themselves, are
+// `no-driver.test.ts`.
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
@@ -146,63 +144,4 @@ await runScenario(async (scenario) => {
   assert.equal((await call(customer, "reputation")<{ dropped_count: number }>("get_reputation_summary", { Driver: second.agentPubKey })).dropped_count, 0, "leaving a late store isn't a drop");
   console.log("[PASS] a store that keeps a checked-in driver waiting pays their fee, the order goes on, and the customer may cancel for a full refund");
 
-  // ===== No driver comes =====
-  const abandoned = await placed();
-  await driving(abandoned, first);
-  await drop(abandoned, first);
-  await assert.rejects(call(merchant, "dispatch")("end_for_no_driver", { order_ref: abandoned, beacon: await currentBeacon() }), /still has time/, "another driver gets the window");
-  const endsAfter = (await timing(abandoned)).no_driver_after;
-  assert.ok(endsAfter, "the window is running");
-  await sleepUntil(endsAfter);
-  // The store's app ends it, with proof of the time; this does the same.
-  await retryUntil(
-    async () => {
-      await call(merchant, "dispatch")("end_for_no_driver", { order_ref: abandoned, beacon: await currentBeacon() }).catch(() => null);
-      return deliveryStatus(customer, abandoned);
-    },
-    (s) => s === "Cancelled",
-    60,
-    1000,
-  );
-  await sync();
-  await settlesTo(customer, abandoned, 0, "the customer is refunded in full");
-  await settlesTo(merchant, abandoned, -FEE + FOOD, "the driver's collateral pays the store for the food");
-  await settlesTo(first, abandoned, -FOOD, "the driver who left it pays for it");
-  await retryUntil(() => call(customer, "reputation")<{ dropped_count: number }>("get_reputation_summary", { Driver: first.agentPubKey }), (s) => s.dropped_count === 2, 60, 1000);
-  console.log("[PASS] if no driver takes on a cooked order, the customer is refunded and the driver who left it pays");
-
-  // A driver's report the store wouldn't check them in moves no money.
-  await call(first, "dispatch")("report_check_in_refused", abandoned);
-  await retryUntil(() => call(customer, "reputation")<{ check_in_refused_count: number }>("get_reputation_summary", { Store: store }), (s) => s.check_in_refused_count === 1, 60, 1000);
-  console.log("[PASS] a driver's report that the store wouldn't check them in shows on the store's record");
-
-  // ===== The customer collects it =====
-  const collected = await placed();
-  await driving(collected, second);
-  await call(customer, "dispatch")("request_collect", collected);
-  await sync();
-  assert.equal(await deliveryStatus(customer, collected), "MerchantConfirmed", "the driver still has time");
-  const due = (await timing(collected)).driver_due;
-  assert.ok(due, "the driver is due at the store");
-  await sleepUntil(due);
-  // The store's app records it once the driver is late, with proof of the
-  // time; this does the same.
-  await retryUntil(
-    async () => {
-      await call(merchant, "dispatch")("record_collecting", { order_ref: collected, beacon: await currentBeacon() }).catch(() => null);
-      return deliveryStatus(customer, collected);
-    },
-    (s) => s === "Collecting",
-    60,
-    1000,
-  );
-  await sync();
-  const handover = await call(customer, "dispatch")<PinSecret>("get_my_handover_code", collected);
-  await retryUntilOk(() => call(merchant, "dispatch")("hand_over_collection", { order_original_action: collected, code: handover }));
-  await sync();
-  await reachesStatus(collected, "Collected");
-  await settlesTo(customer, collected, -FOOD + STORE_SHARE, "the customer pays for the food, less the store's share of the fee");
-  await settlesTo(merchant, collected, -FEE + FOOD + FOOD - STORE_SHARE, "the store is paid for the food, less its share of the fee");
-  await settlesTo(second, collected, FEE, "the late driver's collateral comes back");
-  console.log("[PASS] a customer collecting a late order is refunded the store's share of the fee");
 });

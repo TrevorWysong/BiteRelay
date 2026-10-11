@@ -311,3 +311,16 @@ pub fn driver_changes(from: &Version) -> ExternResult<u32> {
     }
     Ok(changes)
 }
+
+/// What the store refunds a customer who collected their delivery
+/// themselves (`collected`, its Collected version): its share of the last
+/// accepted driver's fee, or of the customer's cap if no driver was ever
+/// accepted -- what it would have paid toward delivery.
+pub fn collection_owed(collected: &Version) -> ExternResult<u64> {
+    let (percent, total, cap) = (collected.order.delivery_subsidy_percent, collected.order.order_total, collected.order.max_delivery_fee);
+    let fee = match find_back(collected.clone(), |v, _| v.order.accepted_bid.clone())? {
+        Some(bid) => decode::<Bid>(&must_get_valid_record(bid)?).map(|b| b.price_offer),
+        None => cap,
+    };
+    Ok(super::collection_compensation(fee, percent, total))
+}

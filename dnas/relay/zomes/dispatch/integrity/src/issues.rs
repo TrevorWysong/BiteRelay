@@ -171,19 +171,6 @@ pub(crate) fn validate_outcome(outcome: &OrderOutcome, author: &AgentPubKey, at:
     }
 }
 
-/// What the store owes a customer who collected their delivery
-/// (`collected`, its Collected version): its share of the last accepted
-/// driver's fee, or of the customer's cap if no driver was ever accepted.
-fn compensation(collected: Record, version: DeliveryOrder) -> ExternResult<u64> {
-    let (percent, total, cap) = (version.delivery_subsidy_percent, version.order_total, version.max_delivery_fee);
-    let last_bid = dispatch_types::lineage::find_back(dispatch_types::lineage::Version { record: collected, order: version }, |v, _| v.order.accepted_bid.clone())?;
-    let fee = match last_bid {
-        Some(bid) => decode::<Bid>(&must_get_valid_record(bid)?).map(|b| b.price_offer),
-        None => cap,
-    };
-    Ok(dispatch_types::collection_compensation(fee, percent, total))
-}
-
 pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     let Some(terms) = order_for_issues(&settlement.order)? else { return invalid("a settlement is for an order, by its original action") };
     if author != &terms.merchant {
@@ -199,7 +186,7 @@ pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPub
         let record = must_get_valid_record(settlement.basis.clone())?;
         let delivered = decode::<OrderOutcome>(&record).is_some_and(|o| o.order == settlement.order && matches!(o.outcome, Outcome::Delivered { .. }));
         match version_of::<DeliveryOrder>(&settlement.order, &settlement.basis)? {
-            Some((record, version)) if !delivered && version.status == DeliveryStatus::Collected => (true, compensation(record, version)?),
+            Some((record, version)) if !delivered && version.status == DeliveryStatus::Collected => (true, dispatch_types::lineage::collection_owed(&dispatch_types::lineage::Version { record, order: version })?),
             _ => (delivered, 0),
         }
     } else {

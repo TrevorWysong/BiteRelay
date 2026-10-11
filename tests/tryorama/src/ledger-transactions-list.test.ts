@@ -82,8 +82,14 @@ await runScenario(async (scenario) => {
   assert.equal(customerEntries.reduce((sum, e) => sum + e.amount, 0), 1000 + 400, "the food, and the whole $4.00 fee (this store covers none of it)");
   console.log("[PASS] the customer's ledger shows exactly what they set aside");
 
-  const merchantEntries = await retryUntil(() => ledger(merchant), (entries) => entries.length === 1, 120, 1000);
-  assert.deepEqual(kinds(merchantEntries), ["Collect"], "the store collected the food, and held nothing (it covers none of the fee)");
+  // The store's listing stake (nothing, on this test network); what it set
+  // aside checking the driver in -- none of the fee, which it doesn't cover,
+  // but the customer's share again in case it kept them waiting -- and
+  // collected back once delivered; and the food.
+  const merchantEntries = await retryUntil(() => ledger(merchant), (entries) => entries.filter((e) => "Collect" in e.kind).length === 2, 120, 1000);
+  assert.deepEqual(kinds(merchantEntries), ["Collect", "Collect", "Hold", "Stake"], "the store collected the food and its late cover back");
+  const net = merchantEntries.reduce((sum, e) => sum + ("Collect" in e.kind ? e.amount : -e.amount), 0);
+  assert.equal(net, 1000, "and is up exactly the food");
   console.log("[PASS] the store's ledger shows the food collected");
 
   const driverEntries = await retryUntil(() => ledger(driver), (entries) => entries.filter((e) => "Collect" in e.kind).length === 2, 120, 1000);

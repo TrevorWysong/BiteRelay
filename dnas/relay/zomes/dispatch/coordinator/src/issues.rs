@@ -440,7 +440,14 @@ pub fn decide_order(order: ActionHash) -> ExternResult<bool> {
     if issues.iter().any(|i| i.accepted.is_none() && now < i.reported_at.as_micros() + answer_grace_micros()) {
         return Ok(false);
     }
-    let (cited, refund) = refund_owed(&terms, &issues);
+    let (cited, issues_refund) = refund_owed(&terms, &issues);
+    // A customer who collected their delivery themselves is refunded the
+    // store's share of the fee it would have paid a driver, too.
+    let collected_owed = match get(basis.clone(), GetOptions::default())?.and_then(dispatch_integrity::lineage::Version::of) {
+        Some(version) if version.order.status == DeliveryStatus::Collected => dispatch_integrity::lineage::collection_owed(&version)?,
+        _ => 0,
+    };
+    let refund = issues_refund.saturating_add(collected_owed).min(terms.order_total);
     record_decision(DecisionWire::Settlement(ItemSettlement { order: order.clone(), basis, issues: cited, refund }))?;
     let _ = send_remote_signal(crate::signals::RemoteSignal::Returned { order_hash: order }, vec![requester]);
     Ok(true)
