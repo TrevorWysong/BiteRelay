@@ -8,8 +8,10 @@
 //   node run.mjs --shard 2/4 --list   just print which files would run
 //   TEST_TIMEOUT_MIN=15 node run.mjs
 //
-// Shards are balanced by how long each file takes (durations.json, which
-// `--record` keeps current), so parallel CI jobs finish together.
+// Shards are balanced by how long each file takes on CI (durations.json),
+// so parallel CI jobs finish together. Those are CI's timings, 2-3 times a
+// laptop's: refresh them from a CI run's summary, or with `--record` run on
+// CI -- a local `--record` would understate every file.
 //
 // Each file spins up its own conductors, which are heavy -- running them
 // concurrently is what made the suite flaky (SQLite "database is locked",
@@ -164,7 +166,11 @@ function runOnce(name, attempt) {
       cleanUp(before);
       const passes = (output.match(/\[PASS\]/g) ?? []).length;
       const failed = code !== 0 || FAILURE.test(output) || /Timed out after/.test(output);
-      const reason = failed ? (output.match(/(AssertionError[^\n]*|Error:[^\n]*|Timed out after[^\n]*)/)?.[0] ?? `exit code ${code}`) : null;
+      // The error's first line, and what it was compared against -- an
+      // assertion's "Input:" or "actual:" -- on one line, so a CI summary
+      // says what went wrong without the log.
+      const found = output.match(/(AssertionError|Error:|Timed out after)[\s\S]{0,600}/)?.[0];
+      const reason = failed ? (found ? found.replace(/\s+/g, " ").slice(0, 400) : `exit code ${code}`) : null;
       resolve({ passes, failed, reason, seconds: Math.round((Date.now() - started) / 1000), log });
     });
   });

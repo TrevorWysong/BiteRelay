@@ -8,7 +8,9 @@ import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryoram
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
 
-const ORDERS = 8;
+// The most a customer may place within one store response window
+// (`max_pending_orders`).
+const ORDERS = 5;
 const PRICE = 1250;
 
 interface LedgerEntry {

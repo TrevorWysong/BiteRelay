@@ -14,7 +14,8 @@ import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, FULL_SIZE_PHOTO, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 /// Long enough to report in, short enough to wait out.
-const REPORT_WINDOW_SECS = 20;
+// Long enough that a slow CI runner files both reports before it closes.
+const REPORT_WINDOW_SECS = 60;
 
 interface IssueView {
   issue: Uint8Array;
@@ -37,7 +38,7 @@ await runScenario(async (scenario) => {
         return balance(p);
       },
       (b) => b === expected,
-      90,
+      150,
       1000,
     );
   const refundOf = (order: Uint8Array) => call(customer, "dispatch")<{ refund: number | null }>("get_order_decisions", order).then((d) => d.refund);
@@ -150,7 +151,7 @@ await runScenario(async (scenario) => {
       return refundOf(ignored);
     },
     (refund) => refund !== null,
-    90,
+    150,
     1000,
   );
   assert.equal(await refundOf(ignored), 1000, "a report the store never answers is refunded");

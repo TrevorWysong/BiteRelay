@@ -268,16 +268,26 @@ fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
 
 /// Refuses another order while the caller has placed as many as the network
 /// allows within one store response window -- validation's rule
-/// (`dispatch_integrity::checks::check_order_rate`), told first.
+/// (`dispatch_integrity::checks::check_order_rate`), told first. Validation
+/// counts orders placed, not whether they've been answered, so the customer
+/// is told when the earliest leaves the window.
 pub(crate) fn ensure_order_rate() -> ExternResult<()> {
-    let since = sys_time()?.as_micros() - relay_governance::store_response_window().as_micros() as i64;
-    let recent = my_order_actions()?
+    let window = relay_governance::store_response_window().as_micros() as i64;
+    let since = sys_time()?.as_micros() - window;
+    let mut recent: Vec<i64> = my_order_actions()?
         .iter()
-        .filter(|(_, record)| matches!(record.action().data, ActionData::Create(_)) && record.action().timestamp().as_micros() >= since)
-        .count();
-    if recent >= relay_governance::max_pending_orders() as usize {
+        .filter(|(_, record)| matches!(record.action().data, ActionData::Create(_)))
+        .map(|(_, record)| record.action().timestamp().as_micros())
+        .filter(|at| *at >= since)
+        .collect();
+    let most = relay_governance::max_pending_orders() as usize;
+    if recent.len() >= most {
+        recent.sort_unstable();
+        let minutes = ((recent[recent.len() - most] + window - sys_time()?.as_micros()) / 60_000_000).max(0) + 1;
+        let window_minutes = window / 60_000_000;
         return Err(wasm_error!(WasmErrorInner::Guest(format!(
-            "You've placed {recent} orders that stores are still answering, the most at once. You can place another once one's answered."
+            "You've placed {most} orders in the last {window_minutes} minutes, the most the network allows. You can place another in about {minutes} minute{}.",
+            if minutes == 1 { "" } else { "s" }
         ))));
     }
     Ok(())
