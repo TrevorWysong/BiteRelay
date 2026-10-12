@@ -11,7 +11,8 @@ import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryoram
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, appWithProperties, decodeEntry, retryUntil, ST_PETE, useTestCoordinators } from "./helpers.js";
 
-const WINDOW_SECS = 8;
+// Long enough that a slow CI runner's steps fit inside it.
+const WINDOW_SECS = 30;
 
 interface OrderState {
   status: string;

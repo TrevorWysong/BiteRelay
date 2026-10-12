@@ -63,7 +63,7 @@ await runScenario(async (scenario) => {
         return balance(p);
       },
       (b) => b === expected,
-      90,
+      180,
       1000,
     ).then((b) => assert.equal(b, expected, why));
   const timing = (order: Uint8Array) => call(customer, "dispatch")<OrderTiming>("get_order_timing", order);

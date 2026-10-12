@@ -27,7 +27,7 @@ const COLLECT_STEPS: { status: DeliveryStatus; label: string }[] = [
   { status: "Collected", label: "Collected" },
 ];
 
-export function statusTone(status: DeliveryStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
+function statusTone(status: DeliveryStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
   switch (status) {
     case "Delivered":
     case "Collected":
@@ -146,7 +146,7 @@ const PICKUP_STEPS: { status: PickupStatus; label: string }[] = [
   { status: "PickedUp", label: "Picked up" },
 ];
 
-export function pickupStatusTone(status: PickupStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
+function pickupStatusTone(status: PickupStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
   switch (status) {
     case "PickedUp":
       return "success";

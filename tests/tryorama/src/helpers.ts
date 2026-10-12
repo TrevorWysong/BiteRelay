@@ -171,7 +171,24 @@ export async function useTestCoordinators(player: PlayerApp, zomes: string[]): P
       cell_id: player.cells[0].cell_id,
       source: { type: "bundle", value: { manifest: { zomes: [{ name: zome, hash: null, path: file, dependencies: [{ name: `${zome}_integrity` }] }] }, resources: { [file]: bytes } } },
     } as never);
+    await warmUp(player, zome);
   }
+}
+
+/// Calls into a zome until its conductor answers -- compiling a swapped-in
+/// coordinator, and granting the caller's signing capability on its first
+/// call, can outlast a request's 60 seconds on a slow CI runner. Any answer
+/// will do (there's no such function), so long as it isn't a timeout.
+async function warmUp(player: PlayerApp, zome: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      await player.cells[0].callZome({ zome_name: zome, fn_name: "__warm_up", payload: null });
+      return;
+    } catch (err) {
+      if (!/timed out/i.test(String(err))) return;
+    }
+  }
+  throw new Error(`the ${zome} zome never answered after its coordinator was swapped in`);
 }
 
 /// An agent key in the form Holochain stores it as a link base: the same

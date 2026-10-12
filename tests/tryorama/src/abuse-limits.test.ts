@@ -75,7 +75,7 @@ await runScenario(async (scenario) => {
   console.log("[PASS] a store's minimum order holds, whichever version of its terms an order cites");
 
   // ===== Waiting orders =====
-  await assert.rejects(pickup(customer, 2), /the most at once/, "a customer can't place more than the network allows at once");
+  await assert.rejects(pickup(customer, 2), /the most the network allows/, "a customer can't place more than the network allows at once");
   await assert.rejects(rawPickup(2), /as many orders as the network allows at once/, "nor can a modified app");
   console.log("[PASS] a customer can't bury stores in orders");
 
