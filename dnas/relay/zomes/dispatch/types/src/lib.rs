@@ -286,6 +286,9 @@ pub struct OrderItem {
 /// order: sharing it never races another party's step.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct DropoffShare {
     /// The order's original action.
     pub order: ActionHash,
@@ -333,6 +336,9 @@ impl LinePricer {
 /// symmetric across verticals.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct DeliveryOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
@@ -507,6 +513,9 @@ pub struct DeliveryOrder {
 /// (`DeliveryStatus::Collecting`), citing this. One per order.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct CollectRequest {
     /// The order's original action.
     pub order: ActionHash,
@@ -514,6 +523,9 @@ pub struct CollectRequest {
 
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct Bid {
     pub order_ref: ActionHash,
     pub bidder: AgentPubKey,
@@ -621,6 +633,9 @@ impl PickupStatus {
 /// right now -- named here rather than silently missed.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct PickupOrder {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
@@ -664,4 +679,29 @@ pub struct PickupOrder {
     /// accepts the order -- see `DeliveryOrder::food_hold`.
     #[serde(default)]
     pub food_hold: Option<ActionHash>,
+}
+
+#[cfg(test)]
+mod type_confusion_tests {
+    use super::*;
+
+    fn hash(n: u8) -> ActionHash {
+        ActionHash::from_raw_36(vec![n; 36])
+    }
+
+    #[test]
+    fn a_record_decodes_only_as_its_own_type() {
+        // A shared address names its order, as a collect request does: it
+        // must never read as the customer asking to collect.
+        let share = DropoffShare {
+            order: hash(1),
+            committed: hash(2),
+            driver: AgentPubKey::from_raw_36(vec![3; 36]),
+            sealed: XSalsa20Poly1305EncryptedData::new([0; 24].into(), vec![0; 16]),
+        };
+        let bytes = SerializedBytes::try_from(share).unwrap();
+        assert!(CollectRequest::try_from(bytes).is_err());
+        let request = SerializedBytes::try_from(CollectRequest { order: hash(1) }).unwrap();
+        assert!(CollectRequest::try_from(request).is_ok());
+    }
 }

@@ -84,6 +84,9 @@ pub enum ReputationEventKind {
 /// and any outstanding warrants, not just this log.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ReputationEvent {
     pub target: ReputationTarget,
     pub counterparty: AgentPubKey,
@@ -114,6 +117,9 @@ pub struct ReputationEvent {
 /// below).
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct Review {
     pub target: ReviewTarget,
     pub author: AgentPubKey,
@@ -133,6 +139,9 @@ pub struct Review {
 /// -- otherwise a customer could rate an item they never ordered.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ItemReview {
     pub item_ref: ActionHash,
     pub author: AgentPubKey,

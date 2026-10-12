@@ -40,6 +40,9 @@ pub struct TemplateDetails {
 
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct RecurringOrderTemplate {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,

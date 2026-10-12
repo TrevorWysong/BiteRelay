@@ -29,6 +29,9 @@ pub enum LegKind {
 /// dual-signature field on the order itself: it hides that asymmetry.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct Leg {
     pub order_ref: ActionHash,
     pub sequence: u8,
@@ -76,6 +79,9 @@ pub struct HandoffEvidence {
 /// still behind an unstable feature that release runtimes don't ship.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ReceiptAttestation {
     pub leg: ActionHash,
     pub attested_at: Timestamp,

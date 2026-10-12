@@ -19,6 +19,9 @@ use relay_integrity_support::text_problem;
 /// A store's choice group, shared by every item that lists it.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ModifierGroup {
     pub catalog_ref: ActionHash,
     /// What the customer is choosing: "Milk", "Choose a side".

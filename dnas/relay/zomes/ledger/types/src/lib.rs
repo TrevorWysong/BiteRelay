@@ -44,6 +44,9 @@ pub enum LedgerKind {
 
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct LedgerEntry {
     pub kind: LedgerKind,
     pub amount: u64,
@@ -61,6 +64,9 @@ pub struct LedgerEntry {
 /// their balance with a `Deposit`.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct IssuerGrant {
     pub to: AgentPubKey,
     pub amount: u64,

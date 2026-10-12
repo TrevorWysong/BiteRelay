@@ -52,6 +52,9 @@ pub struct IssueEvidence {
 /// A customer reporting items missing or wrong on an order they have.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ItemIssue {
     /// The order's original action.
     pub order: ActionHash,
@@ -67,6 +70,9 @@ pub struct ItemIssue {
 /// refunded what it's worth) or decline it (they aren't). One per issue.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct IssueResponse {
     pub issue: ActionHash,
     pub accept: bool,
@@ -86,6 +92,9 @@ pub enum Outcome {
 /// A delivery's outcome, written once by its store.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct OrderOutcome {
     /// The order's original action.
     pub order: ActionHash,
@@ -97,6 +106,9 @@ pub struct OrderOutcome {
 /// collects the rest.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ItemSettlement {
     /// The order's original action.
     pub order: ActionHash,

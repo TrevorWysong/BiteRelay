@@ -18,6 +18,9 @@ pub enum RoleTag {
 
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     /// The name everyone sees -- published only for the roles that face the
     /// public: a store and a driver. A customer publishes none: their name
@@ -61,6 +64,9 @@ impl Profile {
 /// their display name.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct ProviderCredential {
     pub profile_action: ActionHash,
     pub vehicle_description: String,
@@ -105,6 +111,9 @@ pub struct AddressDetails {
 
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct SavedAddress {
     /// The address (`AddressDetails`), sealed to its owner -- nobody else
     /// learns where they live or what they call it.

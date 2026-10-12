@@ -21,6 +21,9 @@ pub use pricing::*;
 
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct MerchantCatalog {
     pub owner: AgentPubKey,
     pub business_name: String,
@@ -126,6 +129,9 @@ pub fn utc() -> String {
 
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct MenuItem {
     pub catalog_ref: ActionHash,
     pub name: String,
@@ -213,6 +219,9 @@ pub enum PromoReward {
 /// whether it can still be used.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct PromoCode {
     pub catalog_ref: ActionHash,
     pub code: String,
@@ -243,6 +252,9 @@ pub struct PromoCode {
 /// would need.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct GoodieBag {
     pub catalog_ref: ActionHash,
     pub title: String,
@@ -347,6 +359,9 @@ pub enum BagClaimStatus {
 /// side, no extra tap needed.
 #[hdk_entry_helper]
 #[derive(Clone)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
 pub struct BagClaim {
     pub bag_ref: ActionHash,
     pub customer: AgentPubKey,
