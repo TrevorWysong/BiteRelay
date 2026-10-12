@@ -5,6 +5,7 @@
 //! `validate` into the same wasm binary fails to link.
 
 use hdi::prelude::*;
+pub use catalog_types::{Chosen, ChosenInput, Selection, SelectionInput};
 pub use relay_types::{Beacon, PinSecret};
 use relay_types::GeoPoint;
 
@@ -152,9 +153,6 @@ impl DeliveryStatus {
             // (`CollectRequest`), when no driver has it or its driver is late
             // -- recorded by the store, which hands it over.
             (Open | BidAccepted | DriverEnRouteToMerchant | MerchantConfirmed, Collecting) => Some(Merchant),
-            // The customer sharing their address with a driver who's committed
-            // -- no change of status (see `DeliveryOrder::driver_dropoff`).
-            (DriverEnRouteToMerchant, DriverEnRouteToMerchant) | (MerchantConfirmed, MerchantConfirmed) | (DriverAtStore, DriverAtStore) | (PickedUp, PickedUp) => Some(Requester),
             // Collected -- on the customer's word, or the store's scan of
             // their handover code.
             (Collecting, Collected) => Some(RequesterOrMerchant),
@@ -252,7 +250,8 @@ pub struct DropoffDetails {
 
 /// One line of an order: an item, the exact version of it that was priced
 /// (the item as the customer saw it -- validation reads its price from
-/// there), and how many.
+/// there), what was chosen from its choice groups, and how many. The same
+/// item may be on several lines, each with different choices.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct OrderLine {
     /// The item's identity (its original action). For a goodie-bag order,
@@ -261,6 +260,68 @@ pub struct OrderLine {
     /// The version priced: `item_ref` itself or one of its updates.
     pub priced_version: ActionHash,
     pub quantity: u32,
+    /// One per choice group of the priced version, in its order, each at
+    /// the group version priced (`catalog_types::line_price`). None for an
+    /// item without choices, or a goodie bag.
+    #[serde(default)]
+    pub selections: Vec<Selection>,
+}
+
+/// Something to order -- an item, how many, and what was chosen -- before
+/// it's priced: what a customer's app sends, and what a recurring order
+/// keeps.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OrderItem {
+    pub item_ref: ActionHash,
+    pub quantity: u32,
+    #[serde(default)]
+    pub selections: Vec<SelectionInput>,
+}
+
+/// A customer's exact drop-off (`DropoffDetails`), sealed to the driver who
+/// has committed to their order -- shared by the customer's app once they
+/// have, so only a driver with collateral at stake ever learns where anyone
+/// lives: a throwaway identity can't win a bid just to harvest addresses.
+/// A record of its own, linked from the order, rather than a version of the
+/// order: sharing it never races another party's step.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq)]
+pub struct DropoffShare {
+    /// The order's original action.
+    pub order: ActionHash,
+    /// A version of the order showing `driver` committed to it.
+    pub committed: ActionHash,
+    pub driver: AgentPubKey,
+    pub sealed: XSalsa20Poly1305EncryptedData,
+}
+
+/// Prices an order's lines with their choices, reading each choice group
+/// version the order names once however many lines name it.
+#[derive(Default)]
+pub struct LinePricer {
+    groups: std::collections::BTreeMap<ActionHash, Option<catalog_types::GroupAt>>,
+}
+
+impl LinePricer {
+    /// What one unit of a line costs: `item` (the line's priced version)
+    /// with the line's choices, each group read at the version the line
+    /// names -- or why the choices don't fit the item. Deterministic: what
+    /// validation checks an order's total and a refund's worth against.
+    pub fn unit_price(&mut self, item: &catalog_types::MenuItem, selections: &[Selection]) -> ExternResult<Result<u64, String>> {
+        let groups = &mut self.groups;
+        catalog_types::line_price(item, selections, &mut |version: &ActionHash| {
+            if let Some(known) = groups.get(version) {
+                return Ok(known.clone());
+            }
+            let record = must_get_valid_record(version.clone())?;
+            let found = match relay_integrity_support::decode::<catalog_types::ModifierGroup>(&record) {
+                Some(group) => Some((relay_integrity_support::original_creation(version.clone())?, group)),
+                None => None,
+            };
+            groups.insert(version.clone(), found.clone());
+            Ok(found)
+        })
+    }
 }
 
 /// One concrete entry type per vertical (this one, plus a future
@@ -293,12 +354,6 @@ pub struct DeliveryOrder {
     /// The exact drop-off and the customer's drop-off notes
     /// (`DropoffDetails`), sealed to the customer themselves.
     pub sealed_dropoff: XSalsa20Poly1305EncryptedData,
-    /// The same details sealed to the driver -- shared by the customer's app
-    /// once the driver has committed (their collateral set aside), so only a
-    /// driver with something at stake ever learns the exact address: a
-    /// throwaway identity can't win a bid just to harvest it. Gone with the
-    /// driver.
-    pub driver_dropoff: Option<XSalsa20Poly1305EncryptedData>,
     /// The customer's note for the kitchen, sealed to the store. `None` when
     /// there isn't one.
     pub kitchen_note: Option<XSalsa20Poly1305EncryptedData>,

@@ -2,20 +2,22 @@ import { useState } from "react";
 import { Pencil, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { addMenuItem, updateMenuItem } from "../../../holochain/zomes/catalog";
-import { bytesToHex } from "../../../holochain/decode";
+import { bytesToHex, hexToBytes } from "../../../holochain/decode";
 import { groupByCategory, type ItemRow } from "../../../lib/menu";
 import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
 import { Button, Card, Input, StatNumber, Textarea } from "../../../components/ui";
 import { PhotoInput } from "../../../components/PhotoInput";
-import { MAX_DESCRIPTION_CHARS, MAX_LABEL_CHARS, MAX_NAME_CHARS } from "../../../holochain/types";
+import { MAX_DESCRIPTION_CHARS, MAX_ITEM_GROUPS, MAX_LABEL_CHARS, MAX_NAME_CHARS } from "../../../holochain/types";
+import { Check } from "lucide-react";
+import type { GroupRow } from "./ChoicesSection";
 
 /// What the editor is open for: a new item, an existing one, or nothing.
 type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
 
 /// The store's menu, grouped by category, with an add/edit form. Changes go
 /// through `onChanged`, which reloads the menu (the promo form reads it too).
-export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; onChanged: () => Promise<void> }) {
+export function MenuSection({ catalogRef, items, groups, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; groups: GroupRow[]; onChanged: () => Promise<void> }) {
   const [editing, setEditing] = useState<Editing>(null);
   const grouped = groupByCategory(items);
 
@@ -41,6 +43,7 @@ export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint
             <ItemForm
               catalogRef={catalogRef}
               row={editing.kind === "edit" ? editing.row : null}
+              groups={groups}
               onSaved={async () => {
                 setEditing(null);
                 await onChanged();
@@ -65,6 +68,11 @@ export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.item.name}</p>
                     {row.item.description && <p className="truncate text-xs text-ink-400">{row.item.description}</p>}
+                    {row.item.modifier_groups.length > 0 && (
+                      <p className="truncate text-xs text-ink-400">
+                        Choices: {row.item.modifier_groups.map((ref) => groups.find((g) => bytesToHex(g.hash) === bytesToHex(ref))?.group.name ?? "…").join(", ")}
+                      </p>
+                    )}
                     <StatNumber className="text-sm">{formatCents(row.item.price_cents)}</StatNumber>
                   </div>
                   <motion.button
@@ -88,7 +96,7 @@ export function MenuSection({ catalogRef, items, onChanged }: { catalogRef: Uint
 }
 
 /// Add (`row` null) or edit an item. The draft is seeded once, on mount.
-function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; onSaved: () => Promise<void> }) {
+function ItemForm({ catalogRef, row, groups, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; groups: GroupRow[]; onSaved: () => Promise<void> }) {
   const [form, setForm] = useState(() => ({
     name: row?.item.name ?? "",
     price: row ? fromMinorUnits(row.item.price_cents) : 0,
@@ -96,6 +104,8 @@ function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: I
     photo_data_uri: row?.item.photo_data_uri ?? "",
     category: row?.item.category ?? "",
     dietary_tags: (row?.item.dietary_tags ?? []).join(", "),
+    /// The item's choice groups, by hex, in the order customers see them.
+    groups: (row?.item.modifier_groups ?? []).map(bytesToHex),
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
@@ -111,6 +121,7 @@ function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: I
         photo_data_uri: form.photo_data_uri,
         category: form.category,
         dietary_tags: form.dietary_tags.split(",").map((t) => t.trim()).filter(Boolean),
+        modifier_groups: form.groups.map(hexToBytes),
       };
       if (row) await updateMenuItem(row.hash, { ...row.item, ...fields });
       else await addMenuItem({ catalog_ref: catalogRef, available: true, ...fields });
@@ -132,6 +143,30 @@ function ItemForm({ catalogRef, row, onSaved }: { catalogRef: Uint8Array; row: I
       <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
       <Input maxLength={MAX_LABEL_CHARS} value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
       <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder="Dietary tags, comma separated (Vegetarian, Spicy)" />
+      {groups.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-semibold text-ink-500">Choices, in the order customers see them</p>
+          <div className="flex flex-wrap gap-1.5">
+            {groups.map((g) => {
+              const hex = bytesToHex(g.hash);
+              const position = form.groups.indexOf(hex);
+              const full = position < 0 && form.groups.length >= MAX_ITEM_GROUPS;
+              return (
+                <button
+                  key={hex}
+                  type="button"
+                  disabled={full}
+                  onClick={() => set({ groups: position < 0 ? [...form.groups, hex] : form.groups.filter((h) => h !== hex) })}
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-40 ${position >= 0 ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
+                >
+                  {position >= 0 ? <span className="tabular-nums">{position + 1}.</span> : <Check size={12} className="opacity-0" />}
+                  {g.group.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <Button loading={saving} disabled={!form.name.trim()} onClick={save} className="py-2 text-xs">
         {row ? "Save changes" : "Add to menu"}
       </Button>

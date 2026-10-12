@@ -4,8 +4,10 @@
 //! same anchor pattern drivers use to find open orders.
 
 mod bags;
+mod modifiers;
 mod signals;
 pub use bags::*;
+pub use modifiers::*;
 pub use signals::*;
 
 use catalog_integrity::*;
@@ -402,7 +404,8 @@ pub fn update_menu_item(input: UpdateMenuItemInput) -> ExternResult<Record> {
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated menu item".into())))
 }
 
-/// One version of a menu item: the action that wrote it, and when.
+/// One version of a menu item (or a choice group): the action that wrote
+/// it, and when.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ItemVersion {
     pub action: ActionHash,
@@ -478,7 +481,7 @@ fn my_menu_item_records() -> ExternResult<Vec<Record>> {
 /// `item_ref` and each update after it, oldest first, from `records` (the
 /// caller's chain). Each version updates the one before it; were the history
 /// ever to fork, the later branch wins.
-fn item_versions(item_ref: &ActionHash, records: &[Record]) -> Vec<Record> {
+pub(crate) fn item_versions(item_ref: &ActionHash, records: &[Record]) -> Vec<Record> {
     let Some(first) = records.iter().find(|r| r.action_address() == item_ref) else { return Vec::new() };
     let mut versions = vec![first.clone()];
     let mut latest = first.action_address();

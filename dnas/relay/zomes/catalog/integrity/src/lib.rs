@@ -17,7 +17,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
+pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -32,6 +32,7 @@ pub enum EntryTypes {
     PromoCode(PromoCode),
     GoodieBag(GoodieBag),
     BagClaim(BagClaim),
+    ModifierGroup(ModifierGroup),
 }
 
 #[hdk_link_types]
@@ -53,6 +54,8 @@ pub enum LinkTypes {
     /// however many a store has retired. `CatalogToPromoCode` stays the
     /// permanent, paginated list the merchant manages.
     CatalogToLivePromo,
+    /// A store's choice groups, base = the store.
+    CatalogToModifierGroup,
 }
 
 #[hdk_extern]
@@ -64,6 +67,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::PromoCode(promo) => validate_new_promo_code(&promo, action.author()),
             EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author(), action.timestamp()),
             EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::ModifierGroup(group) => validate_modifier_group(&group, action.author(), None),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog_update(&catalog, action.author(), &action.original_action_address),
@@ -71,6 +75,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::PromoCode(promo) => validate_promo_code_update(&promo, action.author(), &action.original_action_address),
             EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author(), &action.original_action_address),
             EntryTypes::BagClaim(claim) => validate_claim_update(&claim, action.author(), &action.original_action_address),
+            EntryTypes::ModifierGroup(group) => validate_modifier_group_update(&group, action.author(), &action.original_action_address),
         },
         // A store's menu, promos and bags are retired by updating them
         // (unavailable, inactive), never deleted: orders and reviews cite them.
@@ -198,6 +203,9 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
     if let Some(problem) = dietary_tags_problem(&item.dietary_tags) {
         return Ok(ValidateCallbackResult::Invalid(problem));
     }
+    if let Some(problem) = item_groups_problem(item)? {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
     if item.price_cents == 0 {
         return Ok(ValidateCallbackResult::Invalid("price_cents must be greater than zero".into()));
     }
@@ -217,6 +225,62 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
         ));
     }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// An item's choice groups: a bounded list, each once, each one of the
+/// same store's groups by its original action -- what orders name.
+fn item_groups_problem(item: &MenuItem) -> ExternResult<Option<String>> {
+    if item.modifier_groups.len() > MAX_ITEM_GROUPS {
+        return Ok(Some(format!("an item has at most {MAX_ITEM_GROUPS} choice groups")));
+    }
+    for (i, group) in item.modifier_groups.iter().enumerate() {
+        if item.modifier_groups[..i].contains(group) {
+            return Ok(Some("an item lists each choice group once".into()));
+        }
+        if !is_store_group(group, &item.catalog_ref)? {
+            return Ok(Some("an item's choice groups are its own store's, by their original action".into()));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `group` is the original action of one of `catalog_ref`'s choice
+/// groups. A group's store is set when it's created and never changes.
+fn is_store_group(group: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<bool> {
+    let record = must_get_valid_record(group.clone())?;
+    Ok(matches!(record.action().data, ActionData::Create(_)) && decode::<ModifierGroup>(&record).is_some_and(|g| &g.catalog_ref == catalog_ref))
+}
+
+/// A choice group: by its store's owner, sensible (`ModifierGroup::problem`),
+/// and opening only the same store's groups -- never itself.
+fn validate_modifier_group(group: &ModifierGroup, author: &AgentPubKey, original: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    if let Some(problem) = group.problem() {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
+    if &owner_of_catalog(&group.catalog_ref)? != author {
+        return invalid("a choice group can only be authored by its store's owner");
+    }
+    for nested in group.options.iter().filter_map(|o| o.nested_group.as_ref()) {
+        if Some(nested) == original || !is_store_group(nested, &group.catalog_ref)? {
+            return invalid("an option opens another of the same store's choice groups, by its original action");
+        }
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// A choice group, changed only by whoever wrote it, and only within its
+/// own store.
+fn validate_modifier_group_update(group: &ModifierGroup, author: &AgentPubKey, original: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let prior_record = must_get_valid_record(original.clone())?;
+    let Some(prior) = decode::<ModifierGroup>(&prior_record) else {
+        return invalid("original_action_hash does not point at a ModifierGroup entry");
+    };
+    if prior_record.action().author() != author || group.catalog_ref != prior.catalog_ref {
+        return invalid("only a store's owner may change its choice groups, and a group stays with its store");
+    }
+    // The group's identity, whichever version this updates.
+    let identity = relay_integrity_support::original_creation(original.clone())?;
+    validate_modifier_group(group, author, Some(&identity))
 }
 
 fn owner_of_catalog(catalog_ref: &ActionHash) -> ExternResult<AgentPubKey> {

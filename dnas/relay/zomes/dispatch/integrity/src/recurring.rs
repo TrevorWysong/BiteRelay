@@ -2,7 +2,7 @@
 //! types and their create/update validation.
 
 use super::*;
-use relay_integrity_support::limits::{MAX_NOTE_BYTES, MAX_TEMPLATE_ITEMS, MAX_TIME_ZONE_CHARS};
+use relay_integrity_support::limits::{MAX_NOTE_BYTES, MAX_ORDER_LINES, MAX_TEMPLATE_ITEMS, MAX_TIME_ZONE_CHARS};
 use relay_integrity_support::{sealed_chunks_problem, SealedChunks};
 
 /// The most a recurring order's sealed details may hold: two notes at their
@@ -44,7 +44,8 @@ pub struct RecurringOrderTemplate {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What it orders each time: items, quantities and choices.
+    pub items: Vec<OrderItem>,
     /// Where it goes and the notes for it (`TemplateDetails`), sealed to the
     /// requester -- a standing order shouldn't publish a home address.
     pub sealed_details: SealedChunks,
@@ -94,8 +95,12 @@ pub(crate) fn validate_new_recurring_template(template: &RecurringOrderTemplate,
     if let Some(problem) = amounts.into_iter().find_map(|(field, amount)| amount.and_then(|a| relay_integrity_support::amount_problem(field, a))) {
         return Ok(ValidateCallbackResult::Invalid(problem));
     }
-    if template.item_refs.is_empty() || template.item_refs.len() > MAX_TEMPLATE_ITEMS {
-        return Ok(ValidateCallbackResult::Invalid(format!("a recurring order has between 1 and {MAX_TEMPLATE_ITEMS} items")));
+    let units: u64 = template.items.iter().map(|item| u64::from(item.quantity)).sum();
+    if template.items.is_empty() || template.items.len() > MAX_ORDER_LINES || template.items.iter().any(|item| item.quantity == 0) || units > MAX_TEMPLATE_ITEMS as u64 {
+        return Ok(ValidateCallbackResult::Invalid(format!("a recurring order has between 1 and {MAX_TEMPLATE_ITEMS} items, on at most {MAX_ORDER_LINES} lines")));
+    }
+    if let Some(problem) = template.items.iter().find_map(|item| catalog_types::choices_problem(&item.selections)) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     if let Some(problem) = sealed_chunks_problem("sealed_details", &template.sealed_details, MAX_DETAILS_BYTES) {
         return Ok(ValidateCallbackResult::Invalid(problem));
@@ -138,7 +143,7 @@ pub(crate) fn validate_recurring_template_update(
     let unchanged = prior.requester == template.requester
         && prior.merchant == template.merchant
         && prior.catalog_ref == template.catalog_ref
-        && prior.item_refs == template.item_refs
+        && prior.items == template.items
         && prior.sealed_details == template.sealed_details
         && prior.max_delivery_fee == template.max_delivery_fee
         && prior.tip_cents == template.tip_cents

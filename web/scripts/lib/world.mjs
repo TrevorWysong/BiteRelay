@@ -22,9 +22,16 @@ export const WORLD = {
       details: { cuisine_type: "American", description: "Burgers, bowls and breakfast all day.", address_street: "120 Central Ave", prep_minutes: 15 },
       // Every day, in the seed's time zone (see seed.mjs).
       hours: { opens: "08:00", closes: "22:00" },
+      // Choice groups, created in order -- a group an option opens comes
+      // before it. Items list theirs by key.
+      groups: [
+        { key: "friesSize", name: "Fries size", min: 1, max: 1, options: [{ name: "Regular", price: 0 }, { name: "Large", price: 100 }] },
+        { key: "combo", name: "Make it a combo", min: 0, max: 1, options: [{ name: "Fries", price: 350, opens: "friesSize" }, { name: "Side salad", price: 400 }] },
+        { key: "addOns", name: "Add-ons", min: 0, max: 3, free: 1, options: [{ name: "Cheese", price: 100 }, { name: "Avocado", price: 150 }, { name: "Jalapeños", price: 50 }] },
+      ],
       menu: [
         { name: "Smash Burger", price: 1250, category: "Burgers", description: "Two patties, American cheese, house sauce." },
-        { name: "Veggie Burger", price: 1150, category: "Burgers", dietary_tags: ["Vegetarian"] },
+        { name: "Veggie Burger", price: 1150, category: "Burgers", dietary_tags: ["Vegetarian"], groups: ["addOns", "combo"], description: "One add-on free." },
         { name: "Harvest Bowl", price: 1350, category: "Bowls", dietary_tags: ["Vegan", "Gluten-free"] },
         { name: "Hand-cut Fries", price: 450, category: "Sides", dietary_tags: ["Vegan"] },
         { name: "Pancake Stack", price: 950, category: "Breakfast", dietary_tags: ["Vegetarian"] },
@@ -54,7 +61,13 @@ export const WORLD = {
       at: [1.1, -0.4],
       details: { cuisine_type: "Café", description: "Coffee, pastries and lunch plates.", address_street: "88 Beach Dr NE", prep_minutes: 8 },
       hours: { opens: "07:00", closes: "18:00" },
+      groups: [
+        { key: "size", name: "Size", min: 1, max: 1, options: [{ name: "Small", price: 0 }, { name: "Large", price: 75 }] },
+        { key: "milk", name: "Milk", min: 0, max: 1, options: [{ name: "Whole", price: 0 }, { name: "Oat", price: 60 }, { name: "Almond", price: 60 }] },
+        { key: "extras", name: "Extras", min: 0, max: 4, perOption: 3, options: [{ name: "Extra shot", price: 80 }, { name: "Vanilla syrup", price: 50 }] },
+      ],
       menu: [
+        { name: "Latte", price: 450, category: "Coffee", groups: ["size", "milk", "extras"] },
         { name: "Flat White", price: 475, category: "Coffee" },
         { name: "Almond Croissant", price: 425, category: "Pastries", dietary_tags: ["Vegetarian"] },
         { name: "Chicken Pesto Panini", price: 1195, category: "Lunch" },

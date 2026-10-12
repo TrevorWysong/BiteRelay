@@ -48,6 +48,13 @@ pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkD
                 "a menu item may only be linked under its own catalog, by its author",
             )
         }
+        LinkTypes::CatalogToModifierGroup => {
+            let Some(group) = decode::<ModifierGroup>(&record) else { return invalid("target is not a ModifierGroup") };
+            require(
+                author == entry_author && base == &AnyLinkableHash::from(group.catalog_ref) && matches!(record.action().data, ActionData::Create(_)),
+                "a choice group is linked under its own catalog, by its author, by its original action",
+            )
+        }
         LinkTypes::CatalogToPromoCode => {
             let Some(promo) = decode::<PromoCode>(&record) else { return invalid("target is not a PromoCode") };
             require(

@@ -27,7 +27,8 @@ pub(crate) struct OrderForIssues {
     pub requester: AgentPubKey,
     pub merchant: AgentPubKey,
     pub order_total: u64,
-    pub lines: Vec<(ActionHash, u64, u32)>,
+    /// Each line's (unit price, quantity), in order.
+    pub lines: Vec<(u64, u32)>,
     pub delivery: bool,
 }
 
@@ -46,16 +47,21 @@ pub(crate) fn order_for_issues(order: &ActionHash) -> ExternResult<Option<OrderF
         return Ok(None);
     };
     let mut priced = Vec::with_capacity(lines.len());
+    let mut pricer = dispatch_types::LinePricer::default();
     for line in lines {
         let version = must_get_valid_record(line.priced_version.clone())?;
         let price = if let Some(item) = decode::<MenuItem>(&version) {
-            item.price_cents
+            // The order was valid, so its choices price.
+            match pricer.unit_price(&item, &line.selections)? {
+                Ok(price) => price,
+                Err(_) => return Ok(None),
+            }
         } else if let Some(bag) = decode::<catalog_types::GoodieBag>(&version) {
             bag.price_cents
         } else {
             return Ok(None);
         };
-        priced.push((line.item_ref, price, line.quantity));
+        priced.push((price, line.quantity));
     }
     Ok(Some(OrderForIssues { requester, merchant, order_total, lines: priced, delivery }))
 }
@@ -80,22 +86,22 @@ pub(crate) fn validate_item_issue(issue: &ItemIssue, author: &AgentPubKey, prev_
     }
     let Some(prev) = prev_action else { return invalid("an issue can't open a chain") };
     let placed = must_get_action(issue.order.clone())?.hashed.content.header.timestamp;
-    let reported_again = |earlier: &ItemIssue| earlier.order == issue.order && earlier.lines.iter().any(|old| issue.lines.iter().any(|new| new.item_ref == old.item_ref));
+    let reported_again = |earlier: &ItemIssue| earlier.order == issue.order && earlier.lines.iter().any(|old| issue.lines.iter().any(|new| new.line == old.line));
     if wrote_since::<ItemIssue>(author, prev, placed, UnitEntryTypes::ItemIssue.try_into()?, reported_again)? {
-        return invalid("each item on an order is reported once");
+        return invalid("each line of an order is reported once");
     }
     if issue.lines.is_empty() {
-        return invalid("an issue names at least one item");
+        return invalid("an issue names at least one line");
     }
     for (i, line) in issue.lines.iter().enumerate() {
-        if issue.lines[..i].iter().any(|l| l.item_ref == line.item_ref) {
-            return invalid("each item appears once in an issue");
+        if issue.lines[..i].iter().any(|l| l.line == line.line) {
+            return invalid("each line appears once in an issue");
         }
-        let Some((_, _, ordered)) = terms.lines.iter().find(|(item, _, _)| item == &line.item_ref) else {
-            return invalid("an issue names only items on the order");
+        let Some((_, ordered)) = terms.lines.get(line.line as usize) else {
+            return invalid("an issue names only lines on the order");
         };
         if line.quantity == 0 || line.quantity > *ordered {
-            return invalid("an issue claims between one and the number ordered of each item");
+            return invalid("an issue claims between one and the number ordered of each line");
         }
     }
     let bounded = relay_integrity_support::sealed_chunks_problem("an issue's evidence", &issue.sealed_for_store, relay_integrity_support::max_sealed_image_bytes()).is_none();
@@ -198,7 +204,7 @@ pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPub
     if settlement.refund < owed {
         return invalid("a delivery its customer collected refunds them the store's share of the fee it would have paid a driver");
     }
-    let mut claimed: Vec<(ActionHash, u32)> = Vec::new();
+    let mut claimed: Vec<(u32, u32)> = Vec::new();
     for (i, issue_ref) in settlement.issues.iter().enumerate() {
         if settlement.issues[..i].contains(issue_ref) {
             return invalid("a settlement cites each issue once");
@@ -211,7 +217,7 @@ pub(crate) fn validate_settlement(settlement: &ItemSettlement, author: &AgentPub
         if issue_record.action().timestamp() > at {
             return invalid("a settlement cites only issues reported before it");
         }
-        claimed.extend(issue.lines.iter().map(|l| (l.item_ref.clone(), l.quantity)));
+        claimed.extend(issue.lines.iter().map(|l| (l.line, l.quantity)));
     }
     if settlement.refund > claimed_value(&terms.lines, terms.order_total, &claimed).saturating_add(owed).min(terms.order_total) {
         return invalid("a refund can't exceed what the cited issues are worth");

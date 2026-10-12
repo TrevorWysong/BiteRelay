@@ -13,8 +13,10 @@ use hdi::prelude::*;
 use relay_types::GeoPoint;
 
 mod hours;
+mod modifiers;
 mod pricing;
 pub use hours::*;
+pub use modifiers::*;
 pub use pricing::*;
 
 #[hdk_entry_helper]
@@ -137,6 +139,12 @@ pub struct MenuItem {
     pub category: String,
     #[serde(default)]
     pub dietary_tags: Vec<String>,
+    /// The choice groups a customer picks from when ordering it, in the
+    /// order they're shown: each a `ModifierGroup` of the same store, by
+    /// its original action -- so a store edits a shared group ("Choose a
+    /// side") once for every item that offers it.
+    #[serde(default)]
+    pub modifier_groups: Vec<ActionHash>,
 }
 
 /// What a cart must satisfy for a `PromoCode` to apply -- the "purchase

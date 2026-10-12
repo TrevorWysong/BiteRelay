@@ -31,7 +31,7 @@ await runScenario(async (scenario) => {
   const baseInput = {
     merchant: merchant.agentPubKey,
     catalog_ref: catalogRef,
-    item_refs: [itemRef],
+    items: [{ item_ref: itemRef, quantity: 1 }],
     dropoff: ST_PETE,
     max_delivery_fee: null,
     time_zone: "UTC",

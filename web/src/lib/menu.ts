@@ -1,7 +1,9 @@
 import { bytesToHex, decodeEntry } from "../holochain/decode";
-import { getBagClaim, getGoodieBag, listMenuItems, type MenuItemsPage } from "../holochain/zomes/catalog";
-import type { ActionHash, BagClaim, GoodieBag, OrderLine } from "../holochain/types";
+import { getBagClaim, getGoodieBag, getModifierGroups, listMenuItems, type MenuItemsPage } from "../holochain/zomes/catalog";
+import type { ActionHash, BagClaim, GoodieBag, ModifierGroup, OrderLine, Selection, SelectionInput } from "../holochain/types";
 import type { MenuItem } from "../holochain/types";
+import type { CartLine } from "../store/cart";
+import { choiceLabels, linePrice, type Groups } from "./choices";
 
 // Shared by merchant Catalog.tsx (managing a menu) and customer
 // MerchantDetail.tsx (browsing one) -- both need "this item plus the hash
@@ -61,4 +63,33 @@ export async function fetchOrderItemNames(order: { catalog_ref: ActionHash; line
     if (bag) names[bytesToHex(order.lines[0].item_ref)] = `🎁 ${bag.title}`;
   }
   return names;
+}
+
+/// Choices as an order holds them, without the versions they were priced
+/// at -- what a new order of the same thing sends.
+export function selectionInputs(selections: Selection[]): SelectionInput[] {
+  return selections.map((s) => ({ group: s.group, options: s.options.map((c) => ({ option: c.option, quantity: c.quantity, nested: selectionInputs(c.nested) })) }));
+}
+
+function groupRefs(selections: Selection[]): ActionHash[] {
+  return selections.flatMap((s) => [s.group, ...s.options.flatMap((c) => groupRefs(c.nested))]);
+}
+
+/// A past order's lines as cart lines at the store's current menu: an item
+/// since removed or sold out, or whose choices are no longer on offer, is
+/// left out; one repriced takes its new price.
+export async function cartLinesFromOrder(catalogRef: ActionHash, lines: OrderLine[], menu: ItemRow[]): Promise<CartLine[]> {
+  const refs = new Map(lines.flatMap((line) => groupRefs(line.selections)).map((ref) => [bytesToHex(ref), ref]));
+  const groups: Groups = new Map();
+  if (refs.size > 0) {
+    for (const view of await getModifierGroups(catalogRef, [...refs.values()])) groups.set(bytesToHex(view.original_action), decodeEntry<ModifierGroup>(view.record));
+  }
+  return lines.flatMap((line) => {
+    const row = menu.find((m) => bytesToHex(m.hash) === bytesToHex(line.item_ref));
+    if (!row || !row.item.available) return [];
+    const selections = selectionInputs(line.selections);
+    const priced = linePrice(row.item, selections, groups);
+    if (!priced.ok) return [];
+    return [{ itemRef: row.hash, name: row.item.name, basePriceCents: row.item.price_cents, priceCents: priced.price, quantity: line.quantity, selections, choiceLabels: choiceLabels(selections, groups) }];
+  });
 }

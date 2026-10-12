@@ -5,7 +5,6 @@
 //! that paid it -- so a receipt can be checked against the DHT.
 
 use crate::stores::current_catalog;
-use catalog_types::{GoodieBag, MenuItem};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
@@ -16,8 +15,10 @@ pub struct ReceiptLine {
     pub item_ref: ActionHash,
     pub name: String,
     pub quantity: u32,
+    /// With its choices.
     pub unit_price_cents: u64,
     pub total_cents: u64,
+    pub choices: Vec<String>,
 }
 
 /// One payment the customer made towards the order -- a part of the money
@@ -57,19 +58,19 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
     let order_ref = original_action_of(order_original_action)?;
     let record = resolve_latest(order_ref.clone())?;
     let me = agent_info()?.agent_initial_pubkey;
-    let (requester, catalog_ref, lines, order_total, bag, delivery_fee, tip, delivery) = if let Some(order) = decode_or::<DeliveryOrder>(&record) {
+    let (requester, catalog_ref, lines, order_total, delivery_fee, tip, delivery) = if let Some(order) = decode_or::<DeliveryOrder>(&record) {
         if order.status != DeliveryStatus::Delivered {
             return Err(guest("a receipt is for a delivered order"));
         }
         let bid_ref = order.accepted_bid.clone().ok_or(guest("a delivered order has a driver"))?;
         let bid = decode_or::<Bid>(&resolve_latest(bid_ref)?).ok_or(guest("accepted_bid is not a Bid"))?;
         let (_, customer_share) = split_delivery_fee(bid.price_offer, order.delivery_subsidy_percent);
-        (order.requester, order.catalog_ref, order.lines, order.order_total, order.bag_claim_ref.is_some(), customer_share, order.tip_cents, true)
+        (order.requester, order.catalog_ref, order.lines, order.order_total, customer_share, order.tip_cents, true)
     } else if let Some(order) = decode_or::<PickupOrder>(&record) {
         if order.status != PickupStatus::PickedUp {
             return Err(guest("a receipt is for a collected order"));
         }
-        (order.requester, order.catalog_ref, order.lines, order.order_total, order.bag_claim_ref.is_some(), 0, 0, false)
+        (order.requester, order.catalog_ref, order.lines, order.order_total, 0, 0, false)
     } else {
         return Err(guest("that isn't an order"));
     };
@@ -77,11 +78,10 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
         return Err(guest("only the customer has a receipt for an order"));
     }
 
-    let mut receipt_lines = Vec::with_capacity(lines.len());
-    for line in &lines {
-        let (name, unit_price_cents) = priced_line(&line.priced_version, bag)?;
-        receipt_lines.push(ReceiptLine { item_ref: line.item_ref.clone(), name, quantity: line.quantity, unit_price_cents, total_cents: unit_price_cents * line.quantity as u64 });
-    }
+    let receipt_lines: Vec<ReceiptLine> = crate::lines::describe(&lines)?
+        .into_iter()
+        .map(|line| ReceiptLine { total_cents: line.unit_price_cents * u64::from(line.quantity), item_ref: line.item_ref, name: line.name, quantity: line.quantity, unit_price_cents: line.unit_price_cents, choices: line.choices })
+        .collect();
     let subtotal_cents: u64 = receipt_lines.iter().map(|line| line.total_cents).sum();
     let catalog = current_catalog(&catalog_ref)?;
     let address = [catalog.address_street.as_str(), catalog.address_city.as_str(), catalog.address_state.as_str(), catalog.address_zip.as_str()]
@@ -106,20 +106,6 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
         total_cents: order_total + delivery_fee + tip,
         payments: my_payments(&order_ref)?,
     })
-}
-
-/// A line's name and unit price, from the exact version it was priced at.
-fn priced_line(priced_version: &ActionHash, bag: bool) -> ExternResult<(String, u64)> {
-    let record = match get(priced_version.clone(), GetOptions::local())? {
-        Some(record) => record,
-        None => get(priced_version.clone(), GetOptions::network())?.ok_or(guest("an item on this order couldn't be found"))?,
-    };
-    if bag {
-        let bag = decode_or::<GoodieBag>(&record).ok_or(guest("that isn't a goodie bag"))?;
-        return Ok((bag.title, bag.price_cents));
-    }
-    let item = decode_or::<MenuItem>(&record).ok_or(guest("that isn't a menu item"))?;
-    Ok((item.name, item.price_cents))
 }
 
 /// What the caller paid towards the order: each part of the money they set

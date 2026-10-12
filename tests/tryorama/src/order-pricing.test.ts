@@ -54,8 +54,8 @@ await runScenario(async (scenario) => {
   await assert.rejects(raw({ lines: [{ item_ref: burgerRef, priced_version: tacoRef, quantity: 1 }], order_total: 500 }), /must be a version of its own item/, "a line can't borrow another item's price");
   await assert.rejects(
     raw({ lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 1 }, { item_ref: burgerRef, priced_version: burgerNow, quantity: 1 }] }),
-    /only appear on one line/,
-    "an item appears on one line",
+    /same choices is one line/,
+    "the same item with the same choices is one line",
   );
   await assert.rejects(raw({ lines: [{ item_ref: burgerRef, priced_version: burgerNow, quantity: 0 }], order_total: 0 }), /between one and \d+ units/, "a line orders at least one");
   console.log("[PASS] every line must be a real item from this store, priced from its own versions");

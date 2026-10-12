@@ -79,7 +79,6 @@ fn me() -> ExternResult<AgentPubKey> {
 /// The order without its driver: their address, and what was held for them.
 fn without_driver(order: &mut DeliveryOrder) {
     order.accepted_bid = None;
-    order.driver_dropoff = None;
     order.driver_pay_hold = None;
     order.collateral_hold = None;
     order.subsidy_hold = None;
@@ -113,25 +112,44 @@ pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
 /// have (`upkeep`), never before: a driver with nothing at stake never
 /// learns where anyone lives.
 #[hdk_extern]
-pub fn share_address(order_ref: ActionHash) -> ExternResult<Record> {
+pub fn share_address(order_ref: ActionHash) -> ExternResult<ActionHash> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (record, order) = current(&order_ref)?;
     let me = me()?;
     if order.requester != me {
         return Err(guest("Only the order's customer shares its address."));
     }
-    if order.collateral_hold.is_none() || order.driver_dropoff.is_some() {
-        return Err(guest("There's no committed driver waiting for the address."));
-    }
-    let Some((_, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver.")) };
+    let Some(driver) = owed_driver(&order_ref, &order)? else { return Err(guest("There's no committed driver waiting for the address.")) };
     let dropoff: DropoffDetails = relay_coordinator_support::open(&me, &order.sealed_dropoff)?.ok_or(guest("couldn't open your address"))?;
-    order.driver_dropoff = Some(relay_coordinator_support::seal(&bid.bidder, &dropoff)?);
-    write(&record, order)
+    let share = DropoffShare { order: order_ref.clone(), committed: record.action_address().clone(), sealed: relay_coordinator_support::seal(&driver, &dropoff)?, driver: driver.clone() };
+    let action = create_entry(&EntryTypes::DropoffShare(share))?;
+    create_link(order_ref, action.clone(), LinkTypes::OrderToDropoffShare, driver.get_raw_39().to_vec())?;
+    Ok(action)
 }
 
-/// Whether the customer's app owes this order's driver the address.
-pub(crate) fn address_owed(order: &DeliveryOrder) -> bool {
-    order.collateral_hold.is_some() && order.driver_dropoff.is_none() && matches!(order.status, DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed | DeliveryStatus::DriverAtStore | DeliveryStatus::PickedUp)
+/// The committed driver the customer's app owes the address, if any: the
+/// order's driver, committed, with no share for them yet.
+pub(crate) fn owed_driver(order_ref: &ActionHash, order: &DeliveryOrder) -> ExternResult<Option<AgentPubKey>> {
+    let active = matches!(order.status, DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed | DeliveryStatus::DriverAtStore | DeliveryStatus::PickedUp);
+    if !active || order.collateral_hold.is_none() {
+        return Ok(None);
+    }
+    let Some((_, bid)) = driver_of(order)? else { return Ok(None) };
+    Ok(dropoff_share_for(order_ref, &bid.bidder)?.is_none().then_some(bid.bidder))
+}
+
+/// The address the customer shared with `driver` for an order, if they have.
+pub(crate) fn dropoff_share_for(order_ref: &ActionHash, driver: &AgentPubKey) -> ExternResult<Option<DropoffShare>> {
+    let mut query = LinkQuery::try_new(order_ref.clone(), LinkTypes::OrderToDropoffShare)?;
+    query.tag_prefix = Some(LinkTag::new(driver.get_raw_39().to_vec()));
+    for link in get_links(query, GetStrategy::default())? {
+        let Some(target) = link.target.into_action_hash() else { continue };
+        let share = get(target, GetOptions::default())?.and_then(|record| relay_coordinator_support::decode_or::<DropoffShare>(&record));
+        if let Some(share) = share.filter(|s| &s.order == order_ref && &s.driver == driver) {
+            return Ok(Some(share));
+        }
+    }
+    Ok(None)
 }
 
 // --- the store cooks, and checks the driver in ---

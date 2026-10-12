@@ -115,6 +115,20 @@ async function seedStore(store, owner, center) {
   const location = near(center, store.at);
   const ref = hash(await owner.call("catalog", "publish_catalog", { business_name: store.name, location, address_street: store.details.address_street ?? "" }));
   await owner.call("catalog", "update_catalog_details", storeDetails(ref, store, []));
+  // Its choice groups, by key: each group's options numbered from 1.
+  const groups = new Map();
+  for (const group of store.groups ?? []) {
+    const record = await owner.call("catalog", "create_modifier_group", {
+      catalog_ref: ref,
+      name: group.name,
+      min_selections: group.min,
+      max_selections: group.max,
+      max_per_option: group.perOption ?? 1,
+      free_selections: group.free ?? 0,
+      options: group.options.map((o, i) => ({ id: i + 1, name: o.name, price_cents: o.price, available: true, nested_group: o.opens ? groups.get(o.opens) : null })),
+    });
+    groups.set(group.key, hash(record));
+  }
   const items = new Map();
   for (const item of store.menu) {
     const record = await owner.call("catalog", "add_menu_item", {
@@ -126,6 +140,7 @@ async function seedStore(store, owner, center) {
       photo_data_uri: "",
       category: item.category ?? "",
       dietary_tags: item.dietary_tags ?? [],
+      modifier_groups: (item.groups ?? []).map((key) => groups.get(key)),
     });
     items.set(item.name, { ref: hash(record), price: item.price });
   }

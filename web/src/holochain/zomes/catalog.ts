@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -143,16 +143,35 @@ export async function setDeliverySubsidyPercent(originalAction: ActionHash, deli
   return callZome("catalog", "set_delivery_subsidy_percent", { original_action: originalAction, delivery_subsidy_percent: deliverySubsidyPercent });
 }
 
-const EMPTY_ITEM_DETAILS = { description: "", photo_data_uri: "", category: "", dietary_tags: [] as string[] };
+const EMPTY_ITEM_DETAILS = { description: "", photo_data_uri: "", category: "", dietary_tags: [] as string[], modifier_groups: [] as ActionHash[] };
 
 export async function addMenuItem(
-  input: { catalog_ref: ActionHash; name: string; price_cents: number; available: boolean } & Partial<Pick<MenuItem, "description" | "photo_data_uri" | "category" | "dietary_tags">>,
+  input: { catalog_ref: ActionHash; name: string; price_cents: number; available: boolean } & Partial<Pick<MenuItem, "description" | "photo_data_uri" | "category" | "dietary_tags" | "modifier_groups">>,
 ): Promise<HcRecord> {
   return callZome("catalog", "add_menu_item", { ...EMPTY_ITEM_DETAILS, ...input });
 }
 
 export async function updateMenuItem(originalAction: ActionHash, item: MenuItem): Promise<HcRecord> {
   return callZome("catalog", "update_menu_item", { original_action: originalAction, item });
+}
+
+export async function createModifierGroup(group: ModifierGroup): Promise<HcRecord> {
+  return callZome("catalog", "create_modifier_group", group);
+}
+
+export async function updateModifierGroup(originalAction: ActionHash, group: ModifierGroup): Promise<HcRecord> {
+  return callZome("catalog", "update_modifier_group", { original_action: originalAction, group });
+}
+
+/// Every choice group a store has -- what its owner manages.
+export async function listModifierGroups(catalogRef: ActionHash): Promise<CatalogView[]> {
+  return callZome("catalog", "list_modifier_groups", catalogRef);
+}
+
+/// Some of a store's choice groups at their latest -- an item's, and those
+/// its options open.
+export async function getModifierGroups(catalogRef: ActionHash, groups: ActionHash[]): Promise<CatalogView[]> {
+  return callZome("catalog", "get_modifier_groups", { catalog_ref: catalogRef, groups });
 }
 
 export async function listMenuItems(catalogRef: ActionHash, after: Timestamp | null = null): Promise<MenuItemsPage> {

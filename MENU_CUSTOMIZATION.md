@@ -2,6 +2,27 @@
 
 Sizes, add-ons, choices and nested options ("Large, oat milk, extra shot, vanilla: light"), priced and checked so neither the customer nor the store can change what an order costs. Research and a proposed design.
 
+## Status: built (2026-10-11)
+
+Built as designed below, with these decisions on the open questions:
+- **Nesting:** up to 3 levels (`MAX_CHOICE_DEPTH`), enough for combos (a combo, then a side, then its size).
+- **Free selections:** the cheapest chosen are free.
+- **Kitchen note:** kept, alongside structured choices.
+- **Per-option quantities:** included, as on Uber Eats ("Extra shot" up to 3, `max_per_option`).
+- **Order-wide bound:** at most `MAX_ORDER_CHOICES` (300) options across an order, and each group version is read once per order, so validating an order stays cheap.
+- **Missing-item reports:** made by line position, so a line is refunded at its own price, choices included.
+- **Recurring orders:** keep their items' choices.
+- **Reorder:** reprices choices at the store's current groups, and leaves out a line whose choices are no longer on offer.
+
+Where it lives:
+- `catalog_types::modifiers`: types and `line_price`, the one pricing rule. `web/src/lib/choices.ts` mirrors it, with tests on the same cases.
+- `catalog_integrity`: groups and items' group lists.
+- `dispatch_integrity::checks`: order lines.
+- Store screens: `routes/merchant/catalog/ChoicesSection.tsx`. Customer screens: `components/ItemSheet.tsx`.
+- Integration test: `tests/tryorama/src/menu-choices.test.ts`.
+
+Not built yet: per-item special instructions (the order-level kitchen note covers it), choice photos, and a separate "default option" setting.
+
 ## What the big apps do
 
 DoorDash's menu builder, like Square's item modifiers, uses **modifier groups** attached to items:

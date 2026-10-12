@@ -10,7 +10,8 @@
 
 use super::*;
 use catalog_types::{order_total, BagClaimStatus, GoodieBag, MenuItem, PricedLine};
-use relay_integrity_support::limits::{MAX_LINE_QUANTITY, MAX_ORDER_LINES};
+use dispatch_types::LinePricer;
+use relay_integrity_support::limits::{MAX_LINE_QUANTITY, MAX_ORDER_CHOICES, MAX_ORDER_LINES};
 use relay_integrity_support::{decode, original_creation};
 use std::collections::BTreeSet;
 
@@ -54,9 +55,14 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     if order.lines.iter().any(|line| line.quantity == 0 || line.quantity > MAX_LINE_QUANTITY) {
         return Ok(Some(format!("every line has between one and {MAX_LINE_QUANTITY} units")));
     }
-    let distinct: BTreeSet<_> = order.lines.iter().map(|line| &line.item_ref).collect();
-    if distinct.len() != order.lines.len() {
-        return Ok(Some("each item may only appear on one line".into()));
+    // The same item with the same choices is one line, with its quantity.
+    let choices: usize = order.lines.iter().map(|line| catalog_types::choice_count(&line.selections)).sum();
+    if choices > MAX_ORDER_CHOICES {
+        return Ok(Some(format!("an order chooses at most {MAX_ORDER_CHOICES} options across its lines")));
+    }
+    let repeated = order.lines.iter().enumerate().any(|(i, line)| order.lines[..i].iter().any(|l| l.item_ref == line.item_ref && l.selections == line.selections));
+    if repeated {
+        return Ok(Some("the same item with the same choices is one line".into()));
     }
 
     if let Some(claim_ref) = order.bag_claim_ref {
@@ -64,6 +70,7 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     }
 
     let mut priced = Vec::with_capacity(order.lines.len());
+    let mut pricer = LinePricer::default();
     for line in order.lines {
         if original_creation(line.priced_version.clone())? != line.item_ref {
             return Ok(Some("a line's priced version must be a version of its own item".into()));
@@ -74,7 +81,11 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
         if &item.catalog_ref != order.catalog_ref {
             return Ok(Some("every item must be on this store's menu".into()));
         }
-        priced.push(PricedLine { item_ref: line.item_ref.clone(), unit_price: item.price_cents, quantity: line.quantity });
+        let unit_price = match pricer.unit_price(&item, &line.selections)? {
+            Ok(price) => price,
+            Err(reason) => return Ok(Some(reason)),
+        };
+        priced.push(PricedLine { item_ref: line.item_ref.clone(), base_price: item.price_cents, unit_price, quantity: line.quantity });
     }
     if let Some(min) = order.min_subtotal {
         let subtotal: u64 = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
@@ -118,7 +129,7 @@ fn check_bag_order_price(order: &OrderPricing<'_>, claim_ref: &ActionHash) -> Ex
     let Some(claim) = decode::<BagClaim>(&must_get_valid_record(claim_ref.clone())?) else {
         return Ok(Some("bag_claim_ref does not point at a BagClaim entry".into()));
     };
-    let expected_line = OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref.clone(), quantity: 1 };
+    let expected_line = OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref.clone(), quantity: 1, selections: Vec::new() };
     if order.lines != [expected_line] {
         return Ok(Some("a goodie-bag order is exactly one of the claimed bag".into()));
     }

@@ -35,7 +35,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // The entry structs live in dispatch_types so other integrity zomes can
 // decode them -- see that crate's doc comment. Re-exported here so the
 // coordinator crate imports everything via `dispatch_integrity::*`.
-pub use dispatch_types::{lineage, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+pub use dispatch_types::{lineage, DropoffShare, LinePricer, Chosen, ChosenInput, OrderItem, Selection, SelectionInput, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 // Built once per write and dropped -- boxing the large order would only
 // add an allocation.
@@ -52,6 +52,7 @@ pub enum EntryTypes {
     OrderOutcome(OrderOutcome),
     ItemSettlement(ItemSettlement),
     CollectRequest(CollectRequest),
+    DropoffShare(DropoffShare),
 }
 
 #[hdk_link_types]
@@ -81,6 +82,9 @@ pub enum LinkTypes {
     OrderToDecision,
     /// A customer's request to collect their order, so its store finds it.
     OrderToCollectRequest,
+    /// The customer's address shared with a committed driver; tagged with
+    /// the driver's key.
+    OrderToDropoffShare,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -113,13 +117,14 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::OrderOutcome(outcome) => issues::validate_outcome(&outcome, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::ItemSettlement(settlement) => issues::validate_settlement(&settlement, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::CollectRequest(request) => delivery::validate_collect_request(&request, action.author(), action.prev_action()),
+            EntryTypes::DropoffShare(share) => delivery::validate_dropoff_share(&share, action.author()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
             EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author(), &action.original_action_address),
             EntryTypes::RecurringOrderTemplate(template) => validate_recurring_template_update(&template, action.author(), &action.original_action_address),
             EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
-            EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) | EntryTypes::CollectRequest(_) => {
+            EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) | EntryTypes::CollectRequest(_) | EntryTypes::DropoffShare(_) => {
                 Ok(ValidateCallbackResult::Invalid("issues, requests and an order's settlement can't be changed".into()))
             }
         },

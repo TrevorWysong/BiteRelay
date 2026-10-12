@@ -46,6 +46,7 @@ export function OrderReceipt({ orderRef }: { orderRef: Uint8Array }) {
             <span>
               {line.quantity} × {line.name}
               {line.quantity > 1 && <span className="text-xs text-ink-400"> ({formatCents(line.unit_price_cents)} each)</span>}
+              {line.choices.length > 0 && <span className="block text-xs text-ink-400">{line.choices.join(", ")}</span>}
             </span>
             <span className="tabular-nums">{formatCents(line.total_cents)}</span>
           </div>

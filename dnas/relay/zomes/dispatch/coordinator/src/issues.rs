@@ -27,25 +27,23 @@ struct Priced {
     requester: AgentPubKey,
     merchant: AgentPubKey,
     order_total: u64,
-    lines: Vec<(ActionHash, u64, u32)>,
-    names: Vec<String>,
+    lines: Vec<crate::lines::LineView>,
 }
 
-/// One line of an order, as reports are made against it.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct IssueItem {
-    pub item_ref: ActionHash,
-    pub name: String,
-    pub unit_price_cents: u64,
-    pub quantity: u32,
+impl Priced {
+    /// Each line's (unit price, quantity), in order -- what
+    /// `claimed_value` weighs.
+    fn amounts(&self) -> Vec<(u64, u32)> {
+        self.lines.iter().map(|line| (line.unit_price_cents, line.quantity)).collect()
+    }
 }
 
-/// What reports on an order are judged against: its lines, and what the
-/// customer paid for the food.
+/// What reports on an order are judged against: its lines (reported by
+/// position), and what the customer paid for the food.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IssueItems {
     pub order_total: u64,
-    pub lines: Vec<IssueItem>,
+    pub lines: Vec<crate::lines::LineView>,
 }
 
 /// An order's items as reports are made against them -- public, as the
@@ -53,8 +51,7 @@ pub struct IssueItems {
 #[hdk_extern]
 pub fn get_issue_items(order: ActionHash) -> ExternResult<IssueItems> {
     let terms = priced(&original_action_of(order)?)?;
-    let lines = terms.lines.into_iter().zip(terms.names).map(|((item_ref, unit_price_cents, quantity), name)| IssueItem { item_ref, name, unit_price_cents, quantity }).collect();
-    Ok(IssueItems { order_total: terms.order_total, lines })
+    Ok(IssueItems { order_total: terms.order_total, lines: terms.lines })
 }
 
 fn priced(order: &ActionHash) -> ExternResult<Priced> {
@@ -64,19 +61,7 @@ fn priced(order: &ActionHash) -> ExternResult<Priced> {
         (None, Some(o)) => (o.requester, o.merchant, o.order_total, o.lines),
         _ => return Err(guest("that isn't an order")),
     };
-    let mut out = Vec::with_capacity(lines.len());
-    let mut names = Vec::with_capacity(lines.len());
-    for line in lines {
-        let version = get(line.priced_version, GetOptions::default())?.ok_or(guest("an item on this order couldn't be found"))?;
-        let (price, name) = match (decode_or::<catalog_types::MenuItem>(&version), decode_or::<catalog_types::GoodieBag>(&version)) {
-            (Some(item), _) => (item.price_cents, item.name),
-            (None, Some(bag)) => (bag.price_cents, bag.title),
-            _ => return Err(guest("an order line isn't priced from an item")),
-        };
-        out.push((line.item_ref, price, line.quantity));
-        names.push(name);
-    }
-    Ok(Priced { requester, merchant, order_total, lines: out, names })
+    Ok(Priced { requester, merchant, order_total, lines: crate::lines::describe(&lines)? })
 }
 
 // --- the customer ---
@@ -103,9 +88,9 @@ pub fn report_issue(input: ReportIssueInput) -> ExternResult<Record> {
     if decisions_of(&order)?.settlement.is_some() {
         return Err(guest("The store has already settled this order."));
     }
-    // Each item reported once -- validation's rule, told first.
-    let reported: Vec<ActionHash> = get_issues_for_order(order.clone())?.into_iter().flat_map(|view| view.lines.into_iter().map(|line| line.item_ref)).collect();
-    if input.lines.iter().any(|line| reported.contains(&line.item_ref)) {
+    // Each line reported once -- validation's rule, told first.
+    let reported: Vec<u32> = get_issues_for_order(order.clone())?.into_iter().flat_map(|view| view.lines.into_iter().map(|line| line.line)).collect();
+    if input.lines.iter().any(|line| reported.contains(&line.line)) {
         return Err(guest("You've already reported a problem with one of these items."));
     }
     // The version showing they have it -- validation's rule, told first.
@@ -192,7 +177,7 @@ pub fn get_issues_for_order(order: ActionHash) -> ExternResult<Vec<IssueView>> {
         if record.action().timestamp() > now {
             continue;
         }
-        let claimed: Vec<(ActionHash, u32)> = issue.lines.iter().map(|l| (l.item_ref.clone(), l.quantity)).collect();
+        let claimed: Vec<(u32, u32)> = issue.lines.iter().map(|l| (l.line, l.quantity)).collect();
         let evidence: Option<IssueEvidence> = if me == terms.requester {
             open_chunked(&terms.merchant, &issue.sealed_for_store)?
         } else if me == terms.merchant {
@@ -203,7 +188,7 @@ pub fn get_issues_for_order(order: ActionHash) -> ExternResult<Vec<IssueView>> {
         views.push(IssueView {
             issue: hash.clone(),
             reported_at: record.action().timestamp(),
-            value: claimed_value(&terms.lines, terms.order_total, &claimed),
+            value: claimed_value(&terms.amounts(), terms.order_total, &claimed),
             accepted: store_answer(&hash, &terms.merchant)?,
             evidence: evidence.filter(|e| relay_integrity_support::image_problem(&e.photo_data_uri).is_none()),
             lines: issue.lines,
@@ -327,8 +312,8 @@ fn answer_grace_micros() -> i64 {
 /// refunded -- as it would if you ordered from it directly.
 fn refund_owed(terms: &Priced, issues: &[IssueView]) -> (Vec<ActionHash>, u64) {
     let refunded: Vec<&IssueView> = issues.iter().filter(|i| i.accepted != Some(false)).collect();
-    let claimed: Vec<(ActionHash, u32)> = refunded.iter().flat_map(|i| i.lines.iter().map(|l| (l.item_ref.clone(), l.quantity))).collect();
-    (refunded.iter().map(|i| i.issue.clone()).collect(), claimed_value(&terms.lines, terms.order_total, &claimed))
+    let claimed: Vec<(u32, u32)> = refunded.iter().flat_map(|i| i.lines.iter().map(|l| (l.line, l.quantity))).collect();
+    (refunded.iter().map(|i| i.issue.clone()).collect(), claimed_value(&terms.amounts(), terms.order_total, &claimed))
 }
 
 /// Has the store's conductor make its decisions on `order`, in a call of its

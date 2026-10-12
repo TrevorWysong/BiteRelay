@@ -1,14 +1,11 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, Beacon, DeclineReason, InHand, IssueItems, NetworkTerms, IssueLine, IssueView, OrderDecisions, OrderTiming, PinSecret, StoreStep, StoreStepDue, RankedBid, Receipt, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, RecurrenceRule, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, WarrantSummary } from "../types";
 
 // --- orders ---
 
-/// One thing to order, and how many. The zome prices it at the item's
-/// latest version.
-export interface OrderItemInput {
-  item_ref: ActionHash;
-  quantity: number;
-}
+/// One thing to order -- an item, how many, and its choices (`OrderItem`).
+/// The zome prices it at the item's and its choice groups' latest versions.
+export type OrderItemInput = OrderItem;
 
 /// `order_total` is the total the customer was shown: the order is refused
 /// (with the new total) if the menu's prices no longer add up to it.
@@ -240,7 +237,7 @@ export async function sendLocationUpdate(orderRef: ActionHash, lat: number, lon:
 export async function createRecurringTemplate(input: {
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  items: OrderItem[];
   dropoff: GeoPoint;
   max_delivery_fee: number | null;
   /// A note for the kitchen -- sealed to the store.
@@ -403,6 +400,12 @@ export async function getIssuesForOrder(orderRef: ActionHash): Promise<IssueView
 
 /// An order's items as reports are made against them, and what the food
 /// cost -- readable by its store as well as its customer.
+/// An order's lines as people read them: item, quantity, price with its
+/// choices, and the choices.
+export async function getOrderLines(orderRef: ActionHash): Promise<LineView[]> {
+  return callZome("dispatch", "get_order_lines", orderRef);
+}
+
 export async function getIssueItems(orderRef: ActionHash): Promise<IssueItems> {
   return callZome("dispatch", "get_issue_items", orderRef);
 }

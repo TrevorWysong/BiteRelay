@@ -55,7 +55,7 @@ await runScenario(async (scenario) => {
   const r = await receipt();
   assert.equal(r.store_name, "Mo's");
   assert.equal(r.delivery, false);
-  assert.deepEqual(r.lines, [{ item_ref: soupRef, name: "Soup", quantity: 2, unit_price_cents: 1000, total_cents: 2000 }], "each item at the price it was ordered at");
+  assert.deepEqual(r.lines, [{ item_ref: soupRef, name: "Soup", quantity: 2, unit_price_cents: 1000, total_cents: 2000, choices: [] }], "each item at the price it was ordered at");
   assert.deepEqual([r.subtotal_cents, r.discount_cents, r.delivery_fee_cents, r.tip_cents, r.total_cents], [2000, 200, 0, 0, 1800]);
   assert.equal(r.payments.length, 1);
   assert.deepEqual([r.payments[0].leg, r.payments[0].amount_cents], ["Food", 1800], "the payment that settled it");

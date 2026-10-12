@@ -116,7 +116,10 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
   const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
   const [confirmDecline, setConfirmDecline] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nameOf = (item: Uint8Array) => items.lines.find((l) => bytesToHex(l.item_ref) === bytesToHex(item))?.name ?? "An item";
+  const nameOf = (line: number) => {
+    const ordered = items.lines[line];
+    return ordered ? [ordered.name, ...ordered.choices].join(", ") : "An item";
+  };
 
   async function answer(accept: boolean) {
     setBusy(accept ? "accept" : "decline");
@@ -136,9 +139,9 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
       <div className="flex items-start justify-between gap-3">
         <ul className="flex min-w-0 flex-col gap-1.5">
           {issue.lines.map((line) => (
-            <li key={bytesToHex(line.item_ref)} className="flex items-center gap-2 text-sm">
+            <li key={line.line} className="flex items-center gap-2 text-sm">
               <span className="font-semibold tabular-nums text-ink-900 dark:text-ink-50">{line.quantity}×</span>
-              <span className="truncate text-ink-800 dark:text-ink-100">{nameOf(line.item_ref)}</span>
+              <span className="truncate text-ink-800 dark:text-ink-100">{nameOf(line.line)}</span>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${line.kind === "Missing" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200" : "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-200"}`}>
                 {KIND_LABEL[line.kind]}
               </span>
@@ -207,8 +210,8 @@ function StatusChip({ accepted, role }: { accepted: boolean | null; role: Role }
 
 // --- reporting ---
 
-/// Per item: how many units, and what's wrong with them.
-type Draft = Record<string, { quantity: number; kind: IssueKind }>;
+/// Per line (by position): how many units, and what's wrong with them.
+type Draft = Record<number, { quantity: number; kind: IssueKind }>;
 
 function ReportIssueSheet({
   open,
@@ -232,28 +235,27 @@ function ReportIssueSheet({
   const [error, setError] = useState<string | null>(null);
 
   const orderTotal = items.order_total;
-  const priced = items.lines.map((l) => ({ itemHex: bytesToHex(l.item_ref), unitPrice: l.unit_price_cents, quantity: l.quantity }));
-  const reportedUnits = (itemHex: string) => alreadyReported.flatMap((i) => i.lines).filter((l) => bytesToHex(l.item_ref) === itemHex).reduce((n, l) => n + l.quantity, 0);
+  const priced = items.lines.map((l) => ({ unitPrice: l.unit_price_cents, quantity: l.quantity }));
+  const reported = alreadyReported.flatMap((i) => i.lines).map((l) => ({ line: l.line, quantity: l.quantity }));
+  const reportedUnits = (line: number) => reported.filter((l) => l.line === line).reduce((n, l) => n + l.quantity, 0);
   const claimed = Object.entries(draft)
     .filter(([, d]) => d.quantity > 0)
-    .map(([itemHex, d]) => ({ itemHex, quantity: d.quantity }));
+    .map(([line, d]) => ({ line: Number(line), quantity: d.quantity }));
   // What this report adds to what's already reported -- the same arithmetic
   // the network uses for the refund.
-  const before = claimedValue(priced, orderTotal, alreadyReported.flatMap((i) => i.lines).map((l) => ({ itemHex: bytesToHex(l.item_ref), quantity: l.quantity })));
-  const after = claimedValue(priced, orderTotal, [...alreadyReported.flatMap((i) => i.lines).map((l) => ({ itemHex: bytesToHex(l.item_ref), quantity: l.quantity })), ...claimed]);
-  const estimate = after - before;
+  const estimate = claimedValue(priced, orderTotal, [...reported, ...claimed]) - claimedValue(priced, orderTotal, reported);
 
-  function setUnits(itemHex: string, quantity: number) {
-    setDraft((d) => ({ ...d, [itemHex]: { kind: d[itemHex]?.kind ?? "Missing", quantity } }));
+  function setUnits(line: number, quantity: number) {
+    setDraft((d) => ({ ...d, [line]: { kind: d[line]?.kind ?? "Missing", quantity } }));
   }
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      const lines: IssueLine[] = items.lines.flatMap((l) => {
-        const d = draft[bytesToHex(l.item_ref)];
-        return d && d.quantity > 0 ? [{ item_ref: l.item_ref, quantity: d.quantity, kind: d.kind }] : [];
+      const lines: IssueLine[] = items.lines.flatMap((_, line) => {
+        const d = draft[line];
+        return d && d.quantity > 0 ? [{ line, quantity: d.quantity, kind: d.kind }] : [];
       });
       await reportIssue({ order: orderRef, lines, note: note.trim(), photo_data_uri: photo });
       setDraft({});
@@ -283,21 +285,21 @@ function ReportIssueSheet({
       }
     >
       <ul className="flex flex-col gap-2">
-        {items.lines.map((line) => {
-          const itemHex = bytesToHex(line.item_ref);
-          const max = line.quantity - reportedUnits(itemHex);
-          const d = draft[itemHex];
+        {items.lines.map((line, position) => {
+          const max = line.quantity - reportedUnits(position);
+          const d = draft[position];
           const units = d?.quantity ?? 0;
           return (
-            <li key={itemHex} className={`rounded-2xl border p-3 transition ${units > 0 ? "border-relay-400 bg-relay-50/40 dark:bg-relay-900/10" : "border-ink-100 dark:border-ink-800"} ${max <= 0 ? "opacity-50" : ""}`}>
+            <li key={position} className={`rounded-2xl border p-3 transition ${units > 0 ? "border-relay-400 bg-relay-50/40 dark:bg-relay-900/10" : "border-ink-100 dark:border-ink-800"} ${max <= 0 ? "opacity-50" : ""}`}>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{line.name}</p>
+                  {line.choices.length > 0 && <p className="truncate text-xs text-ink-500">{line.choices.join(", ")}</p>}
                   <p className="text-xs text-ink-400">
                     {line.quantity} ordered · {formatCents(line.unit_price_cents)} each{max < line.quantity && ` · ${line.quantity - max} reported`}
                   </p>
                 </div>
-                <Stepper value={units} max={Math.max(0, max)} onChange={(q) => setUnits(itemHex, q)} />
+                <Stepper value={units} max={Math.max(0, max)} onChange={(q) => setUnits(position, q)} />
               </div>
               <AnimatePresence initial={false}>
                 {units > 0 && (
@@ -306,7 +308,7 @@ function ReportIssueSheet({
                       {(["Missing", "Wrong"] as const).map((kind) => (
                         <button
                           key={kind}
-                          onClick={() => setDraft((dr) => ({ ...dr, [itemHex]: { quantity: units, kind } }))}
+                          onClick={() => setDraft((dr) => ({ ...dr, [position]: { quantity: units, kind } }))}
                           className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold transition ${
                             (d?.kind ?? "Missing") === kind ? "bg-ink-900 text-white dark:bg-ink-50 dark:text-ink-900" : "bg-white text-ink-600 ring-1 ring-ink-200 dark:bg-ink-900 dark:text-ink-300 dark:ring-ink-700"
                           }`}

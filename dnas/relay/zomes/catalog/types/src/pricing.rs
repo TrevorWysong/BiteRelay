@@ -7,10 +7,16 @@
 use super::{PromoRequirement, PromoReward};
 use hdi::prelude::*;
 
-/// One line of an order, priced.
+/// One line of an order, priced. The same item may be on several lines,
+/// with different choices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PricedLine {
     pub item_ref: ActionHash,
+    /// The item's own price, without its choices -- what an item promo
+    /// takes off: a free burger is the burger, its paid extras still
+    /// charged, as on DoorDash and Uber Eats.
+    pub base_price: u64,
+    /// With its choices (`modifiers::line_price`).
     pub unit_price: u64,
     pub quantity: u32,
 }
@@ -25,8 +31,22 @@ pub fn subtotal(lines: &[PricedLine]) -> u64 {
     lines.iter().map(PricedLine::total).sum()
 }
 
-fn line_for<'a>(lines: &'a [PricedLine], item_ref: &ActionHash) -> Option<&'a PricedLine> {
-    lines.iter().find(|line| &line.item_ref == item_ref)
+/// How many units of `item_ref` the cart holds, across its lines.
+fn units_of(lines: &[PricedLine], item_ref: &ActionHash) -> u32 {
+    lines.iter().filter(|line| &line.item_ref == item_ref).map(|line| line.quantity).sum()
+}
+
+/// What `quantity` units of `item_ref` come to at `per_unit` of each line's
+/// base price, taking units from the cart's lines in order.
+fn off_units(lines: &[PricedLine], item_ref: &ActionHash, quantity: u32, per_unit: impl Fn(u64) -> u64) -> u64 {
+    let mut left = quantity;
+    let mut off = 0;
+    for line in lines.iter().filter(|line| &line.item_ref == item_ref) {
+        let units = left.min(line.quantity);
+        off += u64::from(units) * per_unit(line.base_price);
+        left -= units;
+    }
+    off
 }
 
 impl PromoRequirement {
@@ -37,7 +57,7 @@ impl PromoRequirement {
         match self {
             PromoRequirement::None => true,
             PromoRequirement::MinimumSpend(cents) => subtotal(lines) >= *cents,
-            PromoRequirement::MinimumItemQuantity { item_ref, quantity } => line_for(lines, item_ref).is_some_and(|line| line.quantity >= *quantity),
+            PromoRequirement::MinimumItemQuantity { item_ref, quantity } => units_of(lines, item_ref) >= *quantity,
             PromoRequirement::LoyaltyOrderCount(count) => completed_orders >= *count,
         }
     }
@@ -59,10 +79,8 @@ impl PromoReward {
         let off = match self {
             PromoReward::PercentOffSubtotal(percent) => subtotal * u64::from((*percent).min(100)) / 100,
             PromoReward::FlatOffSubtotal(cents) => *cents,
-            PromoReward::FreeItem { item_ref, quantity } => line_for(lines, item_ref).map_or(0, |line| u64::from((*quantity).min(line.quantity)) * line.unit_price),
-            PromoReward::PercentOffItem { item_ref, percent, quantity } => line_for(lines, item_ref).map_or(0, |line| {
-                u64::from((*quantity).min(line.quantity)) * (line.unit_price * u64::from((*percent).min(100)) / 100)
-            }),
+            PromoReward::FreeItem { item_ref, quantity } => off_units(lines, item_ref, *quantity, |base| base),
+            PromoReward::PercentOffItem { item_ref, percent, quantity } => off_units(lines, item_ref, *quantity, |base| base * u64::from((*percent).min(100)) / 100),
         };
         off.min(subtotal)
     }
@@ -86,7 +104,10 @@ mod tests {
         ActionHash::from_raw_36(vec![n; 36])
     }
     fn line(n: u8, unit_price: u64, quantity: u32) -> PricedLine {
-        PricedLine { item_ref: item(n), unit_price, quantity }
+        PricedLine { item_ref: item(n), base_price: unit_price, unit_price, quantity }
+    }
+    fn with_choices(n: u8, base_price: u64, unit_price: u64, quantity: u32) -> PricedLine {
+        PricedLine { item_ref: item(n), base_price, unit_price, quantity }
     }
 
     // Each case also runs in web/test/promotions.test.ts -- keep them in step.
@@ -140,6 +161,23 @@ mod tests {
         assert_eq!(order_total(&[line(1, 1000, 1)], Some((&requirement, &reward)), 5), Some(850));
         assert_eq!(order_total(&[line(1, 1000, 1)], Some((&requirement, &reward)), 4), None);
         assert_eq!(requirement.completed_orders_needed(), 5);
+    }
+
+    #[test]
+    fn an_item_promo_takes_off_the_item_not_its_choices() {
+        // A burger at 800 with 200 of extras, twice: one free burger leaves
+        // its extras charged.
+        let lines = [with_choices(1, 800, 1000, 2)];
+        let reward = PromoReward::FreeItem { item_ref: item(1), quantity: 1 };
+        assert_eq!(order_total(&lines, Some((&PromoRequirement::None, &reward)), 0), Some(1200));
+    }
+
+    #[test]
+    fn an_item_on_several_lines_counts_them_all() {
+        let lines = [with_choices(1, 400, 400, 1), with_choices(1, 400, 475, 1)];
+        let requirement = PromoRequirement::MinimumItemQuantity { item_ref: item(1), quantity: 2 };
+        let reward = PromoReward::FreeItem { item_ref: item(1), quantity: 2 };
+        assert_eq!(order_total(&lines, Some((&requirement, &reward)), 0), Some(75));
     }
 
     #[test]

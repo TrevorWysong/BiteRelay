@@ -41,8 +41,26 @@ pub const MAX_AMOUNT: u64 = 1_000_000_000_000;
 pub const MAX_LINE_QUANTITY: u32 = 1_000;
 const _: () = assert!((MAX_ORDER_LINES as u64) * (MAX_LINE_QUANTITY as u64) * MAX_AMOUNT * 100 < u64::MAX);
 
-/// Lines on one order -- distinct items.
+/// Lines on one order -- an item with its choices.
 pub const MAX_ORDER_LINES: usize = 100;
+
+/// Choice groups on one menu item ("Size", "Milk", "Extras").
+pub const MAX_ITEM_GROUPS: usize = 10;
+/// Options in one choice group.
+pub const MAX_GROUP_OPTIONS: usize = 30;
+/// The most of one option a customer may choose ("extra shot" x 3).
+pub const MAX_OPTION_QUANTITY: u32 = 10;
+/// Options chosen on one order line, nested ones included -- what bounds
+/// the choice groups validation reads to price it.
+pub const MAX_LINE_CHOICES: usize = 50;
+/// Options chosen on one order, across its lines -- with `MAX_LINE_CHOICES`
+/// and each version read once, what bounds the reading validating an order
+/// with choices takes.
+pub const MAX_ORDER_CHOICES: usize = 300;
+/// How deep choices nest: an item's own groups are level 1; an option may
+/// open a group at the next level ("Side: Fries" then "Size: Large"), up to
+/// this many.
+pub const MAX_CHOICE_DEPTH: usize = 3;
 /// Units a recurring order places each time.
 pub const MAX_TEMPLATE_ITEMS: usize = 500;
 /// Opening periods in a store's week: split shifts every day.

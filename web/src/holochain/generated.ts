@@ -188,6 +188,29 @@ export type CatalogLocalSignal =
   | { ClaimConfirmed: ActionHash };
 
 /**
+ * One option chosen, how many, and what was chosen from the group it
+ * opens.
+ */
+export interface Chosen {
+  option: number;
+  quantity: number;
+  /**
+   * The selection from the option's nested group: exactly one if it has
+   * one, none if it doesn't.
+   */
+  nested: Selection[];
+}
+
+/**
+ * One option chosen, before pricing -- see `Chosen`.
+ */
+export interface ChosenInput {
+  option: number;
+  quantity: number;
+  nested: SelectionInput[];
+}
+
+/**
  * A customer asking to collect their delivery from the store themselves --
  * when no driver has it, or its driver is late. The store records it
  * (`DeliveryStatus::Collecting`), citing this. One per order.
@@ -267,14 +290,6 @@ export interface DeliveryOrder {
    * (`DropoffDetails`), sealed to the customer themselves.
    */
   sealed_dropoff: XSalsa20Poly1305EncryptedData;
-  /**
-   * The same details sealed to the driver -- shared by the customer's app
-   * once the driver has committed (their collateral set aside), so only a
-   * driver with something at stake ever learns the exact address: a
-   * throwaway identity can't win a bid just to harvest it. Gone with the
-   * driver.
-   */
-  driver_dropoff: XSalsa20Poly1305EncryptedData | null;
   /**
    * The customer's note for the kitchen, sealed to the store. `None` when
    * there isn't one.
@@ -617,6 +632,27 @@ export type DropoffPreference =
   | "HandToMe"
   | "MeetOutside";
 
+/**
+ * A customer's exact drop-off (`DropoffDetails`), sealed to the driver who
+ * has committed to their order -- shared by the customer's app once they
+ * have, so only a driver with collateral at stake ever learns where anyone
+ * lives: a throwaway identity can't win a bid just to harvest addresses.
+ * A record of its own, linked from the order, rather than a version of the
+ * order: sharing it never races another party's step.
+ */
+export interface DropoffShare {
+  /**
+   * The order's original action.
+   */
+  order: ActionHash;
+  /**
+   * A version of the order showing `driver` committed to it.
+   */
+  committed: ActionHash;
+  driver: AgentPubKey;
+  sealed: XSalsa20Poly1305EncryptedData;
+}
+
 export interface GeoPoint {
   lat: number;
   lon: number;
@@ -733,22 +769,12 @@ export interface IssueEvidence {
 }
 
 /**
- * One line of an order, as reports are made against it.
- */
-export interface IssueItem {
-  item_ref: ActionHash;
-  name: string;
-  unit_price_cents: number;
-  quantity: number;
-}
-
-/**
- * What reports on an order are judged against: its lines, and what the
- * customer paid for the food.
+ * What reports on an order are judged against: its lines (reported by
+ * position), and what the customer paid for the food.
  */
 export interface IssueItems {
   order_total: number;
-  lines: IssueItem[];
+  lines: LineView[];
 }
 
 export type IssueKind =
@@ -762,13 +788,14 @@ export type IssueKind =
   | "Wrong";
 
 /**
- * Some units of one item on the order.
+ * Some units of one line on the order -- an item with its choices, so a
+ * refund is worth what that line cost ("the large latte with oat milk").
  */
 export interface IssueLine {
   /**
-   * The item's original action, as the order's line names it.
+   * The line's position on the order, from 0.
    */
-  item_ref: ActionHash;
+  line: number;
   quantity: number;
   kind: IssueKind;
 }
@@ -997,12 +1024,39 @@ export interface Leg {
 export type LegKind = "MerchantHandoff" | "CustomerHandoff";
 
 /**
+ * One line of an order, described.
+ */
+export interface LineView {
+  /**
+   * The item's original action, as the order names it.
+   */
+  item_ref: ActionHash;
+  name: string;
+  quantity: number;
+  /**
+   * With its choices.
+   */
+  unit_price_cents: number;
+  /**
+   * Each chosen option, in the order the item asks for them.
+   */
+  choices: string[];
+}
+
+/**
  * The most any single amount may be -- a price, fee, tip, minimum or grant
  * -- in minor units of the network's currency. Far past any real order, and
  * small enough that no total of an order's amounts can overflow: 100 lines
  * of 1,000 units at this price is 10^17, well inside a u64.
  */
 export const MAX_AMOUNT = 1000000000000;
+
+/**
+ * How deep choices nest: an item's own groups are level 1; an option may
+ * open a group at the next level ("Side: Fries" then "Size: Large"), up to
+ * this many.
+ */
+export const MAX_CHOICE_DEPTH = 3;
 
 /**
  * A long description: a store's, an item's, a bag's, a review.
@@ -1015,11 +1069,27 @@ export const MAX_DESCRIPTION_CHARS = 2000;
 export const MAX_DIETARY_TAGS = 32;
 
 /**
+ * Options in one choice group.
+ */
+export const MAX_GROUP_OPTIONS = 30;
+
+/**
+ * Choice groups on one menu item ("Size", "Milk", "Extras").
+ */
+export const MAX_ITEM_GROUPS = 10;
+
+/**
  * A short label: a cuisine, a menu category, a person's display name.
  */
 export const MAX_LABEL_CHARS = 60;
 
 export const MAX_LICENSE_PLATE_CHARS = 20;
+
+/**
+ * Options chosen on one order line, nested ones included -- what bounds
+ * the choice groups validation reads to price it.
+ */
+export const MAX_LINE_CHOICES = 50;
 
 /**
  * The most units of one item on one line, or in one promo's terms.
@@ -1048,7 +1118,19 @@ export const MAX_NOTE_CHARS = 1000;
 export const MAX_OPENING_PERIODS = 28;
 
 /**
- * Lines on one order -- distinct items.
+ * The most of one option a customer may choose ("extra shot" x 3).
+ */
+export const MAX_OPTION_QUANTITY = 10;
+
+/**
+ * Options chosen on one order, across its lines -- with `MAX_LINE_CHOICES`
+ * and each version read once, what bounds the reading validating an order
+ * with choices takes.
+ */
+export const MAX_ORDER_CHOICES = 300;
+
+/**
+ * Lines on one order -- an item with its choices.
  */
 export const MAX_ORDER_LINES = 100;
 
@@ -1098,6 +1180,13 @@ export interface MenuItem {
   photo_data_uri: string;
   category: string;
   dietary_tags: string[];
+  /**
+   * The choice groups a customer picks from when ordering it, in the
+   * order they're shown: each a `ModifierGroup` of the same store, by
+   * its original action -- so a store edits a shared group ("Choose a
+   * side") once for every item that offers it.
+   */
+  modifier_groups: ActionHash[];
 }
 
 export interface MerchantCatalog {
@@ -1205,6 +1294,62 @@ export interface MerchantCatalog {
    * `order_total` already has (never independently re-derived either).
    */
   dietary_tags: string[];
+}
+
+/**
+ * A store's choice group, shared by every item that lists it.
+ */
+export interface ModifierGroup {
+  catalog_ref: ActionHash;
+  /**
+   * What the customer is choosing: "Milk", "Choose a side".
+   */
+  name: string;
+  /**
+   * The fewest selections an order must make: 0 for an optional group,
+   * 1 or more for a required one.
+   */
+  min_selections: number;
+  /**
+   * The most, counting each unit of an option; `None` for no limit
+   * beyond `max_per_option` on each.
+   */
+  max_selections: number | null;
+  /**
+   * The most units of any one option ("extra shot" up to 3): 1 for a
+   * plain choice.
+   */
+  max_per_option: number;
+  /**
+   * How many selections cost nothing: the cheapest chosen ("2 free
+   * toppings").
+   */
+  free_selections: number;
+  options: ModifierOption[];
+}
+
+/**
+ * One option in a choice group.
+ */
+export interface ModifierOption {
+  /**
+   * Stable within the group across its versions: what an order names.
+   */
+  id: number;
+  name: string;
+  /**
+   * What it adds to the item, in minor units -- 0 for no charge.
+   */
+  price_cents: number;
+  /**
+   * Off while the store has run out: it can't be chosen.
+   */
+  available: boolean;
+  /**
+   * A group the customer chooses from next when they pick this option,
+   * by its original action -- one of the same store's.
+   */
+  nested_group: ActionHash | null;
 }
 
 /**
@@ -1376,9 +1521,21 @@ export interface OrderDecisions {
 }
 
 /**
+ * Something to order -- an item, how many, and what was chosen -- before
+ * it's priced: what a customer's app sends, and what a recurring order
+ * keeps.
+ */
+export interface OrderItem {
+  item_ref: ActionHash;
+  quantity: number;
+  selections: SelectionInput[];
+}
+
+/**
  * One line of an order: an item, the exact version of it that was priced
  * (the item as the customer saw it -- validation reads its price from
- * there), and how many.
+ * there), what was chosen from its choice groups, and how many. The same
+ * item may be on several lines, each with different choices.
  */
 export interface OrderLine {
   /**
@@ -1391,6 +1548,12 @@ export interface OrderLine {
    */
   priced_version: ActionHash;
   quantity: number;
+  /**
+   * One per choice group of the priced version, in its order, each at
+   * the group version priced (`catalog_types::line_price`). None for an
+   * item without choices, or a goodie bag.
+   */
+  selections: Selection[];
 }
 
 /**
@@ -1861,8 +2024,12 @@ export interface ReceiptLine {
   item_ref: ActionHash;
   name: string;
   quantity: number;
+  /**
+   * With its choices.
+   */
   unit_price_cents: number;
   total_cents: number;
+  choices: string[];
 }
 
 /**
@@ -1900,7 +2067,10 @@ export interface RecurringOrderTemplate {
   requester: AgentPubKey;
   merchant: AgentPubKey;
   catalog_ref: ActionHash;
-  item_refs: ActionHash[];
+  /**
+   * What it orders each time: items, quantities and choices.
+   */
+  items: OrderItem[];
   /**
    * Where it goes and the notes for it (`TemplateDetails`), sealed to the
    * requester -- a standing order shouldn't publish a home address.
@@ -2078,6 +2248,34 @@ export interface SavedAddress {
  * holds (a photo). Sealed with `relay_coordinator_support::seal_chunked`.
  */
 export type SealedChunks = XSalsa20Poly1305EncryptedData[];
+
+/**
+ * What an order line chose from one choice group.
+ */
+export interface Selection {
+  /**
+   * The group, by its original action.
+   */
+  group: ActionHash;
+  /**
+   * The version of it the line was priced at -- the options and prices
+   * the customer saw.
+   */
+  version: ActionHash;
+  /**
+   * What was chosen, by option id, ascending.
+   */
+  options: Chosen[];
+}
+
+/**
+ * What a customer chose from one group, before it's priced: no versions --
+ * the order is priced at each group's latest (`Selection` names the one).
+ */
+export interface SelectionInput {
+  group: ActionHash;
+  options: ChosenInput[];
+}
 
 /**
  * One part of a hold, over the zome-call boundary.

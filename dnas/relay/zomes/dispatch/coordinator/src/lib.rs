@@ -33,6 +33,7 @@ mod chat;
 mod claims;
 mod deliveries;
 mod issues;
+mod lines;
 mod matching;
 mod never_arrived;
 mod order_queues;
@@ -58,7 +59,7 @@ pub use never_arrived::*;
 pub use order_queues::*;
 pub use orders::*;
 pub use pickup::*;
-pub use pricing::OrderItemInput;
+pub use pricing::OrderItem;
 pub use recurring::*;
 pub use pin::*;
 pub use settlement::*;
@@ -266,7 +267,6 @@ mod test_utils {
         order.cancellation = input.cancellation;
         if input.release {
             order.accepted_bid = None;
-            order.driver_dropoff = None;
             order.driver_pay_hold = None;
             order.subsidy_hold = None;
             order.collateral_hold = None;
@@ -291,7 +291,6 @@ mod test_utils {
     pub fn release_raw_for_testing(input: RawReleaseInput) -> ExternResult<ActionHash> {
         let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
         order.accepted_bid = None;
-        order.driver_dropoff = None;
         order.driver_pay_hold = None;
         order.subsidy_hold = None;
         order.collateral_hold = None;

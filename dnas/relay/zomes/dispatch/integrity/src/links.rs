@@ -49,7 +49,7 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
             )
         }
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest => validate_issue_link(&link),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => validate_issue_link(&link),
     }
 }
 
@@ -82,7 +82,7 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
-        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest => invalid("an order's issues, requests and settlement are a permanent record"),
+        LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => invalid("an order's issues, requests and settlement are a permanent record"),
         _ => validate_queue_link_delete(link),
     }
 }
@@ -102,6 +102,7 @@ fn validate_issue_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallback
     let expected_base: Option<AnyLinkableHash> = match link.link_type {
         LinkTypes::OrderToIssue => decode::<ItemIssue>(&record).map(|i| i.order.into()),
         LinkTypes::OrderToCollectRequest => decode::<CollectRequest>(&record).map(|r| r.order.into()),
+        LinkTypes::OrderToDropoffShare => decode::<DropoffShare>(&record).map(|r| r.order.into()),
         LinkTypes::IssueToResponse => decode::<IssueResponse>(&record).map(|r| r.issue.into()),
         LinkTypes::OrderToDecision => match (decode::<OrderOutcome>(&record), decode::<ItemSettlement>(&record)) {
             (Some(outcome), _) => Some(outcome.order.into()),

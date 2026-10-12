@@ -18,6 +18,7 @@ import { describeError } from "../../lib/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 
@@ -152,6 +153,12 @@ export function PickupOrderDetail() {
         <PickupStatusBadge status={order.status} />
       </motion.div>
 
+      {order.status !== "PickedUp" && (
+        <motion.div variants={fadeSlideUp} className="-mt-2 mb-4">
+          <OrderSummary orderRef={orderRef} count={order.lines.reduce((n, l) => n + l.quantity, 0)} />
+        </motion.div>
+      )}
+
       <motion.div variants={fadeSlideUp}>
         <Card className="p-4">
           <PickupStatusTimeline status={order.status} cancellation={order.cancellation} />
@@ -224,7 +231,7 @@ export function PickupOrderDetail() {
               <div>
                 <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
                 <div className="flex flex-col gap-2">
-                  {order.lines.map((line) => bytesToHex(line.item_ref)).map((hex) => (
+                  {[...new Set(order.lines.map((line) => bytesToHex(line.item_ref)))].map((hex) => (
                     <div key={hex} className="flex items-center justify-between">
                       <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
                       <StarRatingInput value={itemRatings[hex] ?? 0} onChange={(v) => setItemRatings((prev) => ({ ...prev, [hex]: v }))} size={16} />

@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { getCatalog, setCatalogOpen } from "../../holochain/zomes/catalog";
+import { getCatalog, listModifierGroups, setCatalogOpen } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, hexToBytes } from "../../holochain/decode";
 import { useMerchantStores, useMyStores } from "../../store/merchantStores";
@@ -15,9 +15,10 @@ import { AutoAcceptCard, BusyCard, DeliverySubsidyCard, LeaveAtDoorCard, Listing
 import { HoursCard } from "./catalog/HoursCard";
 import { PromoCodesCard } from "./catalog/PromoCodesCard";
 import { MenuSection } from "./catalog/MenuSection";
+import { ChoicesSection, type GroupRow } from "./catalog/ChoicesSection";
 import { GoodieBagsSection } from "./catalog/GoodieBagsSection";
 import { StoreReviews } from "./catalog/StoreReviews";
-import type { MerchantCatalog as Catalog } from "../../holochain/types";
+import type { MerchantCatalog as Catalog, ModifierGroup } from "../../holochain/types";
 
 /// The Menu tab: everything about the *currently selected* store (see
 /// `StoreSwitcher`/`merchantStores.ts`). Each store renders as its own keyed
@@ -50,8 +51,9 @@ function CatalogSkeleton() {
 /// sections need them (the promo form picks items from the menu). Every
 /// other section reads its own data.
 async function fetchStore(catalogRef: Uint8Array) {
-  const [record, items] = await Promise.all([getCatalog(catalogRef), fetchMenu(catalogRef)]);
-  return { catalog: decodeEntry<Catalog>(record), items };
+  const [record, items, groupViews] = await Promise.all([getCatalog(catalogRef), fetchMenu(catalogRef), listModifierGroups(catalogRef)]);
+  const groups: GroupRow[] = groupViews.map((v) => ({ hash: v.original_action, group: decodeEntry<ModifierGroup>(v.record) }));
+  return { catalog: decodeEntry<Catalog>(record), items, groups };
 }
 
 function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; openDetailsOnArrival: boolean }) {
@@ -73,7 +75,7 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
       </div>
     );
   }
-  const { catalog, items } = data;
+  const { catalog, items, groups } = data;
   const avgRating = rating ? averageRating(rating) : null;
 
   return (
@@ -122,7 +124,8 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
         <motion.div variants={fadeSlideUp}>
           <PromoCodesCard storeHex={storeHex} catalogRef={catalogRef} items={items} />
         </motion.div>
-        <MenuSection catalogRef={catalogRef} items={items} onChanged={reload} />
+        <ChoicesSection catalogRef={catalogRef} groups={groups} onChanged={reload} />
+        <MenuSection catalogRef={catalogRef} items={items} groups={groups} onChanged={reload} />
         <GoodieBagsSection storeHex={storeHex} catalogRef={catalogRef} />
         <motion.div variants={fadeSlideUp}>
           <StoreReviews storeHex={storeHex} catalogRef={catalogRef} />

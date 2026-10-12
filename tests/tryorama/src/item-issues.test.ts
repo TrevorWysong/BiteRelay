@@ -74,6 +74,9 @@ await runScenario(async (scenario) => {
     await sync();
     return { ref, collected };
   };
+  // The order's lines, by position: as the items were listed.
+  const STEW = 0;
+  const BREAD = 1;
   const raw = (p: typeof customer, fn: string, input: unknown) => call(p, "dispatch")(`create_raw_${fn}_for_testing`, input);
 
   const customerBefore = await balance(customer);
@@ -81,19 +84,19 @@ await runScenario(async (scenario) => {
   const { ref: order, collected } = await pickup();
 
   // Who can report what.
-  await assert.rejects(raw(stranger, "item_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Missing" }] }), /only the order's customer/, "a stranger can't report");
-  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ item_ref: bread, quantity: 3, kind: "Missing" }] }), /number ordered/, "nor more than was ordered");
-  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ item_ref: store, quantity: 1, kind: "Missing" }] }), /only items on the order/, "nor an item that wasn't on it");
+  await assert.rejects(raw(stranger, "item_issue", { order, lines: [{ line: BREAD, quantity: 1, kind: "Missing" }] }), /only the order's customer/, "a stranger can't report");
+  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ line: BREAD, quantity: 3, kind: "Missing" }] }), /number ordered/, "nor more than was ordered");
+  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ line: 5, quantity: 1, kind: "Missing" }] }), /only lines on the order/, "nor a line that wasn't on it");
   await assert.rejects(
-    raw(customer, "item_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Missing" }, { item_ref: bread, quantity: 1, kind: "Wrong" }] }),
+    raw(customer, "item_issue", { order, lines: [{ line: BREAD, quantity: 1, kind: "Missing" }, { line: BREAD, quantity: 1, kind: "Wrong" }] }),
     /once in an issue/,
-    "nor the same item twice in one report",
+    "nor the same line twice in one report",
   );
   console.log("[PASS] only the customer reports, only items on the order, never more than ordered");
 
-  const missingBread = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Missing" }], note: "Only one bread in the bag", photo_data_uri: FULL_SIZE_PHOTO }));
-  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ item_ref: bread, quantity: 1, kind: "Wrong" }] }), /each item on an order is reported once/, "an item already reported can't be reported again");
-  const wrongStew = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ item_ref: stew, quantity: 1, kind: "Wrong" }], note: "This is soup", photo_data_uri: "" }));
+  const missingBread = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ line: BREAD, quantity: 1, kind: "Missing" }], note: "Only one bread in the bag", photo_data_uri: FULL_SIZE_PHOTO }));
+  await assert.rejects(raw(customer, "item_issue", { order, lines: [{ line: BREAD, quantity: 1, kind: "Wrong" }] }), /each line of an order is reported once/, "a line already reported can't be reported again");
+  const wrongStew = actionHash(await call(customer, "dispatch")<HcRecord>("report_issue", { order, lines: [{ line: STEW, quantity: 1, kind: "Wrong" }], note: "This is soup", photo_data_uri: "" }));
   await sync();
   const seenByStore = await retryUntil(() => call(merchant, "dispatch")<IssueView[]>("get_issues_for_order", order), (issues) => issues.length === 2);
   assert.deepEqual(seenByStore.map((i) => i.value), [500, 1000], "each report is worth its share of what was paid");
@@ -123,7 +126,7 @@ await runScenario(async (scenario) => {
   await settlesTo(customer, order, customerBefore - 2000 + 500);
   assert.equal(await refundOf(order), 500, "the accepted report is refunded; the declined one isn't");
   await assert.rejects(settlement(merchant, { refund: 0, issues: [] }), /settled once/, "and it's settled once");
-  await assert.rejects(call(customer, "dispatch")("report_issue", { order, lines: [{ item_ref: stew, quantity: 1, kind: "Missing" }], note: "", photo_data_uri: "" }), /already settled/, "a report after that comes too late");
+  await assert.rejects(call(customer, "dispatch")("report_issue", { order, lines: [{ line: STEW, quantity: 1, kind: "Missing" }], note: "", photo_data_uri: "" }), /already settled/, "a report after that comes too late");
   console.log("[PASS] the store has the final say: what it accepts is refunded, what it declines isn't");
 
   // ===== Reviews, once each =====
@@ -139,7 +142,7 @@ await runScenario(async (scenario) => {
   // ===== A report the store ignores =====
   const customerThen = await balance(customer);
   const { ref: ignored } = await pickup();
-  await call(customer, "dispatch")("report_issue", { order: ignored, lines: [{ item_ref: bread, quantity: 2, kind: "Missing" }], note: "", photo_data_uri: "" });
+  await call(customer, "dispatch")("report_issue", { order: ignored, lines: [{ line: BREAD, quantity: 2, kind: "Missing" }], note: "", photo_data_uri: "" });
   await sync();
   await retryUntil(
     async () => {

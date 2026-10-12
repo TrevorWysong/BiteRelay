@@ -28,6 +28,7 @@ import { carryRefusal, CUSTOMER_REFUSAL, describeLoad } from "../../lib/driverLo
 import { useTerms } from "../../store/network";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
 import { HandoverCode } from "../../components/HandoverCode";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
@@ -367,6 +368,12 @@ export function OrderDetail() {
         </div>
       </motion.div>
 
+      {order.status !== "Delivered" && (
+        <motion.div variants={fadeSlideUp} className="-mt-2 mb-4">
+          <OrderSummary orderRef={orderRef} count={order.lines.reduce((n, l) => n + l.quantity, 0)} />
+        </motion.div>
+      )}
+
       <motion.div variants={fadeSlideUp}>
         <Card className="p-4">
           <OrderStatusTimeline status={order.status} cancellation={order.cancellation} />
@@ -656,7 +663,7 @@ export function OrderDetail() {
             <div>
               <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
               <div className="flex flex-col gap-2">
-                {order.lines.map((line) => bytesToHex(line.item_ref)).map((hex) => (
+                {[...new Set(order.lines.map((line) => bytesToHex(line.item_ref)))].map((hex) => (
                   <div key={hex} className="flex items-center justify-between">
                     <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
                     <StarRatingInput

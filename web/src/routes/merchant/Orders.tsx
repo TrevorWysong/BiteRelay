@@ -39,6 +39,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { acknowledgeLeg } from "../../holochain/zomes/attestation";
+import { OrderLines } from "../../components/OrderLines";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import { OrderIssues } from "../../components/OrderIssues";
 import { HandoverCode } from "../../components/HandoverCode";
@@ -419,6 +420,7 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
         {count} item{count === 1 ? "" : "s"}
         {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · ready by {formatClockTime(order.ready_by)}</span>}
       </p>
+      {!isFinished(row) && <OrderLines orderRef={row.ref} className="mt-3 rounded-xl bg-ink-50 p-3 dark:bg-ink-800/60" />}
       {(order.kitchen_note || order.sealed_customer_name) && <ForTheStore orderHex={row.hex} orderRef={row.ref} />}
       {!isFinished(row) && <CustomerHistory customer={order.requester} />}
       {children}

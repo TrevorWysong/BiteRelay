@@ -143,6 +143,7 @@ dependencies = [
  "hdk",
  "relay_coordinator_support",
  "relay_governance",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]
@@ -167,6 +168,7 @@ version = "0.1.0"
 dependencies = [
  "hdi",
  "holochain_serialized_bytes",
+ "relay_integrity_support",
  "relay_types",
  "serde",
 ]

@@ -7,7 +7,8 @@ import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { distanceKm } from "../../lib/geohash";
-import { useCart, cartItems, expandLineQuantities, type CartLine } from "../../store/cart";
+import { useCart, cartItems, lineKey, type CartLine } from "../../store/cart";
+import { ItemSheet } from "../../components/ItemSheet";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
@@ -16,12 +17,12 @@ import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../..
 import { useCustomerSettings } from "../../store/roleSettings";
 import { useTerms } from "../../store/network";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
-import { fetchMenu } from "../../lib/menu";
+import { fetchMenu, type ItemRow } from "../../lib/menu";
 import { WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
-import type { ActionHash, DropoffPreference, GeoPoint, MenuItem, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
+import type { ActionHash, DropoffPreference, GeoPoint, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
 import { MAX_NOTE_CHARS, MAX_PROMO_CODE_CHARS } from "../../holochain/types";
@@ -97,7 +98,7 @@ function ToggleChip({ active, onClick, children, className }: { active: boolean;
 
 type PromoRow = { hash: ActionHash; promo: PromoCode };
 const NO_PROMOS: PromoRow[] = [];
-const NO_ITEMS: { hash: ActionHash; item: MenuItem }[] = [];
+const NO_ITEMS: ItemRow[] = [];
 
 interface CartStoreInfo {
   subsidyPercent: number;
@@ -121,7 +122,7 @@ interface CartStoreInfo {
   /// it sets its own -- else the network's.
   storeWaitMinutes: number | null;
   promoCodes: PromoRow[];
-  menuItems: { hash: ActionHash; item: MenuItem }[];
+  menuItems: ItemRow[];
   completedOrderCount: number;
 }
 
@@ -212,6 +213,8 @@ export function Cart() {
   const [recurrenceWeekday, setRecurrenceWeekday] = useState(1); // Monday
   const [recurrenceTime, setRecurrenceTime] = useState("09:00");
   const [savingRecurring, setSavingRecurring] = useState(false);
+  /// A line whose choices are being changed.
+  const [editing, setEditing] = useState<{ key: string; line: CartLine; row: ItemRow } | null>(null);
   const [recurringSaved, setRecurringSaved] = useState(false);
   const [scheduled, setScheduled] = useState(false);
   const [priority, setPriority] = useState(usual.priority);
@@ -382,7 +385,7 @@ export function Cart() {
       await createRecurringTemplate({
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
-        item_refs: expandLineQuantities(cart.lines),
+        items: cartItems(cart.lines),
         dropoff,
         max_delivery_fee: maxFeeCents,
         kitchen_notes: kitchenNotes.trim(),
@@ -428,12 +431,21 @@ export function Cart() {
       <motion.div variants={fadeSlideUp}>
         <Card className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
           {cart.lines.map((line) => {
-            const key = bytesToHex(line.itemRef);
+            const key = lineKey(line);
+            const row = line.selections.length > 0 ? menuItems.find((m) => bytesToHex(m.hash) === bytesToHex(line.itemRef)) : undefined;
             return (
               <div key={key} className="flex items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{line.name}</p>
-                  <p className="text-xs text-ink-400">{formatCents(line.priceCents)} each</p>
+                  {line.choiceLabels.length > 0 && <p className="line-clamp-2 text-xs text-ink-500 dark:text-ink-400">{line.choiceLabels.join(", ")}</p>}
+                  <p className="text-xs text-ink-400">
+                    {formatCents(line.priceCents)} each
+                    {row && (
+                      <button type="button" onClick={() => setEditing({ key, line, row })} className="ml-2 font-semibold text-relay-600 hover:underline dark:text-relay-400">
+                        Edit
+                      </button>
+                    )}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 rounded-full bg-ink-100 dark:bg-ink-800 px-1.5 py-1">
                   <motion.button whileTap={{ scale: 0.85 }} onClick={() => cart.setQuantity(key, line.quantity - 1)} className="grid h-6 w-6 place-items-center rounded-full hover:bg-ink-200 dark:hover:bg-ink-700">
@@ -787,6 +799,20 @@ export function Cart() {
           {fulfillment === "Pickup" ? formatCents(discountedSubtotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
         </Button>
       </div>
+
+      {editing && cart.catalogRef && (
+        <ItemSheet
+          key={editing.key}
+          catalogRef={cart.catalogRef}
+          row={editing.row}
+          editing={editing.line}
+          onClose={() => setEditing(null)}
+          onDone={(line) => {
+            cart.replaceLine(editing.key, line);
+            setEditing(null);
+          }}
+        />
+      )}
     </motion.div>
   );
 }

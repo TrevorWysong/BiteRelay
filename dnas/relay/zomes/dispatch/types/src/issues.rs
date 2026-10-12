@@ -30,11 +30,12 @@ pub enum IssueKind {
     Wrong,
 }
 
-/// Some units of one item on the order.
+/// Some units of one line on the order -- an item with its choices, so a
+/// refund is worth what that line cost ("the large latte with oat milk").
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct IssueLine {
-    /// The item's original action, as the order's line names it.
-    pub item_ref: ActionHash,
+    /// The line's position on the order, from 0.
+    pub line: u32,
     pub quantity: u32,
     pub kind: IssueKind,
 }
@@ -106,21 +107,23 @@ pub struct ItemSettlement {
     pub refund: u64,
 }
 
-/// What `claimed` units of an order's items are worth, of what the customer
+/// What `claimed` units of an order's lines are worth, of what the customer
 /// paid: each unit at its line's price, scaled by what the order actually
 /// cost against its undiscounted subtotal (a promo's discount is shared
 /// out), rounded down -- and never more than the order cost. `lines` is the
-/// order's (item, unit price, quantity ordered); a claim for more units of
-/// an item than were ordered counts only those ordered.
-pub fn claimed_value(lines: &[(ActionHash, u64, u32)], order_total: u64, claimed: &[(ActionHash, u32)]) -> u64 {
-    let subtotal: u128 = lines.iter().map(|(_, price, quantity)| u128::from(*price) * u128::from(*quantity)).sum();
+/// order's (unit price, quantity ordered), in order; `claimed` is (line
+/// position, units). A claim for more units of a line than were ordered
+/// counts only those ordered.
+pub fn claimed_value(lines: &[(u64, u32)], order_total: u64, claimed: &[(u32, u32)]) -> u64 {
+    let subtotal: u128 = lines.iter().map(|(price, quantity)| u128::from(*price) * u128::from(*quantity)).sum();
     if subtotal == 0 {
         return 0;
     }
     let claimed_subtotal: u128 = lines
         .iter()
-        .map(|(item, price, ordered)| {
-            let units: u32 = claimed.iter().filter(|(c, _)| c == item).map(|(_, q)| *q).sum();
+        .enumerate()
+        .map(|(position, (price, ordered))| {
+            let units: u32 = claimed.iter().filter(|(line, _)| *line as usize == position).map(|(_, q)| *q).sum();
             u128::from(*price) * u128::from(units.min(*ordered))
         })
         .sum();
@@ -132,30 +135,34 @@ pub fn claimed_value(lines: &[(ActionHash, u64, u32)], order_total: u64, claimed
 mod tests {
     use super::*;
 
-    fn item(n: u8) -> ActionHash {
-        ActionHash::from_raw_36(vec![n; 36])
-    }
-
     #[test]
     fn a_claim_is_worth_its_share_of_what_was_paid() {
-        let lines = [(item(1), 500, 2), (item(2), 1000, 1)];
-        assert_eq!(claimed_value(&lines, 2000, &[(item(1), 1)]), 500, "no promo: the item's price");
-        assert_eq!(claimed_value(&lines, 1600, &[(item(1), 1)]), 400, "a 20% promo shares its discount");
-        assert_eq!(claimed_value(&lines, 1600, &[(item(2), 1), (item(1), 2)]), 1600, "everything is everything paid");
+        let lines = [(500, 2), (1000, 1)];
+        assert_eq!(claimed_value(&lines, 2000, &[(0, 1)]), 500, "no promo: the line's price");
+        assert_eq!(claimed_value(&lines, 1600, &[(0, 1)]), 400, "a 20% promo shares its discount");
+        assert_eq!(claimed_value(&lines, 1600, &[(1, 1), (0, 2)]), 1600, "everything is everything paid");
     }
 
     #[test]
     fn a_claim_counts_only_what_was_ordered() {
-        let lines = [(item(1), 500, 2)];
-        assert_eq!(claimed_value(&lines, 1000, &[(item(1), 5)]), 1000, "five claimed of two ordered counts two");
-        assert_eq!(claimed_value(&lines, 1000, &[(item(1), 2), (item(1), 2)]), 1000, "claimed twice still counts two");
-        assert_eq!(claimed_value(&lines, 1000, &[(item(9), 1)]), 0, "an item not on the order is worth nothing");
+        let lines = [(500, 2)];
+        assert_eq!(claimed_value(&lines, 1000, &[(0, 5)]), 1000, "five claimed of two ordered counts two");
+        assert_eq!(claimed_value(&lines, 1000, &[(0, 2), (0, 2)]), 1000, "claimed twice still counts two");
+        assert_eq!(claimed_value(&lines, 1000, &[(9, 1)]), 0, "a line not on the order is worth nothing");
+    }
+
+    #[test]
+    fn the_same_item_on_two_lines_is_two_prices() {
+        // A plain latte and one with oat milk: the oat milk one is refunded
+        // at its own price.
+        let lines = [(400, 1), (460, 1)];
+        assert_eq!(claimed_value(&lines, 860, &[(1, 1)]), 460);
     }
 
     #[test]
     fn it_rounds_down() {
-        let lines = [(item(1), 333, 3)];
-        assert_eq!(claimed_value(&lines, 999, &[(item(1), 1)]), 333);
-        assert_eq!(claimed_value(&lines, 998, &[(item(1), 1)]), 332);
+        let lines = [(333, 3)];
+        assert_eq!(claimed_value(&lines, 999, &[(0, 1)]), 333);
+        assert_eq!(claimed_value(&lines, 998, &[(0, 1)]), 332);
     }
 }

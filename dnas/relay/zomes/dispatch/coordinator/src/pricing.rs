@@ -11,12 +11,7 @@ use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
 
-/// One thing to order, and how many.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct OrderItemInput {
-    pub item_ref: ActionHash,
-    pub quantity: u32,
-}
+pub use dispatch_integrity::OrderItem;
 
 pub(crate) struct PricedOrder {
     pub lines: Vec<OrderLine>,
@@ -40,7 +35,7 @@ pub(crate) fn ensure_store_minimum(store: &catalog_types::MerchantCatalog, price
 /// is the claimed bag at its own price; anything else is priced from the
 /// menu. Fails if an item isn't on this store's menu or is sold out, if a
 /// promo's requirement isn't met, or if the total isn't `expected_total`.
-pub(crate) fn price_order(catalog_ref: &ActionHash, items: &[OrderItemInput], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, expected_total: u64) -> ExternResult<PricedOrder> {
+pub(crate) fn price_order(catalog_ref: &ActionHash, items: &[OrderItem], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, expected_total: u64) -> ExternResult<PricedOrder> {
     let priced = match bag_claim_ref {
         Some(claim_ref) => price_bag_order(catalog_ref, claim_ref, promo_ref)?,
         None => price_menu_order(catalog_ref, items, promo_ref)?,
@@ -64,7 +59,7 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
         return Err(guest("that goodie bag isn't from this store".into()));
     }
     Ok(PricedOrder {
-        lines: vec![OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref, quantity: 1 }],
+        lines: vec![OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref, quantity: 1, selections: Vec::new() }],
         order_total: bag.price_cents,
         loyalty_proof: Vec::new(),
         menu_subtotal: None,
@@ -74,18 +69,26 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
 /// An order from the menu at current prices, less `promo_ref` -- what
 /// `price_order` checks a client's total against, and what a recurring
 /// order is placed at (`recurring::fire`).
-pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
-    // One line per item, however the client listed them.
-    let mut quantities: Vec<(ActionHash, u32)> = Vec::new();
+pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItem], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
+    // One line per item and its choices, however the client listed them.
+    let mut merged: Vec<OrderItem> = Vec::new();
     for item in items {
-        match quantities.iter_mut().find(|(item_ref, _)| item_ref == &item.item_ref) {
-            Some((_, quantity)) => *quantity += item.quantity,
-            None => quantities.push((item.item_ref.clone(), item.quantity)),
+        if let Some(problem) = catalog_types::choices_problem(&item.selections) {
+            return Err(guest(problem));
+        }
+        match merged.iter_mut().find(|m| m.item_ref == item.item_ref && m.selections == item.selections) {
+            Some(line) => line.quantity = line.quantity.saturating_add(item.quantity),
+            None => merged.push(item.clone()),
         }
     }
-    let mut lines = Vec::with_capacity(quantities.len());
-    let mut priced = Vec::with_capacity(quantities.len());
-    for (item_ref, quantity) in quantities {
+    let choices: usize = merged.iter().map(|item| count_inputs(&item.selections)).sum();
+    if choices > relay_integrity_support::limits::MAX_ORDER_CHOICES {
+        return Err(guest(format!("An order can have at most {} choices across its items.", relay_integrity_support::limits::MAX_ORDER_CHOICES)));
+    }
+    let mut lines = Vec::with_capacity(merged.len());
+    let mut priced = Vec::with_capacity(merged.len());
+    let mut pricer = LinePricer::default();
+    for OrderItem { item_ref, quantity, selections } in merged {
         let record = resolve_latest_fresh(item_ref.clone())?;
         let item: MenuItem = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a menu item".into()))?;
         if &item.catalog_ref != catalog_ref {
@@ -94,8 +97,10 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput
         if !item.available {
             return Err(guest(format!("{} is sold out", item.name)));
         }
-        lines.push(OrderLine { item_ref: item_ref.clone(), priced_version: record.action_address().clone(), quantity });
-        priced.push(PricedLine { item_ref, unit_price: item.price_cents, quantity });
+        let selections = at_latest(&selections)?;
+        let unit_price = pricer.unit_price(&item, &selections)?.map_err(|reason| guest(format!("{}: {reason}", item.name)))?;
+        lines.push(OrderLine { item_ref: item_ref.clone(), priced_version: record.action_address().clone(), quantity, selections });
+        priced.push(PricedLine { item_ref, base_price: item.price_cents, unit_price, quantity });
     }
 
     let promo = match promo_ref {
@@ -108,6 +113,33 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItemInput
         .ok_or(guest("this order doesn't meet the promo code's requirement".into()))?;
     let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
     Ok(PricedOrder { lines, order_total: total, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
+}
+
+/// How many options `selections` choose, nested ones included.
+fn count_inputs(selections: &[SelectionInput]) -> usize {
+    selections.iter().flat_map(|s| &s.options).map(|c| 1 + count_inputs(&c.nested)).sum()
+}
+
+/// Choices at each group's latest version -- what the customer sees now.
+fn at_latest(selections: &[SelectionInput]) -> ExternResult<Vec<Selection>> {
+    selections
+        .iter()
+        .map(|s| {
+            let options = s.options.iter().map(|c| Ok(Chosen { option: c.option, quantity: c.quantity, nested: at_latest(&c.nested)? })).collect::<ExternResult<_>>()?;
+            Ok(Selection { group: s.group.clone(), version: resolve_latest_fresh(s.group.clone())?.action_address().clone(), options })
+        })
+        .collect()
+}
+
+/// Every (group, version) a line's choices were priced at, nested ones
+/// included.
+fn priced_groups(selections: &[Selection], out: &mut Vec<(ActionHash, ActionHash)>) {
+    for s in selections {
+        out.push((s.group.clone(), s.version.clone()));
+        for c in &s.options {
+            priced_groups(&c.nested, out);
+        }
+    }
 }
 
 /// How long the store still honours an order priced just before one of its
@@ -155,18 +187,28 @@ pub(crate) fn outdated_item(order_ref: &ActionHash, lines: &[OrderLine], bag_cla
             return Ok(Some("The promo code".into()));
         }
     }
-    let histories = my_item_versions(lines.iter().map(|line| line.item_ref.clone()).collect())?;
-    // Read only if some line isn't at its current price.
+    // Each item at the version its line was priced at, and each choice
+    // group at its own.
+    let mut cited: Vec<(ActionHash, ActionHash)> = lines.iter().map(|line| (line.item_ref.clone(), line.priced_version.clone())).collect();
+    let item_count = cited.len();
+    for line in lines {
+        priced_groups(&line.selections, &mut cited);
+    }
+    let mut histories = my_item_versions(cited[..item_count].iter().map(|(item, _)| item.clone()).collect())?;
+    if cited.len() > item_count {
+        histories.extend(my_versions("get_my_group_versions", cited[item_count..].iter().map(|(group, _)| group.clone()).collect())?);
+    }
+    // Read only if something isn't at its current price.
     let mut placement = None;
-    for (line, history) in lines.iter().zip(histories) {
-        if history.versions.last().is_some_and(|current| current.action == line.priced_version) {
+    for ((_, version), history) in cited.iter().zip(histories) {
+        if history.versions.last().is_some_and(|current| &current.action == version) {
             continue;
         }
         let placed_at = match placement {
             Some(at) => at,
             None => *placement.insert(placement_time(order_ref)?),
         };
-        if !honoured(&history.versions, &line.priced_version, placed_at)? {
+        if !honoured(&history.versions, version, placed_at)? {
             let name = if history.name.is_empty() { "An item".to_string() } else { history.name };
             return Ok(Some(name));
         }
@@ -275,7 +317,12 @@ struct ItemVersionWire {
 
 /// Each item's history from the caller's (the store's) own chain, in order.
 fn my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersionsWire>> {
-    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_item_versions".into(), None, item_refs)? else {
+    my_versions("get_my_item_versions", item_refs)
+}
+
+/// Each item's or choice group's history from the store's own chain.
+fn my_versions(function: &str, refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersionsWire>> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", function.into(), None, refs)? else {
         return Err(guest("reading your menu's history failed".into()));
     };
     io.decode().map_err(|e| wasm_error!(e))

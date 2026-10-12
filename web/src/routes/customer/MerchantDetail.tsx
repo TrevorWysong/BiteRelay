@@ -13,6 +13,7 @@ import { describeError } from "../../lib/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
+import { ItemSheet } from "../../components/ItemSheet";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { fetchMenu, groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
@@ -106,6 +107,8 @@ function StorePage({ hash }: { hash: string }) {
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimedBagHexes, setClaimedBagHexes] = useState<Set<string>>(new Set());
   const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
+  /// The item whose choices are open, if any.
+  const [choosing, setChoosing] = useState<ItemRow | null>(null);
 
   async function loadMoreReviews() {
     if (reviewsBefore === null) return;
@@ -176,6 +179,16 @@ function StorePage({ hash }: { hash: string }) {
   }
 
   const cartCount = cart.lines.reduce((n, l) => n + l.quantity, 0);
+  /// An item without choices goes straight in the cart; one with choices
+  /// opens its sheet.
+  const addItem = (row: ItemRow) => {
+    if (row.item.modifier_groups.length > 0) {
+      setChoosing(row);
+      return;
+    }
+    const { hash: itemRef, item } = row;
+    cart.addLine(catalogHash, catalog.owner, catalog.business_name, { itemRef, name: item.name, basePriceCents: item.price_cents, priceCents: item.price_cents, quantity: 1, selections: [], choiceLabels: [] });
+  };
   const avgRating = rating ? averageRating(rating) : null;
   const grouped = groupByCategory(filteredItems);
 
@@ -319,7 +332,9 @@ function StorePage({ hash }: { hash: string }) {
           <motion.div variants={fadeSlideUp} key={category} className="mt-6">
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{category}</p>
             <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
-              {rows.map(({ hash: itemHash, item }) => (
+              {rows.map((row) => {
+                const { hash: itemHash, item } = row;
+                return (
                 <div key={bytesToHex(itemHash)} className="flex items-center gap-3 p-4">
                   {item.photo_data_uri && <img src={item.photo_data_uri} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />}
                   <div className="min-w-0 flex-1">
@@ -352,13 +367,14 @@ function StorePage({ hash }: { hash: string }) {
                     whileTap={{ scale: 0.85 }}
                     disabled={!item.available || !status?.open}
                     aria-label={`Add ${item.name}`}
-                    onClick={() => cart.addItem(catalogHash, catalog.owner, catalog.business_name, itemHash, item.name, item.price_cents)}
+                    onClick={() => addItem(row)}
                     className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"
                   >
                     <Plus size={18} />
                   </motion.button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         ))}
@@ -389,6 +405,19 @@ function StorePage({ hash }: { hash: string }) {
           </motion.div>
         )}
       </motion.div>
+
+      {choosing && (
+        <ItemSheet
+          key={bytesToHex(choosing.hash)}
+          catalogRef={catalogHash}
+          row={choosing}
+          onClose={() => setChoosing(null)}
+          onDone={(line) => {
+            cart.addLine(catalogHash, catalog.owner, catalog.business_name, line);
+            setChoosing(null);
+          }}
+        />
+      )}
 
       <AnimatePresence>
         {cartCount > 0 && (

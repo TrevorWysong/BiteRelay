@@ -56,7 +56,7 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
             ))
         }
     }
-    if order.accepted_bid.is_some() || order.driver_dropoff.is_some() {
+    if order.accepted_bid.is_some() {
         return Ok(ValidateCallbackResult::Invalid("a new order cannot already have an accepted bid".into()));
     }
     if !order.delivery_receipts.is_empty() {
@@ -125,7 +125,6 @@ fn check_store_terms(order: &DeliveryOrder) -> ExternResult<Result<MerchantCatal
 pub(crate) fn sealed_fields_problem(order: &DeliveryOrder) -> Option<String> {
     let sealed = [
         ("sealed_dropoff", Some(&order.sealed_dropoff)),
-        ("driver_dropoff", order.driver_dropoff.as_ref()),
         ("kitchen_note", order.kitchen_note.as_ref()),
         ("sealed_customer_name", order.sealed_customer_name.as_ref()),
         ("sealed_pin", Some(&order.sealed_pin)),
@@ -190,8 +189,6 @@ struct Step {
     picking_up: bool,
     /// A driver leaving before pickup -- see `transition_requirement`.
     releasing: bool,
-    /// The customer sharing their address with their committed driver.
-    sharing: bool,
     collecting: bool,
     collected: bool,
     completing: bool,
@@ -209,7 +206,6 @@ impl Step {
             checking_in: *prior == MerchantConfirmed && *next == DriverAtStore,
             picking_up: *prior == DriverAtStore && *next == PickedUp,
             releasing: prior_has_driver && matches!(next, Open | Collecting),
-            sharing: prior == next,
             collecting: *prior != Collecting && *next == Collecting,
             collected: *prior == Collecting && *next == Collected,
             completing: matches!(prior, PickedUp | Disputed) && *next == Delivered,
@@ -303,22 +299,18 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
         return Ok(Some(reason));
     }
 
-    // The driver: set when the customer accepts their bid (with the
-    // address sealed to them), gone when they leave, otherwise fixed.
     // The driver: set when the customer accepts their bid, gone when they
-    // leave, otherwise fixed. Their copy of the address: shared, once, only
-    // after they've committed -- by an update that changes nothing else.
+    // leave, otherwise fixed. (Their copy of the address is a `DropoffShare`
+    // of its own.)
     let driver_ok = if step.accepting {
-        prior.accepted_bid.is_none() && order.accepted_bid.is_some() && order.driver_dropoff.is_none()
+        prior.accepted_bid.is_none() && order.accepted_bid.is_some()
     } else if step.releasing {
-        order.accepted_bid.is_none() && order.driver_dropoff.is_none()
-    } else if step.sharing {
-        prior.accepted_bid == order.accepted_bid && prior.collateral_hold.is_some() && prior.driver_dropoff.is_none() && order.driver_dropoff.is_some()
+        order.accepted_bid.is_none()
     } else {
-        prior.accepted_bid == order.accepted_bid && prior.driver_dropoff == order.driver_dropoff
+        prior.accepted_bid == order.accepted_bid
     };
     if !driver_ok {
-        return Ok(Some("the driver is set when a bid is accepted and gone when they leave; the address is shared with them once, after they've committed".into()));
+        return Ok(Some("accepted_bid is set when a bid is accepted, cleared when its driver leaves, and otherwise never changes".into()));
     }
 
     // The money behind each step, set aside by whoever owes it and cited by
@@ -633,6 +625,31 @@ pub(crate) fn validate_collect_request(request: &CollectRequest, author: &AgentP
     }
     if lineage::asked_to_collect(author, prev_action, &request.order)? {
         return Ok(ValidateCallbackResult::Invalid("a customer asks to collect an order once".into()));
+    }
+    Ok(ValidateCallbackResult::Valid)
+}
+
+/// A customer sharing their address with a driver: theirs to share, with a
+/// driver the order shows committed, and no larger than an address.
+pub(crate) fn validate_dropoff_share(share: &DropoffShare, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if relay_integrity_support::original_creation(share.order.clone())? != share.order || relay_integrity_support::original_creation(share.committed.clone())? != share.order {
+        return Ok(ValidateCallbackResult::Invalid("a share names an order by its original action, and one of its versions".into()));
+    }
+    let Some(order) = decode::<DeliveryOrder>(&must_get_valid_record(share.committed.clone())?) else {
+        return Ok(ValidateCallbackResult::Invalid("a share is for a delivery".into()));
+    };
+    if &order.requester != author {
+        return Ok(ValidateCallbackResult::Invalid("only an order's customer shares its address".into()));
+    }
+    let committed = match (&order.accepted_bid, order.collateral_hold.is_some()) {
+        (Some(bid), true) => decode::<Bid>(&must_get_valid_record(bid.clone())?).is_some_and(|bid| bid.bidder == share.driver),
+        _ => false,
+    };
+    if !committed {
+        return Ok(ValidateCallbackResult::Invalid("the address is shared only with a driver the order shows committed".into()));
+    }
+    if let Some(problem) = sealed_problem("sealed", &share.sealed, MAX_SEALED_BYTES) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
     }
     Ok(ValidateCallbackResult::Valid)
 }

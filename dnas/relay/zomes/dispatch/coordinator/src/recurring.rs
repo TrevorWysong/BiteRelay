@@ -4,20 +4,20 @@
 //! them when due (`tend_templates`, run by `upkeep`), with no app open.
 
 use crate::orders::{ensure_promo_usable, request_delivery, RequestDeliveryInput};
-use crate::pricing::{price_menu_order, OrderItemInput};
-use catalog_types::MenuItem;
+use crate::pricing::{price_menu_order, OrderItem};
 use chrono::{Datelike, Duration as Days, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open_chunked, resolve_latest, resolve_latest_decoded, resolve_latest_fresh, seal_chunked};
+use relay_coordinator_support::{decode_or, open_chunked, resolve_latest, resolve_latest_decoded, seal_chunked};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateRecurringTemplateInput {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
-    pub item_refs: Vec<ActionHash>,
+    /// What it orders each time: items, quantities and choices.
+    pub items: Vec<OrderItem>,
     pub dropoff: GeoPoint,
     pub max_delivery_fee: Option<u64>,
     #[serde(default)]
@@ -58,7 +58,7 @@ pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternR
         requester,
         merchant: input.merchant,
         catalog_ref: input.catalog_ref,
-        item_refs: input.item_refs,
+        items: input.items,
         max_delivery_fee: input.max_delivery_fee,
         tip_cents: input.tip_cents,
         dropoff_preference: input.dropoff_preference,
@@ -149,18 +149,12 @@ pub(crate) fn tend_templates(now: i64) -> ExternResult<Option<i64>> {
 }
 
 /// Places a template's order as the store's menu stands now: items no
-/// longer on it or sold out are dropped, and its promo applies only while
-/// it's still live and the order still earns it.
+/// longer on it, sold out, or whose choices are no longer on offer are
+/// dropped, and its promo applies only while it's still live and the order
+/// still earns it.
 fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternResult<()> {
-    // The template lists an item once per unit; count them back up.
-    let mut items: Vec<OrderItemInput> = Vec::new();
-    for item_ref in &template.item_refs {
-        match items.iter_mut().find(|line| &line.item_ref == item_ref) {
-            Some(line) => line.quantity += 1,
-            None => items.push(OrderItemInput { item_ref: item_ref.clone(), quantity: 1 }),
-        }
-    }
-    items.retain(|line| still_on_menu(&line.item_ref, &template.catalog_ref));
+    let mut items = template.items.clone();
+    items.retain(|item| price_menu_order(&template.catalog_ref, std::slice::from_ref(item), None).is_ok());
     if items.is_empty() {
         return Ok(());
     }
@@ -191,14 +185,6 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
         bag_claim_ref: None,
     })?;
     Ok(())
-}
-
-/// Whether an item is still on this store's menu and available.
-fn still_on_menu(item_ref: &ActionHash, catalog_ref: &ActionHash) -> bool {
-    resolve_latest_fresh(item_ref.clone())
-        .ok()
-        .and_then(|record| decode_or::<MenuItem>(&record))
-        .is_some_and(|item| &item.catalog_ref == catalog_ref && item.available)
 }
 
 /// The first time `rule` fires strictly after `after` (microseconds since

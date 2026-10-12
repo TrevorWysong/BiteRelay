@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { getMyActiveOrders, getMyOrderHistory, listMyRecurringTemplates, setRecurringTemplateActive } from "../../holochain/zomes/dispatch";
 import { getCatalog, getMyBagClaims, getGoodieBag } from "../../holochain/zomes/catalog";
-import { decodeEntry, actionHash, bytesEqual, bytesToHex } from "../../holochain/decode";
+import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { useCart } from "../../store/cart";
 import { useResource } from "../../lib/useResource";
-import { fetchMenu } from "../../lib/menu";
+import { cartLinesFromOrder, fetchMenu } from "../../lib/menu";
 import { customerOrderPath, isFinished, itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
 import { Button, Card, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
@@ -155,10 +155,7 @@ function ReorderButton({ row }: { row: OrderRow }) {
     try {
       const [catalogRecord, menuItems] = await Promise.all([getCatalog(order.catalog_ref), fetchMenu(order.catalog_ref)]);
       const catalog = decodeEntry<MerchantCatalog>(catalogRecord);
-      const lines = order.lines.map((line) => ({ itemRef: line.item_ref, quantity: line.quantity })).flatMap(({ itemRef, quantity }) => {
-        const menuItem = menuItems.find((m) => bytesEqual(m.hash, itemRef));
-        return menuItem ? [{ itemRef, name: menuItem.item.name, priceCents: menuItem.item.price_cents, quantity }] : [];
-      });
+      const lines = await cartLinesFromOrder(order.catalog_ref, order.lines, menuItems);
       cart.setCart(order.catalog_ref, order.merchant, catalog.business_name, lines);
       navigate("/customer/cart");
     } finally {

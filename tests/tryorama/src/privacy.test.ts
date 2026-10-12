@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { actionHash, appSource, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp } from "./helpers.js";
 
 /// The entry's serialized bytes, as any peer holding the record sees them.
 function publishedBytes(record: HcRecord): Buffer {
@@ -91,20 +91,24 @@ await runScenario(async (scenario) => {
   assert.equal((await detailsFor(driver)).customer_name, null, "or the customer's name");
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
-  const driverView = await detailsFor(driver);
-  assert.deepEqual(driverView.dropoff, { point: home, notes: "Gate code 4417", recipient: "Cara" }, "the accepted driver gets the exact drop-off, and who it's for");
+  assert.equal((await detailsFor(driver)).dropoff, null, "winning the bid reveals nothing yet");
+  // Committing -- collateral set aside -- is what earns the address; the
+  // customer's app shares it as soon as it sees that.
+  await commitAndCook(driver, merchant, order, all);
+  const driverView = await retryUntil(() => detailsFor(driver), (view) => view.dropoff !== null, 60, 1000);
+  assert.deepEqual(driverView.dropoff, { point: home, notes: "Gate code 4417", recipient: "Cara" }, "the committed driver gets the exact drop-off, and who it's for");
   assert.equal(driverView.customer_name, "Cara");
   assert.equal(driverView.kitchen_note, null, "but not the kitchen note");
   assert.equal((await detailsFor(stranger)).dropoff, null, "a stranger still reads nothing");
   const accepted = publishedBytes(await call(stranger, "dispatch")<HcRecord>("get_order", order));
   assert.ok(!accepted.includes("Gate code 4417"), "the accepted order still publishes nothing in the clear");
-  console.log("[PASS] only the driver whose bid is accepted learns the address, and only then");
+  console.log("[PASS] only the driver who has committed learns the address, and only then");
 
   // A standing order keeps its address sealed too.
   const template = await call(customer, "dispatch")<HcRecord>("create_recurring_template", {
     merchant: merchant.agentPubKey,
     catalog_ref: store,
-    item_refs: [item],
+    items: [{ item_ref: item, quantity: 1 }],
     dropoff: home,
     max_delivery_fee: null,
     dropoff_notes: "Gate code 4417",

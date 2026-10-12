@@ -5,27 +5,31 @@ import { decodeHandoverCode, encodeHandoverCode, matchesCommitment } from "../sr
 
 // The same cases as dispatch_types::issues::tests -- keep them in step.
 const lines = [
-  { itemHex: "aa", unitPrice: 500, quantity: 2 },
-  { itemHex: "bb", unitPrice: 1000, quantity: 1 },
+  { unitPrice: 500, quantity: 2 },
+  { unitPrice: 1000, quantity: 1 },
 ];
 
 test("a claim is worth its share of what was paid", () => {
-  assert.equal(claimedValue(lines, 2000, [{ itemHex: "aa", quantity: 1 }]), 500);
-  assert.equal(claimedValue(lines, 1600, [{ itemHex: "aa", quantity: 1 }]), 400);
-  assert.equal(claimedValue(lines, 1600, [{ itemHex: "bb", quantity: 1 }, { itemHex: "aa", quantity: 2 }]), 1600);
+  assert.equal(claimedValue(lines, 2000, [{ line: 0, quantity: 1 }]), 500);
+  assert.equal(claimedValue(lines, 1600, [{ line: 0, quantity: 1 }]), 400);
+  assert.equal(claimedValue(lines, 1600, [{ line: 1, quantity: 1 }, { line: 0, quantity: 2 }]), 1600);
 });
 
 test("a claim counts only what was ordered", () => {
-  const two = [{ itemHex: "aa", unitPrice: 500, quantity: 2 }];
-  assert.equal(claimedValue(two, 1000, [{ itemHex: "aa", quantity: 5 }]), 1000);
-  assert.equal(claimedValue(two, 1000, [{ itemHex: "aa", quantity: 2 }, { itemHex: "aa", quantity: 2 }]), 1000);
-  assert.equal(claimedValue(two, 1000, [{ itemHex: "zz", quantity: 1 }]), 0);
+  const two = [{ unitPrice: 500, quantity: 2 }];
+  assert.equal(claimedValue(two, 1000, [{ line: 0, quantity: 5 }]), 1000);
+  assert.equal(claimedValue(two, 1000, [{ line: 0, quantity: 2 }, { line: 0, quantity: 2 }]), 1000);
+  assert.equal(claimedValue(two, 1000, [{ line: 9, quantity: 1 }]), 0);
+});
+
+test("the same item on two lines is two prices", () => {
+  assert.equal(claimedValue([{ unitPrice: 400, quantity: 1 }, { unitPrice: 460, quantity: 1 }], 860, [{ line: 1, quantity: 1 }]), 460);
 });
 
 test("it rounds down", () => {
-  const three = [{ itemHex: "aa", unitPrice: 333, quantity: 3 }];
-  assert.equal(claimedValue(three, 999, [{ itemHex: "aa", quantity: 1 }]), 333);
-  assert.equal(claimedValue(three, 998, [{ itemHex: "aa", quantity: 1 }]), 332);
+  const three = [{ unitPrice: 333, quantity: 3 }];
+  assert.equal(claimedValue(three, 999, [{ line: 0, quantity: 1 }]), 333);
+  assert.equal(claimedValue(three, 998, [{ line: 0, quantity: 1 }]), 332);
 });
 
 test("a handover code round-trips, and checks against its commitment", async () => {

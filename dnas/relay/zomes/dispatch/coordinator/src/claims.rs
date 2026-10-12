@@ -14,7 +14,7 @@
 use crate::order_queues::get_my_order_for_claim;
 use crate::orders::{request_delivery, RequestDeliveryInput};
 use crate::pickup::{request_pickup_order, RequestPickupOrderInput};
-use crate::pricing::OrderItemInput;
+use crate::pricing::OrderItem;
 use crate::stores::current_catalog;
 use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag};
 use hdk::prelude::*;
@@ -68,7 +68,7 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
     let bag_record: Record = io.decode().map_err(|e| wasm_error!(e))?;
     let bag = decode_or::<GoodieBag>(&bag_record).ok_or(wasm_error!(WasmErrorInner::Guest("that isn't a goodie bag".into())))?;
     let merchant = current_catalog(&bag.catalog_ref)?.owner;
-    let items = vec![OrderItemInput { item_ref: claim.bag_ref.clone(), quantity: 1 }];
+    let items = vec![OrderItem { item_ref: claim.bag_ref.clone(), quantity: 1, selections: Vec::new() }];
     let kitchen_notes = format!("Goodie bag: {}", bag.title);
     match claim.fulfillment {
         BagClaimFulfillment::Pickup => {

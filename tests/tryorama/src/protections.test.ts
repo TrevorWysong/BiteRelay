@@ -70,16 +70,12 @@ await runScenario(async (scenario) => {
   // ===== The address, only once committed =====
   const bid = actionHash(await retryUntilOk(() => call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, to_store_seconds: 0, price_offer: FEE })));
   await sync();
-  const acceptance = await call(customer, "dispatch")<HcRecord>("accept_bid", { order_original_action: order, bid_action: bid });
-  assert.equal(decodeEntry<{ driver_dropoff: unknown }>(acceptance).driver_dropoff, null, "winning a bid reveals nothing");
+  await call(customer, "dispatch")<HcRecord>("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
+  const addressFor = async () => (await call(driver, "dispatch")<{ dropoff: unknown }>("get_order_private_details", order)).dropoff;
+  assert.equal(await addressFor(), null, "winning a bid reveals nothing");
   await commitAndCook(driver, merchant, order, all);
-  const shared = await retryUntil(
-    async () => decodeEntry<{ driver_dropoff: unknown }>(await call(driver, "dispatch")<HcRecord>("get_order", order)).driver_dropoff,
-    (dropoff) => dropoff !== null,
-    60,
-    1000,
-  );
+  const shared = await retryUntil(addressFor, (dropoff) => dropoff !== null, 60, 1000);
   assert.ok(shared, "the customer's app shares the address once the driver has committed");
   console.log("[PASS] a driver learns the address only once they've committed");
 

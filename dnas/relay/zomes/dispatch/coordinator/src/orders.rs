@@ -6,7 +6,7 @@
 
 use crate::matching::open_order_anchor_path;
 use crate::order_queues::{self, OrderParties};
-use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItemInput};
+use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItem};
 use crate::settlement;
 use crate::stores::{closed_reason, current_catalog, current_catalog_version};
 use crate::upkeep;
@@ -20,7 +20,7 @@ pub struct RequestDeliveryInput {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
     /// What to order. Priced here at each item's latest version.
-    pub items: Vec<OrderItemInput>,
+    pub items: Vec<OrderItem>,
     /// The total the customer was shown -- the order is refused if pricing
     /// now comes to anything else.
     pub order_total: u64,
@@ -131,12 +131,15 @@ pub fn get_order_private_details(order_original_action: ActionHash) -> ExternRes
     if let Some(order) = decode_or::<DeliveryOrder>(&record) {
         let dropoff: Option<DropoffDetails> = if me == order.requester {
             open(&me, &order.sealed_dropoff)?
-        } else {
-            match &order.driver_dropoff {
-                // Only the accepted driver can open their copy; anyone else gets None.
-                Some(sealed) => open(&order.requester, sealed)?,
+        } else if is_current_driver(&order, &me)? {
+            // The order's driver, once they've committed and the customer's
+            // app has shared it with them; anyone else gets None.
+            match crate::deliveries::dropoff_share_for(&original_action_of(record.action_address().clone())?, &me)? {
+                Some(share) => open(&order.requester, &share.sealed)?,
                 None => None,
             }
+        } else {
+            None
         };
         // The store has its own copy; a driver has the one in their drop-off.
         let customer_name = match open_for_parties(&me, &order.requester, &order.merchant, order.sealed_customer_name.as_ref())? {
@@ -154,6 +157,12 @@ pub fn get_order_private_details(order_original_action: ActionHash) -> ExternRes
         });
     }
     Ok(OrderPrivateDetails::default())
+}
+
+/// Whether `agent` is the driver behind the order's accepted bid.
+fn is_current_driver(order: &DeliveryOrder, agent: &AgentPubKey) -> ExternResult<bool> {
+    let Some(bid_ref) = &order.accepted_bid else { return Ok(false) };
+    Ok(decode_or::<Bid>(&resolve_latest(bid_ref.clone())?).is_some_and(|bid| &bid.bidder == agent))
 }
 
 /// Something sealed between the customer and the store (the kitchen note,
@@ -267,7 +276,6 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         order_total: priced.order_total,
         dropoff_geohash: dropoff_geohash.clone(),
         sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes, recipient: customer_name.clone() })?,
-        driver_dropoff: None,
         kitchen_note: seal_note(&merchant, &input.kitchen_notes)?,
         sealed_customer_name: seal_note(&merchant, &customer_name)?,
         max_delivery_fee: input.max_delivery_fee,

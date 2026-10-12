@@ -9,7 +9,7 @@
 use crate::upkeep;
 use crate::stores::{closed_reason, current_catalog_version, ready_by};
 use crate::orders::{ensure_claim_confirmed, ensure_promo_usable, my_name, seal_note, AcceptOrderInput, DeclineOrderInput, record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
-use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItemInput};
+use crate::pricing::{ensure_current_terms, ensure_priced_from_current_menu, ensure_store_minimum, price_order, OrderItem};
 use crate::settlement;
 use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
@@ -22,7 +22,7 @@ pub struct RequestPickupOrderInput {
     pub merchant: AgentPubKey,
     pub catalog_ref: ActionHash,
     /// What to order -- see `RequestDeliveryInput::items`.
-    pub items: Vec<OrderItemInput>,
+    pub items: Vec<OrderItem>,
     /// The total the customer was shown -- see `RequestDeliveryInput::order_total`.
     pub order_total: u64,
     /// A note for the kitchen -- sealed to the store.

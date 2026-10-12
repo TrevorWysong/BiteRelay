@@ -7,7 +7,16 @@ import type { CartLine } from "../src/store/cart.ts";
 import type { PromoCode, PromoRequirement, PromoReward } from "../src/holochain/types.ts";
 
 const item = (n: number) => new Uint8Array(39).fill(n);
-const line = (n: number, priceCents: number, quantity: number): CartLine => ({ itemRef: item(n), name: `item ${n}`, priceCents, quantity });
+const line = (n: number, priceCents: number, quantity: number): CartLine => withChoices(n, priceCents, priceCents, quantity);
+const withChoices = (n: number, basePriceCents: number, priceCents: number, quantity: number, choice = ""): CartLine => ({
+  itemRef: item(n),
+  name: `item ${n}`,
+  basePriceCents,
+  priceCents,
+  quantity,
+  selections: choice ? [{ group: item(99), options: [{ option: choice.length, quantity: 1, nested: [] }] }] : [],
+  choiceLabels: choice ? [choice] : [],
+});
 const subtotal = (lines: CartLine[]) => lines.reduce((sum, l) => sum + l.priceCents * l.quantity, 0);
 
 /// The order total, or null if the promo's requirement isn't met.
@@ -48,4 +57,13 @@ test("minimum spend counts the whole cart", () => {
 test("loyalty needs enough completed orders", () => {
   assert.equal(orderTotal([line(1, 1000, 1)], { LoyaltyOrderCount: 5 }, { PercentOffSubtotal: 15 }, 5), 850);
   assert.equal(orderTotal([line(1, 1000, 1)], { LoyaltyOrderCount: 5 }, { PercentOffSubtotal: 15 }, 4), null);
+});
+
+test("an item promo takes off the item, not its choices", () => {
+  assert.equal(orderTotal([withChoices(1, 800, 1000, 2)], "None", { FreeItem: { item_ref: item(1), quantity: 1 } }), 1200);
+});
+
+test("an item on several lines counts them all", () => {
+  const lines = [withChoices(1, 400, 400, 1), withChoices(1, 400, 475, 1, "oat")];
+  assert.equal(orderTotal(lines, { MinimumItemQuantity: { item_ref: item(1), quantity: 2 } }, { FreeItem: { item_ref: item(1), quantity: 2 } }), 75);
 });

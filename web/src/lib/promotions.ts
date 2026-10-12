@@ -8,14 +8,30 @@
 // promo type is this," so a new requirement or reward shape later is a new
 // `case`/`in` arm in exactly one place (here), not a new code path threaded
 // through Cart.tsx or the merchant catalog UI.
-import type { CartLine } from "../store/cart";
+import { lineKey, type CartLine } from "../store/cart";
 import type { ActionHash, PromoCode, PromoRequirement, PromoReward } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { formatCents } from "./format";
 
-function findLine(lines: CartLine[], itemRef: ActionHash): CartLine | undefined {
+/// The cart's lines of `itemRef` -- the same item may be on several, with
+/// different choices.
+function linesOf(lines: CartLine[], itemRef: ActionHash): CartLine[] {
   const key = bytesToHex(itemRef);
-  return lines.find((l) => bytesToHex(l.itemRef) === key);
+  return lines.filter((l) => bytesToHex(l.itemRef) === key);
+}
+
+/// Up to `quantity` units of `itemRef`, taken from its lines in order, each
+/// discounted `perUnit` of its line's base price -- an item promo takes off
+/// the item, its paid choices still charged (`catalog_types::pricing`).
+function itemDiscount(lines: CartLine[], itemRef: ActionHash, quantity: number, perUnit: (basePrice: number) => number): PromoEffect {
+  let left = quantity;
+  const itemEffects: PromoItemEffect[] = [];
+  for (const line of linesOf(lines, itemRef)) {
+    const units = Math.min(left, line.quantity);
+    if (units > 0) itemEffects.push({ lineKey: lineKey(line), quantity: units, discountCentsPerUnit: perUnit(line.basePriceCents) });
+    left -= units;
+  }
+  return { subtotalDiscountCents: itemEffects.reduce((sum, e) => sum + e.quantity * e.discountCentsPerUnit, 0), itemEffects };
 }
 
 /// `completedOrderCount` is only meaningful for `LoyaltyOrderCount` --
@@ -30,18 +46,17 @@ export function isPromoEligible(requirement: PromoRequirement, lines: CartLine[]
   if ("MinimumSpend" in requirement) return subtotalCents >= requirement.MinimumSpend;
   if ("MinimumItemQuantity" in requirement) {
     const { item_ref, quantity } = requirement.MinimumItemQuantity;
-    const line = findLine(lines, item_ref);
-    return !!line && line.quantity >= quantity;
+    return linesOf(lines, item_ref).reduce((n, l) => n + l.quantity, 0) >= quantity;
   }
   if ("LoyaltyOrderCount" in requirement) return completedOrderCount >= requirement.LoyaltyOrderCount;
   return false;
 }
 
-/// One line-item effect: `quantity` units of the cart line keyed by
-/// `itemRefHex` each get `discountCentsPerUnit` knocked off (fully free
-/// when that equals the line's own per-unit price).
+/// One line-item effect: `quantity` units of the cart line keyed `lineKey`
+/// each get `discountCentsPerUnit` knocked off (the whole item when that
+/// equals its base price).
 export interface PromoItemEffect {
-  itemRefHex: string;
+  lineKey: string;
   quantity: number;
   discountCentsPerUnit: number;
 }
@@ -64,19 +79,11 @@ export function computePromoEffect(reward: PromoReward, lines: CartLine[], subto
   }
   if ("FreeItem" in reward) {
     const { item_ref, quantity } = reward.FreeItem;
-    const line = findLine(lines, item_ref);
-    if (!line) return NO_EFFECT;
-    const freeQty = Math.min(quantity, line.quantity);
-    const cents = freeQty * line.priceCents;
-    return { subtotalDiscountCents: cents, itemEffects: [{ itemRefHex: bytesToHex(item_ref), quantity: freeQty, discountCentsPerUnit: line.priceCents }] };
+    return itemDiscount(lines, item_ref, quantity, (base) => base);
   }
   if ("PercentOffItem" in reward) {
     const { item_ref, percent, quantity } = reward.PercentOffItem;
-    const line = findLine(lines, item_ref);
-    if (!line) return NO_EFFECT;
-    const affectedQty = Math.min(quantity, line.quantity);
-    const perUnit = Math.floor((line.priceCents * percent) / 100);
-    return { subtotalDiscountCents: affectedQty * perUnit, itemEffects: [{ itemRefHex: bytesToHex(item_ref), quantity: affectedQty, discountCentsPerUnit: perUnit }] };
+    return itemDiscount(lines, item_ref, quantity, (base) => Math.floor((base * percent) / 100));
   }
   return NO_EFFECT;
 }
