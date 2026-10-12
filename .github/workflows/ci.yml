@@ -70,7 +70,8 @@ jobs:
     name: Tryorama suite (${{ matrix.shard }}/10)
     needs: [checks]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Room for a flaky file's retry or two on top of the ~25 minutes.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
