@@ -175,17 +175,29 @@ export async function useTestCoordinators(player: PlayerApp, zomes: string[]): P
   }
 }
 
-/// Calls into a zome until its conductor answers -- compiling a swapped-in
-/// coordinator, and granting the caller's signing capability on its first
-/// call, can outlast a request's 60 seconds on a slow CI runner. Any answer
-/// will do (there's no such function), so long as it isn't a timeout.
+/// A harmless read in each zome a test swaps in -- what `warmUp` calls.
+const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
+  dispatch: () => ["get_network_terms", null],
+  catalog: () => ["list_my_catalogs", null],
+  ledger: (player) => ["get_balance", player.agentPubKey],
+  reputation: (player) => ["get_reputation_summary", { Driver: player.agentPubKey }],
+  attestation: () => ["list_my_receipts", null],
+  profiles: () => ["get_my_name", null],
+};
+
+/// Calls a harmless read in a zome until its conductor answers -- compiling
+/// a swapped-in coordinator, and granting the caller's signing capability on
+/// its first call, can outlast a request's 60 seconds on a slow CI runner.
 async function warmUp(player: PlayerApp, zome: string): Promise<void> {
+  const read = WARM_UP[zome];
+  if (!read) throw new Error(`add a harmless read for the ${zome} zome to WARM_UP`);
+  const [fn_name, payload] = read(player);
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      await player.cells[0].callZome({ zome_name: zome, fn_name: "__warm_up", payload: null });
+      await player.cells[0].callZome({ zome_name: zome, fn_name, payload });
       return;
     } catch (err) {
-      if (!/timed out/i.test(String(err))) return;
+      if (!/timed out/i.test(String(err))) throw err;
     }
   }
   throw new Error(`the ${zome} zome never answered after its coordinator was swapped in`);
@@ -296,8 +308,13 @@ async function stepOrDone(step: () => Promise<unknown>, alreadyDone: RegExp): Pr
 /// app does its step on its own; this does them too, so a test needn't
 /// wait, and checks the order ends up cooking.
 export async function commitAndCook(driver: PlayerApp, store: PlayerApp, orderRef: Uint8Array, players: PlayerApp[]): Promise<void> {
-  await retryUntilOk(() =>
-    stepOrDone(() => driver.cells[0].callZome({ zome_name: "dispatch", fn_name: "commit_to_order", payload: orderRef }), /already committed/),
+  // A driver's earlier deliveries count against their carry limit until
+  // their app settles them, on its own schedule -- up to a minute on a slow
+  // runner.
+  await retryUntilOk(
+    () => stepOrDone(() => driver.cells[0].callZome({ zome_name: "dispatch", fn_name: "commit_to_order", payload: orderRef }), /already committed/),
+    60,
+    1000,
   );
   await dhtSync(players, driver.cells[0].cell_id[0]);
   await retryUntilOk(() =>

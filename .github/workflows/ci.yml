@@ -109,6 +109,7 @@ jobs:
         with:
           name: tryorama-logs-${{ matrix.shard }}
           path: tests/tryorama/.logs/
+          include-hidden-files: true
 
   e2e:
     name: Browser smoke tests
