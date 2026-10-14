@@ -10,7 +10,7 @@
 // `client.ts` deliberately treats "how do I get a token" as out-of-band;
 // this module is that out-of-band step, done from the browser itself
 // rather than requiring a CLI dance before every session.
-import { AdminWebsocket, CellType } from "@holochain/client";
+import { AdminWebsocket, CellType, encodeHashToBase64 } from "@holochain/client";
 import type { AgentPubKey, AppAuthenticationToken, AppInfo, CellId, InstalledAppId, WsClientOptions } from "@holochain/client";
 
 const ROLE_NAME = "relay";
@@ -135,6 +135,14 @@ export async function provisionNewIdentity(adminUrl: string, installedAppId: Ins
 export async function reconnectIdentity(adminUrl: string, installedAppId: InstalledAppId, agentPubKey: AgentPubKey, wsClientOptions?: WsClientOptions): Promise<ProvisionedIdentity> {
   const adminWs = await AdminWebsocket.connect({ url: new URL(adminUrl), wsClientOptions });
   try {
+    // Gone from the node -- a dev reset wipes every identity on it -- is
+    // its own case: nothing to retry, and the browser should forget it.
+    const app = (await adminWs.listApps({})).find((a) => a.installed_app_id === installedAppId);
+    if (!app || encodeHashToBase64(app.agent_pub_key) !== encodeHashToBase64(agentPubKey)) {
+      const gone = new Error("This browser's identity isn't on the node any more -- the dev network was probably reset. Sign in again.");
+      gone.name = "IdentityGone";
+      throw gone;
+    }
     // Signing credentials live in @holochain/client's in-memory module
     // state, not anywhere persisted -- a fresh page load has none, even
     // though the cell itself is still enabled from before. Re-enabling an
@@ -162,7 +170,9 @@ export async function listNodeIdentities(adminUrl: string): Promise<NodeIdentity
   try {
     const apps = await adminWs.listApps({});
     return apps
-      .filter((app) => (app.cell_info[ROLE_NAME] ?? []).length > 0)
+      // The dev network's issuer (web/scripts/seed.mjs) is a service, not a
+      // person to sign in as.
+      .filter((app) => (app.cell_info[ROLE_NAME] ?? []).length > 0 && app.installed_app_id !== "dev-issuer")
       .sort((a, b) => a.installed_at - b.installed_at)
       .map((app) => ({ installedAppId: app.installed_app_id, agentPubKey: app.agent_pub_key }));
   } finally {

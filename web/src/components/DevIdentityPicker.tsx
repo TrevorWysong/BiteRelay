@@ -12,7 +12,17 @@ import { Spinner } from "./ui";
 /// driver, customers), so testing a flow from each side takes one click
 /// instead of a fresh onboarding per role. The list is only read once the
 /// picker is opened.
-export function DevIdentityPicker({ adminUrl, onPick, disabled }: { adminUrl: string; onPick: (installedAppId: string, agentPubKey: Uint8Array) => void; disabled: boolean }) {
+export function DevIdentityPicker({
+  adminUrl,
+  onPick,
+  disabled,
+  label = "Use an existing identity on this node (dev)",
+}: {
+  adminUrl: string;
+  onPick: (installedAppId: string, agentPubKey: Uint8Array) => void;
+  disabled: boolean;
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
   // The Admin API code loads only when the picker is opened (and only exists
   // in dev builds -- see holochain/host.ts).
@@ -24,7 +34,7 @@ export function DevIdentityPicker({ adminUrl, onPick, disabled }: { adminUrl: st
   return (
     <div className="mt-4 rounded-xl border border-dashed border-ink-200 dark:border-ink-700">
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-left text-xs font-semibold text-ink-500">
-        <span>Use an existing identity on this node (dev)</span>
+        <span>{label}</span>
         <motion.span animate={{ rotate: open ? 180 : 0 }}>
           <ChevronDown size={14} />
         </motion.span>

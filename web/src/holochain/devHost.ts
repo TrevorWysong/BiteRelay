@@ -2,9 +2,9 @@
 // conductor through its Admin API, remembered by this browser, optionally
 // behind a device passkey. Loaded only when `DEV_HOST` holds, so it's never
 // part of a production build.
-import { connect } from "./client";
+import { connect, openSocket, setRestorer } from "./client";
 import { provisionNewIdentity, reconnectIdentity } from "./admin";
-import { loadStoredIdentity, saveStoredIdentity } from "./devIdentityStorage";
+import { forgetStoredIdentity, loadStoredIdentity, saveStoredIdentity } from "./devIdentityStorage";
 import { bytesToBase64, base64ToBytes } from "../lib/base64";
 import { describeError } from "../lib/errors";
 import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
@@ -28,10 +28,27 @@ export async function reconnectStoredIdentity(): Promise<boolean> {
       throw tagged;
     }
   }
-  // Same backstop: these admin calls have no timeout of their own.
-  const identity = await withTimeout(reconnectIdentity(stored.adminUrl, stored.installedAppId, base64ToBytes(stored.agentPubKeyB64)), 30000, "Reconnecting to your local node timed out");
-  await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
+  try {
+    await connectAs(stored.adminUrl, stored.installedAppId, base64ToBytes(stored.agentPubKeyB64));
+  } catch (err) {
+    // A reset wiped it: forget it, so the next load starts at sign-in.
+    if (err instanceof Error && err.name === "IdentityGone") forgetStoredIdentity();
+    throw err;
+  }
   return !!stored.credentialId;
+}
+
+/// Connects as an identity already on the node, and registers how to
+/// reconnect -- with a fresh token each time, never the spent one, and
+/// without asking for the passkey again: this visit is already unlocked.
+async function connectAs(adminUrl: string, installedAppId: string, agentPubKey: Uint8Array) {
+  const freshSocket = async () => {
+    // A backstop: these admin calls have no timeout of their own.
+    const identity = await withTimeout(reconnectIdentity(adminUrl, installedAppId, agentPubKey), 30000, "Reconnecting to your local node timed out");
+    return { url: identity.appUrl, token: new Uint8Array(identity.token) };
+  };
+  await connect(await freshSocket());
+  setRestorer(async () => openSocket(await freshSocket()));
 }
 
 /// A brand-new identity on the node at `adminUrl`, connected. Call
@@ -40,6 +57,10 @@ export async function provisionAndConnect(adminUrl: string): Promise<{ installed
   const installedAppId = `relay-${crypto.randomUUID()}`;
   const identity = await provisionNewIdentity(adminUrl, installedAppId);
   await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
+  setRestorer(async () => {
+    const again = await withTimeout(reconnectIdentity(adminUrl, installedAppId, identity.agentPubKey), 30000, "Reconnecting to your local node timed out");
+    return openSocket({ url: again.appUrl, token: new Uint8Array(again.token) });
+  });
   return { installedAppId, agentPubKey: identity.agentPubKey };
 }
 

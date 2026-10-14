@@ -19,6 +19,8 @@ import { describeError } from "../lib/errors";
 import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
 import { HOST } from "../holochain/host";
 import { NotificationSettings } from "../components/NotificationSettings";
+import { DevIdentityPicker } from "../components/DevIdentityPicker";
+import { DEV_ADMIN_URL } from "../lib/devNode";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
 
 /// One identity, several hats: ratings and stats are shown per role (your
@@ -26,7 +28,7 @@ import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHA
 /// one agent-wide number -- see `reputation_integrity`'s module doc.
 export function ProfilePage() {
   const navigate = useNavigate();
-  const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile, setMode } = useSession();
+  const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile, setMode, adoptIdentity } = useSession();
   const setActiveStore = useMerchantStores((s) => s.setActive);
   const isDriver = !!profile?.roles.includes("Provider");
   const isMerchant = !!profile?.roles.includes("Merchant");
@@ -338,7 +340,18 @@ export function ProfilePage() {
 
       {HOST === "dev" && (
         <motion.div variants={fadeSlideUp}>
-          <Button variant="ghost" className="w-full" onClick={signOut}>
+          {/* Dev only: anyone on the dev node can be anyone on it, by design
+              -- it's how one person tests every side of an order. */}
+          <DevIdentityPicker
+            adminUrl={DEV_ADMIN_URL}
+            disabled={false}
+            label="Switch to another identity on this node (dev)"
+            onPick={async (installedAppId, key) => {
+              await adoptIdentity(DEV_ADMIN_URL, installedAppId, key);
+              navigate("/");
+            }}
+          />
+          <Button variant="ghost" className="mt-3 w-full" onClick={signOut}>
             <LogOut size={16} /> Disconnect this identity
           </Button>
         </motion.div>

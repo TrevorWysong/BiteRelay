@@ -3,9 +3,9 @@
 // right now. Everything else (cart, UI mode) is disposable; this is not --
 // losing it means losing the ability to reconnect as the same identity.
 import { create } from "zustand";
-import { connectLauncher, isConnected, myAgentPubKey } from "../holochain/client";
+import { connectLauncher, isConnected, myAgentPubKey, setRestorer } from "../holochain/client";
 import { HOST } from "../holochain/host";
-import { forgetStoredIdentity, loadStoredIdentity } from "../holochain/devIdentityStorage";
+import { forgetStoredIdentity, loadStoredIdentity, storedIdentityNeedsUnlock } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
 import { describeError } from "../lib/errors";
@@ -83,6 +83,9 @@ interface SessionState {
   /// (it's the launcher's agent); in development, one this browser
   /// remembers.
   hasStoredIdentity: () => boolean;
+  /// Whether reconnecting asks for the device passkey -- which must wait
+  /// for the person to tap, not fire on page load.
+  needsUnlock: () => boolean;
   /// Connects as this app's agent and loads its profile -- which may not
   /// exist yet (a first launch), leaving onboarding to create it.
   reconnect: () => Promise<void>;
@@ -115,6 +118,7 @@ export const useSession = create<SessionState>((set, get) => ({
   location: loadStoredLocation() ?? DEFAULT_LOCATION,
 
   hasStoredIdentity: () => HOST === "launcher" || loadStoredIdentity() !== null,
+  needsUnlock: () => HOST === "dev" && storedIdentityNeedsUnlock(),
 
   reconnect: async () => {
     set({ status: "connecting", error: null });
@@ -202,6 +206,7 @@ export const useSession = create<SessionState>((set, get) => ({
   /// Development only: forgets this browser's identity. In a launcher the
   /// identity is the app's own; there's nothing to sign out of.
   signOut: () => {
+    setRestorer(null);
     forgetStoredIdentity();
     window.location.reload();
   },

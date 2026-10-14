@@ -8,6 +8,8 @@ Needs Holochain 0.7.0 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-s
 
 Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account may go $10,000 into debt and orders work without funding anyone. A production network sets the limit (0 recommended) and names issuers who fund accounts; see DEPLOYMENT.md and SECURITY.md.
 
+Signing in, in dev: the browser remembers one identity on the dev node. **Profile → Switch to another identity** jumps to anyone on the node (the seeded people, or accounts you made). An account made through onboarding is behind a device passkey; reopening the app shows **Unlock Relay** and only prompts for Touch ID or Windows Hello when you tap it, since Safari refuses or stalls a prompt that fires on page load. After `npm run dev:reset`, an identity the browser remembers is gone: the app notices, forgets it, and asks you to sign in. If the connection to the node drops (a sleeping laptop, a background tab, a conductor restart), the app reconnects with a fresh token by itself and shows "Reconnecting to your node..." meanwhile.
+
 The seed sets up a dev issuer, "Relay Credits (dev)": it writes the network's properties, naming that issuer, to `web/public/dev-network.json`, and every identity -- seeded, or created in the app's onboarding -- joins that network. Customers start with $100 added through it. Cash-outs wait until you approve or decline them with `npm run issuer`.
 
 | Command | What it does |

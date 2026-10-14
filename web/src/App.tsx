@@ -3,6 +3,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useSession } from "./store/session";
 import { HOST } from "./holochain/host";
 import { Spinner } from "./components/ui";
+import { Fingerprint } from "lucide-react";
+import { describeError } from "./lib/errors";
 import { AppShell } from "./components/AppShell";
 import { Onboarding } from "./routes/Onboarding";
 import { Browse } from "./routes/customer/Browse";
@@ -39,9 +41,17 @@ import { Policies } from "./routes/Policies";
 const RECONNECT_RETRIES = 3;
 const RECONNECT_RETRY_DELAY_MS = 1200;
 
+/// Failures not worth retrying: a passkey ceremony (user-interactive --
+/// retrying re-prompts Touch ID back to back), and an identity the node no
+/// longer has (a dev reset wiped it).
+const FINAL_FAILURES = new Set(["PasskeyError", "IdentityGone"]);
+
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
-  const { status, hasStoredIdentity, reconnect } = useSession();
+  const { status, hasStoredIdentity, needsUnlock, reconnect } = useSession();
   const [attempted, setAttempted] = useState(false);
+  // A passkey-locked identity waits for a tap: a prompt on page load is
+  // one Safari refuses or stalls on.
+  const [locked, setLocked] = useState(() => status === "disconnected" && hasStoredIdentity() && needsUnlock());
 
   useEffect(() => {
     async function attemptReconnect() {
@@ -50,18 +60,12 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
           await reconnect();
           return;
         } catch (err) {
-          // A passkey ceremony is user-interactive and can itself take up
-          // to a minute (session.ts's reconnect() tags this distinctly) --
-          // retrying it automatically just re-triggers Touch ID/Windows
-          // Hello 2-3 more times back to back, which is what was reading
-          // as the page freezing/crashing on refresh, not a helpful retry.
-          // Only the *other* (transient-infra) failures get retried.
-          if (err instanceof Error && err.name === "PasskeyError") return;
+          if (err instanceof Error && FINAL_FAILURES.has(err.name)) return;
           if (i < RECONNECT_RETRIES - 1) await new Promise((r) => setTimeout(r, RECONNECT_RETRY_DELAY_MS));
         }
       }
     }
-    if (hasStoredIdentity() && status === "disconnected") {
+    if (hasStoredIdentity() && status === "disconnected" && !needsUnlock()) {
       attemptReconnect().finally(() => setAttempted(true));
     } else {
       setAttempted(true);
@@ -69,6 +73,7 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (locked) return <UnlockScreen onDone={() => setLocked(false)} />;
   if (!attempted) {
     return (
       <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-3 text-white">
@@ -83,6 +88,43 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
     );
   }
   return <>{children}</>;
+}
+
+/// A remembered identity behind a passkey: unlocked by a tap, which is when
+/// the browser shows Touch ID or Windows Hello. "Another way" goes to
+/// sign-in, which can still continue as this identity.
+function UnlockScreen({ onDone }: { onDone: () => void }) {
+  const reconnect = useSession((s) => s.reconnect);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function unlock() {
+    setBusy(true);
+    setError(null);
+    try {
+      await reconnect();
+      onDone();
+    } catch (err) {
+      // Gone for good (a dev reset): nothing to unlock -- on to sign-in.
+      if (err instanceof Error && err.name === "IdentityGone") onDone();
+      setError(describeError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-6 text-white">
+      <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-3xl font-black text-relay-600 shadow-xl">R</div>
+      <p className="text-lg font-bold">Welcome back</p>
+      <button onClick={unlock} disabled={busy} className="flex items-center gap-2 rounded-full bg-white px-6 py-3 font-semibold text-relay-600 shadow-lg disabled:opacity-60">
+        {busy ? <Spinner className="h-4 w-4" /> : <Fingerprint size={18} />} Unlock Relay
+      </button>
+      {error && <p className="max-w-xs text-center text-xs text-white/80">{error}</p>}
+      <button onClick={onDone} className="text-xs text-white/70 underline underline-offset-2">
+        Sign in another way
+      </button>
+    </div>
+  );
 }
 
 function RequireSession({ children }: { children: React.ReactNode }) {

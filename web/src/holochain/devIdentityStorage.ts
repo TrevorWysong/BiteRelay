@@ -30,3 +30,10 @@ export function saveStoredIdentity(identity: StoredIdentity) {
 export function forgetStoredIdentity() {
   localStorage.removeItem(STORAGE_KEY);
 }
+
+/// Whether the identity this browser remembers is behind a passkey -- so
+/// unlocking it waits for a tap: browsers (Safari above all) refuse or
+/// stall a passkey prompt nobody asked for.
+export function storedIdentityNeedsUnlock(): boolean {
+  return !!loadStoredIdentity()?.credentialId;
+}

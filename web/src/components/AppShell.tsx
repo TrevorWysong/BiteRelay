@@ -9,6 +9,7 @@ import { PresenceDot } from "./ui";
 import { BottomNavLink } from "./BottomNavLink";
 import { MerchantNav } from "./MerchantNav";
 import { Notifier } from "./Notifier";
+import { ConnectionBanner } from "./ConnectionBanner";
 import { usePolling } from "../lib/useResource";
 import { POLL } from "../lib/poll";
 import { collectIncoming } from "../lib/wallet";
@@ -81,6 +82,7 @@ export function AppShell() {
       </header>
 
       <Notifier />
+      <ConnectionBanner />
       <main className="flex-1 overflow-y-auto pb-20">
         <AnimatedOutlet />
       </main>
