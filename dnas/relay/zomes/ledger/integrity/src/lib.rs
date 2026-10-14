@@ -31,8 +31,16 @@
 //!   alongside a priority order, which goes alone -- and settling it (the
 //!   collateral back, or forfeited on the store's decision) takes one away.
 //!
+//! - **Money leaves only as money that's there.** A cash-out (`Redeem`)
+//!   names an issuer on the roster, is at least the network's minimum, and
+//!   can't take its author below zero, whatever the credit limit: credit is
+//!   never cashed out. Its issuer writes its outcome once -- paid, or
+//!   declined -- and only a declined one comes back to its author, once.
+//!
 //! What it can't: move money nobody is entitled to collect yet. An order
-//! nobody has decided stays held.
+//! nobody has decided stays held. Nor make an issuer pay: what an issuer
+//! does outside the network rests on its public record of outcomes, and on
+//! the roster that names it.
 
 use dispatch_types::lineage::{self, Version};
 use dispatch_types::{hold_amount, hold_terms, Bid, Cancellation, DeliveryOrder, DeliveryStatus, ItemSettlement, OrderOutcome, OrderTerms, Outcome, PickupOrder, PickupStatus, Share};
@@ -46,6 +54,8 @@ use relay_integrity_support::{classify, decode, first_problem, invalid, linked_r
 pub enum EntryTypes {
     LedgerEntry(LedgerEntry),
     IssuerGrant(IssuerGrant),
+    RedemptionOutcome(RedemptionOutcome),
+    IssuerProfile(IssuerProfile),
 }
 
 #[hdk_link_types]
@@ -56,6 +66,13 @@ pub enum LinkTypes {
     HoldToWaive,
     /// An agent's grants, so they can collect them.
     AgentToGrant,
+    /// The cash-outs an issuer is asked to pay, base = the issuer -- swept by
+    /// its service in the order they arrive (`LinkQuery::after`).
+    IssuerToRedemption,
+    /// A cash-out's outcome, base = the cash-out, so its author finds it.
+    RedemptionToOutcome,
+    /// An issuer's profile, base = the issuer.
+    IssuerToProfile,
 }
 
 #[hdk_extern]
@@ -64,7 +81,17 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         Checked::Create { entry, action } => match entry {
             EntryTypes::LedgerEntry(entry) => validate_entry(&entry, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::IssuerGrant(grant) => validate_grant(&grant, action.author()),
+            EntryTypes::RedemptionOutcome(outcome) => validate_outcome(&outcome, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::IssuerProfile(profile) => validate_issuer_profile(&profile, action.author()),
         },
+        // An issuer keeps its profile current; nothing else changes.
+        Checked::Update { entry: EntryTypes::IssuerProfile(profile), action } => {
+            let prior = must_get_valid_record(action.original_action_address.clone())?;
+            if decode::<IssuerProfile>(&prior).is_none() || prior.action().author() != action.author() {
+                return invalid("an issuer changes only its own profile");
+            }
+            validate_issuer_profile(&profile, action.author())
+        }
         Checked::Update { .. } => invalid("ledger entries can't be changed"),
         Checked::Delete { .. } => invalid("ledger entries can't be deleted"),
         Checked::CreateLink { link_type, action } => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
@@ -106,6 +133,12 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
             _ => None,
         },
         LinkTypes::AgentToGrant => decode::<IssuerGrant>(&record).map(|grant| grant.to.into()),
+        LinkTypes::IssuerToRedemption => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
+            Some(LedgerKind::Redeem { issuer, .. }) => Some(issuer.into()),
+            _ => None,
+        },
+        LinkTypes::RedemptionToOutcome => decode::<RedemptionOutcome>(&record).map(|o| o.redemption.into()),
+        LinkTypes::IssuerToProfile => decode::<IssuerProfile>(&record).filter(|_| matches!(record.action().data, ActionData::Create(_))).map(|_| author.clone().into()),
     };
     match expected {
         Some(expected) => require(&expected == base, "a ledger link must sit under the order, hold or agent its entry is about"),
@@ -180,8 +213,15 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
     // The arithmetic, and the credit limit on what's spent.
     let amount = i128::from(entry.amount);
     let (expected, debit) = match &entry.kind {
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } => (i128::from(prior_balance) + amount, false),
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => (i128::from(prior_balance) + amount, false),
         LedgerKind::Hold { .. } | LedgerKind::Stake { .. } => (i128::from(prior_balance) - amount, true),
+        // Credit is never cashed out: only money the author has.
+        LedgerKind::Redeem { .. } => {
+            if i128::from(prior_balance) - amount < 0 {
+                return invalid("a cash-out can't take a balance below zero");
+            }
+            (i128::from(prior_balance) - amount, true)
+        }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => {
             if entry.amount != 0 {
                 return invalid("waiving or forfeiting changes nothing in the author's own balance");
@@ -204,6 +244,8 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
         LedgerKind::Forfeit { hold, basis } => validate_forfeit(hold, basis, author, at, prev_action),
         LedgerKind::Stake { catalog } => validate_stake(entry, catalog, author),
         LedgerKind::Unstake { stake, delisting } => validate_unstake(entry, stake, delisting, author, prev_action),
+        LedgerKind::Redeem { issuer, instructions } => validate_redeem(entry, issuer, instructions.as_ref(), author),
+        LedgerKind::Reclaim { redemption, outcome } => validate_reclaim(entry, redemption, outcome, author, prev_action),
     }?;
     if !matches!(kind_result, ValidateCallbackResult::Valid) {
         return Ok(kind_result);
@@ -716,4 +758,105 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
         (_, Basis::Waived { by, hold: waived, portion: p }) => is_payer && by == share.recipient && &waived == hold_ref && p == portion,
     };
     require(entitled, "that isn't grounds for its author to collect this part of the hold")
+}
+
+// --- cashing out ---
+
+/// A cash-out: to an issuer on the roster other than its author, of at
+/// least the network's minimum, with any payout instructions no larger than
+/// a sealed note. (Its balance rule -- never below zero -- is checked with
+/// the arithmetic.)
+fn validate_redeem(entry: &LedgerEntry, issuer: &AgentPubKey, instructions: Option<&XSalsa20Poly1305EncryptedData>, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    if !relay_governance::is_issuer(issuer)? {
+        return invalid("a cash-out names an issuer on the network's roster");
+    }
+    if issuer == author {
+        return invalid("an issuer pays out others, not itself");
+    }
+    let min = relay_governance::min_redemption_cents();
+    if entry.amount < min {
+        return invalid(&format!("a cash-out is at least {min}"));
+    }
+    if let Some(problem) = relay_integrity_support::amount_problem("amount", entry.amount) {
+        return invalid(&problem);
+    }
+    if let Some(sealed) = instructions {
+        if let Some(problem) = relay_integrity_support::sealed_problem("instructions", sealed, relay_integrity_support::limits::MAX_SEALED_BYTES) {
+            return invalid(&problem);
+        }
+    }
+    valid()
+}
+
+/// The `Redeem` entry at `redemption`, with its author and when it was made.
+fn redemption_of(redemption: &ActionHash) -> ExternResult<Option<(AgentPubKey, AgentPubKey, u64, Timestamp)>> {
+    let record = must_get_valid_record(redemption.clone())?;
+    Ok(match decode::<LedgerEntry>(&record) {
+        Some(LedgerEntry { kind: LedgerKind::Redeem { issuer, .. }, amount, .. }) => Some((record.action().author().clone(), issuer, amount, record.action().timestamp())),
+        _ => None,
+    })
+}
+
+/// An issuer's outcome for a cash-out: by the issuer it names, after it,
+/// once -- so a cash-out is never both paid and returned -- with a
+/// reference for a payout and a reason for a refusal.
+fn validate_outcome(outcome: &RedemptionOutcome, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some((_, issuer, _, redeemed_at)) = redemption_of(&outcome.redemption)? else { return invalid("an outcome answers a cash-out") };
+    if &issuer != author {
+        return invalid("only the issuer a cash-out names decides it");
+    }
+    if at < redeemed_at {
+        return invalid("an outcome comes after its cash-out");
+    }
+    let text = match &outcome.outcome {
+        PayoutOutcome::Paid { reference } => text_problem("reference", reference, relay_integrity_support::limits::MAX_REFERENCE_CHARS).or_else(|| reference.trim().is_empty().then(|| "a payout names its reference".to_string())),
+        PayoutOutcome::Declined { reason } => text_problem("reason", reason, relay_integrity_support::limits::MAX_NOTE_CHARS).or_else(|| reason.trim().is_empty().then(|| "a refusal says why".to_string())),
+    };
+    if let Some(problem) = text {
+        return invalid(&problem);
+    }
+    let Some(prev) = prev_action else { return invalid("an outcome can't open a chain") };
+    let again = relay_integrity_support::chain::wrote_since::<RedemptionOutcome>(author, prev, redeemed_at, UnitEntryTypes::RedemptionOutcome.try_into()?, |o| o.redemption == outcome.redemption)?;
+    require(!again, "a cash-out is decided once")
+}
+
+/// A declined cash-out taken back: the author's own, for what it took,
+/// citing its issuer's refusal, once.
+fn validate_reclaim(entry: &LedgerEntry, redemption: &ActionHash, outcome_ref: &ActionHash, author: &AgentPubKey, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let Some((redeemer, issuer, amount, redeemed_at)) = redemption_of(redemption)? else { return invalid("a reclaim takes back a cash-out") };
+    if &redeemer != author || entry.amount != amount {
+        return invalid("a reclaim takes back exactly its author's own cash-out");
+    }
+    let outcome_record = must_get_valid_record(outcome_ref.clone())?;
+    let declined = outcome_record.action().author() == &issuer
+        && decode::<RedemptionOutcome>(&outcome_record).is_some_and(|o| &o.redemption == redemption && matches!(o.outcome, PayoutOutcome::Declined { .. }));
+    if !declined {
+        return invalid("a cash-out comes back only on its issuer's refusal");
+    }
+    let again = activity_since(prev_action, redeemed_at)?
+        .map(|filter| ledger_entries(author, filter))
+        .transpose()?
+        .is_some_and(|entries| entries.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Reclaim { redemption: r, .. } if r == redemption)));
+    require(!again, "a cash-out comes back once")
+}
+
+/// An issuer's profile: by an issuer on the roster, with sensible terms.
+fn validate_issuer_profile(profile: &IssuerProfile, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+    use relay_integrity_support::limits::{MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, MAX_NOTE_CHARS};
+    if !relay_governance::is_issuer(author)? {
+        return invalid("only an issuer on the network's roster has an issuer profile");
+    }
+    if let Some(problem) = first_problem([
+        text_problem("name", &profile.name, MAX_NAME_CHARS),
+        text_problem("description", &profile.description, MAX_DESCRIPTION_CHARS),
+        text_problem("contact", &profile.contact, MAX_NOTE_CHARS),
+        relay_integrity_support::amount_problem("payout_fee_cents", profile.payout_fee_cents),
+        relay_integrity_support::amount_problem("min_payout_cents", profile.min_payout_cents),
+    ]) {
+        return Ok(problem);
+    }
+    if profile.name.trim().is_empty() {
+        return invalid("an issuer has a name");
+    }
+    require(profile.payout_fee_basis_points <= 10_000, "a payout fee's share is at most the whole amount")
 }

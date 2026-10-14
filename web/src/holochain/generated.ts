@@ -837,6 +837,38 @@ export interface IssuerGrant {
 }
 
 /**
+ * What an issuer tells the network about itself: who it is, and its terms
+ * for cashing out -- what the app shows before anyone asks it to pay out.
+ * Its own to change; whether it may issue at all is the network's roster.
+ */
+export interface IssuerProfile {
+  name: string;
+  /**
+   * How it pays out, and anything to know first ("Bank transfer through
+   * Stripe. Set up your payout account at ...").
+   */
+  description: string;
+  /**
+   * Where to reach it: an email address or a website.
+   */
+  contact: string;
+  /**
+   * What it keeps from each cash-out: a flat amount, plus a share in
+   * basis points (1/100 of a percent).
+   */
+  payout_fee_cents: number;
+  payout_fee_basis_points: number;
+  /**
+   * The least it pays out at once -- never below the network's minimum.
+   */
+  min_payout_cents: number;
+  /**
+   * How many days a cash-out usually takes to arrive.
+   */
+  payout_days: number;
+}
+
+/**
  * A customer reporting items missing or wrong on an order they have.
  */
 export interface ItemIssue {
@@ -983,6 +1015,30 @@ export type LedgerKind =
       Forfeit: {
         hold: ActionHash;
         basis: ActionHash;
+      };
+    }
+  /**
+   * The author cashing out `amount` through `issuer` (one on the
+   * network's roster), which pays it to them outside the network --
+   * their bank, through its payment processor. Debit, and never into
+   * credit: only money the author has can leave. `instructions`, sealed to
+   * the issuer, says where to pay if the issuer doesn't already know (an
+   * account it gave them, a HoloFuel address).
+   */
+  | {
+      Redeem: {
+        issuer: AgentPubKey;
+        instructions: XSalsa20Poly1305EncryptedData | null;
+      };
+    }
+  /**
+   * The author taking back a cash-out its issuer declined (`outcome`, the
+   * issuer's `RedemptionOutcome`). Credit, of what the cash-out took.
+   */
+  | {
+      Reclaim: {
+        redemption: ActionHash;
+        outcome: ActionHash;
       };
     };
 
@@ -1636,6 +1692,25 @@ export type Outcome =
       };
     };
 
+export type PayoutOutcome =
+  /**
+   * Paid out; `reference` is the issuer's payout id (its processor's
+   * transfer), so the redeemer can trace it.
+   */
+  | {
+      Paid: {
+        reference: string;
+      };
+    }
+  /**
+   * Not paid -- no payout account set up, a check failed -- and why.
+   */
+  | {
+      Declined: {
+        reason: string;
+      };
+    };
+
 /**
  * The pickup vertical's own entry type -- see `DeliveryStatus`'s doc
  * comment for why this is concrete and separate rather than a flag on
@@ -2095,6 +2170,19 @@ export interface RecurringOrderTemplate {
   next_run_at: Timestamp;
   active: boolean;
   created_at: Timestamp;
+}
+
+/**
+ * What an issuer did with a cash-out: paid it outside the network, or
+ * declined it -- and its funds go back to the redeemer (`LedgerKind::Reclaim`).
+ * Written once per cash-out, by the issuer it names.
+ */
+export interface RedemptionOutcome {
+  /**
+   * The redeemer's `Redeem` ledger entry.
+   */
+  redemption: ActionHash;
+  outcome: PayoutOutcome;
 }
 
 export type ReputationEventKind =

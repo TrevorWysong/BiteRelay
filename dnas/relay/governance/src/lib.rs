@@ -76,6 +76,8 @@ pub struct RelayDnaProperties {
     #[serde(default)]
     pub max_pending_orders: Option<u32>,
     #[serde(default)]
+    pub min_redemption_cents: Option<u64>,
+    #[serde(default)]
     pub default_bag_hold_minutes: Option<u16>,
     #[serde(default)]
     pub suggested_delivery_fees: Option<Vec<u64>>,
@@ -163,6 +165,13 @@ pub fn is_issuer(agent: &AgentPubKey) -> ExternResult<bool> {
     Ok(properties().is_some_and(|p| p.issuers.contains(&agent.to_string())))
 }
 
+/// The network's issuers, in the roster's order -- those whose keys parse.
+pub fn issuers() -> Vec<AgentPubKey> {
+    properties()
+        .map(|p| p.issuers.iter().filter_map(|key| AgentPubKeyB64::from_b64_str(key).ok()).map(AgentPubKey::from).collect())
+        .unwrap_or_default()
+}
+
 /// The network's currency (ISO 4217).
 pub fn currency() -> String {
     setting(|p| p.currency, "USD".into())
@@ -189,6 +198,13 @@ pub fn store_response_window() -> Duration {
 /// many a customer can have waiting on stores at once -- an order costs
 /// nothing until a store accepts it, so without a bound one identity could
 /// bury a store's queue.
+/// The least anyone may cash out at once, in minor units -- so cash-outs
+/// worth less than an issuer's cost of paying them aren't asked for. An
+/// issuer may set its own higher minimum (`IssuerProfile`).
+pub fn min_redemption_cents() -> u64 {
+    setting(|p| p.min_redemption_cents, 500).max(1)
+}
+
 pub fn max_pending_orders() -> u32 {
     setting(|p| p.max_pending_orders, 5).max(1)
 }

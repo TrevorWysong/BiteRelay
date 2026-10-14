@@ -12,6 +12,7 @@ hdk.workspace = true
 serde.workspace = true
 relay_coordinator_support.workspace = true
 relay_governance.workspace = true
+relay_integrity_support.workspace = true
 ledger_integrity = { path = "../integrity" }
 dispatch_types.workspace = true
 

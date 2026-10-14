@@ -845,6 +845,7 @@ dependencies = [
  "ledger_integrity",
  "relay_coordinator_support",
  "relay_governance",
+ "relay_integrity_support",
  "serde",
 ]
 

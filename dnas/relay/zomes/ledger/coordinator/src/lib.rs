@@ -9,12 +9,15 @@ use hdk::prelude::*;
 use ledger_integrity::*;
 use relay_coordinator_support::original_action_of;
 
-fn guest(message: impl Into<String>) -> WasmError {
+mod cash_out;
+pub use cash_out::*;
+
+pub(crate) fn guest(message: impl Into<String>) -> WasmError {
     wasm_error!(WasmErrorInner::Guest(message.into()))
 }
 
 /// The caller's ledger entries, oldest first.
-fn my_entries() -> ExternResult<Vec<Record>> {
+pub(crate) fn my_entries() -> ExternResult<Vec<Record>> {
     query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?).include_entries(true))
 }
 
@@ -23,7 +26,7 @@ fn entry_of(record: &Record) -> Option<LedgerEntry> {
 }
 
 /// Writes the caller's next ledger entry, after their latest.
-fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
+pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
     let latest = my_entries()?.into_iter().last();
     let (previous, balance, in_hand) = match &latest {
         Some(record) => {
@@ -43,8 +46,15 @@ fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
             }
             after
         }
+        // Only money that's there leaves: never credit.
+        LedgerKind::Redeem { .. } => {
+            if balance < signed {
+                return Err(guest("You can cash out up to your balance."));
+            }
+            balance - signed
+        }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } => balance + signed,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => balance + signed,
     };
     create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
 }
@@ -443,7 +453,14 @@ pub fn my_holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 mod test_utils {
     use hdk::prelude::*;
     use ledger_integrity::{EntryTypes, LedgerEntry, LinkTypes};
-    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant);
+    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile);
+
+    /// Writes a cash-out's outcome exactly as given -- what a modified
+    /// client could.
+    #[hdk_extern]
+    pub fn create_raw_redemption_outcome_for_testing(outcome: ledger_integrity::RedemptionOutcome) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::RedemptionOutcome(outcome))
+    }
 
     /// Writes a ledger entry exactly as given -- what a modified client
     /// could -- so a test can prove what validation refuses.
