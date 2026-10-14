@@ -6,7 +6,13 @@ How customers pay with a card, and how stores and drivers get money out, in an a
 
 **Built: cashing out on the ledger.** `LedgerKind::Redeem` (never below zero, whatever the credit limit; at least `min_redemption_cents`; payout instructions sealed to the issuer), the issuer's one-time `RedemptionOutcome` (paid with its reference, or declined with a reason), `Reclaim` of a declined cash-out, and `IssuerProfile` (name, contact, fees, minimum, payout time). Issuers sweep requests with `get_cash_out_requests`, resuming from a cursor. The app's Wallet shows the balance, cash-outs and their status, and cashing out with the fee and net amount. The dev network has an issuer, driven by `npm run issuer`. Test: `tests/tryorama/src/cash-out.test.ts`.
 
-**Next: the issuer service** -- Stripe Checkout top-ups writing grants, Stripe Connect Express onboarding and payouts writing outcomes, with an idempotency store keyed by Stripe ids. It uses exactly the zome functions `npm run issuer` does.
+**Built: the issuer service** (`issuer/`, see its README).
+- **Top-ups:** Stripe Checkout, granted on the signed webhook once per payment.
+- **Payout accounts:** Stripe Connect Express, linked only on the agent's own signature (`sign_issuer_link`).
+- **Payouts:** a sweep of cash-outs paying Stripe transfers keyed by each cash-out.
+- **App:** the Wallet's **Add funds** and **Payout account** buttons reach it through the issuer's published `service_url`.
+
+**Fees, as decided:** adding funds is free. The issuer recovers Stripe's costs (2.9% + 30¢ in, 0.25% + 25¢ out, and $2 a month per account paid) through its cash-out fee, 3.25% + 55¢ by default. The Wallet shows that fee before anyone confirms.
 
 ## Where Relay was before
 

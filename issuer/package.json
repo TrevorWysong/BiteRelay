@@ -1,0 +1,21 @@
+{
+  "name": "relay-issuer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A Relay network's issuer service: card top-ups and bank payouts through Stripe.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@holochain/client": "^0.21.0",
+    "stripe": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "4.23.15",
+    "typescript": "~6.0.2"
+  }
+}

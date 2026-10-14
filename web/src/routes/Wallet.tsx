@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowDownToLine, ArrowUpRight, Banknote, ChevronRight, Clock3, Landmark, Wallet as WalletIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpRight, Banknote, ChevronRight, Clock3, Landmark, Plus, Wallet as WalletIcon } from "lucide-react";
 import { cashOut, getBalance, listIssuers, listMyCashOuts } from "../holochain/zomes/ledger";
 import { bytesToHex } from "../holochain/decode";
 import type { CashOutView, IssuerView } from "../holochain/types";
@@ -20,6 +20,7 @@ import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { POLL } from "../lib/poll";
 import { useResource } from "../lib/useResource";
 import { cashOutStatusLabel, collectIncoming, feeLabel, payoutAfterFees } from "../lib/wallet";
+import { addFundsUrl, payoutSetupUrl } from "../lib/issuerService";
 import { useSession } from "../store/session";
 import { useTerms } from "../store/network";
 
@@ -42,6 +43,8 @@ export function Wallet() {
   const hex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data, reload } = useResource(hex && `wallet:${hex}`, () => fetchWallet(agentPubKey!), { pollMs: POLL.unsignalled });
   const [cashingOut, setCashingOut] = useState(false);
+  /// The issuer funds are being added through, if any.
+  const [addingFundsWith, setAddingFundsWith] = useState<IssuerView | null>(null);
   const terms = useTerms();
   const isMerchant = !!profile?.roles.includes("Merchant");
 
@@ -104,20 +107,13 @@ export function Wallet() {
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="Adding funds">
+        <Section title="Adding funds and payouts">
           {data.issuers.length === 0 ? (
             <p className="p-4 text-sm text-ink-400">This network has no issuer yet.</p>
           ) : (
             <ul className="divide-y divide-ink-100 dark:divide-ink-800">
               {data.issuers.map((i) => (
-                <li key={bytesToHex(i.issuer)} className="flex items-start gap-3 p-4">
-                  <Landmark size={18} className="mt-0.5 shrink-0 text-ink-400" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{i.profile?.name ?? "Unnamed issuer"}</p>
-                    {i.profile?.description && <p className="mt-0.5 text-xs leading-relaxed text-ink-500">{i.profile.description}</p>}
-                    {i.profile?.contact && <p className="mt-1 break-all text-xs text-ink-400">{i.profile.contact}</p>}
-                  </div>
-                </li>
+                <IssuerRow key={bytesToHex(i.issuer)} issuer={i} agent={agentPubKey!} onAddFunds={() => setAddingFundsWith(i)} />
               ))}
             </ul>
           )}
@@ -131,6 +127,10 @@ export function Wallet() {
           <ChevronRight size={16} className="text-ink-300" />
         </Link>
       </motion.div>
+
+      {addingFundsWith?.profile?.service_url && (
+        <AddFundsSheet serviceUrl={addingFundsWith.profile.service_url} issuerName={addingFundsWith.profile.name} agent={agentPubKey!} onClose={() => setAddingFundsWith(null)} />
+      )}
 
       {cashingOut && (
         <CashOutSheet
@@ -146,6 +146,108 @@ export function Wallet() {
         />
       )}
     </motion.div>
+  );
+}
+
+/// An issuer: who it is, and -- when the app can reach its service -- adding
+/// funds through it and setting up a payout account with it.
+function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: Uint8Array; onAddFunds: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const profile = issuer.profile;
+
+  async function setUpPayouts() {
+    if (!profile?.service_url) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // To the processor's own page: bank details never touch Relay.
+      window.location.assign(await payoutSetupUrl(profile.service_url, issuer.issuer, agent));
+    } catch (err) {
+      setError(describeError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="p-4">
+      <div className="flex items-start gap-3">
+        <Landmark size={18} className="mt-0.5 shrink-0 text-ink-400" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{profile?.name ?? "Unnamed issuer"}</p>
+          {profile?.description && <p className="mt-0.5 text-xs leading-relaxed text-ink-500">{profile.description}</p>}
+          {profile?.contact && <p className="mt-1 break-all text-xs text-ink-400">{profile.contact}</p>}
+        </div>
+      </div>
+      {profile?.service_url && (
+        <div className="mt-3 flex gap-2">
+          <Button className="flex-1 py-2 text-xs" onClick={onAddFunds}>
+            <Plus size={14} /> Add funds
+          </Button>
+          <Button variant="ghost" className="flex-1 py-2 text-xs" loading={busy} onClick={setUpPayouts}>
+            <Landmark size={14} /> Payout account
+          </Button>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </li>
+  );
+}
+
+/// Amounts offered at a tap, in minor units.
+const TOP_UP_PRESETS = [2000, 5000, 10_000];
+
+/// Adding funds by card: an amount, then the issuer's card page.
+function AddFundsSheet({ serviceUrl, issuerName, agent, onClose }: { serviceUrl: string; issuerName: string; agent: Uint8Array; onClose: () => void }) {
+  const [amount, setAmount] = useState("50.00");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cents = toMinorUnits(Number(amount) || 0);
+
+  async function pay() {
+    setBusy(true);
+    setError(null);
+    try {
+      // To the processor's own page: card details never touch Relay.
+      window.location.assign(await addFundsUrl(serviceUrl, agent, cents));
+    } catch (err) {
+      setError(describeError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title="Add funds"
+      subtitle={`Pay by card through ${issuerName}. It's added to your balance as soon as the payment goes through.`}
+      footer={
+        <>
+          {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+          <Button className="w-full" disabled={cents <= 0} loading={busy} onClick={pay}>
+            Pay {formatCents(cents)} by card
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        {TOP_UP_PRESETS.map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            onClick={() => setAmount(fromMinorUnits(preset).toFixed(2))}
+            className={`rounded-xl py-2.5 text-sm font-semibold transition ${cents === preset ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200"}`}
+          >
+            {formatCents(preset)}
+          </button>
+        ))}
+      </div>
+      <Field label="Amount">
+        <Input type="number" inputMode="decimal" min={0} step={0.01} value={amount} onChange={(e) => setAmount(e.target.value)} prefix={currencySymbol()} />
+      </Field>
+      <p className="mt-3 text-xs text-ink-400">No fee to add funds. You'll pay exactly this.</p>
+    </Sheet>
   );
 }
 

@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import { EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { verifyLink } from "../../../issuer/src/link.js";
 
 const MIN = 500;
 
@@ -122,4 +123,15 @@ await runScenario(async (scenario) => {
   const fresh = await retryUntil(() => requests(cursor).then((p) => p.requests), (found) => found.length === 1);
   assert.equal(fresh[0].amount, 1000, "and finds the next one when it comes");
   console.log("[PASS] an issuer's service sweeps cash-outs in the order they arrive");
+
+  // ===== Linking a payout account =====
+  // The zome signs in Rust; the issuer's service verifies in Node -- the same
+  // message, byte for byte.
+  const nonce = "nonce_0123456789abcdefXYZ";
+  const signature = await ledger(earner)<Uint8Array>("sign_issuer_link", { issuer: issuer.agentPubKey, nonce });
+  assert.equal(verifyLink(earner.agentPubKey, issuer.agentPubKey, nonce, signature), true, "the issuer's service accepts the earner's signature");
+  assert.equal(verifyLink(stranger.agentPubKey, issuer.agentPubKey, nonce, signature), false, "as no one else's");
+  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: stranger.agentPubKey, nonce }), /isn't one of this network's issuers/, "it signs only for an issuer");
+  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: issuer.agentPubKey, nonce: "short" }), /isn't a nonce/, "and only a nonce's shape");
+  console.log("[PASS] an earner proves their key to the issuer's service, and nothing else can be signed this way");
 });

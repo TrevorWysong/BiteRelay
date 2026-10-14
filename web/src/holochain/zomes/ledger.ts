@@ -57,6 +57,12 @@ export async function reclaimDeclinedCashOuts(): Promise<number> {
   return callZome("ledger", "reclaim_declined_cash_outs", null);
 }
 
+/// The caller's signature showing an issuer's service they hold their key --
+/// over a fixed link message for that issuer and the service's nonce only.
+export async function signIssuerLink(issuer: AgentPubKey, nonce: string): Promise<Uint8Array> {
+  return callZome("ledger", "sign_issuer_link", { issuer, nonce });
+}
+
 /// The caller, an issuer, publishing or changing its terms.
 export async function setIssuerProfile(profile: IssuerProfile): Promise<ActionHash> {
   return callZome("ledger", "set_issuer_profile", profile);

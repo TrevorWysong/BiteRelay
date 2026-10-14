@@ -41,6 +41,20 @@ A card issuer and a HoloFuel issuer are two rows on the same roster. Orders, esc
 5. **Legal:** whether Unyt or Holo handles identity checks and exchange to dollars.
 6. **Availability:** when third-party apps can use it, and at what cost.
 
+## Findings, October 2026
+
+A look at where HoloFuel and Unyt actually stand, to decide whether to wait for them before building the card rail. **Decision: don't wait.** The Stripe issuer service is built (`issuer/`), and HoloFuel joins later as a second issuer, with no ledger changes.
+
+- **HoloFuel isn't live yet.** The HOT→HoloFuel live migration starts by 1 November 2026 (a "worst-case" date), with a swap window of at least six months. The technical migration test with Unyt ran from April to May 2026 on Sepolia. ([Holo blog](https://holo.host/blog/hot-to-holofuel-technical-migration-test-ha2gtr4RkYV/), [HoloFuel overview](https://holofuel.best/))
+- **It's a hosting currency, with no fiat path.** Holo describes HoloFuel as an accounting unit for hosting, not a tradeable asset, and hosting is settled in USD/EUR today. Holo Ltd "does not currently offer token exchange, conversion, or redemption services"; any conversion would be a licensed third party's. Drivers can't turn it into rent money without an exchanger. ([holo.host/currency](https://holo.host/currency/))
+- **Unyt has no integration surface for another hApp yet.**
+  - Unyt is an open-source (Apache-2.0) desktop app, the `unyt-sandbox`, that communities fork or run as a Moss tool.
+  - There are no published SDK or API docs, no cross-DNA interface, and no Holochain version guarantees; custom setups go through Discord.
+  - Its roadmap covers EVM bridging, KYC/AML hooks and "stablecoin-backed remittances", but not card or bank rails. ([docs](https://unyt.co/docs/), [sandbox](https://github.com/unytco/unyt-sandbox), [FAQ](https://unyt.co/faq/), [roadmap](https://unyt.co/blog/unyt-2025-and-2026%3A-revolutionary-p2p-payment-rails/))
+- **Compliance stays with each network.** Unyt's FAQ says a deployment's configuration "will need to be designed to comply with the regulatory requirements" of its jurisdictions.
+
+When to revisit: once live migration has begun *and* Unyt publishes integration docs. The questions to ask Unyt are below.
+
 ## Why mutual credit matters
 
 HoloFuel is mutual credit, not a fixed-supply token: credit is created when someone spends it and settled when they deliver value back, and it's backed by hosting capacity. That changes the picture:

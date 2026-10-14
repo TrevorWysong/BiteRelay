@@ -52,6 +52,12 @@ jobs:
             echo "A production build must not contain the dev host's identity code -- see src/holochain/host.ts"
             exit 1
           fi
+      - name: Issuer service typecheck and tests
+        working-directory: issuer
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
 
   rust-tests:
     name: Rust unit tests

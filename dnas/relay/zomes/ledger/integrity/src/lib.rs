@@ -852,11 +852,16 @@ fn validate_issuer_profile(profile: &IssuerProfile, author: &AgentPubKey) -> Ext
         text_problem("contact", &profile.contact, MAX_NOTE_CHARS),
         relay_integrity_support::amount_problem("payout_fee_cents", profile.payout_fee_cents),
         relay_integrity_support::amount_problem("min_payout_cents", profile.min_payout_cents),
+        text_problem("service_url", &profile.service_url, MAX_NOTE_CHARS),
     ]) {
         return Ok(problem);
     }
     if profile.name.trim().is_empty() {
         return invalid("an issuer has a name");
+    }
+    // The app calls it with people's keys and money: only over https.
+    if !profile.service_url.is_empty() && !profile.service_url.starts_with("https://") && !profile.service_url.starts_with("http://localhost") && !profile.service_url.starts_with("http://127.0.0.1") {
+        return invalid("an issuer's service is reached over https");
     }
     require(profile.payout_fee_basis_points <= 10_000, "a payout fee's share is at most the whole amount")
 }

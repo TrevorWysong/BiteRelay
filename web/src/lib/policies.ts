@@ -83,9 +83,10 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       title: "Adding funds and cashing out",
       summary: "Money comes in and goes out through this network's issuers. The network itself never holds anyone's money.",
       points: [
-        "You add funds by paying one of the network's issuers, which adds the same amount to your balance.",
+        "You add funds by paying one of the network's issuers, by card, which adds exactly that amount to your balance: adding funds is free.",
         `To cash out, you ask an issuer to pay part of your balance to you outside the network. You can cash out ${formatCents(t.min_redemption_cents)} or more, up to what's in your balance; money held for orders and credit never can be.`,
-        "Each issuer publishes its fee and how long payouts take; the app shows what you'll receive before you confirm.",
+        "Each issuer publishes its cash-out fee, which covers its card and transfer costs, and how long payouts take; the app shows what you'll receive before you confirm.",
+        "You set up your payout account on your issuer's processor once, proving with your own key that it's yours. Your bank details never touch Relay.",
         "Your issuer records what it did with each cash-out, once: paid, with its payout reference, or declined. A declined cash-out comes back to your balance automatically.",
         "Payout details you add are sealed so only that issuer can read them.",
       ],

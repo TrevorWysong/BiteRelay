@@ -130,6 +130,28 @@ pub struct IssuerProfile {
     pub min_payout_cents: u64,
     /// How many days a cash-out usually takes to arrive.
     pub payout_days: u8,
+    /// Where its service answers the app -- adding funds by card, setting up
+    /// a payout account (an https URL). Empty for an issuer the app can't
+    /// reach directly.
+    #[serde(default)]
+    pub service_url: String,
+}
+
+/// What a store or driver signs to show an issuer's service they hold their
+/// key, when linking a payout account: a fixed label, the issuer, and the
+/// service's one-time nonce -- never anything else, so the signature can't
+/// stand for some other message.
+pub fn issuer_link_message(issuer: &AgentPubKey, nonce: &str) -> Vec<u8> {
+    [ISSUER_LINK_LABEL, issuer.get_raw_39(), b":", nonce.as_bytes()].concat()
+}
+
+/// See `issuer_link_message`.
+pub const ISSUER_LINK_LABEL: &[u8] = b"relay-issuer-link:v1:";
+
+/// Whether a nonce is one an issuer's service could have issued: short,
+/// and plain letters, digits, `-` and `_`.
+pub fn is_link_nonce(nonce: &str) -> bool {
+    (16..=128).contains(&nonce.len()) && nonce.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 impl IssuerProfile {
@@ -146,7 +168,7 @@ mod tests {
     use super::*;
 
     fn profile(flat: u64, bps: u16) -> IssuerProfile {
-        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2 }
+        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2, service_url: String::new() }
     }
 
     // The same cases run in web/test/wallet.test.ts -- keep them in step.

@@ -18,6 +18,7 @@ The seed sets up a dev issuer, "Relay Credits (dev)": it writes the network's pr
 | `npm run typegen` | Regenerates `src/holochain/generated.ts` from the Rust types (`tools/typegen`). `npm run backend` runs it for you; CI fails if it's stale. |
 | `npm run seed` | Creates a demo world on an empty conductor: three stores (two with the same owner), a driver, customers, and orders in every state. `-- --at lat,lon` seeds around any location. |
 | `npm run dev:reset` | Wipes all dev data, restarts the conductor on the current build, and seeds it. |
+| `npm start` in `issuer/` | The real issuer service against Stripe's test mode: card top-ups and bank payouts for the dev issuer. Setup in `issuer/README.md`. |
 | `npm run issuer` | The dev network's issuer ("Relay Credits (dev)"), from the terminal: lists cash-outs waiting; `-- pay 1` (or `pay all`), `-- decline 1 "reason"`, and `-- grant "Sam Patel" 25` to add funds. |
 | `npm run package -- --network-seed <name>` | Builds the production `deploy/relay.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
 

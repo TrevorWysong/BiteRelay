@@ -945,6 +945,12 @@ export interface IssuerProfile {
    * How many days a cash-out usually takes to arrive.
    */
   payout_days: number;
+  /**
+   * Where its service answers the app -- adding funds by card, setting up
+   * a payout account (an https URL). Empty for an issuer the app can't
+   * reach directly.
+   */
+  service_url: string;
 }
 
 /**
