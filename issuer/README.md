@@ -23,7 +23,7 @@ Adding funds is free: a customer pays exactly what they add. The issuer recovers
 2. **Dev network.** `npm run dev:reset` in `web/` sets one up with an issuer identity (`dev-issuer`).
 3. **Configuration.** In this folder:
    - `cp .env.example .env` and fill in `STRIPE_SECRET_KEY` (a `sk_test_` key).
-   - Run `stripe listen --forward-to localhost:8890/webhooks/stripe` ([Stripe CLI](https://docs.stripe.com/stripe-cli)) and put the `whsec_` secret it prints in `STRIPE_WEBHOOK_SECRET`.
+   - Run `stripe listen --events checkout.session.completed --forward-to localhost:8890/webhooks/stripe` ([Stripe CLI](https://docs.stripe.com/stripe-cli)) and put the `whsec_` secret it prints in `STRIPE_WEBHOOK_SECRET`.
 4. **Start.** `npm install && npm start`. The service publishes the issuer's terms, including its address, and the Wallet shows **Add funds** and **Payout account**.
 5. **Try it:**
    - **Add funds:** use Stripe's test card `4242 4242 4242 4242`.
