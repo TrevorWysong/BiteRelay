@@ -38,8 +38,11 @@ await runScenario(async (scenario) => {
   const cashOut = (amount: number, instructions = "") => ledger(earner)<CashOutView>("cash_out", { issuer: issuer.agentPubKey, amount, instructions });
   const requests = (after: number | null = null) => ledger(issuer)<{ requests: CashOutRequest[]; cursor: number | null; more: boolean }>("get_cash_out_requests", { after });
 
-  // Earnings to cash out.
-  await ledger(issuer)("issue_grant", { to: earner.agentPubKey, amount: 5000, reference: "earnings-1" });
+  // Earnings to cash out -- granted once, however often the issuer's service
+  // asks (it can't tell whether a call cut off mid-flight went through).
+  const grant = await ledger(issuer)<Uint8Array>("issue_grant", { to: earner.agentPubKey, amount: 5000, reference: "earnings-1" });
+  const regrant = await ledger(issuer)<Uint8Array>("issue_grant", { to: earner.agentPubKey, amount: 5000, reference: "earnings-1" });
+  assert.deepEqual(regrant, grant, "the same payment's grant, not a second one");
   await sync();
   await retryUntilOk(() => ledger(earner)<number>("collect_grants", null).then((n) => (n === 1 ? n : Promise.reject(new Error("not yet")))));
   assert.equal(await balance(earner), 5000);

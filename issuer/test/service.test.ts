@@ -112,6 +112,22 @@ test("a cash-out is paid to its owner's account, less the fee, once", async () =
   assert.equal(payments.length, 1);
 });
 
+test("a cash-out whose decision went through on an earlier try counts as decided", async () => {
+  const store = new Store(":memory:");
+  const earner = identity().key;
+  store.setPayoutAccount(agentId(earner), "acct_ready");
+  const { ledger } = fakeLedger([request(1, 10_000, earner)]);
+  // The decision landed, but its answer was lost: asking again says so.
+  ledger.decideCashOut = async () => {
+    throw new Error("That cash-out has already been decided.");
+  };
+  const { rail, payments } = fakeRail(new Set(["acct_ready"]));
+  assert.equal(await sweep(store, ledger, rail, FEE, "https://app/#/wallet"), 1, "the sweep carries on");
+  // And paying again was a no-op: the transfer is keyed by the cash-out.
+  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  assert.equal(payments.length, 1);
+});
+
 test("with no payout account ready, a cash-out is declined and goes back", async () => {
   const store = new Store(":memory:");
   const unset = identity().key;

@@ -102,6 +102,13 @@ pub struct IssueGrantInput {
 /// network's stand-in for a payment processor's top-up.
 #[hdk_extern]
 pub fn issue_grant(input: IssueGrantInput) -> ExternResult<ActionHash> {
+    // Safe to repeat: a payment granted already isn't granted again -- an
+    // issuer's service that lost its connection mid-call can't know whether
+    // its grant went through, so it asks again.
+    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::IssuerGrant)?).include_entries(true))?;
+    if let Some(existing) = mine.iter().find(|r| r.entry().to_app_option::<IssuerGrant>().ok().flatten().is_some_and(|g| g.reference == input.reference)) {
+        return Ok(existing.action_address().clone());
+    }
     let to = input.to.clone();
     let hash = create_entry(&EntryTypes::IssuerGrant(IssuerGrant { to: input.to, amount: input.amount, reference: input.reference }))?;
     create_link(to, hash.clone(), LinkTypes::AgentToGrant, ())?;

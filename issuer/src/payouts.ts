@@ -30,7 +30,12 @@ export async function sweep(store: Store, ledger: IssuerLedger, rail: PaymentRai
     const page = await ledger.cashOutRequests(after);
     for (const request of page.requests) {
       if (request.outcome) continue;
-      await ledger.decideCashOut(request.redemption, await decide(request, store, rail, fee, setUpUrl));
+      try {
+        await ledger.decideCashOut(request.redemption, await decide(request, store, rail, fee, setUpUrl));
+      } catch (err) {
+        // Decided on an earlier try whose answer never came back: done.
+        if (!/already been decided/.test(String(err))) throw err;
+      }
       decided++;
     }
     // Only past what's all decided: a failure above leaves the cursor, and
