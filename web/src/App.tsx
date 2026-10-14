@@ -13,6 +13,7 @@ import { OrderDetail } from "./routes/customer/OrderDetail";
 import { PickupOrderDetail } from "./routes/customer/PickupOrderDetail";
 import { DriverDashboard } from "./routes/driver/Dashboard";
 import { Earnings } from "./routes/driver/Earnings";
+import { Wallet } from "./routes/Wallet";
 import { MerchantOrders } from "./routes/merchant/Orders";
 import { MerchantCatalog } from "./routes/merchant/Catalog";
 import { NewStore } from "./routes/merchant/NewStore";
@@ -137,6 +138,7 @@ export default function App() {
           <Route path="/merchant/stores/new" element={<NewStore />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/transparency" element={<Transparency />} />
+          <Route path="/wallet" element={<Wallet />} />
           <Route path="/policies" element={<Policies />} />
           <Route path="*" element={<HomeForMode />} />
         </Route>

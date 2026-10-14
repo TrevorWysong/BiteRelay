@@ -178,6 +178,85 @@ export type Cancellation =
   | "NoDriver";
 
 /**
+ * A cash-out the caller, an issuer, has been asked to pay.
+ */
+export interface CashOutRequest {
+  redemption: ActionHash;
+  redeemer: AgentPubKey;
+  amount: number;
+  requested_at: Timestamp;
+  /**
+   * The redeemer's payout instructions, opened -- empty if none.
+   */
+  instructions: string;
+  /**
+   * What the issuer already decided, if it has.
+   */
+  outcome: PayoutOutcome | null;
+}
+
+export interface CashOutRequestsPage {
+  requests: CashOutRequest[];
+  /**
+   * Just past the newest request on this page -- pass it back as `after`
+   * to carry on from here, now or on the next sweep. The input's `after`
+   * when the page is empty.
+   */
+  cursor: Timestamp | null;
+  /**
+   * Whether more have already arrived past `cursor`.
+   */
+  more: boolean;
+}
+
+/**
+ * Where a cash-out stands.
+ */
+export type CashOutStatus =
+  /**
+   * Waiting on its issuer.
+   */
+  | "Pending"
+  /**
+   * Paid out of the network; `reference` traces it with the issuer.
+   */
+  | {
+      Paid: {
+        reference: string;
+        at: Timestamp;
+      };
+    }
+  /**
+   * Declined; its funds are on their way back to the balance.
+   */
+  | {
+      Declined: {
+        reason: string;
+        at: Timestamp;
+      };
+    }
+  /**
+   * Declined, and back in the balance.
+   */
+  | {
+      Returned: {
+        reason: string;
+        at: Timestamp;
+      };
+    };
+
+/**
+ * One of the caller's cash-outs.
+ */
+export interface CashOutView {
+  redemption: ActionHash;
+  issuer: AgentPubKey;
+  amount: number;
+  requested_at: Timestamp;
+  status: CashOutStatus;
+}
+
+/**
  * Local UI-facing signal, emitted from `recv_remote_signal` once a remote
  * signal has been handled.
  */
@@ -869,6 +948,17 @@ export interface IssuerProfile {
 }
 
 /**
+ * An issuer on the network's roster, and what it says about itself.
+ */
+export interface IssuerView {
+  issuer: AgentPubKey;
+  /**
+   * `None` until it publishes one: it can still pay out.
+   */
+  profile: IssuerProfile | null;
+}
+
+/**
  * A customer reporting items missing or wrong on an order they have.
  */
 export interface ItemIssue {
@@ -1420,6 +1510,10 @@ export interface NetworkTerms {
    */
   currency: string;
   credit_limit_cents: number;
+  /**
+   * The least anyone may cash out at once.
+   */
+  min_redemption_cents: number;
   /**
    * The delivery fee caps checkout suggests, in minor units.
    */

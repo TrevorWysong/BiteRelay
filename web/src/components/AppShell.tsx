@@ -9,6 +9,9 @@ import { PresenceDot } from "./ui";
 import { BottomNavLink } from "./BottomNavLink";
 import { MerchantNav } from "./MerchantNav";
 import { Notifier } from "./Notifier";
+import { usePolling } from "../lib/useResource";
+import { POLL } from "../lib/poll";
+import { collectIncoming } from "../lib/wallet";
 
 /// Wraps whichever route is active in a short fade+rise so navigating
 /// between screens (Browse -> cart, an order's detail page, switching
@@ -32,6 +35,9 @@ export function AppShell() {
   const cartCount = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const navigate = useNavigate();
   const roles = profile?.roles ?? [];
+  // Funds an issuer added, and cash-outs it declined, land in the balance
+  // without anyone having to open the wallet.
+  usePolling(() => collectIncoming().catch(() => 0), { pollMs: POLL.unsignalled * 4 }, !!agentPubKey);
 
   const availableModes = [
     roles.includes("Requester") && ("customer" as const),

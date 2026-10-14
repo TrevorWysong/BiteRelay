@@ -462,6 +462,8 @@ pub struct NetworkTerms {
     /// The ISO 4217 code every amount is in, in its minor units.
     pub currency: String,
     pub credit_limit_cents: u64,
+    /// The least anyone may cash out at once.
+    pub min_redemption_cents: u64,
     /// The delivery fee caps checkout suggests, in minor units.
     pub suggested_delivery_fees: Vec<u64>,
     pub store_response_secs: u64,
@@ -525,6 +527,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
     Ok(NetworkTerms {
         currency: relay_governance::currency(),
         credit_limit_cents: relay_governance::credit_limit_cents(),
+        min_redemption_cents: relay_governance::min_redemption_cents(),
         suggested_delivery_fees: relay_governance::suggested_delivery_fees(),
         store_response_secs: relay_governance::store_response_window().as_secs(),
         max_pending_orders: relay_governance::max_pending_orders(),

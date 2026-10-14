@@ -2,11 +2,17 @@
 
 How customers pay with a card, and how stores and drivers get money out, in an app with no company in the middle. Research and a proposed design to build from. This is not legal advice: money transmission and prepaid rules vary by state and country, and a payments lawyer should review the design before launch.
 
-## Where Relay is today
+## Status (2026-10-13)
+
+**Built: cashing out on the ledger.** `LedgerKind::Redeem` (never below zero, whatever the credit limit; at least `min_redemption_cents`; payout instructions sealed to the issuer), the issuer's one-time `RedemptionOutcome` (paid with its reference, or declined with a reason), `Reclaim` of a declined cash-out, and `IssuerProfile` (name, contact, fees, minimum, payout time). Issuers sweep requests with `get_cash_out_requests`, resuming from a cursor. The app's Wallet shows the balance, cash-outs and their status, and cashing out with the fee and net amount. The dev network has an issuer, driven by `npm run issuer`. Test: `tests/tryorama/src/cash-out.test.ts`.
+
+**Next: the issuer service** -- Stripe Checkout top-ups writing grants, Stripe Connect Express onboarding and payouts writing outcomes, with an idempotency store keyed by Stripe ids. It uses exactly the zome functions `npm run issuer` does.
+
+## Where Relay was before
 
 - **Ledger.** Every balance is the arithmetic of its owner's signed ledger chain (`ledger_integrity`). Money moves only by validated holds, collects and waives on orders.
 - **Money in.** Money enters only through an `IssuerGrant`, written by an agent on the network's issuer roster (`issuers` in the DNA properties). The grant carries the issuer's own reference, which is unique, and its recipient collects it with a `Deposit`.
-- **Money out.** There is none. Nothing turns a balance back into money in a bank account, so a store or driver can earn but can't withdraw.
+- **Money out.** There was none: nothing turned a balance back into money in a bank account, so a store or driver could earn but not withdraw. (Built since: see Status.)
 - **Credit limit.** Packaging requires a credit limit of 0, so all spending is prepaid.
 
 That issuer model is the right foundation: card payments are an issuer's job, and the ledger never has to know a card exists.

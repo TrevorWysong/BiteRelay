@@ -1,4 +1,5 @@
-import { Wallet, ShieldCheck } from "lucide-react";
+import { Wallet, ShieldCheck, ArrowUpRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { getBalance } from "../../holochain/zomes/ledger";
 import { getReputationSummary } from "../../holochain/zomes/reputation";
@@ -28,16 +29,19 @@ export function Earnings() {
           <div className="grid h-11 w-11 place-items-center rounded-full bg-relay-100 dark:bg-relay-900/30 text-relay-600">
             <Wallet size={20} />
           </div>
-          <div>
-            <p className="text-xs text-ink-400">Ledger balance</p>
+          <div className="flex-1">
+            <p className="text-xs text-ink-400">Balance</p>
             {balance === undefined ? <Skeleton className="mt-1 h-7 w-24" /> : <StatNumber className="text-2xl">{formatCents(balance)}</StatNumber>}
           </div>
+          <Link to="/wallet" className="inline-flex items-center gap-1 rounded-full bg-relay-500 px-3.5 py-2 text-xs font-semibold text-white">
+            <ArrowUpRight size={14} /> Cash out
+          </Link>
         </Card>
       </motion.div>
 
       <motion.p variants={fadeSlideUp} className="mb-4 rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-xs text-ink-500 dark:text-ink-400">
-        This is a mutual-credit ledger, not a bank balance. A negative number means you currently owe the network, which nets
-        out against someone else's positive balance elsewhere. It's a stand-in for HoloFuel, shaped the same way on purpose.
+        Your fees and tips land in your balance as each delivery settles. Cash out through the network's issuer whenever you like; it pays you
+        outside the network, and every cent is on your own ledger.
       </motion.p>
 
       <motion.div variants={fadeSlideUp}>

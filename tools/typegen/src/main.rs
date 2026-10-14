@@ -67,6 +67,7 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/dispatch/integrity/src/recurring.rs", &["RecurrenceRule", "RecurringOrderTemplate", "TemplateDetails"]),
     all("dnas/relay/zomes/ledger/types/src/lib.rs"),
     only("dnas/relay/zomes/ledger/coordinator/src/lib.rs", &["ShareView", "HoldView", "WaiverView"]),
+    only("dnas/relay/zomes/ledger/coordinator/src/cash_out.rs", &["IssuerView", "CashOutStatus", "CashOutView", "CashOutRequest", "CashOutRequestsPage"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/bids.rs", &["WarrantSummary"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/orders.rs", &["NetworkTerms"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/issues.rs", &["IssueView", "OrderDecisions", "IssueItems"]),

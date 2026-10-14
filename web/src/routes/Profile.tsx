@@ -261,10 +261,12 @@ export function ProfilePage() {
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mb-4 grid grid-cols-2 gap-3">
-        <Card className="p-4">
-          <p className="text-xs text-ink-400">Balance</p>
+        <Link to="/wallet" className="block rounded-2xl border border-ink-100 bg-white p-4 shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 dark:border-ink-800 dark:bg-ink-900">
+          <p className="flex items-center justify-between text-xs text-ink-400">
+            Wallet <ChevronRight size={14} className="text-ink-300" />
+          </p>
           {balance === undefined ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
-        </Card>
+        </Link>
         {isDriver && (
           <Card className="p-4">
             <p className="text-xs text-ink-400">Deliveries</p>

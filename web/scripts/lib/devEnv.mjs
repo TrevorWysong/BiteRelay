@@ -3,6 +3,7 @@
 // shared by every dev script so they can't drift apart. Override the ports
 // with RELAY_ADMIN_PORT / RELAY_BOOTSTRAP_PORT if they clash locally.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AdminWebsocket, CellType, encodeHashToBase64 } from "@holochain/client";
@@ -22,6 +23,13 @@ export const ADMIN_URL = `ws://localhost:${ADMIN_PORT}`;
 export const DNA_PATH = path.join(REPO, "dnas/relay/workdir/relay.dna");
 export const BUILT_HAPP = path.join(REPO, "workdir/relay.happ");
 export const SERVED_HAPP = path.join(REPO, "web/public/relay.happ");
+/// The dev network's DNA properties -- its issuer -- written by the seed and
+/// read by everything that installs an identity on it (the seed, the app's
+/// own onboarding), so they all join the same network. Absent outside dev.
+export const DEV_NETWORK = path.join(REPO, "web/public/dev-network.json");
+/// The dev network's issuer's app -- its own id, so it isn't one of the
+/// people the onboarding picker offers.
+export const ISSUER_APP_ID = "dev-issuer";
 
 /// Mirrors web/src/holochain/admin.ts's ROLE_NAME.
 export const ROLE_NAME = "relay";
@@ -72,4 +80,21 @@ export async function appInterfacePort(adminWs) {
 /// The same `uhC0k...` form `hc dna hash` prints.
 export function hashB64(hash) {
   return encodeHashToBase64(hash);
+}
+
+/// The dev network the seed set up, if any: `{ properties, issuer, dnaHash,
+/// builtDna }` -- see seed.mjs.
+export function readDevNetwork() {
+  try {
+    return JSON.parse(readFileSync(DEV_NETWORK, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/// The install-time settings that put an identity on `network` (none
+/// without one): its DNA properties, which name its issuer.
+export function rolesSettingsFor(network) {
+  if (!network) return undefined;
+  return { [ROLE_NAME]: { type: "provisioned", value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: network.properties } } } };
 }

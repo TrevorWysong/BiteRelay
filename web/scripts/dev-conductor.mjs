@@ -28,6 +28,8 @@ import {
   dnaHashOf,
   hashB64,
   relayCells,
+  readDevNetwork,
+  DEV_NETWORK,
   tryConnectAdmin,
 } from "./lib/devEnv.mjs";
 
@@ -121,7 +123,12 @@ async function printStatus() {
   try {
     const cells = await relayCells(adminWs);
     const built = existsSync(DNA_PATH) ? dnaHashOf(DNA_PATH) : null;
-    const stale = cells.filter((c) => built && hashB64(c.cellId[0]) !== built).length;
+    // The seeded network's DNA carries its issuer in its properties, so its
+    // hash differs from the bare build's: an identity is current if it's on
+    // that network and the build hasn't changed since it was set up.
+    const network = readDevNetwork();
+    const current = network ? (network.builtDna === built ? network.dnaHash : null) : built;
+    const stale = cells.filter((c) => built && hashB64(c.cellId[0]) !== current).length;
     console.log(`  Identities on this conductor: ${cells.length}${stale ? ` (${stale} on an older DNA -- run \`npm run dev:reset\` to start fresh)` : ""}`);
   } finally {
     await adminWs.client.close();
@@ -132,6 +139,8 @@ async function main() {
   if (args.has("--reset")) {
     await stopRunningInstance();
     rmSync(CONDUCTOR_DIR, { recursive: true, force: true });
+    // Its issuer was on the wiped conductor: the seed makes a new network.
+    rmSync(DEV_NETWORK, { force: true });
     console.log("Dev data wiped.");
   } else {
     const existing = await tryConnectAdmin();

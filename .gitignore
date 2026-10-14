@@ -10,6 +10,8 @@ node_modules
 
 # Persistent local dev conductor data, logs and pid (web/scripts/dev-conductor.mjs)
 .dev/
+# The dev network's properties, written by the seed (web/scripts/seed.mjs)
+web/public/dev-network.json
 
 # Tryorama runner logs
 tests/tryorama/.logs/

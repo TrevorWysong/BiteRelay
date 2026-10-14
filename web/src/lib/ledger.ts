@@ -27,5 +27,7 @@ export function describeLedgerEntry(entry: LedgerEntry): { label: string; direct
   if ("Waive" in kind) return { label: `Returned to the payer: ${PORTION_LABEL[kind.Waive.portion].toLowerCase()}`, direction: "none" };
   if ("Forfeit" in kind) return { label: "Collateral forfeited: the order never arrived", direction: "none" };
   if ("Stake" in kind) return { label: "Store listing deposit", direction: "out" };
+  if ("Redeem" in kind) return { label: "Cashed out", direction: "out" };
+  if ("Reclaim" in kind) return { label: "Cash-out declined: returned", direction: "in" };
   return { label: "Store listing deposit returned", direction: "in" };
 }

@@ -3,7 +3,7 @@
 // zome. Money for an order is set aside as the order goes and collected by
 // whoever it's owed to, from their own conductor.
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, HcRecord, HoldView } from "../types";
+import type { ActionHash, AgentPubKey, CashOutView, HcRecord, HoldView, IssuerProfile, IssuerView } from "../types";
 
 /// An agent's balance: what their latest ledger entry says, which
 /// validation ties to every entry before it.
@@ -31,4 +31,33 @@ export async function holdsForOrder(order: ActionHash): Promise<HoldView[]> {
 /// Collects any funds issued to the caller; returns how many grants.
 export async function collectGrants(): Promise<number> {
   return callZome("ledger", "collect_grants", null);
+}
+
+// --- cashing out ---
+
+/// The network's issuers, each with its published terms (or none yet).
+export async function listIssuers(): Promise<IssuerView[]> {
+  return callZome("ledger", "list_issuers", null);
+}
+
+/// Asks `issuer` to pay `amount` of the caller's balance out of the network.
+/// `instructions` (where to pay, if the issuer needs telling) is sealed to
+/// the issuer.
+export async function cashOut(issuer: AgentPubKey, amount: number, instructions = ""): Promise<CashOutView> {
+  return callZome("ledger", "cash_out", { issuer, amount, instructions });
+}
+
+/// The caller's cash-outs, newest first, each with where it stands.
+export async function listMyCashOuts(): Promise<CashOutView[]> {
+  return callZome("ledger", "list_my_cash_outs", null);
+}
+
+/// Takes back any cash-out its issuer declined; returns how many.
+export async function reclaimDeclinedCashOuts(): Promise<number> {
+  return callZome("ledger", "reclaim_declined_cash_outs", null);
+}
+
+/// The caller, an issuer, publishing or changing its terms.
+export async function setIssuerProfile(profile: IssuerProfile): Promise<ActionHash> {
+  return callZome("ledger", "set_issuer_profile", profile);
 }

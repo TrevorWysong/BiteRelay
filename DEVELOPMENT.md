@@ -8,6 +8,8 @@ Needs Holochain 0.7.0 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-s
 
 Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account may go $10,000 into debt and orders work without funding anyone. A production network sets the limit (0 recommended) and names issuers who fund accounts; see DEPLOYMENT.md and SECURITY.md.
 
+The seed sets up a dev issuer, "Relay Credits (dev)": it writes the network's properties, naming that issuer, to `web/public/dev-network.json`, and every identity -- seeded, or created in the app's onboarding -- joins that network. Customers start with $100 added through it. Cash-outs wait until you approve or decline them with `npm run issuer`.
+
 | Command | What it does |
 | --- | --- |
 | `npm run dev:conductor` | Starts the persistent dev conductor at `ws://localhost:8870`. Its data lives in `.dev/conductor/` and **survives restarts**. Logs: `.dev/conductor.log`. |
@@ -16,6 +18,7 @@ Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account ma
 | `npm run typegen` | Regenerates `src/holochain/generated.ts` from the Rust types (`tools/typegen`). `npm run backend` runs it for you; CI fails if it's stale. |
 | `npm run seed` | Creates a demo world on an empty conductor: three stores (two with the same owner), a driver, customers, and orders in every state. `-- --at lat,lon` seeds around any location. |
 | `npm run dev:reset` | Wipes all dev data, restarts the conductor on the current build, and seeds it. |
+| `npm run issuer` | The dev network's issuer ("Relay Credits (dev)"), from the terminal: lists cash-outs waiting; `-- pay 1` (or `pay all`), `-- decline 1 "reason"`, and `-- grant "Sam Patel" 25` to add funds. |
 | `npm run package -- --network-seed <name>` | Builds the production `deploy/relay.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
 
 ## What `npm run backend` does to a running conductor

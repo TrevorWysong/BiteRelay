@@ -16,7 +16,8 @@
     "lint": "oxlint",
     "test": "node --import tsx --test test/*.test.ts",
     "test:e2e": "playwright test",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "issuer": "node scripts/issuer.mjs"
   },
   "dependencies": {
     "@holochain/client": "^0.21.0",

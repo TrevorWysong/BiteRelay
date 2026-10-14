@@ -34,6 +34,10 @@ async function authorizeSigning(adminWs: AdminWebsocket, appInfo: AppInfo): Prom
 }
 
 const HAPP_URL = "/relay.happ";
+/// The dev network's DNA properties (its issuer), when the dev seed has set
+/// one up -- see web/scripts/seed.mjs. Absent in production, whose bundle
+/// carries its properties itself.
+const DEV_NETWORK_URL = "/dev-network.json";
 const ALLOWED_ORIGINS = "*";
 
 export interface ProvisionedIdentity {
@@ -45,6 +49,14 @@ export interface ProvisionedIdentity {
 }
 
 let happBundleBytes: Uint8Array | null = null;
+/// The dev network's properties, or `null` outside dev.
+async function fetchDevNetworkProperties(): Promise<Record<string, unknown> | null> {
+  const res = await fetch(DEV_NETWORK_URL).catch(() => null);
+  if (!res?.ok) return null;
+  const network = (await res.json().catch(() => null)) as { properties?: Record<string, unknown> } | null;
+  return network?.properties ?? null;
+}
+
 async function fetchHappBundle(): Promise<Uint8Array> {
   if (happBundleBytes) return happBundleBytes;
   const res = await fetch(HAPP_URL);
@@ -98,11 +110,13 @@ export async function provisionNewIdentity(adminUrl: string, installedAppId: Ins
     const agentPubKey = await adminWs.generateAgentPubKey();
     const bundleBytes = await fetchHappBundle();
 
+    const devProperties = await fetchDevNetworkProperties();
     await adminWs.installApp({
       source: { type: "bytes", value: bundleBytes },
       agent_key: agentPubKey,
       installed_app_id: installedAppId,
-    });
+      ...(devProperties && { roles_settings: { relay: { type: "provisioned", value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: devProperties } } } } }),
+    } as Parameters<AdminWebsocket["installApp"]>[0]);
     const appInfo = await adminWs.enableApp({ installed_app_id: installedAppId });
     await authorizeSigning(adminWs, appInfo);
 

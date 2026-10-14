@@ -10,10 +10,10 @@
 //
 // Every identity's installed app id starts with "seed-"; the onboarding
 // screen's dev identity picker lists them so you can sign in as anyone.
-import { readFileSync } from "node:fs";
-import { AppWebsocket } from "@holochain/client";
+import { readFileSync, writeFileSync } from "node:fs";
+import { AppWebsocket, encodeHashToBase64 } from "@holochain/client";
 import { decode } from "@msgpack/msgpack";
-import { SERVED_HAPP, WS_OPTIONS, appInterfacePort, connectAdmin } from "./lib/devEnv.mjs";
+import { DEV_NETWORK, DNA_PATH, ISSUER_APP_ID, SERVED_HAPP, WS_OPTIONS, appInterfacePort, connectAdmin, dnaHashOf, rolesSettingsFor } from "./lib/devEnv.mjs";
 import { WORLD } from "./lib/world.mjs";
 
 const DEFAULT_CENTER = { lat: 27.7676, lon: -82.6403 }; // matches session.ts's default browse location
@@ -74,18 +74,21 @@ async function stepOrDone(label, fn, alreadyDone) {
   });
 }
 
-async function createAgent(adminWs, appPort, happBytes, person) {
-  const agentKey = await adminWs.generateAgentPubKey();
+/// A ledger amount: dollars, as cents.
+const dollars = (n) => Math.round(n * 100);
+
+async function createAgent(adminWs, appPort, happBytes, person, network, agentKey = null, appIdOverride = null) {
+  agentKey ??= await adminWs.generateAgentPubKey();
   // The onboarding picker turns "seed-mo-haddad" back into "Mo Haddad".
-  const appId = `${SEED_PREFIX}${person.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  await adminWs.installApp({ source: { type: "bytes", value: happBytes }, agent_key: agentKey, installed_app_id: appId });
+  const appId = appIdOverride ?? `${SEED_PREFIX}${person.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  await adminWs.installApp({ source: { type: "bytes", value: happBytes }, agent_key: agentKey, installed_app_id: appId, roles_settings: rolesSettingsFor(network) });
   const appInfo = await adminWs.enableApp({ installed_app_id: appId });
   const cellId = appInfo.cell_info[ROLE][0].value.cell_id;
   await adminWs.authorizeSigningCredentials(cellId);
   const { token } = await adminWs.issueAppAuthenticationToken({ installed_app_id: appId });
   const appWs = await AppWebsocket.connect({ url: new URL(`ws://localhost:${appPort}`), token, wsClientOptions: WS_OPTIONS, defaultTimeout: 60_000 });
   const call = (zome, fn, payload = null) => appWs.callZome({ cell_id: cellId, zome_name: zome, fn_name: fn, payload });
-  return { ...person, appId, key: agentKey, call, close: () => appWs.client.close() };
+  return { ...person, appId, key: agentKey, cellId, call, close: () => appWs.client.close() };
 }
 
 /// `HH:MM` as minutes after midnight.
@@ -279,9 +282,28 @@ async function main() {
     const appPort = await appInterfacePort(adminWs);
 
     console.log(`Seeding around ${center.lat.toFixed(4)}, ${center.lon.toFixed(4)}...`);
+    // The issuer comes first: the network's properties name it, and every
+    // identity -- seeded here or created in the app -- joins that network.
+    const issuerKey = await adminWs.generateAgentPubKey();
+    const network = { properties: { issuers: [encodeHashToBase64(issuerKey)] }, builtDna: dnaHashOf(DNA_PATH) };
+    const issuer = await createAgent(adminWs, appPort, happBytes, { name: "Relay Credits" }, network, issuerKey, ISSUER_APP_ID);
+    agents.push(issuer);
+    network.dnaHash = encodeHashToBase64(issuer.cellId[0]);
+    writeFileSync(DEV_NETWORK, `${JSON.stringify(network, null, 2)}\n`);
+    await issuer.call("ledger", "set_issuer_profile", {
+      name: "Relay Credits (dev)",
+      description: "The dev network's issuer. Approve or decline cash-outs with `npm run issuer` in web/.",
+      contact: "",
+      payout_fee_cents: 25,
+      payout_fee_basis_points: 25,
+      min_payout_cents: dollars(5),
+      payout_days: 1,
+    });
+    console.log("  ✓ Relay Credits, the network's issuer");
+
     const people = new Map();
     for (const person of WORLD.people) {
-      const agent = await createAgent(adminWs, appPort, happBytes, person);
+      const agent = await createAgent(adminWs, appPort, happBytes, person, network);
       agents.push(agent);
       await agent.call("profiles", "create_profile", { display_name: person.name, roles: person.roles, created_at: now(), bio: person.bio ?? "", phone: "", avatar_data_uri: "" });
       const addresses = (person.addresses ?? []).map((a) => ({ ...a, point: near(center, a.at) }));
@@ -290,6 +312,14 @@ async function main() {
       }
       agent.home = addresses[0]?.point ?? center;
       people.set(person.slug, agent);
+      // Customers start with funds added through the issuer, as they would
+      // by card.
+      if (person.roles.includes("Requester")) {
+        await issuer.call("ledger", "issue_grant", { to: agent.key, amount: dollars(100), reference: `seed-topup-${person.slug}` });
+        await eventually(`${person.name} collecting their funds`, async () => {
+          if ((await agent.call("ledger", "collect_grants", null)) === 0) throw new Error("not there yet");
+        });
+      }
       console.log(`  ✓ ${person.name} (${person.roles.join(", ")})`);
     }
 
@@ -316,7 +346,17 @@ async function main() {
       console.log(`  ✓ ${store.name} -- open ${store.hours.opens}-${store.hours.closes} daily`);
     }
 
+    // A driver who's cashed out some of their earnings, paid.
+    const driver = people.get("dana");
+    const earned = await driver.call("ledger", "get_balance", driver.key);
+    if (earned >= dollars(5)) {
+      const cashOut = await driver.call("ledger", "cash_out", { issuer: issuerKey, amount: dollars(5), instructions: "" });
+      await eventually("the issuer paying Dana's cash-out", () => issuer.call("ledger", "decide_cash_out", { redemption: cashOut.redemption, outcome: { Paid: { reference: "po_seed_1" } } }));
+      console.log("  ✓ Dana cashed out $5.00, paid");
+    }
+
     console.log("\nSeeded. Sign in as anyone from the onboarding screen's \"Use an existing identity\" list.");
+    console.log("Cash-outs wait for the issuer: `npm run issuer` lists them, and pays or declines them.");
   } finally {
     await Promise.all(agents.map((a) => a.close().catch(() => {})));
     await adminWs.client.close();
