@@ -185,19 +185,25 @@ const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
   profiles: () => ["get_my_name", null],
 };
 
-/// Calls a harmless read in a zome until its conductor answers -- compiling
-/// a swapped-in coordinator, and granting the caller's signing capability on
-/// its first call, can outlast a request's 60 seconds on a slow CI runner.
+/// What a call can meet while a swapped-in coordinator settles: compiling
+/// it, and granting the caller's signing capability on its first call, can
+/// outlast a request's 60 seconds on a slow CI runner; and for a moment
+/// after the swap the conductor may not have the new code stored yet
+/// ("Missing WASM source").
+const SETTLING = /timed out|Missing WASM source/i;
+
+/// Calls a harmless read in a zome until its conductor answers it.
 async function warmUp(player: PlayerApp, zome: string): Promise<void> {
   const read = WARM_UP[zome];
   if (!read) throw new Error(`add a harmless read for the ${zome} zome to WARM_UP`);
   const [fn_name, payload] = read(player);
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < 20; attempt++) {
     try {
       await player.cells[0].callZome({ zome_name: zome, fn_name, payload });
       return;
     } catch (err) {
-      if (!/timed out/i.test(String(err))) throw err;
+      if (!SETTLING.test(String(err))) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
   throw new Error(`the ${zome} zome never answered after its coordinator was swapped in`);

@@ -543,3 +543,11 @@ matters (e.g. before accepting a bid from a given provider) — a deliberate,
 temporary, semi-centralized exception, named as such rather than presented
 as fully decentralized. Track DeepKey's stabilization for when this can be
 replaced with a first-party mechanism.
+
+## 8. A call right after `update_coordinators` can fail with "Missing WASM source" (0.7.0)
+
+**Description:** After swapping a cell's coordinator zome through the admin API's `update_coordinators`, a zome call made at once can fail with `Missing WASM source`, raised from inside the swapped zome (its `zome_info`). A moment later the same call succeeds. It shows up intermittently, and more on a slow CI runner.
+
+**In this project:** the integration tests swap in the `test-utils` builds of coordinators (`useTestCoordinators` in `tests/tryorama/src/helpers.ts`), then call into them. `link-validation`, which swaps every coordinator for every player, failed this way on CI.
+
+**Workaround:** after a swap, warm the zome up with a harmless read. Retry it with a pause while it times out or reports `Missing WASM source`, and fail on any other error. Production cells never swap coordinators at runtime, so this only affects tests.
