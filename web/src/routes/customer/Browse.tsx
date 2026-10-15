@@ -115,7 +115,11 @@ export function Browse() {
   }, [rows]);
 
   const filtered = useMemo(() => {
-    let list = rows?.filter((r) => r.catalog.business_name.toLowerCase().includes(query.toLowerCase())) ?? null;
+    // Name, cuisine, description and dietary tags, as people search: "tacos",
+    // "vegan", "pizza".
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const haystack = (c: MerchantCatalog) => [c.business_name, c.cuisine_type, c.description, ...(c.dietary_tags ?? [])].join(" ").toLowerCase();
+    let list = rows?.filter((r) => words.every((word) => haystack(r.catalog).includes(word))) ?? null;
     if (list && cuisine) list = list.filter((r) => r.catalog.cuisine_type === cuisine);
     if (list && favoritesOnly) list = list.filter((r) => favoritesHex.has(bytesToHex(r.hash)));
     if (list) {
@@ -140,7 +144,7 @@ export function Browse() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search restaurants"
+          placeholder="Search restaurants, cuisines, diets"
           className="w-full bg-transparent text-sm outline-none"
         />
       </div>
@@ -238,6 +242,7 @@ export function Browse() {
               now={now}
               rating={r.rating}
               reviewCount={r.reviewCount}
+              customer={location}
               favorited={favoritesHex.has(bytesToHex(r.hash))}
               onToggleFavorite={() => toggleFavorite(r.hash)}
             />

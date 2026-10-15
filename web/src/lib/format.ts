@@ -83,3 +83,21 @@ export function formatDeadline(microseconds: number): string {
 export function formatClockTime(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
+
+/// Places whose road distances are in miles.
+const MILES_REGIONS = new Set(["US", "GB", "LR", "MM"]);
+
+/// A distance as people where this device is read it: "1.2 km", or in
+/// miles where roads are signed in miles. `locale` for tests.
+export function formatDistance(km: number, locale: string = typeof navigator === "undefined" ? "en-US" : navigator.language): string {
+  let region: string | undefined;
+  try {
+    region = new Intl.Locale(locale).maximize().region;
+  } catch {
+    region = undefined;
+  }
+  const miles = !!region && MILES_REGIONS.has(region);
+  const value = miles ? km * 0.621371 : km;
+  const unit = miles ? "mi" : "km";
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)} ${unit}`;
+}

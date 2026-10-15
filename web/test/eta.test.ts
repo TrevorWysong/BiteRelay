@@ -26,3 +26,22 @@ test("before the kitchen starts, the food's ready its quoted prep time from now"
 test("an ETA is never under a minute", () => {
   assert.deepEqual(estimateTrip({ ...trip, store: HERE }), { toStoreMinutes: 1, etaMinutes: 1 });
 });
+
+test("a restaurant card's estimate: prep, any busy extra, and the trip, rounded, with a driver's spread", async () => {
+  const { deliveryEstimate } = await import("../src/lib/eta");
+  const here = { lat: 27.7676, lon: -82.6403 };
+  // ~5 km away at 25 km/h is 12 minutes; 15 prep + 12 = 27 -> 25.
+  const near = deliveryEstimate({ location: { lat: 27.8126, lon: -82.6403 }, prep_minutes: 15, busy_extra_minutes: 0 }, here);
+  assert.deepEqual([near.fromMinutes, near.toMinutes], [25, 35]);
+  assert.ok(Math.abs(near.km - 5) < 0.1);
+  const busy = deliveryEstimate({ location: here, prep_minutes: 15, busy_extra_minutes: 20 }, here);
+  assert.deepEqual([busy.fromMinutes, busy.toMinutes], [35, 45], "a busy kitchen says so");
+});
+
+test("distances read in the local unit", async () => {
+  const { formatDistance } = await import("../src/lib/format");
+  assert.equal(formatDistance(1.234, "en-US"), "0.8 mi");
+  assert.equal(formatDistance(1.234, "en-GB"), "0.8 mi");
+  assert.equal(formatDistance(1.234, "de-DE"), "1,2 km");
+  assert.equal(formatDistance(12.6, "fr-FR"), "13 km");
+});

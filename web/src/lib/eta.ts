@@ -38,3 +38,22 @@ export function estimateTrip(trip: Trip): TripEstimate {
   const toStoreMinutes = Math.max(1, Math.ceil(toStore));
   return { toStoreMinutes, etaMinutes: Math.max(toStoreMinutes, Math.ceil(Math.max(toStore, untilReady) + toDropoff)) };
 }
+
+/// A typical driver's speed door to door in town, in km/h -- the same as a
+/// driver's own default (`useDriverSettings`), for estimates made before
+/// any driver is known.
+export const TYPICAL_DRIVER_KMH = 25;
+/// How long a driver usually takes to reach the store once they've taken
+/// the order, in minutes -- the spread of an estimate before one has.
+const PICKUP_SPREAD_MINUTES = 10;
+
+/// What a restaurant card says before ordering: "25–35 min" and how far
+/// the store is -- its prep time (with any busy extra), then the trip to the
+/// customer at a typical speed, rounded to five minutes, with the spread of
+/// a driver getting there.
+export function deliveryEstimate(store: { location: GeoPoint; prep_minutes: number; busy_extra_minutes: number }, customer: GeoPoint): { fromMinutes: number; toMinutes: number; km: number } {
+  const km = distanceKm(store.location, customer);
+  const minutes = store.prep_minutes + store.busy_extra_minutes + (km / TYPICAL_DRIVER_KMH) * 60;
+  const fromMinutes = Math.max(5, Math.round(minutes / 5) * 5);
+  return { fromMinutes, toMinutes: fromMinutes + PICKUP_SPREAD_MINUTES, km };
+}

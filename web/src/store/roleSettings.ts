@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { DropoffPreference } from "../holochain/types";
+import { TYPICAL_DRIVER_KMH } from "../lib/eta";
 
 /// A customer's checkout as they last left it, offered again next time.
 export interface CheckoutDefaults {
@@ -99,7 +100,7 @@ export const useDriverSettings = create<DriverSettings>()(
       limits: { maxAtOnce: null, takePriority: true, minFeeCents: 0 },
       autoBid: { on: false, perKmCents: 100, skipRefusals: 3 },
       setAutoBid: (autoBid) => set((state) => ({ autoBid: { ...state.autoBid, ...autoBid } })),
-      travelSpeedKmh: 25,
+      travelSpeedKmh: TYPICAL_DRIVER_KMH,
       setLimits: (limits) => set((state) => ({ limits: { ...state.limits, ...limits } })),
       setTravelSpeed: (travelSpeedKmh) => set({ travelSpeedKmh }),
     }),

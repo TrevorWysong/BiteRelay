@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import { Clock, Heart } from "lucide-react";
 import { motion } from "framer-motion";
-import type { MerchantCatalog } from "../holochain/types";
+import type { GeoPoint, MerchantCatalog } from "../holochain/types";
+import { deliveryEstimate } from "../lib/eta";
+import { formatDistance } from "../lib/format";
 import { bytesToHex } from "../holochain/decode";
 import { Badge } from "./ui";
 import { StarRating } from "./StarRating";
@@ -34,6 +36,9 @@ interface Props {
   now: Date;
   rating?: number;
   reviewCount?: number;
+  /// Where the customer is: the card shows how long delivery takes, and how
+  /// far the store is.
+  customer?: GeoPoint;
   /// Both omitted means "no favorite affordance at all" -- `Browse` is the
   /// only caller that currently passes these, since it's the only place
   /// that already holds the full favorited-set fetched once up front.
@@ -41,8 +46,9 @@ interface Props {
   onToggleFavorite?: () => void;
 }
 
-export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount, favorited, onToggleFavorite }: Props) {
+export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount, customer, favorited, onToggleFavorite }: Props) {
   const status = storeStatus(catalog, now);
+  const estimate = customer ? deliveryEstimate(catalog, customer) : null;
   const gradient = pick(GRADIENTS, catalogHash);
   const emoji = pick(EMOJI, catalogHash.slice().reverse());
   const hex = bytesToHex(catalogHash);
@@ -93,11 +99,14 @@ export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount,
             ) : (
               <span>{catalog.cuisine_type || "New"}</span>
             )}
-            <span className={clsx("flex min-w-0 items-center gap-1 truncate", status.open ? "text-presence-600" : "text-ink-400")}>
-              <Clock size={11} className="shrink-0" />
-              {status.label}
-            </span>
           </div>
+          <p className={clsx("mt-1 flex min-w-0 items-center gap-1 truncate text-xs", status.open ? "text-presence-600" : "text-ink-400")}>
+            <Clock size={11} className="shrink-0" />
+            <span className="truncate">
+              {status.open && estimate ? `${estimate.fromMinutes}–${estimate.toMinutes} min` : status.label}
+              {estimate && <span className="text-ink-400"> · {formatDistance(estimate.km)}</span>}
+            </span>
+          </p>
         </div>
       </Link>
     </motion.div>
