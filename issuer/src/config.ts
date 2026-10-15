@@ -1,5 +1,7 @@
 // The service's settings, from the environment (see .env.example). Read
 // once at start; a missing secret stops it there rather than mid-payment.
+import { parseTiers, type RiskPolicy } from "./risk.ts";
+
 export interface Config {
   stripeSecretKey: string;
   stripePublishableKey: string;
@@ -22,6 +24,13 @@ export interface Config {
   /// How long a recovered account's old key must be quiet before its
   /// balance is reissued to the new one.
   recoveryWaitMs: number;
+  /// A recovered balance above this is left for a person to approve.
+  recoveryReviewAboveCents: number;
+  risk: RiskPolicy;
+  /// Card forms one address may open an hour -- against card testing.
+  topUpsPerIpPerHour: number;
+  /// Whether the service is behind a proxy that sets X-Forwarded-For.
+  trustProxy: boolean;
 }
 
 function required(name: string): string {
@@ -63,5 +72,9 @@ export function loadConfig(): Config {
     dbPath: process.env.DB_PATH ?? "./issuer.db",
     sweepSeconds: number("SWEEP_SECONDS", 30),
     recoveryWaitMs: number("RECOVERY_WAIT_DAYS", 7) * 24 * 60 * 60 * 1000,
+    recoveryReviewAboveCents: number("RECOVERY_REVIEW_ABOVE_CENTS", 50_000),
+    risk: { tiers: parseTiers(process.env.TOPUP_TIERS), payoutHoldMs: number("PAYOUT_HOLD_DAYS", 7) * 24 * 60 * 60 * 1000 },
+    topUpsPerIpPerHour: number("TOPUPS_PER_IP_PER_HOUR", 20),
+    trustProxy: process.env.TRUST_PROXY === "1",
   };
 }

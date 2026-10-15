@@ -17,6 +17,20 @@ A Relay network's issuer: the one party that turns real money into ledger credit
 
 Every request that touches someone's money (`/topups`, `/saved-card`, `/saved-card/charge`, `/payout-account`) carries the agent's signature over the service's one-time nonce for that purpose (`IssuerRequest`: `TopUp`, `SavedCard` or `PayoutAccount`), so a signature for one can't be replayed as another.
 
+## Card risk
+
+A chargeback after the credits are spent is the issuer's loss, so the service limits its exposure (`src/risk.ts`, `src/payouts.ts`):
+
+- **Top-up limits that grow with trust.** A new account can add a little a day and a week, more after a few orders and a week, and much more after a month of ordering (`TOPUP_TIERS`). The account's age and orders are read from the network, across every key it's had. Every card form opened and saved-card charge counts against the limit, paid or not.
+- **Verified first payments.** A card's first payment asks its bank to confirm the cardholder (3-D Secure), which moves a fraud chargeback's loss to the bank.
+- **Card testing.** One address can open only so many card forms an hour (`TOPUPS_PER_IP_PER_HOUR`).
+- **Disputes freeze.** A chargeback (`charge.dispute.created`) freezes the account: no top-ups, and its cash-outs are held. It's unfrozen if the issuer wins. A lost dispute stays frozen for a person to look at.
+- **Card money goes back to cards.** A cash-out refunds the person's recent card payments first; only what's left, their earnings, goes to their bank. So a stolen card's money can't come out as a bank transfer.
+- **New accounts' bank payouts wait** until the account is `PAYOUT_HOLD_DAYS` old.
+- **Large recoveries** above `RECOVERY_REVIEW_ABOVE_CENTS` are left for a person.
+
+In the Stripe dashboard, also turn on **Radar** rules: block when the CVC or postcode check fails, and review payments Radar scores as elevated risk.
+
 ## Fees
 
 Adding funds is free: a customer pays exactly what they add. The issuer recovers its costs from its **cash-out fee**, published in its profile and shown in the Wallet before anyone confirms:
@@ -30,7 +44,7 @@ Adding funds is free: a customer pays exactly what they add. The issuer recovers
 2. **Dev network.** `npm run dev:reset` in `web/` sets one up with an issuer identity (`dev-issuer`).
 3. **Configuration.** In this folder:
    - `cp .env.example .env` and fill in `STRIPE_SECRET_KEY` (a `sk_test_` key) and `STRIPE_PUBLISHABLE_KEY` (its `pk_test_` partner, for the embedded card form).
-   - Run `stripe listen --events checkout.session.completed --forward-to localhost:8890/webhooks/stripe` ([Stripe CLI](https://docs.stripe.com/stripe-cli)) and put the `whsec_` secret it prints in `STRIPE_WEBHOOK_SECRET`.
+   - Run `stripe listen --events checkout.session.completed,charge.dispute.created,charge.dispute.closed --forward-to localhost:8890/webhooks/stripe` ([Stripe CLI](https://docs.stripe.com/stripe-cli)) and put the `whsec_` secret it prints in `STRIPE_WEBHOOK_SECRET`.
 4. **Start.** `npm install && npm start`. The service publishes the issuer's terms, including its address, and the Wallet shows **Add funds** and **Payout account**.
 5. **Try it:**
    - **Add funds:** use Stripe's test card `4242 4242 4242 4242`, any future date and any CVC. Never a real card.
@@ -56,5 +70,5 @@ The Rust side and the cross-language signature are covered by `tests/tryorama/sr
 - **Legal review** of money transmission and prepaid access for the issuer's setup: see `CARD_PAYMENTS.md`. Payouts through Stripe Connect run under Stripe's licences.
 - **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`).
 - **Hosting:** the service behind https (`PUBLIC_URL`), with its database backed up.
-- **Stripe Radar** and a cap on top-ups for new accounts, against card fraud. A chargeback after credits are spent is the issuer's loss.
+- **Stripe Radar rules** on (see *Card risk*), and the limits tuned to the issuer's appetite for loss.
 - **Apple Pay:** register the app's https domain in Stripe (Settings → Payment methods → Apple Pay). It never shows on localhost.

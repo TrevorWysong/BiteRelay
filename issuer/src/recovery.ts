@@ -24,7 +24,9 @@ const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 
 /// One sweep: new requests recorded, and every waiting recovery that's
 /// ready reissued. Returns how many were reissued.
-export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: number, log: (message: string) => void = () => {}): Promise<number> {
+/// `reviewAboveCents`: a balance larger than this is left for a person to
+/// approve -- a large reissue is a large loss if the recovery wasn't theirs.
+export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: number, reviewAboveCents: number, log: (message: string) => void = () => {}): Promise<number> {
   // Recorded first, durably: the cursor moves only past what's recorded.
   let after = store.get(CURSOR) === null ? null : Number(store.get(CURSOR));
   for (;;) {
@@ -70,6 +72,11 @@ export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: n
     if (Date.now() - recovery.quietSince < waitMs) continue;
     const standing = await ledger.standingAt(predecessor, latest);
     const amount = standing.handed_over ? 0 : Math.max(0, standing.balance);
+    if (amount > reviewAboveCents) {
+      store.settleRecovery(recovery.succession, "review", amount);
+      log(`recovery of ${recovery.predecessor}: ${amount} is more than reissued without review -- left for a person`);
+      continue;
+    }
     if (amount > 0) {
       // Keyed by the account: asked again (a lost answer), it grants once.
       await ledger.issueGrant(agentKey(recovery.successor), amount, `recovery:${recovery.predecessor}`);

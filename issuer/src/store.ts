@@ -19,7 +19,8 @@ export interface Recovery {
   /// Since when the old key has been seen doing nothing.
   quietSince: number;
   /// `void`: the person replaced the plan it rested on.
-  status: "waiting" | "reissued" | "contested" | "nothing" | "void";
+  /// `review`: more than the service reissues on its own -- for a person.
+  status: "waiting" | "reissued" | "contested" | "nothing" | "void" | "review";
   amount: number | null;
 }
 
@@ -35,6 +36,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS saved_card_charges (agent TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS link_nonces (nonce TEXT PRIMARY KEY, agent TEXT NOT NULL, issued_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS topup_attempts (agent TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS disputes (payment TEXT PRIMARY KEY, agent TEXT NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS deferred_cash_outs (redemption TEXT PRIMARY KEY, request TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS recoveries (succession TEXT PRIMARY KEY, predecessor TEXT NOT NULL, successor TEXT NOT NULL, head TEXT, quiet_since INTEGER NOT NULL, status TEXT NOT NULL, amount INTEGER);
     `);
   }
@@ -78,6 +82,61 @@ export class Store {
     if (row.n >= limit) return false;
     this.db.prepare("INSERT INTO saved_card_charges (agent, at) VALUES (?, ?)").run(agent, Date.now());
     return true;
+  }
+
+  /// Records money `agent` asked to add -- a card form opened, a saved card
+  /// charged -- whether or not it's paid yet: what their limit counts.
+  recordTopUpAttempt(agent: string, amount: number): void {
+    this.db.prepare("INSERT INTO topup_attempts (agent, amount, at) VALUES (?, ?, ?)").run(agent, amount, Date.now());
+  }
+
+  /// What `agent` has asked to add since `since` (ms).
+  topUpsSince(agent: string, since: number): number {
+    const row = this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM topup_attempts WHERE agent = ? AND at >= ?").get(agent, since) as { total: number };
+    return row.total;
+  }
+
+  /// Whether `agent` has had a payment granted before -- a first one is
+  /// verified with the card's bank.
+  hasPaidBefore(agent: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM granted_payments WHERE agent = ?").get(agent);
+  }
+
+  /// The agent a granted payment was for, if this service granted it.
+  agentOfPayment(payment: string): string | null {
+    const row = this.db.prepare("SELECT agent FROM granted_payments WHERE payment = ?").get(payment) as { agent: string } | undefined;
+    return row?.agent ?? null;
+  }
+
+  /// A cardholder disputed `payment`: its agent is frozen until it's won.
+  openDispute(payment: string, agent: string, amount: number): void {
+    this.db.prepare("INSERT INTO disputes (payment, agent, amount, status, at) VALUES (?, ?, ?, 'open', ?) ON CONFLICT(payment) DO UPDATE SET status = 'open'").run(payment, agent, amount, Date.now());
+  }
+
+  closeDispute(payment: string, won: boolean): void {
+    this.db.prepare("UPDATE disputes SET status = ? WHERE payment = ?").run(won ? "won" : "lost", payment);
+  }
+
+  /// Whether `agent` has a dispute open, or one the issuer lost -- either
+  /// way, card money they had may not have been theirs.
+  frozen(agent: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM disputes WHERE agent = ? AND status IN ('open', 'lost')").get(agent);
+  }
+
+  /// Sets a cash-out aside until `until` (ms), to decide again then.
+  defer(redemption: string, request: string, until: number, reason: string): void {
+    this.db
+      .prepare("INSERT INTO deferred_cash_outs (redemption, request, until, reason) VALUES (?, ?, ?, ?) ON CONFLICT(redemption) DO UPDATE SET until = excluded.until, reason = excluded.reason")
+      .run(redemption, request, until, reason);
+  }
+
+  /// The deferred cash-outs due by `now`, as their requests were recorded.
+  dueDeferred(now: number): string[] {
+    return (this.db.prepare("SELECT request FROM deferred_cash_outs WHERE until <= ?").all(now) as { request: string }[]).map((r) => r.request);
+  }
+
+  undefer(redemption: string): void {
+    this.db.prepare("DELETE FROM deferred_cash_outs WHERE redemption = ?").run(redemption);
   }
 
   issueNonce(nonce: string, agent: string): void {

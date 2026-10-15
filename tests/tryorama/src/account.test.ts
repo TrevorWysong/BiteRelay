@@ -105,6 +105,8 @@ await runScenario(async (scenario) => {
   assert.ok(same(moved[0].successor, bob.agentPubKey) && moved[0].kind === "HandOver", "everyone sees Alice's account moved to Bob");
   const line = await account(carol)<Uint8Array[]>("lineage", bob.agentPubKey);
   assert.ok(line.length === 1 && same(line[0], alice.agentPubKey), "and Bob's account carries Alice's history");
+  const since = (who: typeof alice) => account(carol)<number | null>("account_since", who.agentPubKey);
+  assert.equal(await since(bob), await since(alice), "and her account's age: a new phone doesn't make it new");
   console.log("[PASS] the new key takes the account over once, with its balance and sealed details");
 
   // ===== Recovery by phrase =====

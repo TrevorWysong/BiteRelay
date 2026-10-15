@@ -11,14 +11,20 @@ import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
 import { agentId, type CashOutRequest, type IssuerLedger, type PayoutOutcome, type ReissueRequest, type Standing, type Succession } from "../src/ledger.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
-import { sweep } from "../src/payouts.ts";
+import { sweep, type PayoutDeps } from "../src/payouts.ts";
 import { reissueSweep } from "../src/recovery.ts";
-import type { CompletedPayment, PaymentRail, SavedCardCharge } from "../src/rail.ts";
+import type { PaymentRail, RailEvent, SavedCardCharge } from "../src/rail.ts";
+import { DEFAULT_TIERS, type AccountStanding, type RiskPolicy } from "../src/risk.ts";
 import { serve } from "../src/server.ts";
 import { Store } from "../src/store.ts";
 import { grantPayment, reconcile } from "../src/topups.ts";
 
 const FEE = { payoutFeeCents: 55, payoutFeeBasisPoints: 325 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const POLICY: RiskPolicy = { tiers: DEFAULT_TIERS, payoutHoldMs: 7 * DAY_MS };
+const format = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+/// An account that's been around and ordered: past every limit's first tier.
+const SEASONED: AccountStanding = { since: Date.now() - 365 * DAY_MS, completedOrders: 100 };
 
 /// A fresh Ed25519 identity, as an agent key (3-byte prefix, 32-byte key,
 /// 4 bytes of location) and a way to sign with it.
@@ -36,6 +42,8 @@ interface Accounts {
   reissues: ReissueRequest[];
   latest: Map<string, Uint8Array>;
   standing: Map<string, Standing>;
+  /// How long each account has existed and done -- seasoned when unset.
+  standingOf?: Map<string, AccountStanding>;
 }
 
 function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
@@ -69,6 +77,8 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
     },
     latestActionOf: async (agent) => accounts.latest.get(agentId(agent)) ?? null,
     standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0, handed_over: false },
+    standingOf: async (agent) => accounts.standingOf?.get(agentId(agent)) ?? SEASONED,
+    currency: async () => "USD",
   };
   return { ledger, grants, decisions, failGrant: () => (failNextGrant = true) };
 }
@@ -79,16 +89,16 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
 function fakeRail(options: { ready?: Set<string>; refundable?: Record<string, number>; charge?: "paid" | "confirm" } = {}) {
   const payments: { account: string; amount: number; key: string }[] = [];
   const refunds: { customer: string; amount: number; key: string }[] = [];
-  const sessions: { agent: string; customer: string; amount: number }[] = [];
+  const sessions: { agent: string; customer: string; amount: number; verify: boolean }[] = [];
   const charges: { agent: string; amount: number; key: string }[] = [];
   let customers = 0;
   const rail: PaymentRail = {
     customer: async (_agent, existing) => existing ?? `cus_${++customers}`,
-    async embeddedTopUp(agent, customer, amount) {
-      sessions.push({ agent, customer, amount });
+    async embeddedTopUp(agent, customer, amount, { verify }) {
+      sessions.push({ agent, customer, amount, verify });
       return `cs_secret_${sessions.length}`;
     },
-    completedPayment: async (body, signature) => (signature === "good" ? (JSON.parse(body.toString()) as CompletedPayment) : Promise.reject(new Error("forged"))),
+    event: async (body, signature) => (signature === "good" ? (JSON.parse(body.toString()) as RailEvent) : Promise.reject(new Error("forged"))),
     paymentsSince: async () => [],
     savedCard: async () => ({ brand: "visa", last4: "4242" }),
     async chargeSavedCard(agent, _customer, amount, key): Promise<SavedCardCharge> {
@@ -97,10 +107,16 @@ function fakeRail(options: { ready?: Set<string>; refundable?: Record<string, nu
       if (!charges.some((c) => c.key === key)) charges.push({ agent, amount, key });
       return { paid: { payment: `pi_${key.slice(-6)}`, agent, amount } };
     },
+    // What each customer's card payments can take back, less what's been
+    // refunded -- counting this cash-out's own refunds, as Stripe's do.
+    refundable: async (customer, key) => (options.refundable?.[customer] ?? 0) - refunds.filter((r) => r.customer === customer && r.key !== key).reduce((sum, r) => sum + r.amount, 0),
     async refund(customer, amount, key) {
-      if ((options.refundable?.[customer] ?? 0) < amount) return null;
-      if (!refunds.some((r) => r.key === key)) refunds.push({ customer, amount, key });
-      return `re_${key.slice(-6)}`;
+      const earlier = refunds.find((r) => r.key === key);
+      if (earlier) return { reference: `re_${key.slice(-6)}`, amount: earlier.amount };
+      const part = Math.min(amount, options.refundable?.[customer] ?? 0);
+      if (part <= 0) return null;
+      refunds.push({ customer, amount: part, key });
+      return { reference: `re_${key.slice(-6)}`, amount: part };
     },
     payoutAccountLink: async (agent, existing) => ({ account: existing ?? `acct_${agent.slice(-6)}`, url: "https://connect.test/onboard" }),
     canPay: async (account) => options.ready?.has(account) ?? false,
@@ -121,9 +137,11 @@ const request = (n: number, amount: number, redeemer: Uint8Array): CashOutReques
   outcome: null,
 });
 
+const payoutDeps = (store: Store, ledger: IssuerLedger, rail: PaymentRail): PayoutDeps => ({ store, ledger, rail, fee: FEE, policy: POLICY, setUpUrl: "https://app/#/wallet", format });
+
 /// The HTTP service on a free port, with a way to call it.
-function running(store: Store, ledger: IssuerLedger, rail: PaymentRail) {
-  const server = serve({ store, ledger, rail, appOrigin: "http://app.test", publishableKey: "pk_test_x" }, 0);
+function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100) {
+  const server = serve({ store, ledger, rail, appOrigin: "http://app.test", publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, trustProxy: false, format }, 0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -177,10 +195,10 @@ test("a cash-out goes to a ready payout account, less the fee, once", async () =
   store.setPayoutAccount(agentId(earner), "acct_ready");
   const { ledger, decisions } = fakeLedger([request(1, 10_000, earner)]);
   const { rail, payments } = fakeRail({ ready: new Set(["acct_ready"]) });
-  assert.equal(await sweep(store, ledger, rail, FEE, "https://app/#/wallet"), 1);
+  assert.equal(await sweep(payoutDeps(store, ledger, rail)), 1);
   assert.deepEqual(payments.map((p) => [p.account, p.amount]), [["acct_ready", payoutAfterFees(FEE, 10_000)]]);
   assert.ok("Paid" in decisions[0].outcome);
-  assert.equal(await sweep(store, ledger, rail, FEE, "https://app/#/wallet"), 0, "a decided cash-out isn't decided again");
+  assert.equal(await sweep(payoutDeps(store, ledger, rail)), 0, "a decided cash-out isn't decided again");
   assert.equal(payments.length, 1);
 });
 
@@ -190,7 +208,7 @@ test("a customer's unspent funds go back to their card, less the fee", async () 
   store.setCustomer(agentId(customer), "cus_paid");
   const { ledger, decisions } = fakeLedger([request(1, 3000, customer)]);
   const { rail, refunds, payments } = fakeRail({ refundable: { cus_paid: 5000 } });
-  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  await sweep(payoutDeps(store, ledger, rail));
   assert.deepEqual(refunds.map((r) => [r.customer, r.amount]), [["cus_paid", payoutAfterFees(FEE, 3000)]]);
   assert.equal(payments.length, 0);
   assert.ok("Paid" in decisions[0].outcome && decisions[0].outcome.Paid.reference.startsWith("re_"));
@@ -206,7 +224,7 @@ test("with nowhere to send it, a cash-out is declined and goes back", async () =
   store.setCustomer(agentId(overdrawn), "cus_small");
   const { ledger, decisions } = fakeLedger([request(1, 5000, unset), request(2, 5000, pending), request(3, 5000, overdrawn)]);
   const { rail, payments, refunds } = fakeRail({ refundable: { cus_small: 1000 } });
-  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  await sweep(payoutDeps(store, ledger, rail));
   assert.equal(payments.length + refunds.length, 0);
   assert.equal(decisions.length, 3);
   for (const d of decisions) assert.ok("Declined" in d.outcome && d.outcome.Declined.reason.includes("https://app/#/wallet"), "it says where to set one up");
@@ -222,8 +240,8 @@ test("a cash-out whose decision went through on an earlier try counts as decided
     throw new Error("That cash-out has already been decided.");
   };
   const { rail, payments } = fakeRail({ ready: new Set(["acct_ready"]) });
-  assert.equal(await sweep(store, ledger, rail, FEE, "https://app/#/wallet"), 1, "the sweep carries on");
-  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  assert.equal(await sweep(payoutDeps(store, ledger, rail)), 1, "the sweep carries on");
+  await sweep(payoutDeps(store, ledger, rail));
   assert.equal(payments.length, 1, "and paying again was a no-op: the transfer is keyed by the cash-out");
 });
 
@@ -247,12 +265,12 @@ test("a recovered account's balance is reissued to its new key, once, after the 
   const accounts = noAccounts();
   const { lost, found } = recovered(accounts, "Phrase", 4200, 1);
   const { ledger, grants } = fakeLedger([], accounts);
-  assert.equal(await reissueSweep(store, ledger, 60_000), 0, "the first look starts the wait");
-  assert.equal(await reissueSweep(store, ledger, 60_000), 0, "and nothing moves before it's over");
+  assert.equal(await reissueSweep(store, ledger, 60_000, 100_000), 0, "the first look starts the wait");
+  assert.equal(await reissueSweep(store, ledger, 60_000, 100_000), 0, "and nothing moves before it's over");
   assert.equal(grants.length, 0);
-  assert.equal(await reissueSweep(store, ledger, 0), 1, "then, quiet throughout, it's reissued");
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 1, "then, quiet throughout, it's reissued");
   assert.deepEqual(grants, [{ to: agentId(found), amount: 4200, reference: `recovery:${agentId(lost)}` }], "what the old key held, to the new one, keyed by the account");
-  assert.equal(await reissueSweep(store, ledger, 0), 0, "once");
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 0, "once");
 });
 
 test("the old key doing anything starts the wait again", async () => {
@@ -260,10 +278,10 @@ test("the old key doing anything starts the wait again", async () => {
   const accounts = noAccounts();
   const { lost } = recovered(accounts, "Guardians", 1000, 2);
   const { ledger, grants } = fakeLedger([], accounts);
-  await reissueSweep(store, ledger, 0);
+  await reissueSweep(store, ledger, 0, 100_000);
   accounts.latest.set(agentId(lost), new Uint8Array(39).fill(99));
-  assert.equal(await reissueSweep(store, ledger, 0), 0, "someone used the old key: wait again");
-  assert.equal(await reissueSweep(store, ledger, 0), 1);
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 0, "someone used the old key: wait again");
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 1);
   assert.equal(grants.length, 1);
 });
 
@@ -277,7 +295,7 @@ test("an account recovered onto two keys is left for review, and a hand-over is 
   accounts.reissues.push({ succession, predecessor: lost, successor: second, requested_at: 1_010 });
   recovered(accounts, "HandOver", 7000, 5);
   const { ledger, grants } = fakeLedger([], accounts);
-  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
   assert.equal(grants.length, 0, "nobody is paid twice, or on a hand-over's account");
 });
 
@@ -288,7 +306,7 @@ test("a recovery whose plan the person replaced reissues nothing", async () => {
   // The network no longer counts it: the account's plan has changed.
   accounts.successions.length = 0;
   const { ledger, grants } = fakeLedger([], accounts);
-  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
   assert.equal(grants.length, 0);
 });
 
@@ -301,7 +319,7 @@ test("a recovered account's old key can't cash out; one that handed over can", a
   store.setPayoutAccount(agentId(movedOn), "acct_moved");
   const { ledger, decisions } = fakeLedger([request(1, 5000, lost), request(2, 5000, movedOn)], accounts);
   const { rail, payments } = fakeRail({ ready: new Set(["acct_lost", "acct_moved"]) });
-  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  await sweep(payoutDeps(store, ledger, rail));
   assert.ok("Declined" in decisions[0].outcome && decisions[0].outcome.Declined.reason.includes("recovered"), "a found phone pays nothing out");
   assert.ok("Paid" in decisions[1].outcome, "the owner who handed over is paid as usual");
   assert.deepEqual(payments.map((p) => p.account), ["acct_moved"]);
@@ -387,7 +405,7 @@ test("webhooks grant only genuine payments, once; payout accounts link only on t
   try {
     const me = identity();
     const id = agentId(me.key);
-    const payment = JSON.stringify({ payment: "pi_9", agent: id, amount: 5000 });
+    const payment = JSON.stringify({ kind: "paid", payment: { payment: "pi_9", agent: id, amount: 5000 } });
     assert.equal((await service.post("/webhooks/stripe", payment, { "stripe-signature": "forged" })).status, 400, "a forged event grants nothing");
     await service.post("/webhooks/stripe", payment, { "stripe-signature": "good" });
     await service.post("/webhooks/stripe", payment, { "stripe-signature": "good" });
@@ -402,4 +420,138 @@ test("webhooks grant only genuine payments, once; payout accounts link only on t
   } finally {
     service.close();
   }
+});
+
+/// A fake network where `who` is a brand-new account with no orders.
+function newcomer(who: Uint8Array): Accounts {
+  return { successions: [], reissues: [], latest: new Map(), standing: new Map(), standingOf: new Map([[agentId(who), { since: Date.now(), completedOrders: 0 }]]) };
+}
+
+test("a new account adds a little at first, counting card forms opened, and more as it orders", async () => {
+  const store = new Store(":memory:");
+  const me = identity();
+  const accounts = newcomer(me.key);
+  const { ledger } = fakeLedger([], accounts);
+  const { rail, sessions } = fakeRail();
+  const service = running(store, ledger, rail);
+  try {
+    const topUp = async (amount: number) => service.post("/topups", await service.signed(me, "TopUp", { amount }));
+    assert.equal((await topUp(6000)).status, 200);
+    assert.equal((await topUp(4000)).status, 200, "up to the first tier's daily limit");
+    const refused = await topUp(500);
+    assert.equal(refused.status, 429, "forms opened count, paid or not");
+    assert.match(((await refused.json()) as { error: string }).error, /add \$0\.00 more.*grows as you order/);
+    assert.equal(sessions.length, 2);
+    accounts.standingOf!.set(agentId(me.key), { since: Date.now() - 40 * DAY_MS, completedOrders: 25 });
+    assert.equal((await topUp(50_000)).status, 200, "an account that's ordered for a month may add far more");
+  } finally {
+    service.close();
+  }
+});
+
+test("a card's first payment is verified with its bank; later ones aren't asked again", async () => {
+  const store = new Store(":memory:");
+  const me = identity();
+  const { ledger } = fakeLedger();
+  const { rail, sessions } = fakeRail();
+  const service = running(store, ledger, rail);
+  try {
+    await service.post("/topups", await service.signed(me, "TopUp", { amount: 2000 }));
+    await grantPayment(store, ledger, { payment: "pi_first", agent: agentId(me.key), amount: 2000 });
+    await service.post("/topups", await service.signed(me, "TopUp", { amount: 2000 }));
+    assert.deepEqual(sessions.map((s) => s.verify), [true, false]);
+  } finally {
+    service.close();
+  }
+});
+
+test("one address opening card form after card form is stopped", async () => {
+  const store = new Store(":memory:");
+  const { ledger } = fakeLedger();
+  const { rail } = fakeRail();
+  const service = running(store, ledger, rail, 2);
+  try {
+    const statuses = [];
+    for (let i = 0; i < 3; i++) statuses.push((await service.post("/topups", await service.signed(identity(), "TopUp", { amount: 1000 }))).status);
+    assert.deepEqual(statuses, [200, 200, 429], "many accounts, one address: someone testing cards");
+  } finally {
+    service.close();
+  }
+});
+
+test("a disputed payment freezes its account -- nothing in, cash-outs held -- until the dispute is won", async () => {
+  const store = new Store(":memory:");
+  const me = identity();
+  const id = agentId(me.key);
+  store.setPayoutAccount(id, "acct_ready");
+  const { ledger, decisions } = fakeLedger([request(1, 5000, me.key)]);
+  const { rail, payments } = fakeRail({ ready: new Set(["acct_ready"]) });
+  const service = running(store, ledger, rail);
+  const event = (body: unknown) => service.post("/webhooks/stripe", JSON.stringify(body), { "stripe-signature": "good" });
+  try {
+    await event({ kind: "paid", payment: { payment: "pi_d", agent: id, amount: 5000 } });
+    await event({ kind: "disputed", payment: "pi_d", amount: 5000 });
+    const refused = await service.post("/topups", await service.signed(me, "TopUp", { amount: 1000 }));
+    assert.equal(refused.status, 429);
+    assert.match(((await refused.json()) as { error: string }).error, /disputed/);
+    assert.equal(await sweep(payoutDeps(store, ledger, rail)), 0, "the cash-out is held, not paid nor declined");
+    assert.equal(decisions.length, 0);
+
+    await event({ kind: "dispute closed", payment: "pi_d", won: true });
+    assert.equal(await sweep(payoutDeps(store, ledger, rail), Date.now() + 2 * DAY_MS), 1, "won: the held cash-out is paid when it's looked at again");
+    assert.equal(payments.length, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test("a lost dispute keeps the account frozen", async () => {
+  const store = new Store(":memory:");
+  const id = agentId(identity().key);
+  store.claimPayment("pi_l", id, 3000);
+  store.openDispute("pi_l", id, 3000);
+  store.closeDispute("pi_l", false);
+  assert.equal(store.frozen(id), true);
+});
+
+test("a cash-out goes back to the cards that paid first, and only what's left to the bank", async () => {
+  const store = new Store(":memory:");
+  const earner = identity().key;
+  store.setCustomer(agentId(earner), "cus_paid");
+  store.setPayoutAccount(agentId(earner), "acct_ready");
+  const { ledger, decisions } = fakeLedger([request(1, 10_000, earner)]);
+  const { rail, refunds, payments } = fakeRail({ refundable: { cus_paid: 2000 }, ready: new Set(["acct_ready"]) });
+  await sweep(payoutDeps(store, ledger, rail));
+  const net = payoutAfterFees(FEE, 10_000);
+  assert.deepEqual(refunds.map((r) => r.amount), [2000], "card money back to the card");
+  assert.deepEqual(payments.map((p) => p.amount), [net - 2000], "earnings to the bank");
+  assert.ok("Paid" in decisions[0].outcome && /re_.*,tr_/.test(decisions[0].outcome.Paid.reference));
+});
+
+test("a new account's bank payout waits until it's old enough; its refunds to card don't", async () => {
+  const store = new Store(":memory:");
+  const earner = identity().key;
+  const refunder = identity().key;
+  store.setPayoutAccount(agentId(earner), "acct_ready");
+  store.setCustomer(agentId(refunder), "cus_paid");
+  const accounts = newcomer(earner);
+  accounts.standingOf!.set(agentId(refunder), { since: Date.now(), completedOrders: 0 });
+  const { ledger, decisions } = fakeLedger([request(1, 5000, earner), request(2, 3000, refunder)], accounts);
+  const { rail, payments, refunds } = fakeRail({ ready: new Set(["acct_ready"]), refundable: { cus_paid: 5000 } });
+  assert.equal(await sweep(payoutDeps(store, ledger, rail)), 1, "the refund goes now");
+  assert.equal(refunds.length, 1);
+  assert.equal(payments.length, 0, "the bank payout waits");
+  assert.equal(await sweep(payoutDeps(store, ledger, rail), Date.now() + 3 * DAY_MS), 0, "still too new");
+  assert.equal(await sweep(payoutDeps(store, ledger, rail), Date.now() + 8 * DAY_MS), 1, "a week on, it's paid");
+  assert.equal(payments.length, 1);
+  assert.equal(decisions.length, 2);
+});
+
+test("a large recovered balance is left for a person to approve", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  recovered(accounts, "Phrase", 80_000, 9);
+  const { ledger, grants } = fakeLedger([], accounts);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 50_000);
+  assert.equal(grants.length, 0);
 });

@@ -14,8 +14,13 @@ const config = loadConfig();
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
 const store = new Store(config.dbPath);
 const ledger = await connectIssuerLedger(config.conductorAdminUrl, config.issuerAppId);
-const rail = stripeRail(config.stripeSecretKey, config.stripeWebhookSecret, config.appUrl);
+// Every amount is in the network's currency, whichever country it runs in.
+const currency = await ledger.currency();
+const rail = stripeRail(config.stripeSecretKey, config.stripeWebhookSecret, config.appUrl, currency);
 const fee = { payoutFeeCents: config.profile.payoutFeeCents, payoutFeeBasisPoints: config.profile.payoutFeeBasisPoints };
+const money = new Intl.NumberFormat("en", { style: "currency", currency });
+const format = (minor: number) => money.format(minor / 10 ** (money.resolvedOptions().maximumFractionDigits ?? 2));
+const payoutDeps = { store, ledger, rail, fee, policy: config.risk, setUpUrl: `${config.appUrl}/#/wallet`, format };
 
 await ledger.setProfile({
   name: config.profile.name,
@@ -30,7 +35,10 @@ await ledger.setProfile({
 });
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
-serve({ store, ledger, rail, appOrigin: new URL(config.appUrl).origin, publishableKey: config.stripePublishableKey, log }, config.port);
+serve(
+  { store, ledger, rail, appOrigin: new URL(config.appUrl).origin, publishableKey: config.stripePublishableKey, policy: config.risk, topUpsPerIpPerHour: config.topUpsPerIpPerHour, trustProxy: config.trustProxy, format, log },
+  config.port,
+);
 log(`listening on :${config.port}`);
 
 // One sweep at a time; a failed one is retried on the next tick from where
@@ -40,7 +48,7 @@ setInterval(async () => {
   if (sweeping) return;
   sweeping = true;
   try {
-    const decided = await sweep(store, ledger, rail, fee, `${config.appUrl}/#/wallet`);
+    const decided = await sweep(payoutDeps);
     if (decided) log(`decided ${decided} cash-out${decided === 1 ? "" : "s"}`);
   } catch (err) {
     log(`sweep failed, retrying next time: ${err instanceof Error ? err.message : String(err)}`);
@@ -72,7 +80,7 @@ setInterval(async () => {
   if (reissuing) return;
   reissuing = true;
   try {
-    await reissueSweep(store, ledger, config.recoveryWaitMs, log);
+    await reissueSweep(store, ledger, config.recoveryWaitMs, config.recoveryReviewAboveCents, log);
   } catch (err) {
     log(`recovery sweep failed, retrying next time: ${err instanceof Error ? err.message : String(err)}`);
   } finally {

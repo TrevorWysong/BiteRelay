@@ -9,6 +9,7 @@
 // to repeat -- `issue_grant` returns a payment's existing grant, a cash-out
 // decided already says so, and reads are reads.
 import { AdminWebsocket, AppWebsocket, decodeHashFromBase64, encodeHashToBase64, type AgentPubKey, type CellId } from "@holochain/client";
+import type { AccountStanding } from "./risk.ts";
 
 export type PayoutOutcome = { Paid: { reference: string } } | { Declined: { reason: string } };
 
@@ -85,6 +86,10 @@ export interface IssuerLedger {
   /// The latest action the network has seen on `agent`'s chain.
   latestActionOf(agent: AgentPubKey): Promise<Uint8Array | null>;
   standingAt(agent: AgentPubKey, head: Uint8Array): Promise<Standing>;
+  /// How long `agent`'s account has existed and how much it has done.
+  standingOf(agent: AgentPubKey): Promise<AccountStanding>;
+  /// The network's currency, an ISO 4217 code.
+  currency(): Promise<string>;
 }
 
 /// Agent keys as the service passes them around: base64, as the app shows them.
@@ -148,6 +153,12 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
     reissueRequests: (after) => call<ReissueRequestsPage>("get_reissue_requests", { after }, "account"),
     latestActionOf: (agent) => call<Uint8Array | null>("latest_action_of", agent, "account"),
     standingAt: (agent, head) => call<Standing>("standing_at", { agent, head }),
+    async standingOf(agent) {
+      const completed = (target: unknown) => call<{ completed_count: number }>("get_reputation_summary", target, "reputation").then((s) => s.completed_count);
+      const [since, asCustomer, asDriver] = await Promise.all([call<number | null>("account_since", agent, "account"), completed({ Customer: agent }), completed({ Driver: agent })]);
+      return { since: since === null ? null : Math.floor(since / 1000), completedOrders: asCustomer + asDriver };
+    },
+    currency: () => call<{ currency: string }>("get_network_terms", null, "dispatch").then((t) => t.currency),
     // The app socket's transport is typed narrowly; it's a WsClient.
     close: async () => void (await (connection.appWs.client as unknown as { close(): Promise<unknown> }).close()),
   };

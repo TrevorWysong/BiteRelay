@@ -12,6 +12,16 @@ How customers pay with a card, and how stores and drivers get money out, in an a
 - **Payouts:** a sweep of cash-outs paying Stripe transfers keyed by each cash-out.
 - **App:** the Wallet's **Add funds** and **Payout account** buttons reach it through the issuer's published `service_url`.
 
+**Built: card risk (2026-10-15).** The issuer limits what a stolen card can cost it:
+- top-up limits that grow with the account's age and orders;
+- 3-D Secure on a card's first payment;
+- a per-address limit on card forms;
+- accounts frozen on a chargeback;
+- cash-outs refunded to the paying cards before anything goes to a bank;
+- a hold on new accounts' first bank payouts.
+
+See the issuer README's *Card risk*.
+
 **Built: paying by card feels like paying by card (2026-10-14).**
 - **Pay at checkout.** A short balance turns the cart's button into "Pay $X and place order": Stripe's embedded form in a sheet (Apple Pay and Google Pay where available), the grant lands in seconds, and the order is placed. The cart is kept on the device, so nothing is lost.
 - **Saved card.** Paid once, the card is saved with the issuer's Stripe customer; the next payment is one tap. Optional auto top-up (Wallet) pays the balance back up when it runs low.

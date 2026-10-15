@@ -146,6 +146,16 @@ pub fn latest_action_of(agent: AgentPubKey) -> ExternResult<Option<ActionHash>> 
     Ok(relay_coordinator_support::agent_activity(agent, ChainQueryFilter::new())?.last().map(|(_, hash)| hash.clone()))
 }
 
+/// When `agent`'s account began: the first action of the oldest key in its
+/// line -- an account moved to a new phone keeps its age. What an issuer
+/// weighs, among other things, in how much it lets a card add at once.
+#[hdk_extern]
+pub fn account_since(agent: AgentPubKey) -> ExternResult<Option<Timestamp>> {
+    let first = lineage(agent.clone())?.pop().unwrap_or(agent);
+    let Some((_, hash)) = relay_coordinator_support::agent_activity(first, ChainQueryFilter::new())?.into_iter().next() else { return Ok(None) };
+    Ok(get(hash, GetOptions::default())?.map(|record| record.action().timestamp()))
+}
+
 /// What the caller's predecessors sealed to them as they handed over, opened.
 #[hdk_extern]
 pub fn open_parcels(_: ()) -> ExternResult<Vec<String>> {

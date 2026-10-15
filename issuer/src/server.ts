@@ -6,18 +6,20 @@
 //   POST /saved-card           signed SavedCard         -> {card}          (brand and last 4, or null)
 //   POST /saved-card/charge    signed SavedCard, {amount} -> {paid} | {needsConfirmation}
 //   POST /payout-account       signed PayoutAccount     -> {url}           (Stripe onboarding)
-//   POST /webhooks/stripe      Stripe's signed events   -> grants completed payments
+//   POST /webhooks/stripe      Stripe's signed events   -> grants completed payments, freezes disputed accounts
 //   GET  /health
 //
 // A signed request carries {agent, nonce, signature}: the agent signed the
 // service's one-time nonce for that purpose (see link.ts). Nothing here
 // moves money on anyone's word: a grant follows only a payment Stripe
 // confirms, and only the agent themselves can save a card to their account,
-// pay with it, or link where their payouts go.
+// pay with it, or link where their payouts go. How much card money an
+// account may add is the issuer's risk policy (risk.ts).
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { agentId, agentKey, type IssuerLedger } from "./ledger.ts";
 import { newNonce, verifyLink, type Purpose } from "./link.ts";
 import type { PaymentRail } from "./rail.ts";
+import { topUpRefusal, type RiskPolicy } from "./risk.ts";
 import type { Store } from "./store.ts";
 import { grantPayment } from "./topups.ts";
 
@@ -40,6 +42,12 @@ export interface Deps {
   appOrigin: string;
   /// Stripe's publishable key, for the app's embedded card form.
   publishableKey: string;
+  policy: RiskPolicy;
+  /// Card forms one address may open an hour.
+  topUpsPerIpPerHour: number;
+  /// Whether to read the caller's address from X-Forwarded-For (behind a proxy).
+  trustProxy: boolean;
+  format: (cents: number) => string;
   log?: (message: string) => void;
 }
 
@@ -93,8 +101,29 @@ function amountFrom(value: unknown): number {
   return value;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
 export function handler(deps: Deps) {
-  const { store, ledger, rail, appOrigin, publishableKey, log = () => {} } = deps;
+  const { store, ledger, rail, appOrigin, publishableKey, policy, format, log = () => {} } = deps;
+  /// When each address opened its recent card forms -- kept in memory: a
+  /// restart forgets them, which only ever loosens this, never the limits.
+  const formsByAddress = new Map<string, number[]>();
+
+  /// Refuses an address that's opened too many card forms this hour --
+  /// someone testing stolen cards opens many.
+  function throttle(req: IncomingMessage) {
+    const forwarded = deps.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
+    const address = forwarded || req.socket.remoteAddress || "unknown";
+    const recent = (formsByAddress.get(address) ?? []).filter((at) => at > Date.now() - HOUR_MS);
+    if (recent.length >= deps.topUpsPerIpPerHour) throw new HttpError(429, "Too many card payments from here. Try again later.");
+    formsByAddress.set(address, [...recent, Date.now()]);
+  }
+
+  /// Refuses `amount` if it's more than `agent` may add now.
+  async function checkRoom(agent: string, amount: number) {
+    const refusal = topUpRefusal(store, agent, amount, await ledger.standingOf(agentKey(agent)), policy, format);
+    if (refusal) throw new HttpError(429, refusal);
+  }
 
   /// The agent a signed request is from, for `purpose` -- or why not.
   function signedBy(input: Record<string, unknown>, purpose: Purpose): string {
@@ -130,7 +159,11 @@ export function handler(deps: Deps) {
       const input = await json(req);
       const agent = signedBy(input, "TopUp");
       const amount = amountFrom(input.amount);
-      return { clientSecret: await rail.embeddedTopUp(agent, await customerOf(agent), amount) };
+      throttle(req);
+      await checkRoom(agent, amount);
+      const clientSecret = await rail.embeddedTopUp(agent, await customerOf(agent), amount, { verify: !store.hasPaidBefore(agent) });
+      store.recordTopUpAttempt(agent, amount);
+      return { clientSecret };
     },
 
     "POST /saved-card": async (req) => {
@@ -145,7 +178,9 @@ export function handler(deps: Deps) {
       const amount = amountFrom(input.amount);
       const customer = store.customer(agent);
       if (!customer) throw new HttpError(409, "There's no saved card yet. Pay with the card form once.");
+      await checkRoom(agent, amount);
       if (!store.takeSavedCardCharge(agent, SAVED_CARD_CHARGES_PER_DAY, DAY_MS)) throw new HttpError(429, "That's as many saved-card payments as one day allows. Use the card form.");
+      store.recordTopUpAttempt(agent, amount);
       // The nonce is single-use, so it keys the charge: retrying this request
       // can't charge twice.
       const charge = await rail.chargeSavedCard(agent, customer, amount, `saved-card-${input.nonce as string}`);
@@ -166,16 +201,30 @@ export function handler(deps: Deps) {
     "POST /webhooks/stripe": async (req) => {
       const signature = req.headers["stripe-signature"];
       if (typeof signature !== "string") throw new HttpError(400, "Unsigned.");
-      let payment;
+      let event;
       try {
-        payment = await rail.completedPayment(await body(req), signature);
+        event = await rail.event(await body(req), signature);
       } catch {
         throw new HttpError(400, "That isn't a genuine event.");
       }
-      if (!payment) return { ignored: true };
-      const result = await grantPayment(store, ledger, payment);
-      log(`${result}: ${payment.payment}, ${payment.amount} for ${payment.agent}`);
-      return { result };
+      if (!event) return { ignored: true };
+      if (event.kind === "paid") {
+        const result = await grantPayment(store, ledger, event.payment);
+        log(`${result}: ${event.payment.payment}, ${event.payment.amount} for ${event.payment.agent}`);
+        return { result };
+      }
+      const agent = store.agentOfPayment(event.payment);
+      if (!agent) return { ignored: true };
+      if (event.kind === "disputed") {
+        // Card money that may not have been theirs: nothing more in or out
+        // until it's settled.
+        store.openDispute(event.payment, agent, event.amount);
+        log(`dispute on ${event.payment} (${event.amount}): froze ${agent}`);
+      } else {
+        store.closeDispute(event.payment, event.won);
+        log(`dispute on ${event.payment} ${event.won ? "won: unfroze" : "lost: stays frozen for review:"} ${agent}`);
+      }
+      return { result: event.kind };
     },
   };
 
