@@ -7,9 +7,9 @@
 // accept holds even with the customer offline. Runs with an 8-second
 // window (the DNA's `store_response_secs`).
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appWithProperties, decodeEntry, retryUntil, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, appWithProperties, decodeEntry, retryUntil, retryingCaller, ST_PETE, useTestCoordinators } from "./helpers.js";
 
 // Long enough that a slow CI runner's steps fit inside it.
 const WINDOW_SECS = 30;
@@ -27,7 +27,9 @@ await runScenario(async (scenario) => {
   // The customer can write what a modified client could.
   await useTestCoordinators(customer, ["dispatch"]);
   const sync = () => dhtSync(both, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  // The store's conductor accepts and upkeeps orders on its own: a call can
+  // meet its write, and is repeated, as the app does.
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const pickupState = async (p: typeof customer, ref: Uint8Array) => decodeEntry<OrderState>(await call(p, "dispatch")<HcRecord>("get_pickup_order", ref));
   const deliveryState = async (ref: Uint8Array) => decodeEntry<OrderState>(await call(customer, "dispatch")<HcRecord>("get_order", ref));
   // The scheduler and gossip both take a moment: poll for up to a minute,

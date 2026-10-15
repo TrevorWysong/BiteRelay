@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { decode } from "@msgpack/msgpack";
-import type { Conductor, PlayerApp, Scenario } from "@holochain-open-dev/tryorama";
+import type { CallableCell, Conductor, PlayerApp, Scenario } from "@holochain-open-dev/tryorama";
 import { dhtSync, enableAndGetAgentApp, getZomeCaller } from "@holochain-open-dev/tryorama";
 import { encodeHashToBase64 } from "@holochain/client";
 import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/client";
@@ -369,4 +369,26 @@ export async function currentBeacon(): Promise<{ round: number; signature: Uint8
     }
   }
   throw new Error("couldn't reach the time source");
+}
+
+/// Holochain's refusals of a commit that wrote nothing -- safe to repeat, as
+/// the app's client does (web/src/holochain/client.ts `RETRYABLE`): a record
+/// validation needs that hasn't arrived, or the agent's own conductor (its
+/// scheduled upkeep, a store's auto-accept) writing to the chain mid-call.
+const RETRYABLE = /could not be completed but may be retried|source chain head has moved/;
+
+/// A zome caller that, like the app's client, repeats a call Holochain
+/// refused before writing anything.
+export function retryingCaller(cell: CallableCell, zome: string) {
+  const caller = getZomeCaller(cell, zome);
+  return async <T>(fn_name: string, payload?: unknown): Promise<T> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await caller<T>(fn_name, payload);
+      } catch (err) {
+        if (attempt >= 3 || !RETRYABLE.test(String(err))) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+  };
 }

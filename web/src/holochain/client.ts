@@ -147,11 +147,14 @@ export function retryConnection(): Promise<void> {
 const NOT_SENT = /WebsocketClosedError|InvalidTokenError|ConnectionError|Websocket is not open|could not connect/;
 const CUT_OFF = /ClientClosedWithPendingRequests|client closed with pending requests/;
 
-/// Holochain's message when a commit's validation needed a record that
-/// hasn't reached this node yet (`DepMissingFromDht`) -- nothing was
-/// committed, so the call is safe to repeat. Typical right after someone
-/// else's write, e.g. ordering from a menu edited a moment ago.
-const RETRYABLE = /could not be completed but may be retried/;
+/// Holochain's messages for a commit refused before anything was written,
+/// so the call is safe to repeat:
+///   - its validation needed a record that hasn't reached this node yet
+///     (`DepMissingFromDht`) -- typical right after someone else's write,
+///     e.g. ordering from a menu edited a moment ago;
+///   - this node's own background work (a store's auto-accept, an order's
+///     upkeep) wrote to the same chain while the call ran.
+const RETRYABLE = /could not be completed but may be retried|source chain head has moved/;
 const RETRY_DELAYS_MS = [500, 1500, 3000];
 
 export async function callZome<T>(zomeName: string, fnName: string, payload?: unknown): Promise<T> {
