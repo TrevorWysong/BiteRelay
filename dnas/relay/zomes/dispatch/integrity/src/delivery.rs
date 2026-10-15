@@ -81,7 +81,8 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
         bag_claim_ref: order.bag_claim_ref.as_ref(),
         loyalty_proof: &order.loyalty_proof,
         placed_at: action_timestamp,
-        min_subtotal: store.min_order_cents,
+        store: &store,
+        tax_cents: order.tax_cents,
     };
     if let Some(reason) = check_pricing(pricing)? {
         return Ok(ValidateCallbackResult::Invalid(reason));

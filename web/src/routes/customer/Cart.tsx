@@ -23,10 +23,11 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
 import { POLL } from "../../lib/poll";
+import { orderTax, totalWithTax } from "../../lib/tax";
 import { CardPaySheet } from "../../components/CardPaySheet";
 import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS } from "../../lib/issuerService";
 import { getBalance, listIssuers } from "../../holochain/zomes/ledger";
-import type { ActionHash, DropoffPreference, GeoPoint, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
+import type { ActionHash, DropoffPreference, GeoPoint, MerchantCatalog, PromoCode, RecurrenceRule, TaxRate } from "../../holochain/types";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
 import { MAX_NOTE_CHARS, MAX_PROMO_CODE_CHARS } from "../../holochain/types";
@@ -125,6 +126,9 @@ interface CartStoreInfo {
   /// How long past the ready time the store may keep a driver waiting, if
   /// it sets its own -- else the network's.
   storeWaitMinutes: number | null;
+  /// The store's sales tax or VAT -- its own, on its own terms.
+  taxRates: TaxRate[];
+  pricesIncludeTax: boolean;
   promoCodes: PromoRow[];
   menuItems: ItemRow[];
   completedOrderCount: number;
@@ -161,6 +165,8 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
     minOrderCents: catalog?.min_order_cents ?? null,
     busyExtraMinutes: catalog?.busy_extra_minutes ?? 0,
     storeWaitMinutes: catalog?.store_wait_minutes ?? null,
+    taxRates: catalog?.tax_rates ?? [],
+    pricesIncludeTax: catalog?.prices_include_tax ?? false,
     promoCodes,
     menuItems,
     completedOrderCount,
@@ -306,17 +312,30 @@ export function Cart() {
   const promoRewardNeedsItem = appliedPromo ? "FreeItem" in appliedPromo.promo.reward || "PercentOffItem" in appliedPromo.promo.reward : false;
   const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
+  // The store's tax on the food after any promo, as validation computes it
+  // (`lib/tax.ts`): added on top, or already in the prices.
+  const taxCategoryOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item.tax_category ?? "";
+  const taxRates = storeInfo?.taxRates ?? [];
+  const taxIncluded = storeInfo?.pricesIncludeTax ?? false;
+  const taxCents = orderTax(
+    cart.lines.map((line) => ({ category: taxCategoryOf(line.itemRef), total: line.priceCents * line.quantity })),
+    discountedSubtotalCents,
+    taxRates,
+    taxIncluded,
+  );
+  /// What the store is paid: the food, and its tax.
+  const orderTotalCents = totalWithTax(discountedSubtotalCents, taxCents, taxIncluded);
   // The store's limit on what may be left at a door; above it, the order is
   // handed over whatever was chosen.
   // The store's minimum is on the menu prices, before any promo.
   const shortOfMinimum = storeInfo?.minOrderCents != null ? Math.max(0, storeInfo.minOrderCents - cart.total()) : 0;
-  const doorAllowed = storeInfo?.leaveAtDoorMaxCents == null || discountedSubtotalCents <= storeInfo.leaveAtDoorMaxCents;
+  const doorAllowed = storeInfo?.leaveAtDoorMaxCents == null || orderTotalCents <= storeInfo.leaveAtDoorMaxCents;
   const dropoffPreference: DropoffPreference = chosenPreference === "LeaveAtDoor" && !doorAllowed ? "HandToMe" : chosenPreference;
-  const estimatedTotalCents = discountedSubtotalCents + tipCents + customerFeeShareCents;
+  const estimatedTotalCents = orderTotalCents + tipCents + customerFeeShareCents;
   // What placing it sets aside from the balance, which may run down to the
   // network's credit limit; a shortfall is paid by card first -- at least
   // the least a card payment may be.
-  const orderHoldCents = fulfillment === "Pickup" ? discountedSubtotalCents : estimatedTotalCents;
+  const orderHoldCents = fulfillment === "Pickup" ? orderTotalCents : estimatedTotalCents;
   const shortfallCents = balance === undefined ? 0 : Math.max(0, orderHoldCents - (balance + creditLimitCents));
   const cardChargeCents = Math.max(shortfallCents, MIN_CARD_PAYMENT_CENTS);
   const payByCard = shortfallCents > 0 && !!payIssuer && cardChargeCents <= MAX_CARD_PAYMENT_CENTS;
@@ -354,7 +373,7 @@ export function Cart() {
           merchant: cart.merchant,
           catalog_ref: cart.catalogRef,
           items: cartItems(cart.lines),
-          order_total: discountedSubtotalCents,
+          order_total: orderTotalCents,
           kitchen_notes: kitchenNotes.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
         });
@@ -367,7 +386,7 @@ export function Cart() {
         merchant: cart.merchant,
         catalog_ref: cart.catalogRef,
         items: cartItems(cart.lines),
-        order_total: discountedSubtotalCents,
+        order_total: orderTotalCents,
         dropoff,
         max_delivery_fee: maxFeeCents,
         kitchen_notes: kitchenNotes.trim(),
@@ -759,6 +778,12 @@ export function Cart() {
               <span>-{formatCents(promoDiscountCents)}</span>
             </div>
           )}
+          {taxRates.length > 0 && !taxIncluded && (
+            <div className="flex justify-between text-ink-400">
+              <span>{taxRates[0].label || "Tax"}</span>
+              <span>{formatCents(taxCents)}</span>
+            </div>
+          )}
           {fulfillment === "Delivery" && (
             <div className="flex justify-between text-ink-400">
               <span>Delivery fee{subsidyPercent > 0 && <span className="text-presence-600"> (merchant covers {subsidyPercent}%)</span>}</span>
@@ -774,8 +799,13 @@ export function Cart() {
           <div className="mt-1 flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-2">
             <span className="font-bold text-ink-900 dark:text-ink-50">Estimated total</span>
             {fulfillment === "Delivery" && <span className="text-ink-400 text-xs mr-1">up to</span>}
-            <StatNumber className="text-lg">{formatCents(fulfillment === "Pickup" ? discountedSubtotalCents : estimatedTotalCents)}</StatNumber>
+            <StatNumber className="text-lg">{formatCents(fulfillment === "Pickup" ? orderTotalCents : estimatedTotalCents)}</StatNumber>
           </div>
+          {taxRates.length > 0 && taxIncluded && taxCents > 0 && (
+            <p className="text-right text-xs text-ink-400">
+              Includes {formatCents(taxCents)} {taxRates[0].label || "tax"}
+            </p>
+          )}
         </Card>
       </motion.div>
 
@@ -829,7 +859,7 @@ export function Cart() {
           ) : (
             <>
               {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}
-              {fulfillment === "Pickup" ? formatCents(discountedSubtotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
+              {fulfillment === "Pickup" ? formatCents(orderTotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
             </>
           )}
         </Button>

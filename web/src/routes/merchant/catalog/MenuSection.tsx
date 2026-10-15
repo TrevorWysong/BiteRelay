@@ -6,9 +6,10 @@ import { bytesToHex, hexToBytes } from "../../../holochain/decode";
 import { groupByCategory, type ItemRow } from "../../../lib/menu";
 import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
-import { Button, Card, Input, StatNumber, Textarea } from "../../../components/ui";
+import { Button, Card, Field, Input, Select, StatNumber, Textarea } from "../../../components/ui";
+import { percentLabel } from "../../../lib/tax";
 import { PhotoInput } from "../../../components/PhotoInput";
-import { MAX_DESCRIPTION_CHARS, MAX_ITEM_GROUPS, MAX_LABEL_CHARS, MAX_NAME_CHARS } from "../../../holochain/types";
+import { MAX_DESCRIPTION_CHARS, MAX_ITEM_GROUPS, MAX_LABEL_CHARS, MAX_NAME_CHARS, type TaxRate } from "../../../holochain/types";
 import { Check } from "lucide-react";
 import type { GroupRow } from "./ChoicesSection";
 
@@ -17,7 +18,7 @@ type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
 
 /// The store's menu, grouped by category, with an add/edit form. Changes go
 /// through `onChanged`, which reloads the menu (the promo form reads it too).
-export function MenuSection({ catalogRef, items, groups, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; groups: GroupRow[]; onChanged: () => Promise<void> }) {
+export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; groups: GroupRow[]; taxRates: TaxRate[]; onChanged: () => Promise<void> }) {
   const [editing, setEditing] = useState<Editing>(null);
   const grouped = groupByCategory(items);
 
@@ -41,6 +42,7 @@ export function MenuSection({ catalogRef, items, groups, onChanged }: { catalogR
           // form seeded from that item instead of copying it into state.
           <motion.div key={editing.kind === "edit" ? bytesToHex(editing.row.hash) : "new"} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
             <ItemForm
+              taxRates={taxRates}
               catalogRef={catalogRef}
               row={editing.kind === "edit" ? editing.row : null}
               groups={groups}
@@ -96,7 +98,7 @@ export function MenuSection({ catalogRef, items, groups, onChanged }: { catalogR
 }
 
 /// Add (`row` null) or edit an item. The draft is seeded once, on mount.
-function ItemForm({ catalogRef, row, groups, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; groups: GroupRow[]; onSaved: () => Promise<void> }) {
+function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: Uint8Array; row: ItemRow | null; groups: GroupRow[]; taxRates: TaxRate[]; onSaved: () => Promise<void> }) {
   const [form, setForm] = useState(() => ({
     name: row?.item.name ?? "",
     price: row ? fromMinorUnits(row.item.price_cents) : 0,
@@ -106,6 +108,7 @@ function ItemForm({ catalogRef, row, groups, onSaved }: { catalogRef: Uint8Array
     dietary_tags: (row?.item.dietary_tags ?? []).join(", "),
     /// The item's choice groups, by hex, in the order customers see them.
     groups: (row?.item.modifier_groups ?? []).map(bytesToHex),
+    tax_category: row?.item.tax_category ?? "",
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
@@ -122,6 +125,7 @@ function ItemForm({ catalogRef, row, groups, onSaved }: { catalogRef: Uint8Array
         category: form.category,
         dietary_tags: form.dietary_tags.split(",").map((t) => t.trim()).filter(Boolean),
         modifier_groups: form.groups.map(hexToBytes),
+        tax_category: form.tax_category,
       };
       if (row) await updateMenuItem(row.hash, { ...row.item, ...fields });
       else await addMenuItem({ catalog_ref: catalogRef, available: true, ...fields });
@@ -143,6 +147,18 @@ function ItemForm({ catalogRef, row, groups, onSaved }: { catalogRef: Uint8Array
       <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
       <Input maxLength={MAX_LABEL_CHARS} value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
       <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder="Dietary tags, comma separated (Vegetarian, Spicy)" />
+      {taxRates.length > 1 && (
+        <Field label="Tax">
+          <Select value={form.tax_category} onChange={(e) => set({ tax_category: e.target.value })}>
+            {taxRates.map((rate, i) => (
+              <option key={rate.category} value={i === 0 ? "" : rate.category}>
+                {rate.category} · {percentLabel(rate.basis_points)}
+                {i === 0 ? " (default)" : ""}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
       {groups.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-ink-500">Choices, in the order customers see them</p>

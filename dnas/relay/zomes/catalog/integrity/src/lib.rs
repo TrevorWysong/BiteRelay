@@ -17,7 +17,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, StoreSuccession};
+pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, StoreSuccession, TaxRate};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -217,7 +217,30 @@ fn validate_catalog(catalog: &MerchantCatalog, author: &AgentPubKey) -> ExternRe
     if let Some(problem) = dietary_tags_problem(&catalog.dietary_tags) {
         return Ok(ValidateCallbackResult::Invalid(problem));
     }
+    if let Some(problem) = tax_problem(catalog) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
     Ok(ValidateCallbackResult::Valid)
+}
+
+/// Why a store's tax settings are unsound, if they are: a handful of rates,
+/// each a named category at a plausible rate, each category once.
+fn tax_problem(catalog: &MerchantCatalog) -> Option<String> {
+    let rates = &catalog.tax_rates;
+    if rates.len() > catalog_types::MAX_TAX_RATES {
+        return Some(format!("a store has at most {} tax rates", catalog_types::MAX_TAX_RATES));
+    }
+    if let Some(problem) = rates.iter().find_map(|r| {
+        first_problem([text_problem("a tax category", &r.category, MAX_LABEL_CHARS), text_problem("a tax label", &r.label, MAX_LABEL_CHARS)])
+            .map(|_| "a tax rate's category and label are short".to_string())
+            .or_else(|| (r.basis_points > catalog_types::MAX_TAX_BASIS_POINTS).then(|| format!("a tax rate is at most {}%", catalog_types::MAX_TAX_BASIS_POINTS / 100)))
+    }) {
+        return Some(problem);
+    }
+    if rates.iter().enumerate().any(|(i, r)| rates[..i].iter().any(|earlier| earlier.category == r.category)) {
+        return Some("each tax category has one rate".into());
+    }
+    text_problem("tax_registration", &catalog.tax_registration, MAX_LABEL_CHARS)
 }
 
 fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
@@ -226,6 +249,7 @@ fn validate_menu_item(item: &MenuItem, author: &AgentPubKey) -> ExternResult<Val
         text_problem("name", &item.name, MAX_NAME_CHARS),
         text_problem("description", &item.description, MAX_DESCRIPTION_CHARS),
         text_problem("category", &item.category, MAX_LABEL_CHARS),
+        text_problem("tax_category", &item.tax_category, MAX_LABEL_CHARS),
     ]) {
         return Ok(invalid);
     }

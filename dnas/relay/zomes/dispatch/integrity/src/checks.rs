@@ -9,7 +9,7 @@
 //! coordinator pre-checks (`request_delivery`/`request_pickup_order`).
 
 use super::*;
-use catalog_types::{order_total, BagClaimStatus, GoodieBag, MenuItem, PricedLine};
+use catalog_types::{order_tax, order_total, total_with_tax, BagClaimStatus, GoodieBag, MenuItem, PricedLine, TaxableLine};
 use dispatch_types::LinePricer;
 use relay_integrity_support::limits::{MAX_LINE_QUANTITY, MAX_ORDER_CHOICES, MAX_ORDER_LINES};
 use relay_integrity_support::{decode, original_creation};
@@ -25,8 +25,10 @@ pub(crate) struct OrderPricing<'a> {
     pub bag_claim_ref: Option<&'a ActionHash>,
     pub loyalty_proof: &'a [ActionHash],
     pub placed_at: Timestamp,
-    /// The store's minimum order, as it stood when the order was placed.
-    pub min_subtotal: Option<u64>,
+    /// The store as it stood when the order was placed (the version it
+    /// cites): its minimum order and its tax rates.
+    pub store: &'a MerchantCatalog,
+    pub tax_cents: u64,
 }
 
 /// The store version an order cites (`catalog_version`) -- the terms it
@@ -40,9 +42,11 @@ pub(crate) fn store_version(catalog_ref: &ActionHash, catalog_version: &ActionHa
 }
 
 /// `order_total` must be exactly what the order's lines cost at the item
-/// versions they name, less any promo discount -- computed with the same
-/// pricing the coordinator uses (`catalog_types::pricing`), so no client
-/// can pay a store a different amount than its menu says.
+/// versions they name, less any promo discount, plus the store's tax when
+/// it adds it -- and `tax_cents` exactly that tax, at the rates of the
+/// store version the order cites -- computed with the same pricing the
+/// coordinator uses (`catalog_types::pricing`), so no client can pay a
+/// store a different amount than its menu says, nor misstate its tax.
 ///
 /// What this can't know is whether a named version is the item's *latest*
 /// one: validation only sees records as they were. The honest coordinator
@@ -70,6 +74,7 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     }
 
     let mut priced = Vec::with_capacity(order.lines.len());
+    let mut categories = Vec::with_capacity(order.lines.len());
     let mut pricer = LinePricer::default();
     for line in order.lines {
         if original_creation(line.priced_version.clone())? != line.item_ref {
@@ -86,8 +91,9 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
             Err(reason) => return Ok(Some(reason)),
         };
         priced.push(PricedLine { item_ref: line.item_ref.clone(), base_price: item.price_cents, unit_price, quantity: line.quantity });
+        categories.push(item.tax_category);
     }
-    if let Some(min) = order.min_subtotal {
+    if let Some(min) = order.store.min_order_cents {
         let subtotal: u64 = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
         if subtotal < min {
             return Ok(Some("the order is below the store's minimum".into()));
@@ -111,13 +117,23 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
         Ok(count) => count,
         Err(reason) => return Ok(Some(reason)),
     };
-    let Some(expected) = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), completed) else {
+    let Some(food) = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), completed) else {
         return Ok(Some("the promo code's requirement isn't met by this order".into()));
     };
-    if order.order_total != expected {
-        return Ok(Some(format!("order_total must be {expected}: the lines at their priced versions, less any promo discount")));
+    let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
+    Ok(check_taxed_total(&order, food, &taxable, "the lines at their priced versions, less any promo discount"))
+}
+
+/// Whether the order's tax and total are what its food comes to under the
+/// store's tax -- or what's wrong.
+fn check_taxed_total(order: &OrderPricing<'_>, food: u64, lines: &[TaxableLine], what: &str) -> Option<String> {
+    let store = order.store;
+    let tax = order_tax(lines, food, &store.tax_rates, store.prices_include_tax);
+    if order.tax_cents != tax {
+        return Some(format!("tax_cents must be {tax}: the store's tax on this order"));
     }
-    Ok(None)
+    let expected = total_with_tax(food, tax, store.prices_include_tax);
+    (order.order_total != expected).then(|| format!("order_total must be {expected}: {what}, with the store's tax"))
 }
 
 /// A goodie-bag order is the bag itself, once, at the bag's price -- its
@@ -136,10 +152,11 @@ fn check_bag_order_price(order: &OrderPricing<'_>, claim_ref: &ActionHash) -> Ex
     let Some(bag) = decode::<GoodieBag>(&must_get_valid_record(claim.bag_ref)?) else {
         return Ok(Some("the claimed bag is not a GoodieBag".into()));
     };
-    if &bag.catalog_ref != order.catalog_ref || order.order_total != bag.price_cents {
-        return Ok(Some("a goodie-bag order costs the bag's price, at the bag's own store".into()));
+    if &bag.catalog_ref != order.catalog_ref {
+        return Ok(Some("a goodie-bag order is from the bag's own store".into()));
     }
-    Ok(None)
+    // A bag is food at the store's default rate.
+    Ok(check_taxed_total(order, bag.price_cents, &[TaxableLine { category: "", total: bag.price_cents }], "the bag's price"))
 }
 
 /// How many distinct earlier orders at this store `proof` shows the

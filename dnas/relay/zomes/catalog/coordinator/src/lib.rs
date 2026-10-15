@@ -141,6 +141,9 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
         min_order_cents: None,
         busy_extra_minutes: 0,
         store_wait_minutes: None,
+        tax_rates: Vec::new(),
+        prices_include_tax: false,
+        tax_registration: String::new(),
     };
     let action_hash = create_entry(&EntryTypes::MerchantCatalog(catalog))?;
     create_link(owner, action_hash.clone(), LinkTypes::OwnerToCatalog, ())?;
@@ -214,6 +217,28 @@ pub struct SetMinimumOrderInput {
 pub fn set_minimum_order(input: SetMinimumOrderInput) -> ExternResult<Record> {
     let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
     catalog.min_order_cents = input.min_cents;
+    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+    get(updated, GetOptions::local())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetTaxSettingsInput {
+    pub original_action: ActionHash,
+    pub tax_rates: Vec<TaxRate>,
+    pub prices_include_tax: bool,
+    pub tax_registration: String,
+}
+
+/// The sales tax or VAT the store charges -- see `MerchantCatalog::tax_rates`.
+/// Orders placed from here on are taxed at these rates; earlier ones keep
+/// the rates they were placed under.
+#[hdk_extern]
+pub fn set_tax_settings(input: SetTaxSettingsInput) -> ExternResult<Record> {
+    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    catalog.tax_rates = input.tax_rates;
+    catalog.prices_include_tax = input.prices_include_tax;
+    catalog.tax_registration = input.tax_registration.trim().to_string();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))

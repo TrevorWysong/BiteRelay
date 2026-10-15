@@ -11,6 +11,7 @@ import { Skeleton } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";
 import { NewStoreForm } from "./NewStore";
+import { TaxCard, TaxReportCard } from "./catalog/TaxCard";
 import { AutoAcceptCard, BusyCard, DeliverySubsidyCard, LeaveAtDoorCard, ListingCard, MinimumOrderCard, StoreDetailsCard, StoreWaitCard } from "./catalog/StoreDetailsCard";
 import { HoursCard } from "./catalog/HoursCard";
 import { PromoCodesCard } from "./catalog/PromoCodesCard";
@@ -116,6 +117,8 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
           <MinimumOrderCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
           <StoreWaitCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
           <ListingCard catalogRef={catalogRef} />
+          <TaxCard key={JSON.stringify(catalog.tax_rates ?? [])} catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
+          {(catalog.tax_rates ?? []).length > 0 && <TaxReportCard catalogRef={catalogRef} />}
           <LeaveAtDoorCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
         </motion.div>
         <motion.div variants={fadeSlideUp}>
@@ -125,7 +128,7 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
           <PromoCodesCard storeHex={storeHex} catalogRef={catalogRef} items={items} />
         </motion.div>
         <ChoicesSection catalogRef={catalogRef} groups={groups} onChanged={reload} />
-        <MenuSection catalogRef={catalogRef} items={items} groups={groups} onChanged={reload} />
+        <MenuSection catalogRef={catalogRef} items={items} groups={groups} taxRates={catalog.tax_rates ?? []} onChanged={reload} />
         <GoodieBagsSection storeHex={storeHex} catalogRef={catalogRef} />
         <motion.div variants={fadeSlideUp}>
           <StoreReviews storeHex={storeHex} catalogRef={catalogRef} />

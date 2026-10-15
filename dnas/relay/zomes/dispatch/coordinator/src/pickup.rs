@@ -51,9 +51,10 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         ensure_claim_confirmed(claim_ref)?;
     }
     order_queues::ensure_order_rate()?;
-    let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+
     // The store as it is now: the terms this order is placed under.
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
+    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
     // Open now -- a goodie bag runs on its own pickup window instead.
     if input.bag_claim_ref.is_none() {
@@ -71,6 +72,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         catalog_version,
         lines: priced.lines,
         order_total: priced.order_total,
+        tax_cents: priced.tax_cents,
         status: PickupStatus::Placed,
         requested_at,
         kitchen_note,

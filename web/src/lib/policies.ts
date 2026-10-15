@@ -84,6 +84,7 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       summary: "Money comes in and goes out through this network's issuers. The network itself never holds anyone's money.",
       points: [
         "You add funds by paying one of the network's issuers, by card, which adds exactly that amount to your balance: adding funds is free. Your balance works like a gift card for the whole network.",
+        "Each store sets its own sales tax or VAT, as the seller. Checkout and your receipt show it: added to the price, or already included in it.",
         "How much you can add by card grows with your account: a new account can add a little a day, and more as it orders. A card's first payment may ask your bank to confirm it's you.",
         "If your balance is short at checkout, you pay the difference by card right there, and your order is placed as soon as it's paid. The card is saved with the issuer, never with Relay, so next time it's one tap; you can also have your balance topped up automatically when it runs low.",
         `To cash out, you ask an issuer to pay part of your balance to you outside the network. You can cash out ${formatCents(t.min_redemption_cents)} or more, up to what's in your balance; money held for orders and credit never can be.`,

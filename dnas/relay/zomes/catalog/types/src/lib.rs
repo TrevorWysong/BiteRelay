@@ -121,7 +121,36 @@ pub struct MerchantCatalog {
     /// `order_total` already has (never independently re-derived either).
     #[serde(default)]
     pub dietary_tags: Vec<String>,
+    /// The sales tax or VAT the store charges, by category of item -- its
+    /// first rate is the default. Empty: no tax. The store's own, for its
+    /// own address: it's the seller, and files what it collects
+    /// (SALES_TAX.md). Part of the terms an order is placed under.
+    #[serde(default)]
+    pub tax_rates: Vec<TaxRate>,
+    /// Whether menu prices already include the tax (VAT, as in most of the
+    /// world), rather than having it added at checkout (US sales tax).
+    #[serde(default)]
+    pub prices_include_tax: bool,
+    /// The store's tax registration (a sales tax permit, a VAT number),
+    /// shown on receipts. Empty for none.
+    #[serde(default)]
+    pub tax_registration: String,
 }
+
+/// One tax rate a store charges.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct TaxRate {
+    /// What it applies to, as items name it: "prepared", "grocery".
+    pub category: String,
+    /// What receipts call it: "Sales tax", "VAT 20%".
+    pub label: String,
+    /// In basis points (1/100 of a percent).
+    pub basis_points: u16,
+}
+
+/// The most tax rates a store may have, and the highest rate.
+pub const MAX_TAX_RATES: usize = 8;
+pub const MAX_TAX_BASIS_POINTS: u16 = 5_000;
 
 pub fn utc() -> String {
     "UTC".into()
@@ -151,6 +180,10 @@ pub struct MenuItem {
     /// side") once for every item that offers it.
     #[serde(default)]
     pub modifier_groups: Vec<ActionHash>,
+    /// Which of its store's tax rates applies (`TaxRate::category`) --
+    /// empty for the store's first.
+    #[serde(default)]
+    pub tax_category: String,
 }
 
 /// What a cart must satisfy for a `PromoCode` to apply -- the "purchase

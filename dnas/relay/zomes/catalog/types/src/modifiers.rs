@@ -312,6 +312,7 @@ mod tests {
             category: String::new(),
             dietary_tags: Vec::new(),
             modifier_groups: groups.iter().map(|&g| hash(g)).collect(),
+            tax_category: String::new(),
         }
     }
 

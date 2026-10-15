@@ -235,7 +235,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         ensure_claim_confirmed(claim_ref)?;
     }
     order_queues::ensure_order_rate()?;
-    let priced = price_order(&input.catalog_ref, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+
     let merchant = input.merchant.clone();
 
     // The store as it is now: its delivery radius (a pre-check -- see
@@ -243,6 +243,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // and its share of the delivery fee, which this order records as the
     // split it was placed under.
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
+    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
     let distance = relay_types::distance_km(catalog.location, input.dropoff);
     if distance > catalog.max_delivery_radius_km {
@@ -274,6 +275,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         catalog_version,
         lines: priced.lines,
         order_total: priced.order_total,
+        tax_cents: priced.tax_cents,
         dropoff_geohash: dropoff_geohash.clone(),
         sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes, recipient: customer_name.clone() })?,
         kitchen_note: seal_note(&merchant, &input.kitchen_notes)?,

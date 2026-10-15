@@ -4,7 +4,7 @@
 //! rules for the cart's live preview; both are tested against the same
 //! cases.
 
-use super::{PromoRequirement, PromoReward};
+use super::{PromoRequirement, PromoReward, TaxRate};
 use hdi::prelude::*;
 
 /// One line of an order, priced. The same item may be on several lines,
@@ -96,9 +96,101 @@ pub fn order_total(lines: &[PricedLine], promo: Option<(&PromoRequirement, &Prom
     }
 }
 
+/// One line of an order as tax sees it: its tax category (an item's, or
+/// empty for the store's first rate) and what the line costs before any
+/// promo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaxableLine<'a> {
+    pub category: &'a str,
+    pub total: u64,
+}
+
+/// The tax in an order: each category's share of `food_total` (what the
+/// food comes to after any promo, which is shared across the lines by what
+/// each costs) at the store's rate for it -- an unknown or empty category
+/// at the store's first rate -- rounded half up per category. With
+/// `included`, prices already contain the tax (VAT), and this is the part
+/// of them that's tax; otherwise it's added on top. No rates, no tax.
+pub fn order_tax(lines: &[TaxableLine], food_total: u64, rates: &[TaxRate], included: bool) -> u64 {
+    let subtotal: u128 = lines.iter().map(|l| u128::from(l.total)).sum();
+    let Some(default) = rates.first() else { return 0 };
+    if subtotal == 0 {
+        return 0;
+    }
+    let mut categories: Vec<&str> = lines.iter().map(|l| l.category).collect();
+    categories.sort_unstable();
+    categories.dedup();
+    let mut tax: u128 = 0;
+    for category in categories {
+        let rate = rates.iter().find(|r| r.category == category).unwrap_or(default);
+        let bp = u128::from(rate.basis_points);
+        let in_category: u128 = lines.iter().filter(|l| l.category == category).map(|l| u128::from(l.total)).sum();
+        let taxable = in_category * u128::from(food_total) / subtotal;
+        tax += if included {
+            let denominator = 10_000 + bp;
+            taxable - (taxable * 10_000 + denominator / 2) / denominator
+        } else {
+            (taxable * bp + 5_000) / 10_000
+        };
+    }
+    tax as u64
+}
+
+/// What the customer pays the store: the food after any promo, and the tax
+/// on top unless prices include it.
+pub fn total_with_tax(food_total: u64, tax: u64, included: bool) -> u64 {
+    if included {
+        food_total
+    } else {
+        food_total + tax
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rate(category: &str, basis_points: u16) -> TaxRate {
+        TaxRate { category: category.into(), label: String::new(), basis_points }
+    }
+    fn taxed<'a>(category: &'a str, total: u64) -> TaxableLine<'a> {
+        TaxableLine { category, total }
+    }
+
+    // The same cases run in web/test/tax.test.ts -- keep them in step.
+    #[test]
+    fn tax_on_top_rounds_half_up_per_category() {
+        let rates = [rate("food", 825)];
+        assert_eq!(order_tax(&[taxed("food", 1000)], 1000, &rates, false), 83, "8.25% of $10.00 is 82.5c: 83");
+        assert_eq!(order_tax(&[taxed("food", 1000)], 1000, &[], false), 0, "no rates, no tax");
+        assert_eq!(total_with_tax(1000, 83, false), 1083);
+    }
+
+    #[test]
+    fn each_category_at_its_rate_and_unknown_ones_at_the_first() {
+        let rates = [rate("prepared", 1000), rate("grocery", 0), rate("alcohol", 2000)];
+        let lines = [taxed("prepared", 1000), taxed("grocery", 500), taxed("alcohol", 800), taxed("", 200)];
+        // 10% of $10, nothing on groceries, 20% of $8, the first rate on $2.
+        assert_eq!(order_tax(&lines, 2500, &rates, false), 280);
+    }
+
+    #[test]
+    fn a_promo_lowers_the_tax_shared_across_lines() {
+        let rates = [rate("prepared", 1000), rate("grocery", 0)];
+        // $20 of food, $10 off: each line's taxable share halves.
+        let lines = [taxed("prepared", 1000), taxed("grocery", 1000)];
+        assert_eq!(order_tax(&lines, 1000, &rates, false), 50);
+    }
+
+    #[test]
+    fn included_tax_is_the_part_of_the_price_that_is_tax() {
+        let rates = [rate("standard", 2000)];
+        // £12.00 including 20% VAT: £10.00 net, £2.00 VAT.
+        assert_eq!(order_tax(&[taxed("standard", 1200)], 1200, &rates, true), 200);
+        assert_eq!(total_with_tax(1200, 200, true), 1200, "the customer pays the price shown");
+        // €10.00 at 10%: 9.09 net, 91c tax.
+        assert_eq!(order_tax(&[taxed("reduced", 1000)], 1000, &[rate("reduced", 1000)], true), 91);
+    }
 
     fn item(n: u8) -> ActionHash {
         ActionHash::from_raw_36(vec![n; 36])

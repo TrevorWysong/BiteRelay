@@ -56,9 +56,16 @@ export function OrderReceipt({ orderRef }: { orderRef: Uint8Array }) {
       <div className="mt-3 flex flex-col gap-1 border-t border-ink-100 dark:border-ink-800 pt-2 text-ink-600 dark:text-ink-300">
         {row("Subtotal", receipt.subtotal_cents)}
         {receipt.discount_cents > 0 && row("Promo", -receipt.discount_cents)}
+        {receipt.tax_cents > 0 && !receipt.tax_included && row(receipt.tax_label || "Tax", receipt.tax_cents)}
         {receipt.delivery && row("Delivery fee", receipt.delivery_fee_cents)}
         {receipt.tip_cents > 0 && row("Driver tip", receipt.tip_cents)}
         {row("Total", receipt.total_cents, true)}
+        {receipt.tax_cents > 0 && receipt.tax_included && (
+          <p className="text-right text-xs text-ink-400">
+            Includes {formatCents(receipt.tax_cents)} {receipt.tax_label || "tax"}
+          </p>
+        )}
+        {receipt.tax_registration && <p className="text-xs text-ink-400">Tax registration {receipt.tax_registration}</p>}
       </div>
 
       {receipt.payments.length > 0 && (

@@ -401,7 +401,18 @@ export interface DeliveryOrder {
    * -- validation recomputes `order_total` from these.
    */
   lines: OrderLine[];
+  /**
+   * What the customer pays the store: the lines less any promo, plus the
+   * tax when the store adds it at checkout -- everything the food hold
+   * sets aside, refunds share, and the store collects.
+   */
   order_total: number;
+  /**
+   * The sales tax or VAT in `order_total`, at the rates of the store
+   * version the order cites -- validation recomputes it. The store
+   * remits it.
+   */
+  tax_cents: number;
   /**
    * The drop-off's area (a geohash cell of `DROPOFF_GEOHASH_PRECISION`,
    * about 1.2 x 0.6 km) -- all that's public about where the order goes:
@@ -1437,6 +1448,11 @@ export interface MenuItem {
    * side") once for every item that offers it.
    */
   modifier_groups: ActionHash[];
+  /**
+   * Which of its store's tax rates applies (`TaxRate::category`) --
+   * empty for the store's first.
+   */
+  tax_category: string;
 }
 
 export interface MerchantCatalog {
@@ -1544,6 +1560,23 @@ export interface MerchantCatalog {
    * `order_total` already has (never independently re-derived either).
    */
   dietary_tags: string[];
+  /**
+   * The sales tax or VAT the store charges, by category of item -- its
+   * first rate is the default. Empty: no tax. The store's own, for its
+   * own address: it's the seller, and files what it collects
+   * (SALES_TAX.md). Part of the terms an order is placed under.
+   */
+  tax_rates: TaxRate[];
+  /**
+   * Whether menu prices already include the tax (VAT, as in most of the
+   * world), rather than having it added at checkout (US sales tax).
+   */
+  prices_include_tax: boolean;
+  /**
+   * The store's tax registration (a sales tax permit, a VAT number),
+   * shown on receipts. Empty for none.
+   */
+  tax_registration: string;
 }
 
 /**
@@ -1968,7 +2001,18 @@ export interface PickupOrder {
    * -- validation recomputes `order_total` from these.
    */
   lines: OrderLine[];
+  /**
+   * What the customer pays the store: the lines less any promo, plus the
+   * tax when the store adds it at checkout -- everything the food hold
+   * sets aside, refunds share, and the store collects.
+   */
   order_total: number;
+  /**
+   * The sales tax or VAT in `order_total`, at the rates of the store
+   * version the order cites -- validation recomputes it. The store
+   * remits it.
+   */
+  tax_cents: number;
   status: PickupStatus;
   requested_at: Timestamp;
   /**
@@ -2276,6 +2320,24 @@ export interface Receipt {
    * A promo's discount: the lines less what the order was priced at.
    */
   discount_cents: number;
+  /**
+   * The sales tax or VAT in the order, at the store's rates when it was
+   * placed.
+   */
+  tax_cents: number;
+  /**
+   * Whether the prices already included it (VAT), rather than having it
+   * added on top.
+   */
+  tax_included: boolean;
+  /**
+   * What the store calls it ("Sales tax", "VAT 20%") -- its first rate's.
+   */
+  tax_label: string;
+  /**
+   * The store's tax registration, if it gave one.
+   */
+  tax_registration: string;
   /**
    * The customer's share of the driver's fee; 0 for pickup.
    */
@@ -2719,6 +2781,24 @@ export interface SuccessionView {
    */
   plan: ActionHash | null;
   at: Timestamp;
+}
+
+/**
+ * One tax rate a store charges.
+ */
+export interface TaxRate {
+  /**
+   * What it applies to, as items name it: "prepared", "grocery".
+   */
+  category: string;
+  /**
+   * What receipts call it: "Sales tax", "VAT 20%".
+   */
+  label: string;
+  /**
+   * In basis points (1/100 of a percent).
+   */
+  basis_points: number;
 }
 
 /**

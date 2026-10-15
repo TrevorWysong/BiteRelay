@@ -42,6 +42,16 @@ pub struct Receipt {
     pub subtotal_cents: u64,
     /// A promo's discount: the lines less what the order was priced at.
     pub discount_cents: u64,
+    /// The sales tax or VAT in the order, at the store's rates when it was
+    /// placed.
+    pub tax_cents: u64,
+    /// Whether the prices already included it (VAT), rather than having it
+    /// added on top.
+    pub tax_included: bool,
+    /// What the store calls it ("Sales tax", "VAT 20%") -- its first rate's.
+    pub tax_label: String,
+    /// The store's tax registration, if it gave one.
+    pub tax_registration: String,
     /// The customer's share of the driver's fee; 0 for pickup.
     pub delivery_fee_cents: u64,
     pub tip_cents: u64,
@@ -58,19 +68,19 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
     let order_ref = original_action_of(order_original_action)?;
     let record = resolve_latest(order_ref.clone())?;
     let me = agent_info()?.agent_initial_pubkey;
-    let (requester, catalog_ref, lines, order_total, delivery_fee, tip, delivery) = if let Some(order) = decode_or::<DeliveryOrder>(&record) {
+    let (requester, catalog_ref, catalog_version, lines, order_total, tax_cents, delivery_fee, tip, delivery) = if let Some(order) = decode_or::<DeliveryOrder>(&record) {
         if order.status != DeliveryStatus::Delivered {
             return Err(guest("a receipt is for a delivered order"));
         }
         let bid_ref = order.accepted_bid.clone().ok_or(guest("a delivered order has a driver"))?;
         let bid = decode_or::<Bid>(&resolve_latest(bid_ref)?).ok_or(guest("accepted_bid is not a Bid"))?;
         let (_, customer_share) = split_delivery_fee(bid.price_offer, order.delivery_subsidy_percent);
-        (order.requester, order.catalog_ref, order.lines, order.order_total, customer_share, order.tip_cents, true)
+        (order.requester, order.catalog_ref, order.catalog_version, order.lines, order.order_total, order.tax_cents, customer_share, order.tip_cents, true)
     } else if let Some(order) = decode_or::<PickupOrder>(&record) {
         if order.status != PickupStatus::PickedUp {
             return Err(guest("a receipt is for a collected order"));
         }
-        (order.requester, order.catalog_ref, order.lines, order.order_total, 0, 0, false)
+        (order.requester, order.catalog_ref, order.catalog_version, order.lines, order.order_total, order.tax_cents, 0, 0, false)
     } else {
         return Err(guest("that isn't an order"));
     };
@@ -90,6 +100,10 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
         .collect::<Vec<_>>()
         .join(", ");
     let placed_at = get(order_ref.clone(), GetOptions::local())?.map(|r| r.action().timestamp()).unwrap_or(record.action().timestamp());
+    // The tax as the store charged it: the version the order was placed under.
+    let terms = get(catalog_version, GetOptions::default())?.and_then(|r| decode_or::<catalog_types::MerchantCatalog>(&r)).unwrap_or_else(|| catalog.clone());
+    let tax_included = terms.prices_include_tax;
+    let food = if tax_included { order_total } else { order_total - tax_cents };
 
     Ok(Receipt {
         order_ref: order_ref.clone(),
@@ -100,7 +114,11 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
         completed_at: record.action().timestamp(),
         lines: receipt_lines,
         subtotal_cents,
-        discount_cents: subtotal_cents.saturating_sub(order_total),
+        discount_cents: subtotal_cents.saturating_sub(food),
+        tax_cents,
+        tax_included,
+        tax_label: terms.tax_rates.first().map(|r| r.label.clone()).unwrap_or_default(),
+        tax_registration: terms.tax_registration.clone(),
         delivery_fee_cents: delivery_fee,
         tip_cents: tip,
         total_cents: order_total + delivery_fee + tip,

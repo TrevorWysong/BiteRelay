@@ -5,7 +5,7 @@
 //! the order is refused with the new total rather than charged silently.
 
 use crate::order_queues::my_completions_at;
-use catalog_types::{order_total, BagClaim, GoodieBag, MenuItem, PricedLine, PromoCode};
+use catalog_types::{order_tax, order_total, total_with_tax, BagClaim, GoodieBag, MerchantCatalog, MenuItem, PricedLine, PromoCode, TaxableLine};
 use relay_coordinator_support::{decode_or, original_action_of};
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -15,7 +15,10 @@ pub use dispatch_integrity::OrderItem;
 
 pub(crate) struct PricedOrder {
     pub lines: Vec<OrderLine>,
+    /// With the store's tax, when it adds it.
     pub order_total: u64,
+    /// The tax in it.
+    pub tax_cents: u64,
     pub loyalty_proof: Vec<ActionHash>,
     /// The menu items' price before any promo -- what a store's minimum
     /// order is measured against. `None` for a goodie bag, priced on its own.
@@ -31,14 +34,22 @@ pub(crate) fn ensure_store_minimum(store: &catalog_types::MerchantCatalog, price
     }
 }
 
-/// Prices an order at `catalog_ref`. A goodie-bag order (`bag_claim_ref`)
-/// is the claimed bag at its own price; anything else is priced from the
-/// menu. Fails if an item isn't on this store's menu or is sold out, if a
-/// promo's requirement isn't met, or if the total isn't `expected_total`.
-pub(crate) fn price_order(catalog_ref: &ActionHash, items: &[OrderItem], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, expected_total: u64) -> ExternResult<PricedOrder> {
+/// The order's tax under `store`'s rates, and what it comes to with it.
+fn taxed(store: &MerchantCatalog, food: u64, lines: &[TaxableLine]) -> (u64, u64) {
+    let tax = order_tax(lines, food, &store.tax_rates, store.prices_include_tax);
+    (total_with_tax(food, tax, store.prices_include_tax), tax)
+}
+
+/// Prices an order at `catalog_ref`, under `store` -- the version of it the
+/// order will cite, whose tax it carries. A goodie-bag order
+/// (`bag_claim_ref`) is the claimed bag at its own price; anything else is
+/// priced from the menu. Fails if an item isn't on this store's menu or is
+/// sold out, if a promo's requirement isn't met, or if the total isn't
+/// `expected_total`.
+pub(crate) fn price_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, expected_total: u64) -> ExternResult<PricedOrder> {
     let priced = match bag_claim_ref {
-        Some(claim_ref) => price_bag_order(catalog_ref, claim_ref, promo_ref)?,
-        None => price_menu_order(catalog_ref, items, promo_ref)?,
+        Some(claim_ref) => price_bag_order(catalog_ref, store, claim_ref, promo_ref)?,
+        None => price_menu_order(catalog_ref, store, items, promo_ref)?,
     };
     if priced.order_total != expected_total {
         return Err(guest(format!(
@@ -49,7 +60,7 @@ pub(crate) fn price_order(catalog_ref: &ActionHash, items: &[OrderItem], promo_r
     Ok(priced)
 }
 
-fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
+fn price_bag_order(catalog_ref: &ActionHash, store: &MerchantCatalog, claim_ref: &ActionHash, promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
     if promo_ref.is_some() {
         return Err(guest("a goodie bag can't be combined with a promo code".into()));
     }
@@ -58,9 +69,12 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
     if &bag.catalog_ref != catalog_ref {
         return Err(guest("that goodie bag isn't from this store".into()));
     }
+    // A bag is food at the store's default rate.
+    let (order_total, tax_cents) = taxed(store, bag.price_cents, &[TaxableLine { category: "", total: bag.price_cents }]);
     Ok(PricedOrder {
         lines: vec![OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref, quantity: 1, selections: Vec::new() }],
-        order_total: bag.price_cents,
+        order_total,
+        tax_cents,
         loyalty_proof: Vec::new(),
         menu_subtotal: None,
     })
@@ -69,7 +83,7 @@ fn price_bag_order(catalog_ref: &ActionHash, claim_ref: &ActionHash, promo_ref: 
 /// An order from the menu at current prices, less `promo_ref` -- what
 /// `price_order` checks a client's total against, and what a recurring
 /// order is placed at (`recurring::fire`).
-pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItem], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
+pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
     // One line per item and its choices, however the client listed them.
     let mut merged: Vec<OrderItem> = Vec::new();
     for item in items {
@@ -87,6 +101,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItem], pr
     }
     let mut lines = Vec::with_capacity(merged.len());
     let mut priced = Vec::with_capacity(merged.len());
+    let mut categories = Vec::with_capacity(merged.len());
     let mut pricer = LinePricer::default();
     for OrderItem { item_ref, quantity, selections } in merged {
         let record = resolve_latest_fresh(item_ref.clone())?;
@@ -101,6 +116,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItem], pr
         let unit_price = pricer.unit_price(&item, &selections)?.map_err(|reason| guest(format!("{}: {reason}", item.name)))?;
         lines.push(OrderLine { item_ref: item_ref.clone(), priced_version: record.action_address().clone(), quantity, selections });
         priced.push(PricedLine { item_ref, base_price: item.price_cents, unit_price, quantity });
+        categories.push(item.tax_category);
     }
 
     let promo = match promo_ref {
@@ -109,10 +125,12 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, items: &[OrderItem], pr
     };
     let needed = promo.as_ref().map_or(0, |p| p.requirement.completed_orders_needed()) as usize;
     let loyalty_proof: Vec<ActionHash> = if needed > 0 { my_completions_at(catalog_ref)?.into_iter().take(needed).collect() } else { Vec::new() };
-    let total = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
+    let food = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
         .ok_or(guest("this order doesn't meet the promo code's requirement".into()))?;
+    let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
+    let (order_total, tax_cents) = taxed(store, food, &taxable);
     let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
-    Ok(PricedOrder { lines, order_total: total, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
+    Ok(PricedOrder { lines, order_total, tax_cents, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
 }
 
 /// How many options `selections` choose, nested ones included.

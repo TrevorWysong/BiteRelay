@@ -2,6 +2,23 @@
 
 How tax is charged on food, fees and tips, and who collects and pays it, when no company sits between store and customer. Research and a proposed design. This is not tax advice: rules differ by state, county and country, and a sales-tax adviser should confirm the approach for each jurisdiction at launch.
 
+## Status (2026-10-15)
+
+**Built.** Stores are the seller of record and set their own tax (store screen → Tax). Each store has:
+- up to 8 rates, by category of item, each at most 50%; the first is the default;
+- either tax added at checkout (US sales tax) or prices that already include it (VAT, as in most of the world);
+- an optional registration number for receipts.
+
+Each menu item picks its category. Every order carries `tax_cents`, and `order_total` includes the tax when it's added on top. Validation recomputes both from the rates of the store version the order cites (`catalog_types::order_tax`): each category's share of the food after any promo, rounded half up per category. So the food hold, refunds for missing items (which are proportional to the order total) and the store's collection all carry the tax with no new money paths.
+
+Checkout shows a tax line, or "Includes £x VAT". Receipts show the tax as it was charged when the order was placed, with the store's registration. The store's **tax report** (orders, sales, tax collected, tax refunded, tax to remit, CSV download) is computed on its own device from its own history.
+
+Tests:
+- `tests/tryorama/src/tax.test.ts`;
+- the shared cases in `catalog_types` pricing and `web/test/tax.test.ts`.
+
+**Not built:** rate lookup by address (the store enters its combined rate), and taxing the store's share of a delivery fee.
+
 ## What the big apps do
 
 - **Marketplace facilitator laws.** Most US states now require a marketplace that facilitates a sale and collects the payment to collect and remit the sales tax on it, in place of the seller.

@@ -350,7 +350,15 @@ pub struct DeliveryOrder {
     /// What was ordered, each line priced at a specific version of its item
     /// -- validation recomputes `order_total` from these.
     pub lines: Vec<OrderLine>,
+    /// What the customer pays the store: the lines less any promo, plus the
+    /// tax when the store adds it at checkout -- everything the food hold
+    /// sets aside, refunds share, and the store collects.
     pub order_total: u64,
+    /// The sales tax or VAT in `order_total`, at the rates of the store
+    /// version the order cites -- validation recomputes it. The store
+    /// remits it.
+    #[serde(default)]
+    pub tax_cents: u64,
     /// The drop-off's area (a geohash cell of `DROPOFF_GEOHASH_PRECISION`,
     /// about 1.2 x 0.6 km) -- all that's public about where the order goes:
     /// enough for drivers nearby to find it and judge the trip, and for
@@ -646,7 +654,15 @@ pub struct PickupOrder {
     /// What was ordered, each line priced at a specific version of its item
     /// -- validation recomputes `order_total` from these.
     pub lines: Vec<OrderLine>,
+    /// What the customer pays the store: the lines less any promo, plus the
+    /// tax when the store adds it at checkout -- everything the food hold
+    /// sets aside, refunds share, and the store collects.
     pub order_total: u64,
+    /// The sales tax or VAT in `order_total`, at the rates of the store
+    /// version the order cites -- validation recomputes it. The store
+    /// remits it.
+    #[serde(default)]
+    pub tax_cents: u64,
     pub status: PickupStatus,
     pub requested_at: Timestamp,
     /// The customer's note for the kitchen, sealed to the store.

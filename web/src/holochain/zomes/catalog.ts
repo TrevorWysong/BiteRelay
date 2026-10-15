@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, GeoPoint, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, AgentPubKey, GeoPoint, TaxRate, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -307,6 +307,12 @@ export async function confirmClaim(claimRef: ActionHash): Promise<HcRecord> {
 /// The most an order may cost to be left at the door, in cents -- `null`
 /// for no limit.
 /// The smallest order the store takes, in minor units -- `null` for any size.
+/// The store's sales tax or VAT -- orders placed from here on are taxed at
+/// these rates.
+export async function setTaxSettings(originalAction: ActionHash, settings: { tax_rates: TaxRate[]; prices_include_tax: boolean; tax_registration: string }): Promise<HcRecord> {
+  return callZome("catalog", "set_tax_settings", { original_action: originalAction, ...settings });
+}
+
 export async function setMinimumOrder(originalAction: ActionHash, minCents: number | null): Promise<HcRecord> {
   return callZome("catalog", "set_minimum_order", { original_action: originalAction, min_cents: minCents });
 }
