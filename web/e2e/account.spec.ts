@@ -42,7 +42,8 @@ async function startRestore(page: Page, method: RegExp) {
 /// The account code a device shows, as its copy button copies it.
 async function copiedCode(page: Page): Promise<string> {
   await page.getByRole("button", { name: "Copy the code instead" }).click();
-  return page.evaluate(() => navigator.clipboard.readText());
+  // Run in the page, where there's a clipboard to read.
+  return page.evaluate<string>("navigator.clipboard.readText()");
 }
 
 test("moving to a new device takes the account, its name and its balance along, and retires the old one", async ({ browser }) => {
