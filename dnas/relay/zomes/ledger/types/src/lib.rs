@@ -137,16 +137,38 @@ pub struct IssuerProfile {
     pub service_url: String,
 }
 
-/// What a store or driver signs to show an issuer's service they hold their
-/// key, when linking a payout account: a fixed label, the issuer, and the
-/// service's one-time nonce -- never anything else, so the signature can't
-/// stand for some other message.
-pub fn issuer_link_message(issuer: &AgentPubKey, nonce: &str) -> Vec<u8> {
-    [ISSUER_LINK_LABEL, issuer.get_raw_39(), b":", nonce.as_bytes()].concat()
+/// What someone signs to show an issuer's service they hold their key -- to
+/// top up (saving their card), to pay with a saved card, or to link a payout
+/// account: a fixed label, what it's for, the issuer, and the service's
+/// one-time nonce. Never anything else, so the signature can't stand for
+/// some other message, nor for another purpose.
+pub fn issuer_link_message(purpose: IssuerRequest, issuer: &AgentPubKey, nonce: &str) -> Vec<u8> {
+    [ISSUER_LINK_LABEL, purpose.label().as_bytes(), b":", issuer.get_raw_39(), b":", nonce.as_bytes()].concat()
 }
 
 /// See `issuer_link_message`.
-pub const ISSUER_LINK_LABEL: &[u8] = b"relay-issuer-link:v1:";
+pub const ISSUER_LINK_LABEL: &[u8] = b"relay-issuer-link:v2:";
+
+/// What a signed request to an issuer's service is for.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssuerRequest {
+    /// Adding funds by card, saving the card for next time.
+    TopUp,
+    /// Paying with the card saved before.
+    SavedCard,
+    /// Linking a payout account.
+    PayoutAccount,
+}
+
+impl IssuerRequest {
+    pub fn label(self) -> &'static str {
+        match self {
+            IssuerRequest::TopUp => "top-up",
+            IssuerRequest::SavedCard => "saved-card",
+            IssuerRequest::PayoutAccount => "payout-account",
+        }
+    }
+}
 
 /// Whether a nonce is one an issuer's service could have issued: short,
 /// and plain letters, digits, `-` and `_`.

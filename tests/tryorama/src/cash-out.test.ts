@@ -127,14 +127,17 @@ await runScenario(async (scenario) => {
   assert.equal(fresh[0].amount, 1000, "and finds the next one when it comes");
   console.log("[PASS] an issuer's service sweeps cash-outs in the order they arrive");
 
-  // ===== Linking a payout account =====
+  // ===== Signed requests to the issuer's service =====
   // The zome signs in Rust; the issuer's service verifies in Node -- the same
-  // message, byte for byte.
+  // message, byte for byte, and for one purpose only.
   const nonce = "nonce_0123456789abcdefXYZ";
-  const signature = await ledger(earner)<Uint8Array>("sign_issuer_link", { issuer: issuer.agentPubKey, nonce });
-  assert.equal(verifyLink(earner.agentPubKey, issuer.agentPubKey, nonce, signature), true, "the issuer's service accepts the earner's signature");
-  assert.equal(verifyLink(stranger.agentPubKey, issuer.agentPubKey, nonce, signature), false, "as no one else's");
-  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: stranger.agentPubKey, nonce }), /isn't one of this network's issuers/, "it signs only for an issuer");
-  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: issuer.agentPubKey, nonce: "short" }), /isn't a nonce/, "and only a nonce's shape");
+  const signature = await ledger(earner)<Uint8Array>("sign_issuer_link", { issuer: issuer.agentPubKey, purpose: "PayoutAccount", nonce });
+  assert.equal(verifyLink(earner.agentPubKey, "PayoutAccount", issuer.agentPubKey, nonce, signature), true, "the issuer's service accepts the earner's signature");
+  assert.equal(verifyLink(earner.agentPubKey, "SavedCard", issuer.agentPubKey, nonce, signature), false, "for that purpose only");
+  assert.equal(verifyLink(stranger.agentPubKey, "PayoutAccount", issuer.agentPubKey, nonce, signature), false, "as no one else's");
+  const topUp = await ledger(earner)<Uint8Array>("sign_issuer_link", { issuer: issuer.agentPubKey, purpose: "TopUp", nonce });
+  assert.equal(verifyLink(earner.agentPubKey, "TopUp", issuer.agentPubKey, nonce, topUp), true);
+  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: stranger.agentPubKey, purpose: "TopUp", nonce }), /isn't one of this network's issuers/, "it signs only for an issuer");
+  await assert.rejects(ledger(earner)("sign_issuer_link", { issuer: issuer.agentPubKey, purpose: "TopUp", nonce: "short" }), /isn't a nonce/, "and only a nonce's shape");
   console.log("[PASS] an earner proves their key to the issuer's service, and nothing else can be signed this way");
 });

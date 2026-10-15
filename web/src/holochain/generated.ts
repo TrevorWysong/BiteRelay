@@ -954,6 +954,23 @@ export interface IssuerProfile {
 }
 
 /**
+ * What a signed request to an issuer's service is for.
+ */
+export type IssuerRequest =
+  /**
+   * Adding funds by card, saving the card for next time.
+   */
+  | "TopUp"
+  /**
+   * Paying with the card saved before.
+   */
+  | "SavedCard"
+  /**
+   * Linking a payout account.
+   */
+  | "PayoutAccount";
+
+/**
  * An issuer on the network's roster, and what it says about itself.
  */
 export interface IssuerView {

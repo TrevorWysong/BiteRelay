@@ -3,7 +3,7 @@
 // zome. Money for an order is set aside as the order goes and collected by
 // whoever it's owed to, from their own conductor.
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, CashOutView, HcRecord, HoldView, IssuerProfile, IssuerView } from "../types";
+import type { ActionHash, AgentPubKey, CashOutView, HcRecord, HoldView, IssuerProfile, IssuerRequest, IssuerView } from "../types";
 
 /// An agent's balance: what their latest ledger entry says, which
 /// validation ties to every entry before it.
@@ -57,10 +57,11 @@ export async function reclaimDeclinedCashOuts(): Promise<number> {
   return callZome("ledger", "reclaim_declined_cash_outs", null);
 }
 
-/// The caller's signature showing an issuer's service they hold their key --
-/// over a fixed link message for that issuer and the service's nonce only.
-export async function signIssuerLink(issuer: AgentPubKey, nonce: string): Promise<Uint8Array> {
-  return callZome("ledger", "sign_issuer_link", { issuer, nonce });
+/// The caller's signature showing an issuer's service they hold their key,
+/// for one purpose -- over a fixed message for that purpose, issuer and the
+/// service's nonce only.
+export async function signIssuerLink(issuer: AgentPubKey, purpose: IssuerRequest, nonce: string): Promise<Uint8Array> {
+  return callZome("ledger", "sign_issuer_link", { issuer, purpose, nonce });
 }
 
 /// The caller, an issuer, publishing or changing its terms.

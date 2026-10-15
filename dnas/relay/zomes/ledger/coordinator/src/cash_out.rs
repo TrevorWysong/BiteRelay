@@ -65,13 +65,16 @@ pub fn set_issuer_profile(profile: IssuerProfile) -> ExternResult<ActionHash> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IssuerLinkInput {
     pub issuer: AgentPubKey,
+    /// What the signed request is for.
+    pub purpose: IssuerRequest,
     /// The issuer service's one-time nonce.
     pub nonce: String,
 }
 
-/// The caller's signature showing `issuer`'s service they hold their key --
-/// over `ledger_types::issuer_link_message` and nothing else, for one of
-/// the network's issuers, with a nonce of the shape a service issues.
+/// The caller's signature showing `issuer`'s service they hold their key,
+/// for one purpose -- over `ledger_types::issuer_link_message` and nothing
+/// else, for one of the network's issuers, with a nonce of the shape a
+/// service issues.
 #[hdk_extern]
 pub fn sign_issuer_link(input: IssuerLinkInput) -> ExternResult<Signature> {
     if !relay_governance::is_issuer(&input.issuer)? {
@@ -81,7 +84,7 @@ pub fn sign_issuer_link(input: IssuerLinkInput) -> ExternResult<Signature> {
         return Err(guest("That isn't a nonce an issuer's service would send."));
     }
     let me = agent_info()?.agent_initial_pubkey;
-    sign_raw(me, issuer_link_message(&input.issuer, &input.nonce))
+    sign_raw(me, issuer_link_message(input.purpose, &input.issuer, &input.nonce))
 }
 
 // --- the redeemer ---

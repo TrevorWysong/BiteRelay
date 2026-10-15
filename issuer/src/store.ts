@@ -17,6 +17,8 @@ export class Store {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS granted_payments (payment TEXT PRIMARY KEY, agent TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS payout_accounts (agent TEXT PRIMARY KEY, account TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS customers (agent TEXT PRIMARY KEY, customer TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS saved_card_charges (agent TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS link_nonces (nonce TEXT PRIMARY KEY, agent TEXT NOT NULL, issued_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
@@ -41,6 +43,26 @@ export class Store {
 
   setPayoutAccount(agent: string, account: string): void {
     this.db.prepare("INSERT INTO payout_accounts (agent, account) VALUES (?, ?) ON CONFLICT(agent) DO UPDATE SET account = excluded.account").run(agent, account);
+  }
+
+  /// The agent's customer record at the processor, where their saved cards live.
+  customer(agent: string): string | null {
+    const row = this.db.prepare("SELECT customer FROM customers WHERE agent = ?").get(agent) as { customer: string } | undefined;
+    return row?.customer ?? null;
+  }
+
+  setCustomer(agent: string, customer: string): void {
+    this.db.prepare("INSERT INTO customers (agent, customer) VALUES (?, ?) ON CONFLICT(agent) DO UPDATE SET customer = excluded.customer").run(agent, customer);
+  }
+
+  /// Records a saved-card charge for `agent` -- `false`, recording nothing,
+  /// if they've had `limit` within `windowMs` already.
+  takeSavedCardCharge(agent: string, limit: number, windowMs: number): boolean {
+    const since = Date.now() - windowMs;
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM saved_card_charges WHERE agent = ? AND at >= ?").get(agent, since) as { n: number };
+    if (row.n >= limit) return false;
+    this.db.prepare("INSERT INTO saved_card_charges (agent, at) VALUES (?, ?)").run(agent, Date.now());
+    return true;
   }
 
   issueNonce(nonce: string, agent: string): void {

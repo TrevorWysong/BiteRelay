@@ -2,6 +2,7 @@
 // once at start; a missing secret stops it there rather than mid-payment.
 export interface Config {
   stripeSecretKey: string;
+  stripePublishableKey: string;
   stripeWebhookSecret: string;
   publicUrl: string;
   port: number;
@@ -41,6 +42,7 @@ export function loadConfig(): Config {
   }
   return {
     stripeSecretKey,
+    stripePublishableKey: required("STRIPE_PUBLISHABLE_KEY"),
     stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
     publicUrl: required("PUBLIC_URL").replace(/\/$/, ""),
     port: number("PORT", 8890),

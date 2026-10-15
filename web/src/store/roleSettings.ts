@@ -18,9 +18,23 @@ export interface CheckoutDefaults {
   autoMatch: boolean;
 }
 
+/// Paying the balance back up by saved card when it runs low -- the
+/// card's charges are still only ever the person's own, signed by their app
+/// and capped a day by the issuer.
+export interface AutoTopUp {
+  /// The issuer whose saved card pays, as hex.
+  issuer: string;
+  /// Topping up once the balance is below this, in minor units.
+  belowCents: number;
+  amountCents: number;
+}
+
 interface CustomerSettings {
   checkout: CheckoutDefaults;
   rememberCheckout: (checkout: CheckoutDefaults) => void;
+  /// Each identity's auto top-up on this device, by agent hex.
+  autoTopUps: Record<string, AutoTopUp>;
+  setAutoTopUp: (agent: string, autoTopUp: AutoTopUp | null) => void;
 }
 
 export const useCustomerSettings = create<CustomerSettings>()(
@@ -28,9 +42,21 @@ export const useCustomerSettings = create<CustomerSettings>()(
     (set) => ({
       checkout: { tipPercent: 15, feeCapCents: null, dropoffPreference: "HandToMe", priority: false, autoMatch: true },
       rememberCheckout: (checkout) => set({ checkout }),
+      autoTopUps: {},
+      setAutoTopUp: (agent, autoTopUp) =>
+        set((state) => {
+          const { [agent]: _previous, ...others } = state.autoTopUps;
+          return { autoTopUps: autoTopUp ? { ...others, [agent]: autoTopUp } : others };
+        }),
     }),
     // Checkout defaults saved before a field existed take its default.
-    { name: "relay.customer-settings.v1", merge: (saved, current) => ({ ...current, checkout: { ...current.checkout, ...(saved as Partial<CustomerSettings> | undefined)?.checkout } }) },
+    {
+      name: "relay.customer-settings.v1",
+      merge: (saved, current) => {
+        const stored = saved as Partial<CustomerSettings> | undefined;
+        return { ...current, checkout: { ...current.checkout, ...stored?.checkout }, autoTopUps: stored?.autoTopUps ?? {} };
+      },
+    },
   ),
 );
 

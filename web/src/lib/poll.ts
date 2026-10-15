@@ -16,6 +16,9 @@ export const POLL = {
   driverFeed: 5_000,
   /// Slow-moving reads: stores nearby, a menu.
   slow: 60_000,
+  /// A card payment that's gone through, until its funds land: the issuer
+  /// grants them within seconds of hearing from the processor.
+  payment: 2_000,
 } as const;
 
 /// Whether a signal says an order changed -- what every order screen

@@ -9,17 +9,22 @@ import type { Store } from "./store.ts";
 
 const CURSOR = "cash_out_cursor";
 
-/// What to do with one cash-out.
+/// What to do with one cash-out: to the owner's payout account if they have
+/// one ready (stores and drivers); otherwise back to the cards they paid
+/// with (customers' unspent funds); otherwise, nowhere to send it yet.
 export async function decide(request: CashOutRequest, store: Store, rail: PaymentRail, fee: Fee, setUpUrl: string): Promise<PayoutOutcome> {
-  const account = store.payoutAccount(agentId(request.redeemer));
-  if (!account || !(await rail.canPay(account))) {
-    return { Declined: { reason: `Set up your payout account first, then cash out again: ${setUpUrl}` } };
-  }
+  const agent = agentId(request.redeemer);
   const net = payoutAfterFees(fee, request.amount);
   if (net === 0) return { Declined: { reason: "After the fee, there'd be nothing to send. Cash out a larger amount." } };
-  // The cash-out's own hash keys the transfer: a retried sweep never pays twice.
-  const reference = await rail.pay(account, net, `cash-out-${Buffer.from(request.redemption).toString("hex")}`);
-  return { Paid: { reference } };
+  // The cash-out's own hash keys each transfer or refund: a retried sweep
+  // never pays twice.
+  const key = `cash-out-${Buffer.from(request.redemption).toString("hex")}`;
+  const account = store.payoutAccount(agent);
+  if (account && (await rail.canPay(account))) return { Paid: { reference: await rail.pay(account, net, key) } };
+  const customer = store.customer(agent);
+  const refunded = customer ? await rail.refund(customer, net, key) : null;
+  if (refunded) return { Paid: { reference: refunded } };
+  return { Declined: { reason: `There's nowhere to send this yet: set up your payout account, then cash out again: ${setUpUrl}` } };
 }
 
 /// One sweep: every cash-out since the last, decided. Returns how many.

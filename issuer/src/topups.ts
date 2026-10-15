@@ -18,3 +18,18 @@ export async function grantPayment(store: Store, ledger: IssuerLedger, payment: 
     throw err;
   }
 }
+
+/// How far back reconciliation looks: Stripe retries a webhook for three
+/// days; a week covers that with room.
+export const RECONCILE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/// Grants every payment completed in the window that hasn't been -- a
+/// webhook that never arrived, a saved-card charge whose grant failed.
+/// Returns how many it granted.
+export async function reconcile(store: Store, ledger: IssuerLedger, payments: CompletedPayment[]): Promise<number> {
+  let granted = 0;
+  for (const payment of payments) {
+    if ((await grantPayment(store, ledger, payment)) === "granted") granted++;
+  }
+  return granted;
+}

@@ -2,13 +2,18 @@
 
 A Relay network's issuer: the one party that turns real money into ledger credits and back. It is to a Relay network what a payment processor is to a shop. Relay itself never holds anyone's money.
 
-- **Adding funds.** A customer pays on Stripe Checkout, so card data never touches Relay. Stripe signs a webhook; the service writes an `IssuerGrant` with the payment's id as its reference, once; the customer's app collects it.
+- **Adding funds.** A customer pays in Stripe's embedded card form inside the app (Apple Pay and Google Pay where the device and domain allow), so card data never touches Relay. Stripe signs a webhook; the service writes an `IssuerGrant` with the payment's id as its reference, once; the customer's app collects it. Checkout uses this for a balance that's short: pay the difference, and the order is placed.
+- **Saved cards.** The card is saved to the customer's Stripe customer record, so the next payment is one tap (`/saved-card/charge`), granted at once. The app's auto top-up uses the same call. At most 6 saved-card charges per customer per day.
+- **Reconciliation.** Every 5 minutes the service checks Stripe's payments from the last 7 days and grants any whose webhook never arrived. Grants are idempotent by reference, so this is always safe.
 - **Payout accounts.** A store or driver sets one up on Stripe Connect Express, where Stripe does the identity checks and holds the bank details.
   - They first prove they hold their agent key by signing the service's one-time nonce. The signature comes from the ledger zome's `sign_issuer_link`, which signs only that message.
   - So nobody can point someone else's payouts at their own bank.
 - **Cashing out.** The service sweeps the cash-outs it's been asked to pay (`get_cash_out_requests`, resuming from a cursor) and decides each one:
   - **Payout account ready:** it pays the owner less the published fee, as a Stripe transfer keyed by the cash-out (so it's never paid twice), and records `Paid` with the transfer's id.
-  - **No account ready:** it records `Declined` with a link to set one up, and the funds go back automatically.
+  - **No account, but card payments:** it refunds the amount less the fee to the owner's recent card payments, newest first (within Stripe's 180-day window), and records `Paid` with the refund ids. That's how a customer gets unspent funds back.
+  - **Neither:** it records `Declined` with a link to set up a payout account, and the funds go back automatically.
+
+Every request that touches someone's money (`/topups`, `/saved-card`, `/saved-card/charge`, `/payout-account`) carries the agent's signature over the service's one-time nonce for that purpose (`IssuerRequest`: `TopUp`, `SavedCard` or `PayoutAccount`), so a signature for one can't be replayed as another.
 
 ## Fees
 
@@ -22,11 +27,13 @@ Adding funds is free: a customer pays exactly what they add. The issuer recovers
 1. **Stripe account.** Create a free Stripe account. Test mode costs nothing. In the dashboard, turn on **Connect** (Express accounts).
 2. **Dev network.** `npm run dev:reset` in `web/` sets one up with an issuer identity (`dev-issuer`).
 3. **Configuration.** In this folder:
-   - `cp .env.example .env` and fill in `STRIPE_SECRET_KEY` (a `sk_test_` key).
+   - `cp .env.example .env` and fill in `STRIPE_SECRET_KEY` (a `sk_test_` key) and `STRIPE_PUBLISHABLE_KEY` (its `pk_test_` partner, for the embedded card form).
    - Run `stripe listen --events checkout.session.completed --forward-to localhost:8890/webhooks/stripe` ([Stripe CLI](https://docs.stripe.com/stripe-cli)) and put the `whsec_` secret it prints in `STRIPE_WEBHOOK_SECRET`.
 4. **Start.** `npm install && npm start`. The service publishes the issuer's terms, including its address, and the Wallet shows **Add funds** and **Payout account**.
 5. **Try it:**
-   - **Add funds:** use Stripe's test card `4242 4242 4242 4242`.
+   - **Add funds:** use Stripe's test card `4242 4242 4242 4242`, any future date and any CVC. Never a real card.
+   - **Pay at checkout:** with an empty balance, the cart's button reads "Pay $X and place order".
+   - **Missed webhook:** stop `stripe listen`, pay, then wait for the next reconciliation (or restart the service).
    - **Payout account:** finish Stripe's test onboarding, then cash out from the Wallet.
 
 `.env` and the database are ignored by git. Never put keys in code, chat or commits. The service refuses a live key unless `ALLOW_LIVE_STRIPE=1`.
@@ -34,7 +41,9 @@ Adding funds is free: a customer pays exactly what they add. The issuer recovers
 ## Tests
 
 `npm test` runs the service's rules with Stripe and the ledger faked:
-- a payment is granted once;
+- a payment is granted once, and reconciliation grants only the missing ones;
+- saved-card charges: signed, capped a day, granted at once, or sent to the card form when the bank wants confirmation;
+- a cash-out refunded to the card when there's no payout account;
 - a cash-out is paid once, less the fee, or declined;
 - an account is linked only on its owner's signature.
 
@@ -46,3 +55,4 @@ The Rust side and the cross-language signature are covered by `tests/tryorama/sr
 - **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`).
 - **Hosting:** the service behind https (`PUBLIC_URL`), with its database backed up.
 - **Stripe Radar** and a cap on top-ups for new accounts, against card fraud. A chargeback after credits are spent is the issuer's loss.
+- **Apple Pay:** register the app's https domain in Stripe (Settings → Payment methods → Apple Pay). It never shows on localhost.

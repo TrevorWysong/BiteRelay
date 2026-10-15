@@ -12,6 +12,19 @@ How customers pay with a card, and how stores and drivers get money out, in an a
 - **Payouts:** a sweep of cash-outs paying Stripe transfers keyed by each cash-out.
 - **App:** the Wallet's **Add funds** and **Payout account** buttons reach it through the issuer's published `service_url`.
 
+**Built: paying by card feels like paying by card (2026-10-14).**
+- **Pay at checkout.** A short balance turns the cart's button into "Pay $X and place order": Stripe's embedded form in a sheet (Apple Pay and Google Pay where available), the grant lands in seconds, and the order is placed. The cart is kept on the device, so nothing is lost.
+- **Saved card.** Paid once, the card is saved with the issuer's Stripe customer; the next payment is one tap. Optional auto top-up (Wallet) pays the balance back up when it runs low.
+- **Refunds to the card.** A cash-out with no payout account is refunded to the owner's recent card payments, less the cash-out fee.
+- **Reconciliation.** The service grants any payment whose webhook went missing.
+
+**Why credits, not per-order card holds.** We weighed charging a card per order with holds, as DoorDash does, and kept credits:
+- **It would put a company in every order.** Whoever captures each charge becomes merchant of record, with sales tax, disputes and payout control. That is the middleman Relay removes.
+- **Card fees would multiply.** An order needs up to three holds (customer, driver collateral, store's fee share); several small captures cost far more than one top-up.
+- **Card holds are poor escrow.** They expire after about 7 days, capture once, and tie up a driver's debit card. Every rule the ledger enforces peer to peer would have to be redone as captures and refunds in one central service.
+
+Credits are best understood as **decentralized gift cards**: closed-loop prepaid value, spendable anywhere on the network, issued by an issuer and refundable to the card. Before launch, check gift-card unclaimed-property (escheatment) rules alongside the prepaid-access exemption below.
+
 **Fees, as decided:** adding funds is free. The issuer recovers Stripe's costs (2.9% + 30¢ in, 0.25% + 25¢ out, and $2 a month per account paid) through its cash-out fee, 3.25% + 55¢ by default. The Wallet shows that fee before anyone confirms.
 
 ## Where Relay was before

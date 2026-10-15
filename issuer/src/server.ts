@@ -1,26 +1,34 @@
 // The service's HTTP face, for the app and for Stripe:
 //
-//   POST /topups                 {agent, amount}            -> {url}  (Stripe Checkout)
-//   POST /webhooks/stripe        Stripe's signed events     -> grants completed payments
-//   POST /payout-account/nonce   {agent}                    -> {nonce}
-//   POST /payout-account         {agent, nonce, signature}  -> {url}  (Stripe onboarding)
+//   GET  /config                                        -> {publishableKey}
+//   POST /nonce                {agent}                  -> {nonce, issuer}
+//   POST /topups               signed TopUp, {amount}   -> {clientSecret}  (embedded card form)
+//   POST /saved-card           signed SavedCard         -> {card}          (brand and last 4, or null)
+//   POST /saved-card/charge    signed SavedCard, {amount} -> {paid} | {needsConfirmation}
+//   POST /payout-account       signed PayoutAccount     -> {url}           (Stripe onboarding)
+//   POST /webhooks/stripe      Stripe's signed events   -> grants completed payments
 //   GET  /health
 //
-// Nothing here moves money on anyone's word: a grant follows only a
-// payment Stripe signs for, and a payout account is linked only on the
-// agent's own signature.
+// A signed request carries {agent, nonce, signature}: the agent signed the
+// service's one-time nonce for that purpose (see link.ts). Nothing here
+// moves money on anyone's word: a grant follows only a payment Stripe
+// confirms, and only the agent themselves can save a card to their account,
+// pay with it, or link where their payouts go.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { agentId, agentKey, type IssuerLedger } from "./ledger.ts";
-import { newNonce, verifyLink } from "./link.ts";
+import { newNonce, verifyLink, type Purpose } from "./link.ts";
 import type { PaymentRail } from "./rail.ts";
 import type { Store } from "./store.ts";
 import { grantPayment } from "./topups.ts";
 
-/// Card top-ups, per payment: at least enough to be worth the card fee, at
-/// most well under the closed-loop prepaid limit of $2,000 a day.
+/// Card payments, each: at least enough to be worth the card fee, at most
+/// well under the closed-loop prepaid limit of $2,000 a day.
 const MIN_TOPUP_CENTS = 500;
 const MAX_TOPUP_CENTS = 50_000;
-/// How long a link nonce stays good.
+/// Saved-card charges an agent may make in a day -- auto top-up included.
+const SAVED_CARD_CHARGES_PER_DAY = 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/// How long a nonce stays good.
 const NONCE_MAX_AGE_MS = 10 * 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -30,6 +38,8 @@ export interface Deps {
   rail: PaymentRail;
   /// The app's origin, allowed to call this from the browser.
   appOrigin: string;
+  /// Stripe's publishable key, for the app's embedded card form.
+  publishableKey: string;
   log?: (message: string) => void;
 }
 
@@ -75,19 +85,82 @@ function agentFrom(value: unknown): string {
   }
 }
 
+/// An amount in cents a card may pay.
+function amountFrom(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < MIN_TOPUP_CENTS || value > MAX_TOPUP_CENTS) {
+    throw new HttpError(400, `Pay between ${MIN_TOPUP_CENTS / 100} and ${MAX_TOPUP_CENTS / 100} dollars at a time.`);
+  }
+  return value;
+}
+
 export function handler(deps: Deps) {
-  const { store, ledger, rail, appOrigin, log = () => {} } = deps;
+  const { store, ledger, rail, appOrigin, publishableKey, log = () => {} } = deps;
+
+  /// The agent a signed request is from, for `purpose` -- or why not.
+  function signedBy(input: Record<string, unknown>, purpose: Purpose): string {
+    const agent = agentFrom(input.agent);
+    const { nonce, signature } = input;
+    if (typeof nonce !== "string" || typeof signature !== "string") throw new HttpError(400, "Send the nonce and your signature.");
+    if (!store.takeNonce(nonce, agent, NONCE_MAX_AGE_MS)) throw new HttpError(401, "That request has expired. Try again.");
+    if (!verifyLink(agentKey(agent), purpose, ledger.issuer, nonce, Buffer.from(signature, "base64"))) throw new HttpError(401, "That signature isn't yours.");
+    return agent;
+  }
+
+  /// The agent's customer record at the processor, made on first use.
+  async function customerOf(agent: string): Promise<string> {
+    const existing = store.customer(agent);
+    const customer = await rail.customer(agent, existing);
+    if (!existing) store.setCustomer(agent, customer);
+    return customer;
+  }
+
   const routes: Record<string, (req: IncomingMessage) => Promise<unknown>> = {
     "GET /health": async () => ({ ok: true }),
 
+    "GET /config": async () => ({ publishableKey }),
+
+    "POST /nonce": async (req) => {
+      const agent = agentFrom((await json(req)).agent);
+      const nonce = newNonce();
+      store.issueNonce(nonce, agent);
+      return { nonce, issuer: agentId(ledger.issuer) };
+    },
+
     "POST /topups": async (req) => {
       const input = await json(req);
-      const agent = agentFrom(input.agent);
-      const amount = input.amount;
-      if (typeof amount !== "number" || !Number.isInteger(amount) || amount < MIN_TOPUP_CENTS || amount > MAX_TOPUP_CENTS) {
-        throw new HttpError(400, `Add between ${MIN_TOPUP_CENTS / 100} and ${MAX_TOPUP_CENTS / 100} dollars at a time.`);
-      }
-      return { url: await rail.topUpUrl(agent, amount) };
+      const agent = signedBy(input, "TopUp");
+      const amount = amountFrom(input.amount);
+      return { clientSecret: await rail.embeddedTopUp(agent, await customerOf(agent), amount) };
+    },
+
+    "POST /saved-card": async (req) => {
+      const agent = signedBy(await json(req), "SavedCard");
+      const customer = store.customer(agent);
+      return { card: customer ? await rail.savedCard(customer) : null };
+    },
+
+    "POST /saved-card/charge": async (req) => {
+      const input = await json(req);
+      const agent = signedBy(input, "SavedCard");
+      const amount = amountFrom(input.amount);
+      const customer = store.customer(agent);
+      if (!customer) throw new HttpError(409, "There's no saved card yet. Pay with the card form once.");
+      if (!store.takeSavedCardCharge(agent, SAVED_CARD_CHARGES_PER_DAY, DAY_MS)) throw new HttpError(429, "That's as many saved-card payments as one day allows. Use the card form.");
+      // The nonce is single-use, so it keys the charge: retrying this request
+      // can't charge twice.
+      const charge = await rail.chargeSavedCard(agent, customer, amount, `saved-card-${input.nonce as string}`);
+      if ("needsConfirmation" in charge) return { needsConfirmation: true };
+      // Granted now, rather than waiting on a webhook: the money is in.
+      const result = await grantPayment(store, ledger, charge.paid);
+      log(`${result} (saved card): ${charge.paid.payment}, ${amount} for ${agent}`);
+      return { paid: true };
+    },
+
+    "POST /payout-account": async (req) => {
+      const agent = signedBy(await json(req), "PayoutAccount");
+      const { account, url } = await rail.payoutAccountLink(agent, store.payoutAccount(agent));
+      store.setPayoutAccount(agent, account);
+      return { url };
     },
 
     "POST /webhooks/stripe": async (req) => {
@@ -103,25 +176,6 @@ export function handler(deps: Deps) {
       const result = await grantPayment(store, ledger, payment);
       log(`${result}: ${payment.payment}, ${payment.amount} for ${payment.agent}`);
       return { result };
-    },
-
-    "POST /payout-account/nonce": async (req) => {
-      const agent = agentFrom((await json(req)).agent);
-      const nonce = newNonce();
-      store.issueNonce(nonce, agent);
-      return { nonce, issuer: agentId(ledger.issuer) };
-    },
-
-    "POST /payout-account": async (req) => {
-      const input = await json(req);
-      const agent = agentFrom(input.agent);
-      const { nonce, signature } = input;
-      if (typeof nonce !== "string" || typeof signature !== "string") throw new HttpError(400, "Send the nonce and your signature.");
-      if (!store.takeNonce(nonce, agent, NONCE_MAX_AGE_MS)) throw new HttpError(401, "That link has expired. Try again.");
-      if (!verifyLink(agentKey(agent), ledger.issuer, nonce, Buffer.from(signature, "base64"))) throw new HttpError(401, "That signature isn't yours.");
-      const { account, url } = await rail.payoutAccountLink(agent, store.payoutAccount(agent));
-      store.setPayoutAccount(agent, account);
-      return { url };
     },
   };
 

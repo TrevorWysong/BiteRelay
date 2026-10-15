@@ -6,12 +6,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowDownToLine, ArrowUpRight, Banknote, ChevronRight, Clock3, Landmark, Plus, Wallet as WalletIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpRight, Banknote, ChevronRight, Clock3, Landmark, Plus, RefreshCw, Wallet as WalletIcon } from "lucide-react";
 import { cashOut, getBalance, listIssuers, listMyCashOuts } from "../holochain/zomes/ledger";
 import { bytesToHex } from "../holochain/decode";
 import type { CashOutView, IssuerView } from "../holochain/types";
 import { MAX_NOTE_CHARS } from "../holochain/types";
-import { Badge, Button, Card, Field, Input, Skeleton, StatNumber, Textarea } from "../components/ui";
+import { Badge, Button, Card, Field, Input, Select, Skeleton, StatNumber, Switch, Textarea } from "../components/ui";
+import { CardPaySheet } from "../components/CardPaySheet";
 import { InfoTip } from "../components/InfoTip";
 import { Sheet } from "../components/Sheet";
 import { describeError } from "../lib/errors";
@@ -20,8 +21,9 @@ import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { POLL } from "../lib/poll";
 import { useResource } from "../lib/useResource";
 import { cashOutStatusLabel, collectIncoming, feeLabel, payoutAfterFees } from "../lib/wallet";
-import { addFundsUrl, payoutSetupUrl } from "../lib/issuerService";
+import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS, payoutSetupUrl, savedCard, type PayableIssuer } from "../lib/issuerService";
 import { useSession } from "../store/session";
+import { useCustomerSettings } from "../store/roleSettings";
 import { useTerms } from "../store/network";
 
 interface WalletData {
@@ -44,7 +46,7 @@ export function Wallet() {
   const { data, reload } = useResource(hex && `wallet:${hex}`, () => fetchWallet(agentPubKey!), { pollMs: POLL.unsignalled });
   const [cashingOut, setCashingOut] = useState(false);
   /// The issuer funds are being added through, if any.
-  const [addingFundsWith, setAddingFundsWith] = useState<IssuerView | null>(null);
+  const [addingFundsWith, setAddingFundsWith] = useState<PayableIssuer | null>(null);
   const terms = useTerms();
   const isMerchant = !!profile?.roles.includes("Merchant");
 
@@ -60,6 +62,7 @@ export function Wallet() {
   const issuerName = (issuer: Uint8Array) => data.issuers.find((i) => bytesToHex(i.issuer) === bytesToHex(issuer))?.profile?.name ?? "An issuer";
   const available = Math.max(0, data.balance);
   const canCashOut = data.issuers.length > 0 && available >= terms.min_redemption_cents;
+  const payable = data.issuers.filter(isPayable);
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
@@ -113,12 +116,20 @@ export function Wallet() {
           ) : (
             <ul className="divide-y divide-ink-100 dark:divide-ink-800">
               {data.issuers.map((i) => (
-                <IssuerRow key={bytesToHex(i.issuer)} issuer={i} agent={agentPubKey!} onAddFunds={() => setAddingFundsWith(i)} />
+                <IssuerRow key={bytesToHex(i.issuer)} issuer={i} agent={agentPubKey!} onAddFunds={isPayable(i) ? () => setAddingFundsWith(i) : null} />
               ))}
             </ul>
           )}
         </Section>
       </motion.div>
+
+      {payable.length > 0 && (
+        <motion.div variants={fadeSlideUp}>
+          <Section title="Auto top-up">
+            <AutoTopUpRow issuer={payable[0]} agent={agentPubKey!} />
+          </Section>
+        </motion.div>
+      )}
 
       <motion.div variants={fadeSlideUp}>
         <Link to="/transparency" className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white p-4 dark:border-ink-800 dark:bg-ink-900">
@@ -128,8 +139,16 @@ export function Wallet() {
         </Link>
       </motion.div>
 
-      {addingFundsWith?.profile?.service_url && (
-        <AddFundsSheet serviceUrl={addingFundsWith.profile.service_url} issuerName={addingFundsWith.profile.name} agent={agentPubKey!} onClose={() => setAddingFundsWith(null)} />
+      {addingFundsWith && (
+        <AddFundsSheet
+          issuer={addingFundsWith}
+          agent={agentPubKey!}
+          onClose={() => setAddingFundsWith(null)}
+          onPaid={async () => {
+            setAddingFundsWith(null);
+            await reload();
+          }}
+        />
       )}
 
       {cashingOut && (
@@ -151,7 +170,7 @@ export function Wallet() {
 
 /// An issuer: who it is, and -- when the app can reach its service -- adding
 /// funds through it and setting up a payout account with it.
-function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: Uint8Array; onAddFunds: () => void }) {
+function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: Uint8Array; onAddFunds: (() => void) | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const profile = issuer.profile;
@@ -179,7 +198,7 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
           {profile?.contact && <p className="mt-1 break-all text-xs text-ink-400">{profile.contact}</p>}
         </div>
       </div>
-      {profile?.service_url && (
+      {onAddFunds && (
         <div className="mt-3 flex gap-2">
           <Button className="flex-1 py-2 text-xs" onClick={onAddFunds}>
             <Plus size={14} /> Add funds
@@ -197,36 +216,28 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
 /// Amounts offered at a tap, in minor units.
 const TOP_UP_PRESETS = [2000, 5000, 10_000];
 
-/// Adding funds by card: an amount, then the issuer's card page.
-function AddFundsSheet({ serviceUrl, issuerName, agent, onClose }: { serviceUrl: string; issuerName: string; agent: Uint8Array; onClose: () => void }) {
+/// Adding funds by card: an amount, then paying it in the app.
+function AddFundsSheet({ issuer, agent, onClose, onPaid }: { issuer: PayableIssuer; agent: Uint8Array; onClose: () => void; onPaid: () => Promise<void> }) {
   const [amount, setAmount] = useState("50.00");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
   const cents = toMinorUnits(Number(amount) || 0);
+  const problem =
+    cents < MIN_CARD_PAYMENT_CENTS ? `Add ${formatCents(MIN_CARD_PAYMENT_CENTS)} or more.` : cents > MAX_CARD_PAYMENT_CENTS ? `Add up to ${formatCents(MAX_CARD_PAYMENT_CENTS)} at a time.` : null;
 
-  async function pay() {
-    setBusy(true);
-    setError(null);
-    try {
-      // To the processor's own page: card details never touch Relay.
-      window.location.assign(await addFundsUrl(serviceUrl, agent, cents));
-    } catch (err) {
-      setError(describeError(err));
-      setBusy(false);
-    }
+  if (paying) {
+    return <CardPaySheet issuer={issuer} agent={agent} amount={cents} title={`Add ${formatCents(cents)}`} subtitle={`Paid through ${issuer.profile.name}. No fee to add funds.`} onClose={onClose} onPaid={onPaid} />;
   }
-
   return (
     <Sheet
       open
       onClose={onClose}
       title="Add funds"
-      subtitle={`Pay by card through ${issuerName}. It's added to your balance as soon as the payment goes through.`}
+      subtitle={`Pay by card through ${issuer.profile.name}. It's in your balance as soon as the payment goes through.`}
       footer={
         <>
-          {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
-          <Button className="w-full" disabled={cents <= 0} loading={busy} onClick={pay}>
-            Pay {formatCents(cents)} by card
+          {problem && amount !== "" && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{problem}</p>}
+          <Button className="w-full" disabled={!!problem} onClick={() => setPaying(true)}>
+            Continue · {formatCents(cents)}
           </Button>
         </>
       }
@@ -246,8 +257,75 @@ function AddFundsSheet({ serviceUrl, issuerName, agent, onClose }: { serviceUrl:
       <Field label="Amount">
         <Input type="number" inputMode="decimal" min={0} step={0.01} value={amount} onChange={(e) => setAmount(e.target.value)} prefix={currencySymbol()} />
       </Field>
-      <p className="mt-3 text-xs text-ink-400">No fee to add funds. You'll pay exactly this.</p>
+      <p className="mt-3 text-xs text-ink-400">No fee to add funds. Whatever you don't spend can go back to your card when you cash out.</p>
     </Sheet>
+  );
+}
+
+/// Balances below which auto top-up pays, and what it adds -- in minor units.
+const AUTO_TOP_UP_BELOW = [1000, 2000, 5000];
+const AUTO_TOP_UP_AMOUNTS = [2500, 5000, 10_000];
+
+/// Auto top-up through `issuer`, with the card saved there.
+function AutoTopUpRow({ issuer, agent }: { issuer: PayableIssuer; agent: Uint8Array }) {
+  const hex = bytesToHex(agent);
+  const setting = useCustomerSettings((s) => s.autoTopUps[hex]);
+  const setAutoTopUp = useCustomerSettings((s) => s.setAutoTopUp);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function turn(on: boolean) {
+    setError(null);
+    if (!on) return setAutoTopUp(hex, null);
+    setBusy(true);
+    try {
+      // It charges the card saved last time: there has to be one.
+      if (!(await savedCard(issuer.profile.service_url, issuer.issuer, agent))) {
+        setError("Add funds by card once first -- that card is what auto top-up uses.");
+        return;
+      }
+      setAutoTopUp(hex, { issuer: bytesToHex(issuer.issuer), belowCents: AUTO_TOP_UP_BELOW[0], amountCents: AUTO_TOP_UP_AMOUNTS[0] });
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="p-4">
+      <div className="flex items-start gap-3">
+        <RefreshCw size={18} className="mt-0.5 shrink-0 text-ink-400" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">Top up automatically</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-500">When your balance runs low, this device adds funds with your saved card through {issuer.profile.name}.</p>
+        </div>
+        <Switch checked={!!setting} disabled={busy} onChange={turn} label="Top up automatically" />
+      </div>
+      {setting && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Field label="When below">
+            <Select value={setting.belowCents} onChange={(e) => setAutoTopUp(hex, { ...setting, belowCents: Number(e.target.value) })}>
+              {AUTO_TOP_UP_BELOW.map((c) => (
+                <option key={c} value={c}>
+                  {formatCents(c)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Add">
+            <Select value={setting.amountCents} onChange={(e) => setAutoTopUp(hex, { ...setting, amountCents: Number(e.target.value) })}>
+              {AUTO_TOP_UP_AMOUNTS.map((c) => (
+                <option key={c} value={c}>
+                  {formatCents(c)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
   );
 }
 
@@ -328,7 +406,7 @@ function CashOutSheet({
       open
       onClose={onClose}
       title="Cash out"
-      subtitle="Your issuer pays it to you outside the network."
+      subtitle="Your issuer pays it to your payout account -- or, without one, refunds it to the card you paid with."
       footer={
         <>
           {(error || problem) && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error ?? problem}</p>}

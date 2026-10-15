@@ -13,6 +13,9 @@ import { ConnectionBanner } from "./ConnectionBanner";
 import { usePolling } from "../lib/useResource";
 import { POLL } from "../lib/poll";
 import { collectIncoming } from "../lib/wallet";
+import { topUpIfLow } from "../lib/autoTopUp";
+import { bytesToHex } from "../holochain/decode";
+import { useCustomerSettings } from "../store/roleSettings";
 
 /// Wraps whichever route is active in a short fade+rise so navigating
 /// between screens (Browse -> cart, an order's detail page, switching
@@ -39,6 +42,9 @@ export function AppShell() {
   // Funds an issuer added, and cash-outs it declined, land in the balance
   // without anyone having to open the wallet.
   usePolling(() => collectIncoming().catch(() => 0), { pollMs: POLL.unsignalled * 4 }, !!agentPubKey);
+  // And a balance that's run low is paid back up, for those who asked.
+  const autoTopUp = useCustomerSettings((s) => (agentPubKey ? !!s.autoTopUps[bytesToHex(agentPubKey)] : false));
+  usePolling(() => topUpIfLow(agentPubKey!).catch(() => false), { pollMs: POLL.slow }, autoTopUp);
 
   const availableModes = [
     roles.includes("Requester") && ("customer" as const),

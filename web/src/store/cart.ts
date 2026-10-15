@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { base64ToBytes, bytesToBase64 } from "../lib/base64";
 import type { ActionHash, OrderItem, SelectionInput } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { selectionsKey } from "../lib/choices";
@@ -57,36 +59,53 @@ function merged(lines: CartLine[], line: CartLine): CartLine[] {
   return lines.some((l) => lineKey(l) === key) ? lines.map((l) => (lineKey(l) === key ? { ...l, quantity: l.quantity + line.quantity } : l)) : [...lines, line];
 }
 
-export const useCart = create<CartState>((set, get) => ({
-  catalogRef: null,
-  merchant: null,
-  merchantName: null,
-  lines: [],
+/// Hashes and keys, through JSON and back.
+const BYTES = "$bytes";
+const replacer = (_key: string, value: unknown) => (value instanceof Uint8Array ? { [BYTES]: bytesToBase64(value) } : value);
+const reviver = (_key: string, value: unknown) =>
+  value && typeof value === "object" && BYTES in value && typeof (value as Record<string, unknown>)[BYTES] === "string" ? base64ToBytes((value as Record<string, string>)[BYTES]) : value;
 
-  addLine: (catalogRef, merchant, merchantName, line) => {
-    const state = get();
-    // Switching restaurants clears the cart -- same rule every real
-    // delivery app enforces, since one order can only reference one
-    // catalog_ref/merchant on the backend.
-    const sameCatalog = state.catalogRef && bytesToHex(state.catalogRef) === bytesToHex(catalogRef);
-    set({ catalogRef, merchant, merchantName, lines: merged(sameCatalog ? state.lines : [], line) });
-  },
+// Kept on this device, so a cart outlives a reload, a card payment or
+// closing the tab -- as the big apps' do.
+export const useCart = create<CartState>()(
+  persist(
+    (set, get) => ({
+      catalogRef: null,
+      merchant: null,
+      merchantName: null,
+      lines: [],
 
-  replaceLine: (key, line) => set({ lines: merged(get().lines.filter((l) => lineKey(l) !== key), line) }),
+      addLine: (catalogRef, merchant, merchantName, line) => {
+        const state = get();
+        // Switching restaurants clears the cart -- same rule every real
+        // delivery app enforces, since one order can only reference one
+        // catalog_ref/merchant on the backend.
+        const sameCatalog = state.catalogRef && bytesToHex(state.catalogRef) === bytesToHex(catalogRef);
+        set({ catalogRef, merchant, merchantName, lines: merged(sameCatalog ? state.lines : [], line) });
+      },
 
-  removeLine: (key) => set({ lines: get().lines.filter((l) => lineKey(l) !== key) }),
+      replaceLine: (key, line) => set({ lines: merged(get().lines.filter((l) => lineKey(l) !== key), line) }),
 
-  setQuantity: (key, quantity) => {
-    if (quantity <= 0) {
-      get().removeLine(key);
-      return;
-    }
-    set({ lines: get().lines.map((l) => (lineKey(l) === key ? { ...l, quantity } : l)) });
-  },
+      removeLine: (key) => set({ lines: get().lines.filter((l) => lineKey(l) !== key) }),
 
-  setCart: (catalogRef, merchant, merchantName, lines) => set({ catalogRef, merchant, merchantName, lines: lines.reduce(merged, [] as CartLine[]) }),
+      setQuantity: (key, quantity) => {
+        if (quantity <= 0) {
+          get().removeLine(key);
+          return;
+        }
+        set({ lines: get().lines.map((l) => (lineKey(l) === key ? { ...l, quantity } : l)) });
+      },
 
-  clear: () => set({ catalogRef: null, merchant: null, merchantName: null, lines: [] }),
+      setCart: (catalogRef, merchant, merchantName, lines) => set({ catalogRef, merchant, merchantName, lines: lines.reduce(merged, [] as CartLine[]) }),
 
-  total: () => get().lines.reduce((sum, l) => sum + l.priceCents * l.quantity, 0),
-}));
+      clear: () => set({ catalogRef: null, merchant: null, merchantName: null, lines: [] }),
+
+      total: () => get().lines.reduce((sum, l) => sum + l.priceCents * l.quantity, 0),
+    }),
+    {
+      name: "relay.cart.v1",
+      storage: createJSONStorage(() => localStorage, { replacer, reviver }),
+      partialize: ({ catalogRef, merchant, merchantName, lines }) => ({ catalogRef, merchant, merchantName, lines }),
+    },
+  ),
+);

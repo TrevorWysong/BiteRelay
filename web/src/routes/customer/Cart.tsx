@@ -22,6 +22,10 @@ import { WEEKDAYS } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
+import { POLL } from "../../lib/poll";
+import { CardPaySheet } from "../../components/CardPaySheet";
+import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS } from "../../lib/issuerService";
+import { getBalance, listIssuers } from "../../holochain/zomes/ledger";
 import type { ActionHash, DropoffPreference, GeoPoint, MerchantCatalog, PromoCode, RecurrenceRule } from "../../holochain/types";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
@@ -234,6 +238,14 @@ export function Cart() {
   // How late the store may run before a driver can leave it paid and the
   // customer cancel for nothing -- its own, or the network's.
   const networkWaitSecs = useTerms().store_wait_secs;
+  const creditLimitCents = useTerms().credit_limit_cents;
+  // What the order can draw on, and who it can be topped up through by card
+  // when that's short.
+  const agentPubKey = useSession((s) => s.agentPubKey);
+  const { data: balance } = useResource(agentPubKey && `balance:${bytesToHex(agentPubKey)}`, () => getBalance(agentPubKey!), { pollMs: POLL.signalled });
+  const { data: payIssuer } = useResource("card-issuer", async () => (await listIssuers()).find(isPayable) ?? null, { pollMs: POLL.slow });
+  /// The card payment the order's waiting on, if any.
+  const [payingCents, setPayingCents] = useState<number | null>(null);
   const storeWaitMinutes = storeInfo?.storeWaitMinutes ?? Math.round(networkWaitSecs / 60);
   const subsidyPercent = storeInfo?.subsidyPercent ?? 0;
   const merchantLocation = storeInfo?.merchantLocation ?? null;
@@ -301,6 +313,13 @@ export function Cart() {
   const doorAllowed = storeInfo?.leaveAtDoorMaxCents == null || discountedSubtotalCents <= storeInfo.leaveAtDoorMaxCents;
   const dropoffPreference: DropoffPreference = chosenPreference === "LeaveAtDoor" && !doorAllowed ? "HandToMe" : chosenPreference;
   const estimatedTotalCents = discountedSubtotalCents + tipCents + customerFeeShareCents;
+  // What placing it sets aside from the balance, which may run down to the
+  // network's credit limit; a shortfall is paid by card first -- at least
+  // the least a card payment may be.
+  const orderHoldCents = fulfillment === "Pickup" ? discountedSubtotalCents : estimatedTotalCents;
+  const shortfallCents = balance === undefined ? 0 : Math.max(0, orderHoldCents - (balance + creditLimitCents));
+  const cardChargeCents = Math.max(shortfallCents, MIN_CARD_PAYMENT_CENTS);
+  const payByCard = shortfallCents > 0 && !!payIssuer && cardChargeCents <= MAX_CARD_PAYMENT_CENTS;
 
   if (cart.lines.length === 0) {
     return (
@@ -784,6 +803,11 @@ export function Cart() {
             A free order can't be delivered: your driver answers for what they carry. Choose pickup instead.
           </p>
         )}
+        {shortfallCents > 0 && !payByCard && (
+          <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
+            Your balance is {formatCents(shortfallCents)} short for this order. Add funds in your wallet first.
+          </p>
+        )}
         {storeClosed && (
           <p className="w-full rounded-lg bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-center text-xs font-semibold text-amber-700 dark:text-amber-300">
             {orderFor === now ? storeHours.label : "The store isn't open at that time."}
@@ -792,13 +816,43 @@ export function Cart() {
         <Button
           className="w-full"
           loading={placing}
-          disabled={storeClosed || shortOfMinimum > 0 || (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))}
-          onClick={placeOrder}
+          disabled={
+            storeClosed ||
+            shortOfMinimum > 0 ||
+            (shortfallCents > 0 && !payByCard) ||
+            (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))
+          }
+          onClick={payByCard ? () => setPayingCents(cardChargeCents) : placeOrder}
         >
-          {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}
-          {fulfillment === "Pickup" ? formatCents(discountedSubtotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
+          {payByCard ? (
+            <>Pay {formatCents(cardChargeCents)} and {fulfillment === "Delivery" && scheduled ? "schedule" : "place"} order</>
+          ) : (
+            <>
+              {fulfillment === "Pickup" ? "Place pickup order" : scheduled ? "Schedule order" : "Place order"} ·{" "}
+              {fulfillment === "Pickup" ? formatCents(discountedSubtotalCents) : `up to ${formatCents(estimatedTotalCents)}`}
+            </>
+          )}
         </Button>
       </div>
+
+      {payingCents !== null && payIssuer && agentPubKey && (
+        <CardPaySheet
+          issuer={payIssuer}
+          agent={agentPubKey}
+          amount={payingCents}
+          title={`Pay ${formatCents(payingCents)}`}
+          subtitle={
+            payingCents > shortfallCents
+              ? `What your balance is short, plus a little to reach the ${formatCents(MIN_CARD_PAYMENT_CENTS)} minimum card payment -- the rest stays in your balance. Your order is placed as soon as it's paid.`
+              : "What your balance is short. Your order is placed as soon as it's paid."
+          }
+          onClose={() => setPayingCents(null)}
+          onPaid={async () => {
+            setPayingCents(null);
+            await placeOrder();
+          }}
+        />
+      )}
 
       {editing && cart.catalogRef && (
         <ItemSheet

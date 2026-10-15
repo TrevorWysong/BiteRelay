@@ -5,6 +5,7 @@ import { loadConfig } from "./config.ts";
 import { connectIssuerLedger } from "./ledger.ts";
 import { sweep } from "./payouts.ts";
 import { serve } from "./server.ts";
+import { reconcile, RECONCILE_WINDOW_MS } from "./topups.ts";
 import { Store } from "./store.ts";
 import { stripeRail } from "./stripe.ts";
 
@@ -17,7 +18,7 @@ const fee = { payoutFeeCents: config.profile.payoutFeeCents, payoutFeeBasisPoint
 
 await ledger.setProfile({
   name: config.profile.name,
-  description: "Add funds by card, free. Cash out to your bank: the fee covers card and transfer costs. Set up your payout account once, from the Wallet.",
+  description: "Pay by card or Apple Pay at checkout, free. Cash out to your bank, or unspent funds back to your card: the fee covers card and transfer costs.",
   contact: config.profile.contact,
   payout_fee_cents: config.profile.payoutFeeCents,
   payout_fee_basis_points: config.profile.payoutFeeBasisPoints,
@@ -27,7 +28,7 @@ await ledger.setProfile({
 });
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
-serve({ store, ledger, rail, appOrigin: new URL(config.appUrl).origin, log }, config.port);
+serve({ store, ledger, rail, appOrigin: new URL(config.appUrl).origin, publishableKey: config.stripePublishableKey, log }, config.port);
 log(`listening on :${config.port}`);
 
 // One sweep at a time; a failed one is retried on the next tick from where
@@ -45,3 +46,19 @@ setInterval(async () => {
     sweeping = false;
   }
 }, config.sweepSeconds * 1000);
+
+// Every few minutes, every payment of the last week is checked for its
+// grant: a webhook that never arrived is granted here, once.
+let reconciling = false;
+setInterval(async () => {
+  if (reconciling) return;
+  reconciling = true;
+  try {
+    const granted = await reconcile(store, ledger, await rail.paymentsSince(Date.now() - RECONCILE_WINDOW_MS));
+    if (granted) log(`reconciled ${granted} payment${granted === 1 ? "" : "s"} that had no grant`);
+  } catch (err) {
+    log(`reconciliation failed, retrying next time: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    reconciling = false;
+  }
+}, 5 * 60_000);
