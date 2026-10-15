@@ -1,0 +1,9 @@
+# TLS for the network's public servers, with certificates from Let's
+# Encrypt. Set BOOTSTRAP_DOMAIN and ISSUER_DOMAIN (docker-compose.yml).
+{$BOOTSTRAP_DOMAIN} {
+	reverse_proxy bootstrap:8888
+}
+
+{$ISSUER_DOMAIN} {
+	reverse_proxy issuer:8890
+}

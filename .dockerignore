@@ -1,0 +1,10 @@
+target
+**/node_modules
+web
+tests
+.git
+.dev
+issuer/issuer.db
+issuer/.env
+deploy/issuer.env
+!deploy/relay.happ

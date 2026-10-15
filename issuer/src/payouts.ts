@@ -23,8 +23,6 @@ export interface PayoutDeps {
   rail: PaymentRail;
   fee: Fee;
   policy: RiskPolicy;
-  /// Where someone sets up their payout account.
-  setUpUrl: string;
   format: (cents: number) => string;
 }
 
@@ -32,7 +30,7 @@ export interface PayoutDeps {
 export type Decision = PayoutOutcome | { Defer: { until: number; reason: string } };
 
 export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Date.now()): Promise<Decision> {
-  const { store, ledger, rail, fee, policy, setUpUrl, format } = deps;
+  const { store, ledger, rail, fee, policy, format } = deps;
   const agent = agentId(request.redeemer);
   // A recovered account's old key may be in someone else's hands now (a
   // lost phone found): it pays nothing out. Its owner's balance is reissued
@@ -57,7 +55,7 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
   if (toBank > 0) {
     if (!account || !(await rail.canPay(account))) {
       const cardOnly = toCards > 0 ? ` You can cash out up to ${format(toCards)} back to your card now.` : "";
-      return { Declined: { reason: `There's nowhere to send this yet: set up your payout account, then cash out again: ${setUpUrl}.${cardOnly}` } };
+      return { Declined: { reason: `There's nowhere to send this yet: set up your payout account (Wallet → Payout account), then cash out again.${cardOnly}` } };
     }
     const from = bankPayoutFrom(await ledger.standingOf(request.redeemer), policy, now);
     if (from > now) return { Defer: { until: from, reason: "a new account's first bank payouts wait" } };

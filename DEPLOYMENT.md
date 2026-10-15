@@ -69,7 +69,61 @@ Copy `deploy/properties.example.json` to `deploy/properties.json` (gitignored) a
 
 ## 2. Run the network's servers
 
-Run `kitsune2-bootstrap-srv` (from the same Holochain release CI pins, with its checksum: `.github/actions/holochain-bins/action.yml`) behind TLS. It serves both bootstrap and relay. Note its public URLs.
+A network needs three things running on machines you control. Each is small:
+
+1. **Bootstrap and relay** (`kitsune2-bootstrap-srv`) behind TLS. Peers find each other through it, and reach each other through it when NATs are in the way. Holochain refuses a plaintext relay outside development.
+2. **The issuer's conductor**: an always-on Holochain node holding the issuer's agent key, on the same network as everyone else (`issuer/scripts/conductor.mjs`). Its admin interface listens on its own machine only.
+3. **The issuer service** (`issuer/`, see its README): card top-ups, payout accounts, cash-outs, recoveries. It runs beside the issuer's conductor, and it's the only thing that talks to it. It's reached by the app over https: its address is published in the issuer's profile.
+
+The issuer's key has to be on the network's roster (`issuers` in `deploy/properties.json`), which is part of the DNA. So the order is:
+
+```sh
+# On the issuer's machine (ISSUER_DATA_DIR short: the keystore's socket path is limited).
+export ISSUER_DATA_DIR=/var/lib/relay-issuer ISSUER_LAIR_PASSPHRASE=... \
+       BOOTSTRAP_URL=https://bootstrap.example.org RELAY_URL=https://bootstrap.example.org
+node issuer/scripts/conductor.mjs &          # the issuer's node
+node issuer/scripts/provision.mjs key        # prints its key: add it to deploy/properties.json `issuers`
+
+# Anywhere: build the network's bundle with that roster (step 3 below) -> deploy/relay.happ and relay.webhapp
+
+# Back on the issuer's machine:
+node issuer/scripts/provision.mjs install deploy/relay.happ   # same bundle as everyone
+cd issuer && npm start                       # the service (issuer/.env, see .env.example)
+```
+
+**Keep safe:**
+- `ISSUER_DATA_DIR` holds the issuer's key and chain: back it up. Losing it means losing the ability to grant and pay out.
+- The passphrase unlocks the keystore. Keep it in a secret store.
+
+**Stripe** (the issuer README has the details):
+- live keys only once the issuer is cleared to handle real money (`ALLOW_LIVE_STRIPE=1`);
+- a webhook endpoint at `https://<issuer>/webhooks/stripe` with the events `checkout.session.completed`, `charge.dispute.created` and `charge.dispute.closed`;
+- Radar rules.
+
+### With Docker Compose
+
+`deploy/docker-compose.yml` runs all three behind Caddy, which fetches TLS certificates itself:
+- `deploy/issuer/Dockerfile` builds one image: the pinned Holochain binaries, checked against CI's hashes, and the issuer;
+- `deploy/issuer/start.sh` starts the conductor, then prints the key (`key`) or installs the hApp and serves (`serve`).
+
+```sh
+cd deploy
+cp ../issuer/.env.example issuer.env       # fill in; never commit it (gitignored)
+export BOOTSTRAP_DOMAIN=bootstrap.example.org ISSUER_DOMAIN=issuer.example.org
+docker compose run --rm issuer key         # the issuer's key, for the roster
+#   ...package the network with it, so deploy/relay.happ exists...
+docker compose up -d --build
+```
+
+The scripts it runs are tested (a fresh conductor, key, install, admin on localhost only). **The images and Compose file themselves haven't been run yet**: build them once on the target machine and check the logs before relying on them.
+
+### Apple Pay and Google Pay
+
+The card form is Stripe's own (Embedded Checkout). It offers Apple Pay and Google Pay only:
+- in a browser engine that supports them;
+- on a domain registered in Stripe (Settings → Payment methods).
+
+Inside the desktop app (Kangaroo's Electron), they don't appear, and cards still work. In a Tauri mobile build, test them on the device before promising them.
 
 ## 3. Package
 

@@ -11,7 +11,9 @@ import type { CompletedPayment, PaymentRail, RailEvent, Refunded, SavedCardCharg
 const REFUND_WINDOW_MS = 170 * 24 * 60 * 60 * 1000;
 
 /// `currency`: the network's (an ISO 4217 code), which every amount is in.
-export function stripeRail(secretKey: string, webhookSecret: string, appUrl: string, currency: string): PaymentRail {
+/// `publicUrl`: this service's own address, where Stripe sends people back
+/// after setting up a payout account (the app itself isn't a website).
+export function stripeRail(secretKey: string, webhookSecret: string, publicUrl: string, currency: string): PaymentRail {
   const stripe = new Stripe(secretKey);
   currency = currency.toLowerCase();
 
@@ -143,7 +145,7 @@ export function stripeRail(secretKey: string, webhookSecret: string, appUrl: str
 
     async payoutAccountLink(agent, existing) {
       const account = existing ?? (await stripe.accounts.create({ type: "express", metadata: { agent }, capabilities: { transfers: { requested: true } } })).id;
-      const link = await stripe.accountLinks.create({ account, type: "account_onboarding", refresh_url: `${appUrl}/#/wallet`, return_url: `${appUrl}/#/wallet?payouts=1` });
+      const link = await stripe.accountLinks.create({ account, type: "account_onboarding", refresh_url: `${publicUrl}/payouts/expired`, return_url: `${publicUrl}/payouts/done` });
       return { account, url: link.url };
     },
 

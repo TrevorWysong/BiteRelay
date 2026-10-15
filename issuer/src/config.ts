@@ -8,7 +8,9 @@ export interface Config {
   stripeWebhookSecret: string;
   publicUrl: string;
   port: number;
-  appUrl: string;
+  /// The origins the app runs at, allowed to call this from inside it: a
+  /// browser dev server, or the Relay app's own (Kangaroo, Tauri).
+  appOrigins: string[];
   conductorAdminUrl: string;
   issuerAppId: string;
   profile: {
@@ -58,7 +60,11 @@ export function loadConfig(): Config {
     stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
     publicUrl: required("PUBLIC_URL").replace(/\/$/, ""),
     port: number("PORT", 8890),
-    appUrl: required("APP_URL").replace(/\/$/, ""),
+    // APP_URL, its older name, still works.
+    appOrigins: (process.env.APP_ORIGINS || process.env.APP_URL || required("APP_ORIGINS"))
+      .split(",")
+      .map((origin) => (origin.trim() ? new URL(origin.trim()).origin : ""))
+      .filter(Boolean),
     conductorAdminUrl: process.env.CONDUCTOR_ADMIN_URL ?? "ws://localhost:8870",
     issuerAppId: process.env.ISSUER_APP_ID ?? "dev-issuer",
     profile: {

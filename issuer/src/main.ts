@@ -16,11 +16,11 @@ const store = new Store(config.dbPath);
 const ledger = await connectIssuerLedger(config.conductorAdminUrl, config.issuerAppId);
 // Every amount is in the network's currency, whichever country it runs in.
 const currency = await ledger.currency();
-const rail = stripeRail(config.stripeSecretKey, config.stripeWebhookSecret, config.appUrl, currency);
+const rail = stripeRail(config.stripeSecretKey, config.stripeWebhookSecret, config.publicUrl, currency);
 const fee = { payoutFeeCents: config.profile.payoutFeeCents, payoutFeeBasisPoints: config.profile.payoutFeeBasisPoints };
 const money = new Intl.NumberFormat("en", { style: "currency", currency });
 const format = (minor: number) => money.format(minor / 10 ** (money.resolvedOptions().maximumFractionDigits ?? 2));
-const payoutDeps = { store, ledger, rail, fee, policy: config.risk, setUpUrl: `${config.appUrl}/#/wallet`, format };
+const payoutDeps = { store, ledger, rail, fee, policy: config.risk, format };
 
 await ledger.setProfile({
   name: config.profile.name,
@@ -36,7 +36,7 @@ await ledger.setProfile({
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
 serve(
-  { store, ledger, rail, appOrigin: new URL(config.appUrl).origin, publishableKey: config.stripePublishableKey, policy: config.risk, topUpsPerIpPerHour: config.topUpsPerIpPerHour, trustProxy: config.trustProxy, format, log },
+  { store, ledger, rail, appOrigins: config.appOrigins, publishableKey: config.stripePublishableKey, policy: config.risk, topUpsPerIpPerHour: config.topUpsPerIpPerHour, trustProxy: config.trustProxy, format, log },
   config.port,
 );
 log(`listening on :${config.port}`);

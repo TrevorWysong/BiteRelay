@@ -137,11 +137,11 @@ const request = (n: number, amount: number, redeemer: Uint8Array): CashOutReques
   outcome: null,
 });
 
-const payoutDeps = (store: Store, ledger: IssuerLedger, rail: PaymentRail): PayoutDeps => ({ store, ledger, rail, fee: FEE, policy: POLICY, setUpUrl: "https://app/#/wallet", format });
+const payoutDeps = (store: Store, ledger: IssuerLedger, rail: PaymentRail): PayoutDeps => ({ store, ledger, rail, fee: FEE, policy: POLICY, format });
 
 /// The HTTP service on a free port, with a way to call it.
 function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100) {
-  const server = serve({ store, ledger, rail, appOrigin: "http://app.test", publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, trustProxy: false, format }, 0);
+  const server = serve({ store, ledger, rail, appOrigins: ["http://app.test"], publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, trustProxy: false, format }, 0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -227,7 +227,7 @@ test("with nowhere to send it, a cash-out is declined and goes back", async () =
   await sweep(payoutDeps(store, ledger, rail));
   assert.equal(payments.length + refunds.length, 0);
   assert.equal(decisions.length, 3);
-  for (const d of decisions) assert.ok("Declined" in d.outcome && d.outcome.Declined.reason.includes("https://app/#/wallet"), "it says where to set one up");
+  for (const d of decisions) assert.ok("Declined" in d.outcome && d.outcome.Declined.reason.includes("Wallet → Payout account"), "it says where to set one up");
 });
 
 test("a cash-out whose decision went through on an earlier try counts as decided", async () => {

@@ -13,7 +13,7 @@
 // network seed are part of the DNA hash, so a different value is a
 // different, separate network.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { REPO, DNA_PATH } from "./lib/devEnv.mjs";
@@ -76,6 +76,8 @@ try {
   const manifest = { manifest_version: "0", name: "relay", description: "Relay -- food delivery with no middleman, on Holochain", roles: [role], bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
   writeFileSync(path.join(work, "happ.yaml"), JSON.stringify(manifest, null, 2));
   step("Packing hApp", "hc", ["app", "pack", work]);
+  // The issuer's own conductor installs exactly this (issuer/scripts/provision.mjs).
+  copyFileSync(path.join(work, "relay.happ"), path.join(REPO, "deploy/relay.happ"));
 
   // The production UI: no dev host, so no Admin API code (see
   // src/holochain/host.ts), and none of the dev-only public files.
@@ -90,7 +92,6 @@ try {
 
   console.log(`\n✓ ${path.relative(REPO, out)} (${Math.round(statSync(out).size / 1024)} KB)`);
   console.log(`  network seed: ${networkSeed}`);
-  console.log(`  arbitrators:  ${properties.arbitrators.length}`);
   console.log(`  issuers:      ${properties.issuers.length}`);
   console.log(`  credit limit: ${properties.credit_limit_cents} cents`);
   console.log(`  bootstrap:    ${bootstrapUrl ?? "(runtime default)"}`);

@@ -1,0 +1,35 @@
+# A Relay network's servers: its bootstrap/relay server, and an issuer (its
+# conductor and service), behind Caddy for TLS. See DEPLOYMENT.md, "Run the
+# servers". Fill in deploy/issuer.env from issuer/.env.example (never commit
+# it), and point both domains' DNS at this machine.
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      BOOTSTRAP_DOMAIN: ${BOOTSTRAP_DOMAIN:?set BOOTSTRAP_DOMAIN}
+      ISSUER_DOMAIN: ${ISSUER_DOMAIN:?set ISSUER_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  bootstrap:
+    build: { context: .., dockerfile: deploy/issuer/Dockerfile }
+    restart: unless-stopped
+    entrypoint: ["kitsune2-bootstrap-srv", "--listen", "0.0.0.0:8888"]
+
+  issuer:
+    build: { context: .., dockerfile: deploy/issuer/Dockerfile }
+    restart: unless-stopped
+    env_file: ./issuer.env
+    environment:
+      BOOTSTRAP_URL: https://${BOOTSTRAP_DOMAIN}
+      RELAY_URL: https://${BOOTSTRAP_DOMAIN}
+      PUBLIC_URL: https://${ISSUER_DOMAIN}
+    volumes:
+      - issuer-data:/var/lib/relay-issuer
+
+volumes:
+  caddy-data:
+  issuer-data:

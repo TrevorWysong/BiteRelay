@@ -38,8 +38,8 @@ export interface Deps {
   store: Store;
   ledger: IssuerLedger;
   rail: PaymentRail;
-  /// The app's origin, allowed to call this from the browser.
-  appOrigin: string;
+  /// The origins the app runs at, allowed to call this from inside it.
+  appOrigins: string[];
   /// Stripe's publishable key, for the app's embedded card form.
   publishableKey: string;
   policy: RiskPolicy;
@@ -104,7 +104,7 @@ function amountFrom(value: unknown): number {
 const HOUR_MS = 60 * 60 * 1000;
 
 export function handler(deps: Deps) {
-  const { store, ledger, rail, appOrigin, publishableKey, policy, format, log = () => {} } = deps;
+  const { store, ledger, rail, appOrigins, publishableKey, policy, format, log = () => {} } = deps;
   /// When each address opened its recent card forms -- kept in memory: a
   /// restart forgets them, which only ever loosens this, never the limits.
   const formsByAddress = new Map<string, number[]>();
@@ -228,10 +228,25 @@ export function handler(deps: Deps) {
     },
   };
 
+  /// The pages Stripe sends someone to after setting up their payout
+  /// account -- the app itself has no web address to return to.
+  const pages: Record<string, string> = {
+    "GET /payouts/done": "Your payout account is set up. Go back to Relay: your cash-outs are paid to it from now on.",
+    "GET /payouts/expired": "That link has expired. Go back to Relay and open Wallet → Payout account again.",
+  };
+
   return async (req: IncomingMessage, res: ServerResponse) => {
+    const page = pages[`${req.method} ${(req.url ?? "").split("?")[0]}`];
+    if (page) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(
+        `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relay</title><body style="font:16px system-ui;max-width:28rem;margin:4rem auto;padding:0 1rem;text-align:center"><h1>Relay</h1><p>${page}</p></body>`,
+      );
+      return;
+    }
     // The app calls from the browser; nothing else may.
-    if (req.headers.origin === appOrigin) {
-      res.setHeader("Access-Control-Allow-Origin", appOrigin);
+    const origin = req.headers.origin;
+    if (origin && appOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
       res.setHeader("Vary", "Origin");
     }
