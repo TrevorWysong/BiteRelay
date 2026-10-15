@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag, Star } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag, type FulfillmentInput } from "../../holochain/zomes/catalog";
+import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag, storeSuccessor, type FulfillmentInput } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
 import { useResource } from "../../lib/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
@@ -55,7 +55,11 @@ async function fetchStoreMenu(catalogHash: Uint8Array): Promise<StoreMenu> {
 /// over from the previous store.
 export function MerchantDetail() {
   const { hash } = useParams<{ hash: string }>();
+  // A store its owner moved to a new key (a new phone) sends customers on
+  // to the new one -- a saved favourite, an old link.
+  const { data: movedTo } = useResource(hash ? `store-successor:${hash}` : null, () => storeSuccessor(hexToBytes(hash!)));
   if (!hash) return null;
+  if (movedTo) return <Navigate to={`/customer/merchant/${bytesToHex(movedTo)}`} replace />;
   return <StorePage key={hash} hash={hash} />;
 }
 

@@ -5,9 +5,11 @@
 
 mod bags;
 mod modifiers;
+mod moves;
 mod signals;
 pub use bags::*;
 pub use modifiers::*;
+pub use moves::*;
 pub use signals::*;
 
 use catalog_integrity::*;
@@ -347,7 +349,7 @@ pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> Ex
 /// browse read -- see `MerchantCatalog.dietary_tags`'s own doc comment for
 /// why that tradeoff is the right one here), but silently truncating at one
 /// page would mean an item on page 2 could never contribute its tags.
-fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<()> {
+pub(crate) fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<()> {
     let mut tags: Vec<String> = Vec::new();
     let mut after = None;
     loop {
@@ -580,10 +582,13 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
         None
     };
     links.truncate(CATALOG_PAGE_SIZE);
-    let catalogs = resolve_links_to_records_with_original(links)
-        .into_iter()
-        .map(|(original_action, record)| CatalogView { original_action, record })
-        .collect();
+    let mut catalogs = Vec::new();
+    for (original_action, record) in resolve_links_to_records_with_original(links) {
+        // A store whose owner moved it to a new key shows as the new one.
+        if !moves::has_moved(&original_action)? {
+            catalogs.push(CatalogView { original_action, record });
+        }
+    }
     Ok(NearbyMerchantsPage { catalogs, next_after })
 }
 
@@ -728,7 +733,13 @@ pub fn list_promo_codes_for_catalog(input: ListPromoCodesInput) -> ExternResult<
 mod test_utils {
     use hdk::prelude::*;
     use catalog_integrity::{EntryTypes, LinkTypes, MerchantCatalog};
-    relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo);
+    relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo, CatalogToSuccessor, CatalogToPredecessor);
+
+    /// Writes a store's move exactly as given -- what a modified client could.
+    #[hdk_extern]
+    pub fn create_raw_store_move_for_testing(moved: catalog_integrity::StoreSuccession) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::StoreSuccession(moved))
+    }
 
     /// Writes a goodie-bag claim exactly as given, past the coordinator's
     /// checks -- so a test can prove what validation refuses.

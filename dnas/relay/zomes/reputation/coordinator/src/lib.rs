@@ -27,26 +27,36 @@ fn event_links(target: &ReputationTarget) -> (AnyLinkableHash, LinkTypes) {
     }
 }
 
-/// Every base a target's record lives under: a store's catalog; for a
-/// driver or customer, their key and each key their account had before it
-/// (the account zome's `lineage`) -- a person's record follows them to a new
-/// device.
-fn bases_of(base: AnyLinkableHash, agent: Option<&AgentPubKey>) -> ExternResult<Vec<AnyLinkableHash>> {
+/// Who or what a record is about: a person, or a store.
+enum Subject<'a> {
+    Person(&'a AgentPubKey),
+    Store(&'a ActionHash),
+}
+
+/// Every base a target's record lives under -- its own, and those it carries
+/// on from: for a person, each key their account had before (the account
+/// zome's `lineage`); for a store, each store it was moved from (the catalog
+/// zome's `store_line`). A record follows its subject to a new key.
+fn bases_of(base: AnyLinkableHash, subject: Subject) -> ExternResult<Vec<AnyLinkableHash>> {
     let mut bases = vec![base];
-    if let Some(agent) = agent {
-        if let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "account", "lineage".into(), None, agent.clone())? {
-            let earlier: Vec<AgentPubKey> = io.decode().map_err(|e| wasm_error!(e))?;
-            bases.extend(earlier.into_iter().map(AnyLinkableHash::from));
-        }
+    let earlier = match subject {
+        Subject::Person(agent) => call(CallTargetCell::Local, "account", "lineage".into(), None, agent.clone())?,
+        Subject::Store(catalog) => call(CallTargetCell::Local, "catalog", "store_line".into(), None, catalog.clone())?,
+    };
+    if let ZomeCallResponse::Ok(io) = earlier {
+        let earlier: Vec<AnyLinkableHash> = match subject {
+            Subject::Person(_) => io.decode::<Vec<AgentPubKey>>().map_err(|e| wasm_error!(e))?.into_iter().map(Into::into).collect(),
+            Subject::Store(_) => io.decode::<Vec<ActionHash>>().map_err(|e| wasm_error!(e))?.into_iter().map(Into::into).collect(),
+        };
+        bases.extend(earlier);
     }
     Ok(bases)
 }
 
-/// The agent a target is about, if it's a person rather than a store.
-fn person_of(target: &ReputationTarget) -> Option<&AgentPubKey> {
+fn subject_of(target: &ReputationTarget) -> Subject<'_> {
     match target {
-        ReputationTarget::Store(_) => None,
-        ReputationTarget::Driver(agent) | ReputationTarget::Customer(agent) => Some(agent),
+        ReputationTarget::Store(catalog) => Subject::Store(catalog),
+        ReputationTarget::Driver(agent) | ReputationTarget::Customer(agent) => Subject::Person(agent),
     }
 }
 
@@ -149,7 +159,7 @@ fn stores_delivered_for(driver: &AgentPubKey) -> ExternResult<u32> {
 pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
     let (base, event_link) = event_links(&target);
     let mut links = Vec::new();
-    for base in bases_of(base, person_of(&target))? {
+    for base in bases_of(base, subject_of(&target))? {
         links.extend(get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())?);
     }
     // Each order counts once per kind of event, whoever recorded it: two of
@@ -339,11 +349,11 @@ pub struct RatingSummary {
 #[hdk_extern]
 pub fn get_rating_summary(target: ReviewTarget) -> ExternResult<RatingSummary> {
     let (base, review_link) = review_links(&target);
-    let person = match &target {
-        ReviewTarget::Driver(agent) => Some(agent),
-        ReviewTarget::Store(_) => None,
+    let subject = match &target {
+        ReviewTarget::Driver(agent) => Subject::Person(agent),
+        ReviewTarget::Store(catalog) => Subject::Store(catalog),
     };
-    let ratings = ratings(bases_of(base, person)?, review_link)?;
+    let ratings = ratings(bases_of(base, subject)?, review_link)?;
     Ok(RatingSummary { count: ratings.len() as u32, rating_sum: ratings.iter().map(|&r| r as u32).sum() })
 }
 

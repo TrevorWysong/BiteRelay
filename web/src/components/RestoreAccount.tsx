@@ -17,6 +17,7 @@ import type { AgentPubKey, PlanView, VouchView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { accountsForPhraseKey, latestActionOf, mySuccession, recoveryPlanOf, requestReissue, takeOver, vouchesForMe } from "../holochain/zomes/account";
 import { bequestsToMe, listIssuers } from "../holochain/zomes/ledger";
+import { catalogsOf, moveStore } from "../holochain/zomes/catalog";
 import { AccountCode } from "./AccountCode";
 import { Button, Field, Input, Skeleton, Spinner, Textarea } from "./ui";
 import { adoptPredecessor, keyFingerprint, readPredecessor } from "../lib/accountMove";
@@ -300,6 +301,9 @@ function ConfirmDetails({ predecessor, recovered, onDone }: { predecessor: Agent
     setBusy(true);
     setError(null);
     try {
+      // Their stores first -- safe to repeat -- then their profile, so a
+      // failure here can simply be tried again.
+      for (const store of await catalogsOf(predecessor)) await moveStore(store.original_action);
       await adoptPredecessor(predecessor, known, shownName, shownPhone);
       await reconnect();
       onDone();
@@ -324,8 +328,11 @@ function ConfirmDetails({ predecessor, recovered, onDone }: { predecessor: Agent
       {recovered && (
         <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
           Your balance is reissued to this device by the network's issuer once your old device has gone unused for {wait ? `${wait} day${wait === 1 ? "" : "s"}` : "a while"} -- so nobody holding it can spend it twice.
-          {known.profile?.roles.includes("Merchant") ? " Your stores stay with the old account: set them up again from here." : ""}
+
         </p>
+      )}
+      {known.profile?.roles.includes("Merchant") && (
+        <p className="mb-3 text-xs text-ink-500">Your stores come with you, with their menus and ratings. List them again from your store screen to take orders.</p>
       )}
       {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
       <Button className="w-full" loading={busy} disabled={!shownName.trim()} onClick={finish}>

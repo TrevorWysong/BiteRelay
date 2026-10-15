@@ -400,3 +400,23 @@ mod bag_hold_tests {
         assert_eq!(lapses.as_micros(), 1_000_000 + 30 * 60_000_000 + 300_000_000);
     }
 }
+
+/// A store carried on to its owner's new key: `to`, a copy of `from` --
+/// details, choice groups, menu and promo codes -- published by the key
+/// that took over the account that owned `from` (`succession`, the
+/// account zome's `Succession`). A key can't change another's entries, so
+/// a store moves by being republished, and this ties the two together:
+/// ratings follow it, and customers are sent on from the old one.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
+pub struct StoreSuccession {
+    /// The old store, by its original action.
+    pub from: ActionHash,
+    /// The new store, by its original action.
+    pub to: ActionHash,
+    /// The author's succession of the old store's owner.
+    pub succession: ActionHash,
+}

@@ -13,6 +13,7 @@ import { bytesToHex } from "../holochain/decode";
 import { handOver, myRecoveryPlan, myWards, setRecoveryPlan, vouch } from "../holochain/zomes/account";
 import { MAX_GUARDIANS } from "../holochain/types";
 import { fetchProfile } from "../holochain/zomes/profiles";
+import { closeListing, isStoreListed, listMyCatalogs } from "../holochain/zomes/catalog";
 import { AccountCode, AccountCodeReader } from "../components/AccountCode";
 import { Sheet } from "../components/Sheet";
 import { Badge, Button, Card, Checkbox, Field, Input, Select, Skeleton } from "../components/ui";
@@ -448,6 +449,7 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
 }
 
 function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
+  const merchant = useSession((s) => !!s.profile?.roles.includes("Merchant"));
   const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -457,6 +459,11 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
+      // A listed store's stake comes back only to this key: its listing
+      // closes here, and the new phone lists the moved store again.
+      for (const store of await listMyCatalogs()) {
+        if (await isStoreListed(store.original_action)) await closeListing(store.original_action);
+      }
       await handOver(successor, await packParcel());
       // This key is done: the app shows so, from here on.
       useSession.setState({ movedTo: successor });
@@ -492,6 +499,7 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
           <ul className="flex flex-col gap-2 text-sm text-ink-600 dark:text-ink-300">
             <li>Your balance, name, phone, saved addresses and favourites go to the new device, sealed so only it can read them.</li>
             <li>Your ratings and history follow you.</li>
+            {merchant && <li>Your stores move too: their listings close here, and you list them again from your new phone.</li>}
             <li className="font-semibold">This device stops working for Relay once you move. Finish any orders in progress first.</li>
           </ul>
         </div>

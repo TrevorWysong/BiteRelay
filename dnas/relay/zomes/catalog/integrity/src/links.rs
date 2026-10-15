@@ -41,6 +41,11 @@ pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkD
             require(author == &catalog.owner && base == &AnyLinkableHash::from(catalog.owner.clone()), "a store is linked from its owner, by its owner")
         }
         LinkTypes::GeohashToCatalog => validate_listing(link, &record),
+        LinkTypes::CatalogToSuccessor | LinkTypes::CatalogToPredecessor => {
+            let Some(moved) = decode::<StoreSuccession>(&record) else { return invalid("target is not a store's move") };
+            let expected = if link_type == LinkTypes::CatalogToSuccessor { moved.from } else { moved.to };
+            require(author == entry_author && base == &AnyLinkableHash::from(expected), "a store's move is linked from its stores, by its author")
+        }
         LinkTypes::CatalogToMenuItem => {
             let Some(item) = decode::<MenuItem>(&record) else { return invalid("target is not a MenuItem") };
             require(

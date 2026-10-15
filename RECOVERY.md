@@ -62,17 +62,25 @@ Around that, honest apps treat a key whose account has moved on as finished:
 
 When Holochain's DPKI (Deepkey) returns, key revocation at the conductor level could make recovery's money move deterministically too. The `Succession` record is the natural thing to anchor it to.
 
+## Stores
+
+A store is authored by its merchant's key, and no key can change another's entries. So a store moves by being **republished** by the new key: `move_store` in the catalog zome copies its details, choice groups (nested ones remapped), menu and live promo codes into a store of the new key's own. A `StoreSuccession` ties old to new:
+
+- Validation accepts it only from the key whose `Succession` took over the old store's owner, and each store moves once.
+- Ratings follow the store's line (`store_line`), as a person's follow their keys. A move counts only while the succession behind it stands.
+- Customers opening the old store are sent on to the new one, and Browse lists only the new one.
+- **On a hand-over**, the old phone closes the store's listing first, so the listing stake comes back with the balance. The new phone lists the moved store again.
+- **On a recovery**, the old listing's stake stays with the lost key.
+
 ## What doesn't move yet
 
-- **Stores.** A catalog is authored by the merchant's key, and its listing stake comes back only to that key.
-  - Handing over is refused while a store is listed. Take the listing down first; the stake comes back.
-  - A merchant who recovers sets up their store again from the new key.
-  - Moving a store between keys is future work.
 - **Money owed to the old key mid-order** (a refund, a store's payment for food in flight) stays with the old key. Finish orders before moving. A recovered key's uncollected parts aren't reissued.
+- **Goodie bags** are short-lived and aren't copied.
 
 ## Where it lives
 
 - `dnas/relay/zomes/account/`: the plan, vouches, successions and parcels, with their validation.
+- `dnas/relay/zomes/catalog/coordinator/src/moves.rs`: moving a store (`StoreSuccession`).
 - `dnas/relay/zomes/ledger/`: `HandOver`, `Inherit`, `standing_at`.
 - `dnas/relay/zomes/dispatch/coordinator/src/accounts.rs`: honest apps refuse moved keys.
 - `dnas/relay/zomes/reputation/coordinator`: reputation follows the account's lineage.
@@ -82,5 +90,6 @@ When Holochain's DPKI (Deepkey) returns, key revocation at the conductor level c
 - `web/src/lib/recoveryPhrase.ts`: BIP-39 words in ten languages, and HKDF under Relay's own label to Ed25519.
 - Tests:
   - `tests/tryorama/src/account.test.ts`: every authority, and the forgeries a modified app would try;
+  - `tests/tryorama/src/store-move.test.ts`: a faithful copy, the move's forgeries;
   - `issuer/test/service.test.ts`: reissue rules;
   - `web/test/recoveryPhrase.test.ts`.

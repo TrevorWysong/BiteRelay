@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, GeoPoint, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import type { ActionHash, AgentPubKey, GeoPoint, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -325,4 +325,22 @@ export async function setBusy(originalAction: ActionHash, extraMinutes: number):
 
 export async function setLeaveAtDoorLimit(originalAction: ActionHash, maxCents: number | null): Promise<HcRecord> {
   return callZome("catalog", "set_leave_at_door_limit", { original_action: originalAction, max_cents: maxCents });
+}
+
+// --- a store moved to its owner's new key (catalog zome's `moves`) ---
+
+/// The stores `owner` has published.
+export async function catalogsOf(owner: AgentPubKey): Promise<CatalogView[]> {
+  return callZome("catalog", "catalogs_of", owner);
+}
+
+/// Republishes `from`, a store of the account the caller took over, as the
+/// caller's own; returns the new store.
+export async function moveStore(from: ActionHash): Promise<ActionHash> {
+  return callZome("catalog", "move_store", from);
+}
+
+/// Where a store moved to, if its owner moved it to a new key.
+export async function storeSuccessor(catalogRef: ActionHash): Promise<ActionHash | null> {
+  return callZome("catalog", "store_successor", catalogRef);
 }

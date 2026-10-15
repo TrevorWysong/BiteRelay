@@ -2674,6 +2674,29 @@ export interface StoreStepDue {
 }
 
 /**
+ * A store carried on to its owner's new key: `to`, a copy of `from` --
+ * details, choice groups, menu and promo codes -- published by the key
+ * that took over the account that owned `from` (`succession`, the
+ * account zome's `Succession`). A key can't change another's entries, so
+ * a store moves by being republished, and this ties the two together:
+ * ratings follow it, and customers are sent on from the old one.
+ */
+export interface StoreSuccession {
+  /**
+   * The old store, by its original action.
+   */
+  from: ActionHash;
+  /**
+   * The new store, by its original action.
+   */
+  to: ActionHash;
+  /**
+   * The author's succession of the old store's owner.
+   */
+  succession: ActionHash;
+}
+
+/**
  * The author taking over `predecessor`'s account, on `authority`.
  */
 export interface Succession {

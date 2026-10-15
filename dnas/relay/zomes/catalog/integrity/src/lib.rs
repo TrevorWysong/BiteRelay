@@ -6,7 +6,7 @@ use hdi::prelude::*;
 use relay_integrity_support::limits::*;
 use relay_integrity_support::{amount_problem, first_problem, image_problem, text_problem};
 use relay_integrity_support::chain::wrote_since;
-use relay_integrity_support::{classify, decode, invalid, Checked};
+use relay_integrity_support::{classify, decode, invalid, require, Checked};
 
 mod links;
 pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
@@ -17,7 +17,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward};
+pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, StoreSuccession};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -33,6 +33,7 @@ pub enum EntryTypes {
     GoodieBag(GoodieBag),
     BagClaim(BagClaim),
     ModifierGroup(ModifierGroup),
+    StoreSuccession(StoreSuccession),
 }
 
 #[hdk_link_types]
@@ -56,6 +57,10 @@ pub enum LinkTypes {
     CatalogToLivePromo,
     /// A store's choice groups, base = the store.
     CatalogToModifierGroup,
+    /// A store moved to its owner's new key, base = the old store.
+    CatalogToSuccessor,
+    /// The same, base = the new store -- the store's line, for its ratings.
+    CatalogToPredecessor,
 }
 
 #[hdk_extern]
@@ -68,6 +73,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::GoodieBag(bag) => validate_new_goodie_bag(&bag, action.author(), action.timestamp()),
             EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::ModifierGroup(group) => validate_modifier_group(&group, action.author(), None),
+            EntryTypes::StoreSuccession(succession) => validate_store_succession(&succession, action.author(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog_update(&catalog, action.author(), &action.original_action_address),
@@ -76,6 +82,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::GoodieBag(bag) => validate_goodie_bag_update(&bag, action.author(), &action.original_action_address),
             EntryTypes::BagClaim(claim) => validate_claim_update(&claim, action.author(), &action.original_action_address),
             EntryTypes::ModifierGroup(group) => validate_modifier_group_update(&group, action.author(), &action.original_action_address),
+            EntryTypes::StoreSuccession(_) => invalid("a store's move can't be changed"),
         },
         // A store's menu, promos and bags are retired by updating them
         // (unavailable, inactive), never deleted: orders and reviews cite them.
@@ -84,6 +91,31 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         Checked::DeleteLink { original, action, .. } => links::validate_delete_link(original.author(), action.author()),
         Checked::Other => Ok(ValidateCallbackResult::Valid),
     }
+}
+
+/// A store carried on to a new key: by the key that took over the old
+/// store's owner (a validated `Succession` naming them), to a store of its
+/// own -- each old store once, each new store once.
+fn validate_store_succession(succession: &StoreSuccession, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(prev_action) = prev_action else { return invalid("a store's move can't open a chain") };
+    let original_catalog = |hash: &ActionHash| -> ExternResult<Option<Record>> {
+        let record = must_get_valid_record(hash.clone())?;
+        Ok((decode::<MerchantCatalog>(&record).is_some() && matches!(record.action().data, ActionData::Create(_))).then_some(record))
+    };
+    let (Some(from), Some(to)) = (original_catalog(&succession.from)?, original_catalog(&succession.to)?) else {
+        return invalid("a store moves from one store to another, each by its original action");
+    };
+    if to.action().author() != author {
+        return invalid("a store moves to a store of the new key's own");
+    }
+    let taken = must_get_valid_record(succession.succession.clone())?;
+    let took_over = taken.action().author() == author && decode::<account_types::Succession>(&taken).is_some_and(|s| &s.predecessor == from.action().author());
+    if !took_over {
+        return invalid("only the key that took over a store's owner moves the store");
+    }
+    let since = from.action().timestamp();
+    let again = wrote_since(author, prev_action, since, ScopedEntryDefIndex::try_from(UnitEntryTypes::StoreSuccession)?, |s: &StoreSuccession| s.from == succession.from || s.to == succession.to)?;
+    require(!again, "a store moves once, to one store")
 }
 
 /// A store's details, changed only by its owner: the version being updated
