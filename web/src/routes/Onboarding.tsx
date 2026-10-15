@@ -14,6 +14,8 @@ import { describeError } from "../lib/errors";
 import { DEV_ADMIN_URL } from "../lib/devNode";
 import { HOST } from "../holochain/host";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
+import { RestoreAccount } from "../components/RestoreAccount";
+import { isRestoring } from "../lib/restoring";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
 
 const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
@@ -24,7 +26,7 @@ const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bi
 
 const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
 
-type Step = "roles" | "details" | "vehicle";
+type Step = "roles" | "details" | "vehicle" | "restore";
 const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 
 export function Onboarding() {
@@ -49,7 +51,9 @@ export function Onboarding() {
   // into a Profile schema change.
   const [addressDraft, setAddressDraft] = useState(EMPTY_SPLIT_ADDRESS);
   const [roles, setRoles] = useState<RoleTag[]>(["Requester"]);
-  const [step, setStep] = useState<Step>("roles");
+  // Part-way through bringing an account here (a reload while guardians
+  // vouch): back to that, not to sign-up.
+  const [step, setStep] = useState<Step>(() => (isRestoring() && status === "connected" ? "restore" : "roles"));
   const [localError, setLocalError] = useState<string | null>(null);
 
   const [vehicleType, setVehicleType] = useState(VEHICLE_TYPES[0]);
@@ -142,6 +146,10 @@ export function Onboarding() {
         className="w-full max-w-sm"
       >
         <Card className="bg-white text-ink-900 p-6 overflow-hidden">
+          {step === "restore" ? (
+            <RestoreAccount devAdminUrl={adminUrl} onBack={() => setStep("roles")} onDone={() => navigate("/")} />
+          ) : (
+          <>
           <div className="mb-5 flex items-center gap-1.5">
             {Array.from({ length: totalSteps }).map((_, i) => (
               <motion.div
@@ -190,6 +198,9 @@ export function Onboarding() {
                 <Button className="w-full" disabled={roles.length === 0} onClick={() => setStep("details")}>
                   Continue
                 </Button>
+                <button type="button" onClick={() => setStep("restore")} className="mt-3 w-full text-center text-sm font-semibold text-relay-600 hover:underline">
+                  I already have an account
+                </button>
               </motion.div>
             )}
 
@@ -312,6 +323,9 @@ export function Onboarding() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          </>
+          )}
 
           {devHost && step === "roles" && <DevIdentityPicker adminUrl={adminUrl} onPick={handleAdopt} disabled={connecting} />}
 

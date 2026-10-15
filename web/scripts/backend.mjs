@@ -14,12 +14,21 @@
 //     it says so and points at `npm run dev:reset`.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync } from "node:fs";
-import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, relayCells, tryConnectAdmin } from "./lib/devEnv.mjs";
+import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, readDevNetwork, relayCells, tryConnectAdmin } from "./lib/devEnv.mjs";
 import { updateCoordinators } from "./lib/coordinators.mjs";
 
 function step(label, cmd, cmdArgs) {
   console.log(`\n▸ ${label}`);
   execFileSync(cmd, cmdArgs, { cwd: REPO, stdio: "inherit" });
+}
+
+/// The DNA the dev network's identities run, if it's this build's: the seed
+/// installs everyone with the network's properties (its issuer roster),
+/// which gives a different hash from the bare build's. Recorded beside it in
+/// web/public/dev-network.json.
+function devNetworkDna(builtDna) {
+  const network = readDevNetwork();
+  return network?.builtDna === builtDna ? network.dnaHash : null;
 }
 
 function sameBytes(a, b) {
@@ -52,8 +61,9 @@ async function main() {
   }
   try {
     const cells = await relayCells(adminWs);
-    const current = cells.filter((c) => hashB64(c.cellId[0]) === dnaHash);
-    const stale = cells.filter((c) => hashB64(c.cellId[0]) !== dnaHash);
+    const runnable = new Set([dnaHash, devNetworkDna(dnaHash)].filter(Boolean));
+    const current = cells.filter((c) => runnable.has(hashB64(c.cellId[0])));
+    const stale = cells.filter((c) => !runnable.has(hashB64(c.cellId[0])));
     if (current.length > 0) {
       const zomeCount = await updateCoordinators(adminWs, current.map((c) => c.cellId));
       console.log(`\n▸ Hot-swapped ${zomeCount} coordinator zomes into ${current.length} running identit${current.length === 1 ? "y" : "ies"}. No reload needed.`);

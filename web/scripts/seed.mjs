@@ -298,6 +298,7 @@ async function main() {
       payout_fee_basis_points: 25,
       min_payout_cents: dollars(5),
       payout_days: 1,
+      recovery_wait_days: 7,
     });
     console.log("  ✓ Relay Credits, the network's issuer");
 

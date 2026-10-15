@@ -27,6 +27,29 @@ fn event_links(target: &ReputationTarget) -> (AnyLinkableHash, LinkTypes) {
     }
 }
 
+/// Every base a target's record lives under: a store's catalog; for a
+/// driver or customer, their key and each key their account had before it
+/// (the account zome's `lineage`) -- a person's record follows them to a new
+/// device.
+fn bases_of(base: AnyLinkableHash, agent: Option<&AgentPubKey>) -> ExternResult<Vec<AnyLinkableHash>> {
+    let mut bases = vec![base];
+    if let Some(agent) = agent {
+        if let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "account", "lineage".into(), None, agent.clone())? {
+            let earlier: Vec<AgentPubKey> = io.decode().map_err(|e| wasm_error!(e))?;
+            bases.extend(earlier.into_iter().map(AnyLinkableHash::from));
+        }
+    }
+    Ok(bases)
+}
+
+/// The agent a target is about, if it's a person rather than a store.
+fn person_of(target: &ReputationTarget) -> Option<&AgentPubKey> {
+    match target {
+        ReputationTarget::Store(_) => None,
+        ReputationTarget::Driver(agent) | ReputationTarget::Customer(agent) => Some(agent),
+    }
+}
+
 /// Where a `ReviewTarget`'s reviews live.
 fn review_links(target: &ReviewTarget) -> (AnyLinkableHash, LinkTypes) {
     match target {
@@ -39,9 +62,13 @@ fn review_links(target: &ReviewTarget) -> (AnyLinkableHash, LinkTypes) {
 /// (with a modified client) reviewed the same order twice still counts
 /// once. Read from the links' validated tags alone -- one network read,
 /// however many reviews there are.
-fn ratings(base: AnyLinkableHash, link_type: LinkTypes) -> ExternResult<Vec<u8>> {
+fn ratings(bases: Vec<AnyLinkableHash>, link_type: LinkTypes) -> ExternResult<Vec<u8>> {
     let mut votes: BTreeMap<(AgentPubKey, Vec<u8>), u8> = BTreeMap::new();
-    for link in get_links(LinkQuery::try_new(base, link_type)?, GetStrategy::default())? {
+    let mut links = Vec::new();
+    for base in bases {
+        links.extend(get_links(LinkQuery::try_new(base, link_type)?, GetStrategy::default())?);
+    }
+    for link in links {
         let tag = link.tag.into_inner();
         let (Some(&rating), Some(order)) = (tag.first(), tag.get(1..)) else { continue };
         if (1..=5).contains(&rating) {
@@ -121,6 +148,10 @@ fn stores_delivered_for(driver: &AgentPubKey) -> ExternResult<u32> {
 #[hdk_extern]
 pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
     let (base, event_link) = event_links(&target);
+    let mut links = Vec::new();
+    for base in bases_of(base, person_of(&target))? {
+        links.extend(get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())?);
+    }
     // Each order counts once per kind of event, whoever recorded it: two of
     // an order's parties can each record the same fact (a cancellation), and
     // it's still one fact.
@@ -129,7 +160,7 @@ pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<Reputati
     // they've completed enough deliveries -- a throwaway identity's reports
     // don't. Each reporter is looked up once.
     let mut seasoned: BTreeMap<AgentPubKey, bool> = BTreeMap::new();
-    for link in get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())? {
+    for link in links {
         let tag = link.tag.into_inner();
         if tag.len() != 1 + 8 + 39 {
             continue;
@@ -308,7 +339,11 @@ pub struct RatingSummary {
 #[hdk_extern]
 pub fn get_rating_summary(target: ReviewTarget) -> ExternResult<RatingSummary> {
     let (base, review_link) = review_links(&target);
-    let ratings = ratings(base, review_link)?;
+    let person = match &target {
+        ReviewTarget::Driver(agent) => Some(agent),
+        ReviewTarget::Store(_) => None,
+    };
+    let ratings = ratings(bases_of(base, person)?, review_link)?;
     Ok(RatingSummary { count: ratings.len() as u32, rating_sum: ratings.iter().map(|&r| r as u32).sum() })
 }
 
@@ -366,7 +401,7 @@ pub struct ItemRatingSummary {
 /// (`rating_sum / count`; `count == 0` means no reviews yet).
 #[hdk_extern]
 pub fn get_item_rating_summary(item_ref: ActionHash) -> ExternResult<ItemRatingSummary> {
-    let ratings = ratings(item_ref.into(), LinkTypes::ItemToReview)?;
+    let ratings = ratings(vec![item_ref.into()], LinkTypes::ItemToReview)?;
     Ok(ItemRatingSummary { count: ratings.len() as u32, rating_sum: ratings.iter().map(|&r| r as u32).sum() })
 }
 

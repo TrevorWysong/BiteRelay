@@ -86,3 +86,8 @@ const _: () = assert!(MAX_NOTE_BYTES == 4 * MAX_NOTE_CHARS);
 /// What a sealed field holding an image may add, beyond the image itself:
 /// a note, and its encoding.
 pub const SEALED_IMAGE_OVERHEAD_BYTES: usize = 4_096;
+
+/// The most guardians a recovery plan may name.
+pub const MAX_GUARDIANS: usize = 7;
+/// The most a hand-over's parcel may hold, before sealing.
+pub const MAX_PARCEL_BYTES: usize = 65_536;

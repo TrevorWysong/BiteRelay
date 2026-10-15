@@ -1,6 +1,6 @@
 // The issuer's side of the Relay ledger -- the zome functions this service
-// calls, as the issuer's own identity on its own conductor (see the ledger
-// zome's `cash_out` module). An interface, so the service's logic is tested
+// calls, as the issuer's own identity on its own conductor (the ledger
+// zome's `cash_out` module, and the account zome's recoveries). An interface, so the service's logic is tested
 // without a conductor.
 //
 // The connection heals itself: when the conductor restarts, its app port
@@ -36,6 +36,38 @@ export interface IssuerProfile {
   min_payout_cents: number;
   payout_days: number;
   service_url: string;
+  recovery_wait_days: number;
+}
+
+/// A key that took over an account -- `ledger`'s view of the account zome's
+/// `SuccessionView`.
+export interface Succession {
+  succession: Uint8Array;
+  predecessor: AgentPubKey;
+  successor: AgentPubKey;
+  kind: "HandOver" | "Phrase" | "Guardians";
+  /// The plan a recovery rested on.
+  plan: Uint8Array | null;
+  at: number;
+}
+
+export interface ReissueRequest {
+  succession: Uint8Array;
+  predecessor: AgentPubKey;
+  successor: AgentPubKey;
+  requested_at: number;
+}
+
+export interface ReissueRequestsPage {
+  requests: ReissueRequest[];
+  cursor: number | null;
+  more: boolean;
+}
+
+/// Where an account's ledger stood as of an action on its chain.
+export interface Standing {
+  balance: number;
+  handed_over: boolean;
 }
 
 export interface IssuerLedger {
@@ -45,6 +77,14 @@ export interface IssuerLedger {
   cashOutRequests(after: number | null): Promise<CashOutRequestsPage>;
   decideCashOut(redemption: Uint8Array, outcome: PayoutOutcome): Promise<void>;
   setProfile(profile: IssuerProfile): Promise<void>;
+  /// Every key that took over `account` and still stands -- a recovery
+  /// whose plan the person has since replaced doesn't. None while it's in
+  /// use.
+  successionsOf(account: AgentPubKey): Promise<Succession[]>;
+  reissueRequests(after: number | null): Promise<ReissueRequestsPage>;
+  /// The latest action the network has seen on `agent`'s chain.
+  latestActionOf(agent: AgentPubKey): Promise<Uint8Array | null>;
+  standingAt(agent: AgentPubKey, head: Uint8Array): Promise<Standing>;
 }
 
 /// Agent keys as the service passes them around: base64, as the app shows them.
@@ -87,8 +127,8 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
         reopening = null;
       }));
 
-  async function call<T>(fn_name: string, payload: unknown): Promise<T> {
-    const send = () => connection.appWs.callZome<T>({ cell_id: connection.cellId, zome_name: "ledger", fn_name, payload });
+  async function call<T>(fn_name: string, payload: unknown, zome_name = "ledger"): Promise<T> {
+    const send = () => connection.appWs.callZome<T>({ cell_id: connection.cellId, zome_name, fn_name, payload });
     try {
       return await send();
     } catch (err) {
@@ -104,6 +144,10 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
     cashOutRequests: (after) => call<CashOutRequestsPage>("get_cash_out_requests", { after }),
     decideCashOut: async (redemption, outcome) => void (await call("decide_cash_out", { redemption, outcome })),
     setProfile: async (profile) => void (await call("set_issuer_profile", profile)),
+    successionsOf: (account) => call<Succession[]>("successions_of", account, "account"),
+    reissueRequests: (after) => call<ReissueRequestsPage>("get_reissue_requests", { after }, "account"),
+    latestActionOf: (agent) => call<Uint8Array | null>("latest_action_of", agent, "account"),
+    standingAt: (agent, head) => call<Standing>("standing_at", { agent, head }),
     // The app socket's transport is typed narrowly; it's a WsClient.
     close: async () => void (await (connection.appWs.client as unknown as { close(): Promise<unknown> }).close()),
   };

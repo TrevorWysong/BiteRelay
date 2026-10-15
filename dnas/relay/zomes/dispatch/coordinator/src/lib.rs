@@ -28,6 +28,7 @@
 //! - `store_queue` -- each store's active queue and day-bucketed history,
 //!   shared by both verticals.
 
+mod accounts;
 mod bids;
 mod chat;
 mod claims;

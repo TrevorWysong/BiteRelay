@@ -139,6 +139,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     if winning_bid.status != BidStatus::Open {
         return Err(wasm_error!(WasmErrorInner::Guest("that driver has withdrawn their bid".into())));
     }
+    crate::accounts::ensure_not_moved(&winning_bid.bidder, "That driver")?;
 
     if !input.override_warrants {
         let warrants = check_warrants(winning_bid.bidder.clone())?;

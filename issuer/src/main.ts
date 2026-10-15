@@ -5,6 +5,7 @@ import { loadConfig } from "./config.ts";
 import { connectIssuerLedger } from "./ledger.ts";
 import { sweep } from "./payouts.ts";
 import { serve } from "./server.ts";
+import { reissueSweep } from "./recovery.ts";
 import { reconcile, RECONCILE_WINDOW_MS } from "./topups.ts";
 import { Store } from "./store.ts";
 import { stripeRail } from "./stripe.ts";
@@ -25,6 +26,7 @@ await ledger.setProfile({
   min_payout_cents: config.profile.minPayoutCents,
   payout_days: config.profile.payoutDays,
   service_url: config.publicUrl,
+  recovery_wait_days: Math.round(config.recoveryWaitMs / (24 * 60 * 60 * 1000)),
 });
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
@@ -62,3 +64,18 @@ setInterval(async () => {
     reconciling = false;
   }
 }, 5 * 60_000);
+
+// Recovered accounts' balances, reissued once the old key has been quiet
+// long enough (recovery.ts).
+let reissuing = false;
+setInterval(async () => {
+  if (reissuing) return;
+  reissuing = true;
+  try {
+    await reissueSweep(store, ledger, config.recoveryWaitMs, log);
+  } catch (err) {
+    log(`recovery sweep failed, retrying next time: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    reissuing = false;
+  }
+}, 10 * 60_000);

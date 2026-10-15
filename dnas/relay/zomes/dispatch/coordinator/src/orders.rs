@@ -377,6 +377,7 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     if order.merchant != agent_info()?.agent_initial_pubkey {
         return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
     }
+    crate::accounts::ensure_not_moved(&order.requester, "This customer")?;
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
     ensure_current_terms(&order_original_action, &order.catalog_ref, &order.catalog_version)?;
     if let Some(claim_ref) = &order.bag_claim_ref {

@@ -20,7 +20,7 @@ const SCAN_INTERVAL_MS = 120;
 
 /// `onScan` is called with each code read until the scanner unmounts; keep
 /// it stable (`useCallback`), as a new one restarts the camera.
-export function QrScanner({ onScan }: { onScan: (text: string) => void }) {
+export function QrScanner({ onScan, prompt = "Point at the code on the customer's screen" }: { onScan: (text: string) => void; prompt?: string }) {
   const [problem, setProblem] = useState<string | null>(null);
 
   const viewfinder = useCallback(
@@ -103,7 +103,7 @@ export function QrScanner({ onScan }: { onScan: (text: string) => void }) {
         ))}
         <span className="absolute inset-x-3 top-1/2 h-0.5 animate-[scanline_2s_ease-in-out_infinite] rounded-full bg-relay-400 shadow-[0_0_12px_2px] shadow-relay-400/70" />
       </div>
-      <p className="absolute inset-x-0 bottom-4 text-center text-xs font-semibold text-white/90 drop-shadow">Point at the code on the customer's screen</p>
+      <p className="absolute inset-x-0 bottom-4 text-center text-xs font-semibold text-white/90 drop-shadow">{prompt}</p>
     </div>
   );
 }

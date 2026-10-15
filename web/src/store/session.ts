@@ -7,6 +7,7 @@ import { connectLauncher, isConnected, myAgentPubKey, setRestorer } from "../hol
 import { HOST } from "../holochain/host";
 import { forgetStoredIdentity, loadStoredIdentity, storedIdentityNeedsUnlock } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
+import { successionsOf } from "../holochain/zomes/account";
 import { actionHash, decodeEntry } from "../holochain/decode";
 import { describeError } from "../lib/errors";
 import { useNetwork } from "./network";
@@ -68,6 +69,10 @@ interface SessionState {
   agentPubKey: Uint8Array | null;
   profile: Profile | null;
   profileActionHash: ActionHash | null;
+  /// The key this account moved on to, if it has -- handed over, or
+  /// recovered after this device was lost. This key is done: the app says
+  /// so instead of carrying on.
+  movedTo: Uint8Array | null;
   /// Whether this identity has a device passkey gating `reconnect()` -- see
   /// `lib/webauthn.ts`'s own doc comment for exactly what this does and
   /// doesn't protect against. Surfaced so the Profile screen can show real
@@ -98,6 +103,11 @@ interface SessionState {
     extras?: { bio?: string; avatarDataUri?: string; phone?: string },
     devAdminUrl?: string,
   ) => Promise<void>;
+  /// Gets this device's own key ready to take over an existing account --
+  /// connected, with no profile yet. In development it provisions a new
+  /// identity on the node at `devAdminUrl` and remembers it, so a recovery
+  /// that waits days for guardians keeps the same key across reloads.
+  prepareNewDevice: (devAdminUrl?: string) => Promise<void>;
   /// Development only: signs this browser in as an identity that already
   /// exists on the node (the onboarding picker for seeded people).
   adoptIdentity: (adminUrl: string, installedAppId: string, agentPubKey: Uint8Array) => Promise<void>;
@@ -113,6 +123,7 @@ export const useSession = create<SessionState>((set, get) => ({
   agentPubKey: null,
   profile: null,
   profileActionHash: null,
+  movedTo: null,
   hasDeviceLock: false,
   mode: "customer",
   location: loadStoredLocation() ?? DEFAULT_LOCATION,
@@ -128,13 +139,16 @@ export const useSession = create<SessionState>((set, get) => ({
       else hasDeviceLock = await (await devHost()).reconnectStoredIdentity();
       // One call: decode the record here rather than fetching it twice. The
       // network's terms load alongside -- every screen past here quotes them.
-      const [profileRecord] = await Promise.all([getProfileForAgent(myAgentPubKey()), useNetwork.getState().load()]);
+      // Whether this account has moved on is read before anything else is
+      // shown: a key whose account moved on mustn't carry on as if it hadn't.
+      const [profileRecord, successions] = await Promise.all([getProfileForAgent(myAgentPubKey()), successionsOf(myAgentPubKey()).catch(() => []), useNetwork.getState().load()]);
       const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
       set({
         status: "connected",
         agentPubKey: myAgentPubKey(),
         profile,
         profileActionHash: profileRecord ? actionHash(profileRecord) : null,
+        movedTo: successions[0]?.successor ?? null,
         // A fresh store defaults `mode` to "customer"; restore it from the
         // profile, or a driver or merchant reloading lands on their route
         // with the customer nav.
@@ -179,6 +193,26 @@ export const useSession = create<SessionState>((set, get) => ({
         mode: primaryModeForRoles(roles),
         hasDeviceLock,
       });
+    } catch (err) {
+      set({ status: "error", error: describeError(err) });
+      throw err;
+    }
+  },
+
+  prepareNewDevice: async (devAdminUrl) => {
+    if (isConnected()) return;
+    set({ status: "connecting", error: null });
+    try {
+      let hasDeviceLock = false;
+      if (HOST === "launcher") {
+        await connectLauncher();
+      } else {
+        const dev = await devHost();
+        const identity = await dev.provisionAndConnect(devAdminUrl ?? "");
+        hasDeviceLock = await dev.rememberIdentity(devAdminUrl ?? "", identity.installedAppId, identity.agentPubKey, "Relay");
+      }
+      await useNetwork.getState().load();
+      set({ status: "connected", agentPubKey: myAgentPubKey(), profile: null, profileActionHash: null, movedTo: null, hasDeviceLock });
     } catch (err) {
       set({ status: "error", error: describeError(err) });
       throw err;

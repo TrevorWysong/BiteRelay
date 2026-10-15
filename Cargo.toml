@@ -21,6 +21,9 @@ members = [
     "dnas/relay/zomes/ledger/coordinator",
     "dnas/relay/zomes/reputation/integrity",
     "dnas/relay/zomes/reputation/coordinator",
+    "dnas/relay/zomes/account/types",
+    "dnas/relay/zomes/account/integrity",
+    "dnas/relay/zomes/account/coordinator",
 ]
 
 [workspace.package]
@@ -45,6 +48,7 @@ relay_integrity_support = { path = "dnas/relay/integrity_support" }
 dispatch_types = { path = "dnas/relay/zomes/dispatch/types" }
 catalog_types = { path = "dnas/relay/zomes/catalog/types" }
 ledger_types = { path = "dnas/relay/zomes/ledger/types" }
+account_types = { path = "dnas/relay/zomes/account/types" }
 
 [profile.release]
 opt-level = "z"

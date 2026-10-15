@@ -3,6 +3,41 @@
 version = 4
 
 [[package]]
+name = "account_coordinator"
+version = "0.1.0"
+dependencies = [
+ "account_integrity",
+ "hdk",
+ "ledger_types",
+ "relay_coordinator_support",
+ "relay_governance",
+ "serde",
+]
+
+[[package]]
+name = "account_integrity"
+version = "0.1.0"
+dependencies = [
+ "account_types",
+ "hdi",
+ "holochain_serialized_bytes",
+ "ledger_types",
+ "relay_governance",
+ "relay_integrity_support",
+ "serde",
+]
+
+[[package]]
+name = "account_types"
+version = "0.1.0"
+dependencies = [
+ "hdi",
+ "holochain_serialized_bytes",
+ "relay_integrity_support",
+ "serde",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

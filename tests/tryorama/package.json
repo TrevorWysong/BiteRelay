@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:test-coordinators": "cd ../.. && cargo build --release --target wasm32-unknown-unknown --target-dir target/test-utils --features \"attestation_coordinator/test-utils catalog_coordinator/test-utils dispatch_coordinator/test-utils ledger_coordinator/test-utils profiles_coordinator/test-utils reputation_coordinator/test-utils\"",
+    "build:test-coordinators": "cd ../.. && cargo build --release --target wasm32-unknown-unknown --target-dir target/test-utils --features \"attestation_coordinator/test-utils catalog_coordinator/test-utils dispatch_coordinator/test-utils ledger_coordinator/test-utils profiles_coordinator/test-utils reputation_coordinator/test-utils account_coordinator/test-utils\"",
     "test": "node run.mjs"
   },
   "devDependencies": {

@@ -16,6 +16,8 @@ integrity:
       path: ../../../target/wasm32-unknown-unknown/release/ledger_integrity.wasm
     - name: reputation_integrity
       path: ../../../target/wasm32-unknown-unknown/release/reputation_integrity.wasm
+    - name: account_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/account_integrity.wasm
 coordinator:
   zomes:
     - name: profiles
@@ -42,3 +44,7 @@ coordinator:
       path: ../../../target/wasm32-unknown-unknown/release/reputation.wasm
       dependencies:
         - name: reputation_integrity
+    - name: account
+      path: ../../../target/wasm32-unknown-unknown/release/account.wasm
+      dependencies:
+        - name: account_integrity

@@ -12,8 +12,15 @@ const CURSOR = "cash_out_cursor";
 /// What to do with one cash-out: to the owner's payout account if they have
 /// one ready (stores and drivers); otherwise back to the cards they paid
 /// with (customers' unspent funds); otherwise, nowhere to send it yet.
-export async function decide(request: CashOutRequest, store: Store, rail: PaymentRail, fee: Fee, setUpUrl: string): Promise<PayoutOutcome> {
+export async function decide(request: CashOutRequest, store: Store, ledger: IssuerLedger, rail: PaymentRail, fee: Fee, setUpUrl: string): Promise<PayoutOutcome> {
   const agent = agentId(request.redeemer);
+  // A recovered account's old key may be in someone else's hands now (a
+  // lost phone found): it pays nothing out. Its owner's balance is reissued
+  // to their new key instead (recovery.ts). A key that handed its account
+  // over did so itself, and is paid as usual.
+  if ((await ledger.successionsOf(request.redeemer)).some((s) => s.kind !== "HandOver")) {
+    return { Declined: { reason: "This account was recovered on a new device, so this key can't cash out. Its balance goes to the new device." } };
+  }
   const net = payoutAfterFees(fee, request.amount);
   if (net === 0) return { Declined: { reason: "After the fee, there'd be nothing to send. Cash out a larger amount." } };
   // The cash-out's own hash keys each transfer or refund: a retried sweep
@@ -36,7 +43,7 @@ export async function sweep(store: Store, ledger: IssuerLedger, rail: PaymentRai
     for (const request of page.requests) {
       if (request.outcome) continue;
       try {
-        await ledger.decideCashOut(request.redemption, await decide(request, store, rail, fee, setUpUrl));
+        await ledger.decideCashOut(request.redemption, await decide(request, store, ledger, rail, fee, setUpUrl));
       } catch (err) {
         // Decided on an earlier try whose answer never came back: done.
         if (!/already been decided/.test(String(err))) throw err;

@@ -19,6 +19,9 @@ export interface Config {
   };
   dbPath: string;
   sweepSeconds: number;
+  /// How long a recovered account's old key must be quiet before its
+  /// balance is reissued to the new one.
+  recoveryWaitMs: number;
 }
 
 function required(name: string): string {
@@ -59,5 +62,6 @@ export function loadConfig(): Config {
     },
     dbPath: process.env.DB_PATH ?? "./issuer.db",
     sweepSeconds: number("SWEEP_SECONDS", 30),
+    recoveryWaitMs: number("RECOVERY_WAIT_DAYS", 7) * 24 * 60 * 60 * 1000,
   };
 }

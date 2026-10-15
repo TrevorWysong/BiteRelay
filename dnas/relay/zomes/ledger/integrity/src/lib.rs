@@ -37,6 +37,12 @@
 //!   never cashed out. Its issuer writes its outcome once -- paid, or
 //!   declined -- and only a declined one comes back to its author, once.
 //!
+//! - **An account handed over is closed.** Moving to a new device, the old
+//!   key's last ledger entry (`HandOver`) passes its whole balance -- never
+//!   below zero, with no order in hand -- to the key it names, which takes
+//!   it in once (`Inherit`). Nothing may follow it on the old key's ledger,
+//!   so that key can never spend again, whoever holds it.
+//!
 //! What it can't: move money nobody is entitled to collect yet. An order
 //! nobody has decided stays held. Nor make an issuer pay: what an issuer
 //! does outside the network rests on its public record of outcomes, and on
@@ -73,6 +79,9 @@ pub enum LinkTypes {
     RedemptionToOutcome,
     /// An issuer's profile, base = the issuer.
     IssuerToProfile,
+    /// An account handed over, base = its successor, so the new device
+    /// finds it.
+    SuccessorToBequest,
 }
 
 #[hdk_extern]
@@ -139,6 +148,10 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
         },
         LinkTypes::RedemptionToOutcome => decode::<RedemptionOutcome>(&record).map(|o| o.redemption.into()),
         LinkTypes::IssuerToProfile => decode::<IssuerProfile>(&record).filter(|_| matches!(record.action().data, ActionData::Create(_))).map(|_| author.clone().into()),
+        LinkTypes::SuccessorToBequest => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
+            Some(LedgerKind::HandOver { successor }) => Some(successor.into()),
+            _ => None,
+        },
     };
     match expected {
         Some(expected) => require(&expected == base, "a ledger link must sit under the order, hold or agent its entry is about"),
@@ -199,6 +212,9 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
             if between.iter().any(|e| &e.hash != previous) {
                 return invalid("previous must be the author's latest ledger entry");
             }
+            if matches!(prior.kind, LedgerKind::HandOver { .. }) {
+                return invalid("this account has been handed over: its ledger is closed");
+            }
             (prior.balance, prior.in_hand)
         }
         None => {
@@ -213,7 +229,14 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
     // The arithmetic, and the credit limit on what's spent.
     let amount = i128::from(entry.amount);
     let (expected, debit) = match &entry.kind {
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => (i128::from(prior_balance) + amount, false),
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } | LedgerKind::Inherit { .. } => (i128::from(prior_balance) + amount, false),
+        // Everything, and only what's there: credit isn't handed on.
+        LedgerKind::HandOver { .. } => {
+            if prior_balance < 0 || amount != i128::from(prior_balance) {
+                return invalid("a hand-over passes on the whole balance, which can't be below zero");
+            }
+            (0, true)
+        }
         LedgerKind::Hold { .. } | LedgerKind::Stake { .. } => (i128::from(prior_balance) - amount, true),
         // Credit is never cashed out: only money the author has.
         LedgerKind::Redeem { .. } => {
@@ -246,6 +269,8 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
         LedgerKind::Unstake { stake, delisting } => validate_unstake(entry, stake, delisting, author, prev_action),
         LedgerKind::Redeem { issuer, instructions } => validate_redeem(entry, issuer, instructions.as_ref(), author),
         LedgerKind::Reclaim { redemption, outcome } => validate_reclaim(entry, redemption, outcome, author, prev_action),
+        LedgerKind::HandOver { successor } => validate_hand_over(successor, author, &prior_in_hand),
+        LedgerKind::Inherit { bequest } => validate_inherit(entry, bequest, author, at, prev_action),
     }?;
     if !matches!(kind_result, ValidateCallbackResult::Valid) {
         return Ok(kind_result);
@@ -840,6 +865,37 @@ fn validate_reclaim(entry: &LedgerEntry, redemption: &ActionHash, outcome_ref: &
     require(!again, "a cash-out comes back once")
 }
 
+/// An account handed over: to another key, with no order in hand -- an
+/// order's collateral comes back to the key that paid it, and this one's
+/// ledger is about to close.
+fn validate_hand_over(successor: &AgentPubKey, author: &AgentPubKey, in_hand: &InHand) -> ExternResult<ValidateCallbackResult> {
+    if successor == author {
+        return invalid("an account is handed over to another key");
+    }
+    require(in_hand.orders == 0, "deliver the orders in hand before handing the account over")
+}
+
+/// A hand-over taken in: by the successor it names, for what it passed on,
+/// once.
+fn validate_inherit(entry: &LedgerEntry, bequest_ref: &ActionHash, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let record = must_get_valid_record(bequest_ref.clone())?;
+    let Some(LedgerEntry { kind: LedgerKind::HandOver { successor }, amount, .. }) = decode::<LedgerEntry>(&record) else {
+        return invalid("an inheritance takes in a hand-over");
+    };
+    if &successor != author || entry.amount != amount {
+        return invalid("an inheritance takes in exactly a hand-over to its author");
+    }
+    let handed_at = record.action().timestamp();
+    if at < handed_at {
+        return invalid("a hand-over is taken in after it's made");
+    }
+    let again = activity_since(prev_action, handed_at)?
+        .map(|filter| ledger_entries(author, filter))
+        .transpose()?
+        .is_some_and(|entries| entries.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Inherit { bequest } if bequest == bequest_ref)));
+    require(!again, "a hand-over is taken in once")
+}
+
 /// An issuer's profile: by an issuer on the roster, with sensible terms.
 fn validate_issuer_profile(profile: &IssuerProfile, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     use relay_integrity_support::limits::{MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, MAX_NOTE_CHARS};
@@ -862,6 +918,9 @@ fn validate_issuer_profile(profile: &IssuerProfile, author: &AgentPubKey) -> Ext
     // The app calls it with people's keys and money: only over https.
     if !profile.service_url.is_empty() && !profile.service_url.starts_with("https://") && !profile.service_url.starts_with("http://localhost") && !profile.service_url.starts_with("http://127.0.0.1") {
         return invalid("an issuer's service is reached over https");
+    }
+    if profile.recovery_wait_days > 365 {
+        return invalid("a recovery waits at most a year");
     }
     require(profile.payout_fee_basis_points <= 10_000, "a payout fee's share is at most the whole amount")
 }

@@ -9,6 +9,20 @@ export interface PayoutAccount {
   account: string;
 }
 
+/// A recovered account this issuer was asked to reissue, and where it's up to.
+export interface Recovery {
+  succession: string;
+  predecessor: string;
+  successor: string;
+  /// The old key's latest action last seen, as hex.
+  head: string | null;
+  /// Since when the old key has been seen doing nothing.
+  quietSince: number;
+  /// `void`: the person replaced the plan it rested on.
+  status: "waiting" | "reissued" | "contested" | "nothing" | "void";
+  amount: number | null;
+}
+
 export class Store {
   private db: DatabaseSync;
 
@@ -21,6 +35,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS saved_card_charges (agent TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS link_nonces (nonce TEXT PRIMARY KEY, agent TEXT NOT NULL, issued_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS recoveries (succession TEXT PRIMARY KEY, predecessor TEXT NOT NULL, successor TEXT NOT NULL, head TEXT, quiet_since INTEGER NOT NULL, status TEXT NOT NULL, amount INTEGER);
     `);
   }
 
@@ -74,6 +89,30 @@ export class Store {
     const row = this.db.prepare("SELECT agent, issued_at FROM link_nonces WHERE nonce = ?").get(nonce) as { agent: string; issued_at: number } | undefined;
     this.db.prepare("DELETE FROM link_nonces WHERE nonce = ? OR issued_at < ?").run(nonce, Date.now() - maxAgeMs);
     return !!row && row.agent === agent && Date.now() - row.issued_at <= maxAgeMs;
+  }
+
+  /// Starts watching a recovery this issuer was asked to reissue -- once.
+  trackRecovery(succession: string, predecessor: string, successor: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO recoveries (succession, predecessor, successor, quiet_since, status) VALUES (?, ?, ?, ?, 'waiting')").run(succession, predecessor, successor, Date.now());
+  }
+
+  /// The recoveries still waiting to be reissued.
+  waitingRecoveries(): Recovery[] {
+    return this.db.prepare("SELECT succession, predecessor, successor, head, quiet_since AS quietSince, status, amount FROM recoveries WHERE status = 'waiting'").all() as unknown as Recovery[];
+  }
+
+  /// Whether an account's balance has already been reissued to anyone.
+  reissued(predecessor: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM recoveries WHERE predecessor = ? AND status = 'reissued'").get(predecessor);
+  }
+
+  /// The old key was seen at `head`, quiet since `quietSince`.
+  sawRecoveryHead(succession: string, head: string, quietSince: number): void {
+    this.db.prepare("UPDATE recoveries SET head = ?, quiet_since = ? WHERE succession = ?").run(head, quietSince, succession);
+  }
+
+  settleRecovery(succession: string, status: Exclude<Recovery["status"], "waiting">, amount: number | null = null): void {
+    this.db.prepare("UPDATE recoveries SET status = ?, amount = ? WHERE succession = ?").run(status, amount, succession);
   }
 
   get(key: string): string | null {

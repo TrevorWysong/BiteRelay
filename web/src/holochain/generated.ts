@@ -9,6 +9,8 @@ export type EntryHash = Uint8Array;
 export type AgentPubKey = Uint8Array;
 /** Any hash a link can point at. */
 export type AnyLinkableHash = Uint8Array;
+/** A 64-byte Ed25519 signature. */
+export type Signature = Uint8Array;
 /** Microseconds since the Unix epoch. */
 export type Timestamp = number;
 /** Ciphertext sealed between two agents -- opened only through a zome call. */
@@ -43,6 +45,40 @@ export interface AddressDetails {
   state: string;
   zip: string;
 }
+
+export type Authority =
+  /**
+   * The predecessor's own hand-over: its final ledger entry, naming the
+   * author.
+   */
+  | {
+      HandOver: {
+        bequest: ActionHash;
+      };
+    }
+  /**
+   * The recovery phrase: its key's signature over `phrase_message`.
+   * `plan` is the predecessor's latest plan as of `head`, an action on its
+   * chain -- where the account stood when it was recovered.
+   */
+  | {
+      Phrase: {
+        plan: ActionHash;
+        head: ActionHash;
+        signature: Signature;
+      };
+    }
+  /**
+   * Guardians: at least the plan's threshold of them vouching for the
+   * author, under `plan` -- the predecessor's latest plan as of `head`.
+   */
+  | {
+      Guardians: {
+        plan: ActionHash;
+        head: ActionHash;
+        vouches: ActionHash[];
+      };
+    };
 
 /**
  * A customer's claim against a `GoodieBag` -- the `Bid`-shaped half of
@@ -110,6 +146,16 @@ export type BagClaimStatus =
 export interface Beacon {
   round: number;
   signature: Uint8Array;
+}
+
+/**
+ * An account handed over to the caller.
+ */
+export interface BequestView {
+  bequest: ActionHash;
+  from: AgentPubKey;
+  amount: number;
+  at: Timestamp;
 }
 
 export interface Bid {
@@ -951,6 +997,11 @@ export interface IssuerProfile {
    * reach directly.
    */
   service_url: string;
+  /**
+   * How many days a recovered account's old key must stay unused before
+   * this issuer reissues its balance to the new one (see RECOVERY.md).
+   */
+  recovery_wait_days: number;
 }
 
 /**
@@ -1153,6 +1204,26 @@ export type LedgerKind =
         redemption: ActionHash;
         outcome: ActionHash;
       };
+    }
+  /**
+   * The author handing their account over to `successor`, a key on their
+   * new device: their whole balance, which can't be below zero, with no
+   * order in hand. Debit -- and their last: nothing follows it on their
+   * ledger, so the old key can never spend again.
+   */
+  | {
+      HandOver: {
+        successor: AgentPubKey;
+      };
+    }
+  /**
+   * The author, a successor, taking in the balance its predecessor handed
+   * over (`bequest`, that `HandOver`). Credit, once.
+   */
+  | {
+      Inherit: {
+        bequest: ActionHash;
+      };
     };
 
 /**
@@ -1243,6 +1314,11 @@ export const MAX_DIETARY_TAGS = 32;
 export const MAX_GROUP_OPTIONS = 30;
 
 /**
+ * The most guardians a recovery plan may name.
+ */
+export const MAX_GUARDIANS = 7;
+
+/**
  * Choice groups on one menu item ("Size", "Milk", "Extras").
  */
 export const MAX_ITEM_GROUPS = 10;
@@ -1302,6 +1378,11 @@ export const MAX_ORDER_CHOICES = 300;
  * Lines on one order -- an item with its choices.
  */
 export const MAX_ORDER_LINES = 100;
+
+/**
+ * The most a hand-over's parcel may hold, before sealing.
+ */
+export const MAX_PARCEL_BYTES = 65536;
 
 export const MAX_PHONE_CHARS = 30;
 
@@ -1809,6 +1890,16 @@ export type Outcome =
       };
     };
 
+/**
+ * What a key handing over its account passes on, sealed to its successor:
+ * what only the person could read before (their name, phone, addresses),
+ * which the old key alone could open. Its contents are the app's own.
+ */
+export interface Parcel {
+  successor: AgentPubKey;
+  sealed: SealedChunks;
+}
+
 export type PayoutOutcome =
   /**
    * Paid out; `reference` is the issuer's payout id (its processor's
@@ -1940,6 +2031,18 @@ export type PickupStatus = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "
 export interface PinSecret {
   pin: string;
   salt: Uint8Array;
+}
+
+/**
+ * A plan, with the action that published it.
+ */
+export interface PlanView {
+  plan: ActionHash;
+  account: AgentPubKey;
+  phrase_key: AgentPubKey | null;
+  guardians: AgentPubKey[];
+  threshold: number;
+  published_at: Timestamp;
 }
 
 /**
@@ -2235,6 +2338,28 @@ export interface ReceiptPayment {
 }
 
 /**
+ * How an account may be recovered if its key is lost: the phrase's key,
+ * guardians, or both. The author's latest plan is the one that counts;
+ * one with neither turns recovery off.
+ */
+export interface RecoveryPlan {
+  /**
+   * The public half of the key the person's recovery phrase derives --
+   * never the phrase, which stays on paper.
+   */
+  phrase_key: AgentPubKey | null;
+  /**
+   * People who can vouch for them, each by their own key.
+   */
+  guardians: AgentPubKey[];
+  /**
+   * How many guardians must vouch: none without guardians, otherwise
+   * between one and all of them.
+   */
+  threshold: number;
+}
+
+/**
  * How often a `RecurringOrderTemplate` fires. Deliberately just these two
  * shapes -- the literal "same order every Monday" ask, plus daily as the
  * same shape with no weekday. `hour`/`minute` are wall-clock time in the
@@ -2300,6 +2425,25 @@ export interface RedemptionOutcome {
    */
   redemption: ActionHash;
   outcome: PayoutOutcome;
+}
+
+/**
+ * A recovered account an issuer has been asked to reissue.
+ */
+export interface ReissueRequest {
+  succession: ActionHash;
+  predecessor: AgentPubKey;
+  successor: AgentPubKey;
+  requested_at: Timestamp;
+}
+
+export interface ReissueRequestsPage {
+  requests: ReissueRequest[];
+  /**
+   * As `CashOutRequestsPage::cursor`.
+   */
+  cursor: Timestamp | null;
+  more: boolean;
 }
 
 export type ReputationEventKind =
@@ -2492,6 +2636,17 @@ export interface ShareView {
 }
 
 /**
+ * Where an account's ledger stood as of an action on its chain.
+ */
+export interface Standing {
+  balance: number;
+  /**
+   * Whether it had already been handed over -- nothing more to recover.
+   */
+  handed_over: boolean;
+}
+
+/**
  * What a store's deliveries call for once a deadline has passed -- the
  * steps its app takes, with proof of the time (`get_store_steps_due`).
  */
@@ -2519,6 +2674,31 @@ export interface StoreStepDue {
 }
 
 /**
+ * The author taking over `predecessor`'s account, on `authority`.
+ */
+export interface Succession {
+  predecessor: AgentPubKey;
+  authority: Authority;
+}
+
+export type SuccessionKind = "HandOver" | "Phrase" | "Guardians";
+
+/**
+ * One key taking over another's account.
+ */
+export interface SuccessionView {
+  succession: ActionHash;
+  predecessor: AgentPubKey;
+  successor: AgentPubKey;
+  kind: SuccessionKind;
+  /**
+   * The plan a recovery rested on -- none for a hand-over.
+   */
+  plan: ActionHash | null;
+  at: Timestamp;
+}
+
+/**
  * A customer's own saved "repeat this order" recipe. Deliberately a plain
  * entry with **no DHT link at all** -- nobody but the owner ever needs to
  * discover these, so `list_my_recurring_templates` is a local chain
@@ -2537,6 +2717,29 @@ export interface TemplateDetails {
    * Each order asks for a driver of its own (`DeliveryOrder::priority`).
    */
   priority: boolean;
+}
+
+/**
+ * A guardian's word that the person now holding `successor` is the one
+ * behind `account` -- after checking it's really them, outside the app.
+ */
+export interface Vouch {
+  account: AgentPubKey;
+  successor: AgentPubKey;
+  /**
+   * The account's plan that names the guardian.
+   */
+  plan: ActionHash;
+}
+
+/**
+ * A guardian's vouch for the caller.
+ */
+export interface VouchView {
+  vouch: ActionHash;
+  guardian: AgentPubKey;
+  account: AgentPubKey;
+  plan: ActionHash;
 }
 
 /**

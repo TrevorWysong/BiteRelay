@@ -19,6 +19,9 @@ export const POLL = {
   /// A card payment that's gone through, until its funds land: the issuer
   /// grants them within seconds of hearing from the processor.
   payment: 2_000,
+  /// A new device waiting to be handed an account, or vouched for: someone
+  /// is standing there with both phones.
+  waitingDevice: 3_000,
 } as const;
 
 /// Whether a signal says an order changed -- what every order screen

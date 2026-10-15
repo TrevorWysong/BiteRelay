@@ -250,6 +250,18 @@ export function policySections(t: NetworkTerms): PolicySection[] {
       ],
     },
     {
+      id: "account",
+      title: "Your account and getting it back",
+      summary: "Your account is a key on your device. There's no company that can reset it, so these are the ways back in.",
+      points: [
+        "Moving to a new phone: your old phone hands the account to the new one, with your balance, ratings and history. Your old phone can't spend after that.",
+        "Losing your phone: your recovery phrase (twelve words you write down) or enough of your guardians (people you choose, who vouch for your new phone) bring your account back.",
+        "After a recovery, your balance is reissued to your new phone by the network's issuer, once your old phone has gone unused for the issuer's waiting period. That's so nobody holding your old phone can spend the same money twice.",
+        "Anyone with your recovery phrase can take over your account. Keep it on paper, never share it, and no one from Relay will ever ask for it.",
+        "Guardians can't touch your account on their own: only enough of them together, for a phone you're recovering onto. Your plan publishes their keys, never their names.",
+      ],
+    },
+    {
       id: "privacy",
       title: "Privacy",
       summary: "You're known by a key, not a name. What's private is sealed; what isn't is said here.",
@@ -272,6 +284,7 @@ export function policyRisks(t: NetworkTerms): string[] {
     "Nothing forces a store to answer a report about missing items before it settles the order; a store that settles early, or declines unfairly, answers to its reviews.",
     `A store could refuse to check a driver in, then collect that driver's collateral if they leave and no one else comes. The network can't tell a store that won't check drivers in from a driver who never arrived, so it sides with the store, the party with the most to lose. Drivers can report it; reports from drivers who've delivered for at least ${t.min_reporter_stores} different stores show on the store's record, and drivers' apps can skip reported stores.`,
     "Balances are credits issued by this network's issuers. What a balance is worth outside Relay depends on those issuers, not on Relay.",
+    "If you lose your phone with no recovery phrase or guardians set up, your account and its balance can't be recovered by anyone. A phone found by someone else can still spend until you recover the account.",
     "Everything you publish is permanent and copied across the network. Reviews, ratings and order records can't be deleted.",
     "Which store a customer key ordered from, and roughly where, is public. Using one identity for everything links those orders together.",
     "Reviews can't detect a store buying from itself under another identity to rate itself.",

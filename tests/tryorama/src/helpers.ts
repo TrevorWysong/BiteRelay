@@ -183,6 +183,7 @@ const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
   reputation: (player) => ["get_reputation_summary", { Driver: player.agentPubKey }],
   attestation: () => ["list_my_receipts", null],
   profiles: () => ["get_my_name", null],
+  account: () => ["my_recovery_plan", null],
 };
 
 /// What a call can meet while a swapped-in coordinator settles: compiling

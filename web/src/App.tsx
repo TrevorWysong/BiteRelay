@@ -22,6 +22,8 @@ import { NewStore } from "./routes/merchant/NewStore";
 import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
 import { Policies } from "./routes/Policies";
+import { AccountPage } from "./routes/Account";
+import { MovedAway } from "./components/MovedAway";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
 /// whether a real identity is already provisioned on the conductor and
@@ -130,6 +132,8 @@ function UnlockScreen({ onDone }: { onDone: () => void }) {
 function RequireSession({ children }: { children: React.ReactNode }) {
   const status = useSession((s) => s.status);
   const profile = useSession((s) => s.profile);
+  const movedTo = useSession((s) => s.movedTo);
+  if (status === "connected" && movedTo) return <MovedAway to={movedTo} />;
   if (status !== "connected" || !profile) return <Navigate to="/onboarding" replace />;
   return <>{children}</>;
 }
@@ -182,6 +186,7 @@ export default function App() {
           <Route path="/transparency" element={<Transparency />} />
           <Route path="/wallet" element={<Wallet />} />
           <Route path="/policies" element={<Policies />} />
+          <Route path="/account" element={<AccountPage />} />
           <Route path="*" element={<HomeForMode />} />
         </Route>
       </Routes>

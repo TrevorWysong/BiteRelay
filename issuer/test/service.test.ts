@@ -9,9 +9,10 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
-import { agentId, type CashOutRequest, type IssuerLedger, type PayoutOutcome } from "../src/ledger.ts";
+import { agentId, type CashOutRequest, type IssuerLedger, type PayoutOutcome, type ReissueRequest, type Standing, type Succession } from "../src/ledger.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
 import { sweep } from "../src/payouts.ts";
+import { reissueSweep } from "../src/recovery.ts";
 import type { CompletedPayment, PaymentRail, SavedCardCharge } from "../src/rail.ts";
 import { serve } from "../src/server.ts";
 import { Store } from "../src/store.ts";
@@ -28,7 +29,16 @@ function identity() {
   return { key, sign: (message: Buffer) => new Uint8Array(sign(null, message, privateKey)) };
 }
 
-function fakeLedger(requests: CashOutRequest[] = []) {
+/// What the fake network knows of accounts: who took each over, each
+/// account's latest action, and its standing there.
+interface Accounts {
+  successions: Succession[];
+  reissues: ReissueRequest[];
+  latest: Map<string, Uint8Array>;
+  standing: Map<string, Standing>;
+}
+
+function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
   const grants: { to: string; amount: number; reference: string }[] = [];
   const decisions: { redemption: string; outcome: PayoutOutcome }[] = [];
   let failNextGrant = false;
@@ -39,7 +49,8 @@ function fakeLedger(requests: CashOutRequest[] = []) {
         failNextGrant = false;
         throw new Error("conductor unavailable");
       }
-      grants.push({ to: agentId(to), amount, reference });
+      // Idempotent by reference, as `issue_grant` is.
+      if (!grants.some((g) => g.reference === reference)) grants.push({ to: agentId(to), amount, reference });
     },
     async cashOutRequests(after) {
       const page = requests.filter((r) => after === null || r.requested_at >= after);
@@ -51,6 +62,13 @@ function fakeLedger(requests: CashOutRequest[] = []) {
       if (request) request.outcome = outcome;
     },
     async setProfile() {},
+    successionsOf: async (account) => accounts.successions.filter((s) => agentId(s.predecessor) === agentId(account)),
+    async reissueRequests(after) {
+      const page = accounts.reissues.filter((r) => after === null || r.requested_at >= after);
+      return { requests: page, cursor: page.length ? Math.max(...page.map((r) => r.requested_at)) + 1 : after, more: false };
+    },
+    latestActionOf: async (agent) => accounts.latest.get(agentId(agent)) ?? null,
+    standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0, handed_over: false },
   };
   return { ledger, grants, decisions, failGrant: () => (failNextGrant = true) };
 }
@@ -207,6 +225,86 @@ test("a cash-out whose decision went through on an earlier try counts as decided
   assert.equal(await sweep(store, ledger, rail, FEE, "https://app/#/wallet"), 1, "the sweep carries on");
   await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
   assert.equal(payments.length, 1, "and paying again was a no-op: the transfer is keyed by the cash-out");
+});
+
+/// A recovered account on the fake network: `lost`'s old key, recovered
+/// onto `found` by `kind`, with `balance` on its ledger.
+function recovered(accounts: Accounts, kind: Succession["kind"], balance: number, n: number) {
+  const lost = identity().key;
+  const found = identity().key;
+  const succession = new Uint8Array(39).fill(100 + n);
+  accounts.successions.push({ succession, predecessor: lost, successor: found, kind, plan: kind === "HandOver" ? null : new Uint8Array(39).fill(200 + n), at: n });
+  if (kind !== "HandOver") accounts.reissues.push({ succession, predecessor: lost, successor: found, requested_at: 1_000 + n });
+  accounts.latest.set(agentId(lost), new Uint8Array(39).fill(n));
+  accounts.standing.set(agentId(lost), { balance, handed_over: false });
+  return { lost, found, succession };
+}
+
+const noAccounts = (): Accounts => ({ successions: [], reissues: [], latest: new Map(), standing: new Map() });
+
+test("a recovered account's balance is reissued to its new key, once, after the old key is quiet", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  const { lost, found } = recovered(accounts, "Phrase", 4200, 1);
+  const { ledger, grants } = fakeLedger([], accounts);
+  assert.equal(await reissueSweep(store, ledger, 60_000), 0, "the first look starts the wait");
+  assert.equal(await reissueSweep(store, ledger, 60_000), 0, "and nothing moves before it's over");
+  assert.equal(grants.length, 0);
+  assert.equal(await reissueSweep(store, ledger, 0), 1, "then, quiet throughout, it's reissued");
+  assert.deepEqual(grants, [{ to: agentId(found), amount: 4200, reference: `recovery:${agentId(lost)}` }], "what the old key held, to the new one, keyed by the account");
+  assert.equal(await reissueSweep(store, ledger, 0), 0, "once");
+});
+
+test("the old key doing anything starts the wait again", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  const { lost } = recovered(accounts, "Guardians", 1000, 2);
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0);
+  accounts.latest.set(agentId(lost), new Uint8Array(39).fill(99));
+  assert.equal(await reissueSweep(store, ledger, 0), 0, "someone used the old key: wait again");
+  assert.equal(await reissueSweep(store, ledger, 0), 1);
+  assert.equal(grants.length, 1);
+});
+
+test("an account recovered onto two keys is left for review, and a hand-over is never reissued", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  const { lost } = recovered(accounts, "Phrase", 5000, 3);
+  const second = identity().key;
+  const succession = new Uint8Array(39).fill(120);
+  accounts.successions.push({ succession, predecessor: lost, successor: second, kind: "Guardians", plan: new Uint8Array(39).fill(204), at: 4 });
+  accounts.reissues.push({ succession, predecessor: lost, successor: second, requested_at: 1_010 });
+  recovered(accounts, "HandOver", 7000, 5);
+  const { ledger, grants } = fakeLedger([], accounts);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0);
+  assert.equal(grants.length, 0, "nobody is paid twice, or on a hand-over's account");
+});
+
+test("a recovery whose plan the person replaced reissues nothing", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  recovered(accounts, "Phrase", 3000, 8);
+  // The network no longer counts it: the account's plan has changed.
+  accounts.successions.length = 0;
+  const { ledger, grants } = fakeLedger([], accounts);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0);
+  assert.equal(grants.length, 0);
+});
+
+test("a recovered account's old key can't cash out; one that handed over can", async () => {
+  const store = new Store(":memory:");
+  const accounts = noAccounts();
+  const { lost } = recovered(accounts, "Phrase", 0, 6);
+  const { lost: movedOn } = recovered(accounts, "HandOver", 0, 7);
+  store.setPayoutAccount(agentId(lost), "acct_lost");
+  store.setPayoutAccount(agentId(movedOn), "acct_moved");
+  const { ledger, decisions } = fakeLedger([request(1, 5000, lost), request(2, 5000, movedOn)], accounts);
+  const { rail, payments } = fakeRail({ ready: new Set(["acct_lost", "acct_moved"]) });
+  await sweep(store, ledger, rail, FEE, "https://app/#/wallet");
+  assert.ok("Declined" in decisions[0].outcome && decisions[0].outcome.Declined.reason.includes("recovered"), "a found phone pays nothing out");
+  assert.ok("Paid" in decisions[1].outcome, "the owner who handed over is paid as usual");
+  assert.deepEqual(payments.map((p) => p.account), ["acct_moved"]);
 });
 
 test("a signature counts only for its agent, its issuer, its nonce and its purpose", () => {

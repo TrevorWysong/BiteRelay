@@ -10,7 +10,9 @@ use ledger_integrity::*;
 use relay_coordinator_support::original_action_of;
 
 mod cash_out;
+mod hand_over;
 pub use cash_out::*;
+pub use hand_over::*;
 
 pub(crate) fn guest(message: impl Into<String>) -> WasmError {
     wasm_error!(WasmErrorInner::Guest(message.into()))
@@ -21,7 +23,7 @@ pub(crate) fn my_entries() -> ExternResult<Vec<Record>> {
     query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?).include_entries(true))
 }
 
-fn entry_of(record: &Record) -> Option<LedgerEntry> {
+pub(crate) fn entry_of(record: &Record) -> Option<LedgerEntry> {
     record.entry().to_app_option::<LedgerEntry>().ok().flatten()
 }
 
@@ -35,6 +37,9 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
         }
         None => (None, 0, InHand::default()),
     };
+    if latest.as_ref().and_then(entry_of).is_some_and(|e| matches!(e.kind, LedgerKind::HandOver { .. })) {
+        return Err(guest("This account has moved to a new device."));
+    }
     let in_hand = in_hand_after(in_hand, &kind)?;
     let signed = i64::try_from(amount).map_err(|_| guest("amount out of range"))?;
     let balance = match kind {
@@ -53,8 +58,14 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
             }
             balance - signed
         }
+        LedgerKind::HandOver { .. } => {
+            if balance < 0 || balance != signed {
+                return Err(guest("An account is handed over with its whole balance, which can't be below zero."));
+            }
+            0
+        }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => balance + signed,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } | LedgerKind::Inherit { .. } => balance + signed,
     };
     create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
 }
@@ -416,8 +427,8 @@ pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
         return Ok(my_entries()?.last().and_then(entry_of).map_or(0, |e| e.balance));
     }
     let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?);
-    let activity = get_agent_activity(agent, filter, ActivityRequest::Full, GetOptions::default())?;
-    let Some((_, latest)) = activity.valid_activity.last() else { return Ok(0) };
+    let activity = relay_coordinator_support::agent_activity(agent, filter)?;
+    let Some((_, latest)) = activity.last() else { return Ok(0) };
     let record = get(latest.clone(), GetOptions::default())?.ok_or(guest("couldn't read their latest ledger entry"))?;
     Ok(entry_of(&record).map_or(0, |e| e.balance))
 }
@@ -460,7 +471,7 @@ pub fn my_holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 mod test_utils {
     use hdk::prelude::*;
     use ledger_integrity::{EntryTypes, LedgerEntry, LinkTypes};
-    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile);
+    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile, SuccessorToBequest);
 
     /// Writes a cash-out's outcome exactly as given -- what a modified
     /// client could.

@@ -258,3 +258,15 @@ macro_rules! raw_link_test_externs {
         }
     };
 }
+
+/// `agent`'s valid actions matching `filter`, oldest first: as the network's
+/// authorities for them report it, or -- when they report nothing, as for an
+/// agent on this same node, whose authority the network lookup skips --
+/// what this node already holds, which it validated too.
+pub fn agent_activity(agent: AgentPubKey, filter: ChainQueryFilter) -> ExternResult<Vec<(u32, ActionHash)>> {
+    let network = get_agent_activity(agent.clone(), filter.clone(), ActivityRequest::Full, GetOptions::default())?.valid_activity;
+    if !network.is_empty() {
+        return Ok(network);
+    }
+    Ok(get_agent_activity(agent, filter, ActivityRequest::Full, GetOptions::local())?.valid_activity)
+}

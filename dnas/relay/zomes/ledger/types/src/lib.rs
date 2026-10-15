@@ -50,6 +50,14 @@ pub enum LedgerKind {
     /// The author taking back a cash-out its issuer declined (`outcome`, the
     /// issuer's `RedemptionOutcome`). Credit, of what the cash-out took.
     Reclaim { redemption: ActionHash, outcome: ActionHash },
+    /// The author handing their account over to `successor`, a key on their
+    /// new device: their whole balance, which can't be below zero, with no
+    /// order in hand. Debit -- and their last: nothing follows it on their
+    /// ledger, so the old key can never spend again.
+    HandOver { successor: AgentPubKey },
+    /// The author, a successor, taking in the balance its predecessor handed
+    /// over (`bequest`, that `HandOver`). Credit, once.
+    Inherit { bequest: ActionHash },
 }
 
 #[hdk_entry_helper]
@@ -135,6 +143,10 @@ pub struct IssuerProfile {
     /// reach directly.
     #[serde(default)]
     pub service_url: String,
+    /// How many days a recovered account's old key must stay unused before
+    /// this issuer reissues its balance to the new one (see RECOVERY.md).
+    #[serde(default)]
+    pub recovery_wait_days: u16,
 }
 
 /// What someone signs to show an issuer's service they hold their key -- to
@@ -190,7 +202,7 @@ mod tests {
     use super::*;
 
     fn profile(flat: u64, bps: u16) -> IssuerProfile {
-        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2, service_url: String::new() }
+        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2, service_url: String::new(), recovery_wait_days: 7 }
     }
 
     // The same cases run in web/test/wallet.test.ts -- keep them in step.

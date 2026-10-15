@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ChevronRight, Fingerprint, LogOut, Pencil, Radio, ShieldCheck, Store, Truck } from "lucide-react";
+import { ChevronRight, Fingerprint, KeyRound, LogOut, Pencil, Radio, ShieldCheck, Store, Truck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
 import { useSession } from "../store/session";
@@ -260,6 +260,19 @@ export function ProfilePage() {
           </p>
         )}
       </Card>
+      </motion.div>
+
+      <motion.div variants={fadeSlideUp} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
+        <Link to="/account" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 bg-white p-4 shadow-[var(--shadow-card)] dark:border-ink-800 dark:bg-ink-900">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300">
+            <KeyRound size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Account &amp; recovery</p>
+            <p className="text-xs text-ink-400">Recovery phrase, guardians, moving to a new device</p>
+          </div>
+          <ChevronRight size={18} className="shrink-0 text-ink-300" />
+        </Link>
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mb-4 grid grid-cols-2 gap-3">
