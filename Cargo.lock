@@ -187,6 +187,7 @@ dependencies = [
 name = "catalog_integrity"
 version = "0.1.0"
 dependencies = [
+ "account_types",
  "catalog_types",
  "hdi",
  "holochain_serialized_bytes",
