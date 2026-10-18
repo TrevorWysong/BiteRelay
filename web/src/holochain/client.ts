@@ -158,7 +158,35 @@ const RETRYABLE = /could not be completed but may be retried|source chain head h
 const RETRY_DELAYS_MS = [500, 1500, 3000];
 
 export async function callZome<T>(zomeName: string, fnName: string, payload?: unknown): Promise<T> {
-  const request = { role_name: ROLE_NAME, zome_name: zomeName, fn_name: fnName, payload };
+  return callZomeIn(ROLE_NAME, zomeName, fnName, payload);
+}
+
+/// The app role that carries the previous version of the network, in a
+/// release made while people move from it (MIGRATION.md).
+export const PREVIOUS_ROLE = "previous";
+
+/// A zome call on the previous version of the network -- only in a release
+/// that carries it (`hasPreviousNetwork`).
+export async function callPrevious<T>(zomeName: string, fnName: string, payload?: unknown): Promise<T> {
+  return callZomeIn(PREVIOUS_ROLE, zomeName, fnName, payload);
+}
+
+let previousNetwork: Promise<boolean> | null = null;
+
+/// Whether this release carries the previous version of the network.
+export function hasPreviousNetwork(): Promise<boolean> {
+  previousNetwork ??= getAppWs()
+    .appInfo()
+    .then((info) => (info?.cell_info[PREVIOUS_ROLE] ?? []).length > 0)
+    .catch(() => {
+      previousNetwork = null;
+      return false;
+    });
+  return previousNetwork;
+}
+
+async function callZomeIn<T>(roleName: string, zomeName: string, fnName: string, payload?: unknown): Promise<T> {
+  const request = { role_name: roleName, zome_name: zomeName, fn_name: fnName, payload };
   let reconnected = false;
   for (let attempt = 0; ; attempt++) {
     // A call made while a new connection is on its way waits for it.

@@ -5,6 +5,7 @@ import { loadConfig } from "./config.ts";
 import { connectIssuerLedger } from "./ledger.ts";
 import { sweep } from "./payouts.ts";
 import { serve } from "./server.ts";
+import { migrationSweep } from "./migrations.ts";
 import { reissueSweep } from "./recovery.ts";
 import { reconcile, RECONCILE_WINDOW_MS } from "./topups.ts";
 import { Store } from "./store.ts";
@@ -22,7 +23,7 @@ const money = new Intl.NumberFormat("en", { style: "currency", currency });
 const format = (minor: number) => money.format(minor / 10 ** (money.resolvedOptions().maximumFractionDigits ?? 2));
 const payoutDeps = { store, ledger, rail, fee, policy: config.risk, format };
 
-await ledger.setProfile({
+const profile = {
   name: config.profile.name,
   description: "Pay by card or Apple Pay at checkout, free. Cash out to your bank, or unspent funds back to your card: the fee covers card and transfer costs.",
   contact: config.profile.contact,
@@ -32,7 +33,8 @@ await ledger.setProfile({
   payout_days: config.profile.payoutDays,
   service_url: config.publicUrl,
   recovery_wait_days: Math.round(config.recoveryWaitMs / (24 * 60 * 60 * 1000)),
-});
+};
+await ledger.setProfile(profile);
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
 serve(
@@ -87,3 +89,24 @@ setInterval(async () => {
     reissuing = false;
   }
 }, 10 * 60_000);
+
+// While people are still moving from the previous version of the network:
+// tell them there (apps offer to move), and carry their balances here.
+if (config.previousIssuerAppId) {
+  const previous = await connectIssuerLedger(config.conductorAdminUrl, config.previousIssuerAppId);
+  await previous.setProfile({ ...profile, next_network: await ledger.network() });
+  log("announced this network to the previous one; carrying balances over");
+  let migrating = false;
+  setInterval(async () => {
+    if (migrating) return;
+    migrating = true;
+    try {
+      const credited = await migrationSweep(store, previous, ledger, log);
+      if (credited) log(`carried ${credited} account${credited === 1 ? "" : "s"} over`);
+    } catch (err) {
+      log(`migration sweep failed, retrying next time: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      migrating = false;
+    }
+  }, config.sweepSeconds * 1000);
+}

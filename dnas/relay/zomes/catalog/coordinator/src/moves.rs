@@ -25,7 +25,7 @@ struct SuccessionView {
     successor: AgentPubKey,
 }
 
-fn guest(message: impl Into<String>) -> WasmError {
+pub(crate) fn guest(message: impl Into<String>) -> WasmError {
     wasm_error!(WasmErrorInner::Guest(message.into()))
 }
 
@@ -65,10 +65,7 @@ pub fn move_store(from: ActionHash) -> ExternResult<ActionHash> {
     let to = create_entry(&EntryTypes::MerchantCatalog(MerchantCatalog { owner: me.clone(), dietary_tags: Vec::new(), ..store }))?;
     create_link(me, to.clone(), LinkTypes::OwnerToCatalog, ())?;
 
-    let groups = copy_groups(&from, &to)?;
-    let items = copy_items(&from, &to, &groups)?;
-    recompute_dietary_tags(&to)?;
-    copy_promos(&from, &to, &items)?;
+    copy_contents(&Source::Here, &from, &to)?;
 
     let hash = create_entry(&EntryTypes::StoreSuccession(StoreSuccession { from: from.clone(), to: to.clone(), succession: mine.succession }))?;
     create_link(from, hash.clone(), LinkTypes::CatalogToSuccessor, ())?;
@@ -76,10 +73,43 @@ pub fn move_store(from: ActionHash) -> ExternResult<ActionHash> {
     Ok(to)
 }
 
+/// Where a store being republished is read from: this network (moving it
+/// to its owner's new key), or the previous version of the network
+/// (bringing it over in a migration -- the app's `previous` role).
+pub(crate) enum Source {
+    Here,
+    Previous,
+}
+
+impl Source {
+    /// One of the catalog zome's reads, on the source network.
+    pub(crate) fn read<I: Serialize + std::fmt::Debug, O: for<'de> Deserialize<'de> + std::fmt::Debug>(&self, function: &str, input: I) -> ExternResult<O> {
+        let target = match self {
+            Source::Here => CallTargetCell::Local,
+            Source::Previous => CallTargetCell::OtherRole("previous".into()),
+        };
+        match call(target, "catalog", function.into(), None, input)? {
+            ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
+            other => Err(guest(format!("couldn't read the store to copy ({function}): {other:?}"))),
+        }
+    }
+}
+
+/// Republishes `from`'s choice groups, menu and live promo codes, read from
+/// `source`, onto the store `to` -- every reference between them remapped
+/// to the copies.
+pub(crate) fn copy_contents(source: &Source, from: &ActionHash, to: &ActionHash) -> ExternResult<()> {
+    let groups = copy_groups(source, from, to)?;
+    let items = copy_items(source, from, to, &groups)?;
+    recompute_dietary_tags(to)?;
+    copy_promos(source, from, to, &items)
+}
+
 /// Copies the store's choice groups, each after the groups its options
 /// open, so every copy names copies. Returns old original -> new.
-fn copy_groups(from: &ActionHash, to: &ActionHash) -> ExternResult<BTreeMap<ActionHash, ActionHash>> {
-    let mut pending: Vec<(ActionHash, ModifierGroup)> = list_modifier_groups(from.clone())?
+fn copy_groups(source: &Source, from: &ActionHash, to: &ActionHash) -> ExternResult<BTreeMap<ActionHash, ActionHash>> {
+    let mut pending: Vec<(ActionHash, ModifierGroup)> = source
+        .read::<_, Vec<ModifierGroupView>>("list_modifier_groups", from.clone())?
         .into_iter()
         .filter_map(|view| decode_or::<ModifierGroup>(&view.record).map(|group| (view.original_action, group)))
         .collect();
@@ -117,11 +147,11 @@ fn copy_groups(from: &ActionHash, to: &ActionHash) -> ExternResult<BTreeMap<Acti
 
 /// Copies the menu, each item offering the copies of its groups. Returns
 /// old original -> new.
-fn copy_items(from: &ActionHash, to: &ActionHash, groups: &BTreeMap<ActionHash, ActionHash>) -> ExternResult<BTreeMap<ActionHash, ActionHash>> {
+fn copy_items(source: &Source, from: &ActionHash, to: &ActionHash, groups: &BTreeMap<ActionHash, ActionHash>) -> ExternResult<BTreeMap<ActionHash, ActionHash>> {
     let mut copies = BTreeMap::new();
     let mut after = None;
     loop {
-        let page = list_menu_items(ListMenuItemsInput { catalog_ref: from.clone(), after })?;
+        let page: MenuItemsPage = source.read("list_menu_items", ListMenuItemsInput { catalog_ref: from.clone(), after })?;
         for view in page.items {
             let Some(item) = decode_or::<MenuItem>(&view.record) else { continue };
             let modifier_groups = item.modifier_groups.iter().filter_map(|g| groups.get(g).cloned()).collect();
@@ -137,10 +167,10 @@ fn copy_items(from: &ActionHash, to: &ActionHash, groups: &BTreeMap<ActionHash, 
 }
 
 /// Copies the promo codes still live, naming the copies of their items.
-fn copy_promos(from: &ActionHash, to: &ActionHash, items: &BTreeMap<ActionHash, ActionHash>) -> ExternResult<()> {
+fn copy_promos(source: &Source, from: &ActionHash, to: &ActionHash, items: &BTreeMap<ActionHash, ActionHash>) -> ExternResult<()> {
     let now = sys_time()?;
     let remap = |item: &ActionHash| items.get(item).cloned();
-    for view in list_live_promo_codes(from.clone())? {
+    for view in source.read::<_, Vec<PromoView>>("list_live_promo_codes", from.clone())? {
         let Some(promo) = decode_or::<PromoCode>(&view.record) else { continue };
         if !promo.active || promo.expires_at.is_some_and(|at| at <= now) {
             continue;
@@ -215,4 +245,64 @@ pub fn store_line(catalog: ActionHash) -> ExternResult<Vec<ActionHash>> {
 pub(crate) fn has_moved(catalog: &ActionHash) -> ExternResult<bool> {
     let links = get_links(LinkQuery::try_new(catalog.clone(), LinkTypes::CatalogToSuccessor)?, GetStrategy::default())?;
     Ok(!links.is_empty() && store_successor(catalog.clone())?.is_some())
+}
+
+// --- bringing a store over from the previous network (MIGRATION.md) ---
+
+/// The account zome's answer for who an agent was on the previous network.
+fn arrived_from(agent: AgentPubKey) -> ExternResult<Option<AgentPubKey>> {
+    match call(CallTargetCell::Local, "account", "arrived_from".into(), None, agent)? {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
+        _ => Ok(None),
+    }
+}
+
+/// The stores the caller's account ran on the previous network.
+#[hdk_extern]
+pub fn previous_stores(_: ()) -> ExternResult<Vec<CatalogView>> {
+    let Some(previous) = arrived_from(agent_info()?.agent_initial_pubkey)? else { return Ok(Vec::new()) };
+    Source::Previous.read("catalogs_of", previous)
+}
+
+/// Republishes `from` -- a store the caller's account ran on the previous
+/// network -- here, as the caller's own, and records where it came from.
+/// Returns the new store; safe to repeat. Unlisted, like a moved store.
+#[hdk_extern]
+pub fn import_store(from: ActionHash) -> ExternResult<ActionHash> {
+    let me = agent_info()?.agent_initial_pubkey;
+    let previous = arrived_from(me.clone())?.ok_or(guest("This account hasn't arrived from a previous network."))?;
+    let imported = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::StoreImport)?).include_entries(true))?;
+    if let Some(earlier) = imported.iter().filter_map(decode_or::<StoreImport>).find(|i| i.from == from) {
+        return Ok(earlier.to);
+    }
+    let record: Record = Source::Previous.read("get_catalog", from.clone())?;
+    let store = decode_or::<MerchantCatalog>(&record).ok_or(guest("That isn't a store."))?;
+    if store.owner != previous {
+        return Err(guest("That store wasn't this account's."));
+    }
+    let previous_network: DnaHash = match call(CallTargetCell::OtherRole("previous".into()), "account", "network_hash".into(), None, ())? {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
+        _ => return Err(guest("Couldn't reach the previous network.")),
+    };
+    // The store's settings are the network's own now: its rules and limits
+    // may have changed, so the copy starts from what this network allows.
+    let to = create_entry(&EntryTypes::MerchantCatalog(MerchantCatalog { owner: me.clone(), dietary_tags: Vec::new(), ..store }))?;
+    create_link(me, to.clone(), LinkTypes::OwnerToCatalog, ())?;
+    copy_contents(&Source::Previous, &from, &to)?;
+    let hash = create_entry(&EntryTypes::StoreImport(StoreImport { previous_network, from, to: to.clone() }))?;
+    create_link(to.clone(), hash, LinkTypes::CatalogToImport, ())?;
+    Ok(to)
+}
+
+/// The store on the previous network that `catalog` was brought over from,
+/// if its owner really did move their account to this store's owner --
+/// checked there. Its ratings are this store's too.
+#[hdk_extern]
+pub fn imported_from(catalog: ActionHash) -> ExternResult<Option<ActionHash>> {
+    let links = get_links(LinkQuery::try_new(catalog.clone(), LinkTypes::CatalogToImport)?, GetStrategy::default())?;
+    let Some((_, record)) = resolve_links_to_records_with_original(links).into_iter().next() else { return Ok(None) };
+    let Some(import) = decode_or::<StoreImport>(&record) else { return Ok(None) };
+    let Some(previous) = arrived_from(record.action().author().clone())? else { return Ok(None) };
+    let Ok(old) = Source::Previous.read::<_, Record>("get_catalog", import.from.clone()) else { return Ok(None) };
+    Ok(decode_or::<MerchantCatalog>(&old).filter(|store| store.owner == previous).map(|_| import.from))
 }

@@ -2,7 +2,7 @@
 // onto it (RestoreAccount) -- remembered, so a reload while guardians vouch
 // comes back to it rather than to sign-up.
 
-export type Method = "device" | "phrase" | "guardians";
+export type Method = "device" | "phrase" | "guardians" | "previous";
 
 /// Where it's kept: the method chosen.
 const RESTORING_KEY = "relay.restoring.v1";
@@ -28,7 +28,7 @@ export function remember(method: Method | null) {
 export function rememberedMethod(): Method | null {
   try {
     const method = localStorage.getItem(RESTORING_KEY);
-    return method === "device" || method === "phrase" || method === "guardians" ? method : null;
+    return method === "device" || method === "phrase" || method === "guardians" || method === "previous" ? method : null;
   } catch {
     return null;
   }

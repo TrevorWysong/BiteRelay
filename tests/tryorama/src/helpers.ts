@@ -160,7 +160,7 @@ export async function installManyAgents(conductor: Conductor, count: number, lab
 /// link validation rejects them. Coordinators aren't part of the DNA hash,
 /// so the swap leaves the cell on the same DNA as everyone else. Build
 /// first with `npm run build:test-coordinators`.
-export async function useTestCoordinators(player: PlayerApp, zomes: string[]): Promise<void> {
+export async function useTestCoordinators(player: PlayerApp, zomes: string[], cell: CallableCell = player.cells[0]): Promise<void> {
   const { readFile } = await import("node:fs/promises");
   const wasmDir = fileURLToPath(new URL("../../../target/test-utils/wasm32-unknown-unknown/release/", import.meta.url));
   const adminWs = player.conductor.adminWs();
@@ -168,10 +168,10 @@ export async function useTestCoordinators(player: PlayerApp, zomes: string[]): P
     const file = `${zome}.wasm`;
     const bytes = new Uint8Array(await readFile(`${wasmDir}${file}`));
     await adminWs.updateCoordinators({
-      cell_id: player.cells[0].cell_id,
+      cell_id: cell.cell_id,
       source: { type: "bundle", value: { manifest: { zomes: [{ name: zome, hash: null, path: file, dependencies: [{ name: `${zome}_integrity` }] }] }, resources: { [file]: bytes } } },
     } as never);
-    await warmUp(player, zome);
+    await warmUp(player, zome, cell);
   }
 }
 
@@ -194,13 +194,13 @@ const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
 const SETTLING = /timed out|Missing WASM source/i;
 
 /// Calls a harmless read in a zome until its conductor answers it.
-async function warmUp(player: PlayerApp, zome: string): Promise<void> {
+async function warmUp(player: PlayerApp, zome: string, cell: CallableCell = player.cells[0]): Promise<void> {
   const read = WARM_UP[zome];
   if (!read) throw new Error(`add a harmless read for the ${zome} zome to WARM_UP`);
   const [fn_name, payload] = read(player);
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      await player.cells[0].callZome({ zome_name: zome, fn_name, payload });
+      await cell.callZome({ zome_name: zome, fn_name, payload });
       return;
     } catch (err) {
       if (!SETTLING.test(String(err))) throw err;

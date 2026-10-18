@@ -7,10 +7,11 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
-import { ArrowLeft, ChevronRight, HeartHandshake, KeyRound, QrCode, ShieldAlert, ShieldCheck, Smartphone, Trash2, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, ChevronRight, HeartHandshake, KeyRound, QrCode, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Trash2, UserPlus, Users } from "lucide-react";
 import type { AgentPubKey, PlanView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
-import { handOver, myRecoveryPlan, myWards, setRecoveryPlan, vouch } from "../holochain/zomes/account";
+import { handOver, migrateOut, myRecoveryPlan, myWards, setRecoveryPlan, vouch } from "../holochain/zomes/account";
+import { nextNetwork } from "../lib/migration";
 import { MAX_GUARDIANS } from "../holochain/types";
 import { fetchProfile } from "../holochain/zomes/profiles";
 import { closeListing, isStoreListed, listMyCatalogs } from "../holochain/zomes/catalog";
@@ -26,7 +27,7 @@ import { useResource } from "../lib/useResource";
 import { useGuardianNames } from "../store/guardianNames";
 import { useSession } from "../store/session";
 
-type Open = "phrase" | "guardians" | "move" | "help" | "code" | null;
+type Open = "phrase" | "guardians" | "move" | "help" | "code" | "upgrade" | null;
 
 export function AccountPage() {
   const agentPubKey = useSession((s) => s.agentPubKey);
@@ -35,6 +36,8 @@ export function AccountPage() {
   const { data: wards } = useResource(hex && `wards:${hex}`, myWards, { pollMs: POLL.slow });
   const [open, setOpen] = useState<Open>(null);
   const names = useGuardianNames((s) => s.names);
+  // A new version of the network, once an issuer announces it (MIGRATION.md).
+  const { data: next } = useResource("next-network", nextNetwork, { pollMs: POLL.slow });
 
   if (!agentPubKey) return null;
   const hasPhrase = !!plan?.phrase_key;
@@ -76,6 +79,14 @@ export function AccountPage() {
           )}
         </Card>
       </motion.div>
+
+      {next && (
+        <motion.div variants={fadeSlideUp}>
+          <Section title="New version">
+            <Row icon={<Sparkles size={18} />} title="Move to the new version of Relay" detail="Your account, balance, stores and history come with you" onClick={() => setOpen("upgrade")} />
+          </Section>
+        </motion.div>
+      )}
 
       <motion.div variants={fadeSlideUp}>
         <Section title="Ways back in">
@@ -129,6 +140,7 @@ export function AccountPage() {
       {open === "phrase" && <PhraseSheet plan={plan ?? null} onClose={close} onSaved={saved} />}
       {open === "guardians" && <GuardiansSheet plan={plan ?? null} me={agentPubKey} onClose={close} onSaved={saved} />}
       {open === "move" && <MoveSheet me={agentPubKey} onClose={close} />}
+      {open === "upgrade" && next && <UpgradeSheet me={agentPubKey} next={next} onClose={close} />}
       {open === "help" && wards && <HelpRecoverSheet wards={wards} me={agentPubKey} onClose={close} />}
       {open === "code" && (
         <Sheet open onClose={close} title="Your account code" subtitle="Someone making you their guardian scans this.">
@@ -598,4 +610,68 @@ function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: Agent
 
 function WardOption({ ward }: { ward: PlanView }) {
   return <option value={bytesToHex(ward.account)}>{useDisplayName(ward.account)}</option>;
+}
+
+/// Moving the account to the new version of Relay (MIGRATION.md): the new
+/// version, installed on this device or another, shows its code; this one
+/// seals what's private to it, records the move and closes its chain here.
+/// The issuer carries the balance over.
+function UpgradeSheet({ me, next, onClose }: { me: AgentPubKey; next: { network: Uint8Array; issuer: AgentPubKey }; onClose: () => void }) {
+  const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function move() {
+    if (!successor) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // A listed store's stake comes back only to this key: its listing
+      // closes here, and the new version lists the store again.
+      for (const store of await listMyCatalogs()) {
+        if (await isStoreListed(store.original_action)) await closeListing(store.original_action);
+      }
+      await migrateOut({ network: next.network, successor, issuer: next.issuer, parcel: await packParcel() });
+      useSession.setState({ movedToNewVersion: true });
+    } catch (err) {
+      setError(describeError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title="Move to the new version"
+      subtitle={successor ? "Check the fingerprint matches the new version." : "Install the new version of Relay, open it, choose “I already have an account”, then “From the previous version”. Scan the code it shows."}
+      footer={
+        successor ? (
+          <>
+            {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+            <Button className="w-full" loading={busy} onClick={move}>
+              Move my account
+            </Button>
+          </>
+        ) : undefined
+      }
+    >
+      {successor ? (
+        <div className="flex flex-col gap-4">
+          <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">New version</p>
+            <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(successor)}</p>
+          </div>
+          <ul className="flex flex-col gap-2 text-sm text-ink-600 dark:text-ink-300">
+            <li>Your balance is carried over by the network's issuer within a few minutes.</li>
+            <li>Your name, phone, saved addresses, favourites, stores and ratings come with you.</li>
+            <li className="font-semibold">This version stops working for your account once you move. Finish any orders in progress first.</li>
+          </ul>
+        </div>
+      ) : (
+        <AccountCodeReader prompt="Point at the code in the new version" onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError("That's this version's own code.") : setSuccessor(key))} />
+      )}
+      {!successor && error && <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </Sheet>
+  );
 }

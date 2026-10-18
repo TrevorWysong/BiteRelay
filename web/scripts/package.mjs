@@ -9,6 +9,14 @@
 // The bootstrap and relay URLs are the network's own servers (see
 // DEPLOYMENT.md); without them, runtimes use their defaults.
 //
+// A new version of the network (MIGRATION.md) also carries the one before
+// it, so people can move their accounts over:
+//
+//     --previous deploy/releases/<previous version>
+//
+// a directory holding that release's relay.happ and relay.network.json
+// (both written by this script into deploy/: keep a copy of each release).
+//
 // Everyone on a network must install the same bundle: the properties and
 // network seed are part of the DNA hash, so a different value is a
 // different, separate network.
@@ -22,6 +30,7 @@ const args = process.argv.slice(2);
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 const networkSeed = option("--network-seed");
 const bootstrapUrl = option("--bootstrap-url");
+const previousDir = option("--previous");
 const relayUrl = option("--relay-url");
 if (!args.includes("--network-seed") || !networkSeed) {
   fail("Pass --network-seed <name>: it names the network this bundle joins.");
@@ -73,11 +82,25 @@ try {
     provisioning: { strategy: "create", deferred: false },
     dna: { path: DNA_PATH, modifiers: { properties, network_seed: networkSeed }, clone_limit: 0 },
   };
-  const manifest = { manifest_version: "0", name: "relay", description: "Relay -- food delivery with no middleman, on Holochain", roles: [role], bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
+  const roles = [role];
+  if (previousDir) {
+    // The previous network, exactly: its own DNA file and the same seed and
+    // properties, so it's the network people are moving from.
+    const previousNetwork = JSON.parse(readFileSync(path.join(previousDir, "relay.network.json"), "utf8"));
+    step("Unpacking the previous release", "hc", ["app", "unpack", path.join(previousDir, "relay.happ"), "-o", path.join(work, "previous")]);
+    roles.push({
+      name: "previous",
+      provisioning: { strategy: "create", deferred: false },
+      dna: { path: path.join(work, "previous", "relay.dna"), modifiers: { properties: previousNetwork.properties, network_seed: previousNetwork.network_seed }, clone_limit: 0 },
+    });
+  }
+  const manifest = { manifest_version: "0", name: "relay", description: "Relay -- food delivery with no middleman, on Holochain", roles, bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
   writeFileSync(path.join(work, "happ.yaml"), JSON.stringify(manifest, null, 2));
   step("Packing hApp", "hc", ["app", "pack", work]);
   // The issuer's own conductor installs exactly this (issuer/scripts/provision.mjs).
   copyFileSync(path.join(work, "relay.happ"), path.join(REPO, "deploy/relay.happ"));
+  // What a later release needs to carry this network as its previous one.
+  writeFileSync(path.join(REPO, "deploy/relay.network.json"), `${JSON.stringify({ network_seed: networkSeed, properties }, null, 2)}\n`);
 
   // The production UI: no dev host, so no Admin API code (see
   // src/holochain/host.ts), and none of the dev-only public files.
@@ -94,6 +117,7 @@ try {
   console.log(`  network seed: ${networkSeed}`);
   console.log(`  issuers:      ${properties.issuers.length}`);
   console.log(`  credit limit: ${properties.credit_limit_cents} cents`);
+  console.log(`  previous:     ${previousDir ?? "(none)"}`);
   console.log(`  bootstrap:    ${bootstrapUrl ?? "(runtime default)"}`);
   console.log(`  relay:        ${relayUrl ?? "(runtime default)"}`);
 } finally {

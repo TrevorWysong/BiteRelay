@@ -34,6 +34,8 @@ pub enum EntryTypes {
     Vouch(Vouch),
     Succession(Succession),
     Parcel(Parcel),
+    Migration(Migration),
+    Arrival(Arrival),
 }
 
 #[hdk_link_types]
@@ -57,6 +59,14 @@ pub enum LinkTypes {
     /// A recovered account asking an issuer to reissue its balance, base =
     /// the issuer.
     IssuerToReissue,
+    /// An account moving to the next network, asking an issuer to carry its
+    /// balance there, base = the issuer.
+    IssuerToMigration,
+    /// The same, base = the successor -- how the new network's key finds
+    /// what was moved to it.
+    SuccessorToMigration,
+    /// An account's arrival from the previous network, base = its author.
+    AccountToArrival,
 }
 
 #[hdk_extern]
@@ -67,6 +77,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::Vouch(vouch) => validate_vouch(&vouch, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::Succession(succession) => validate_succession(&succession, action.author(), action.prev_action()),
             EntryTypes::Parcel(parcel) => validate_parcel(&parcel, action.author()),
+            EntryTypes::Migration(migration) => validate_migration(&migration, action.author(), action.prev_action()),
+            EntryTypes::Arrival(arrival) => validate_arrival(&arrival, action.author(), action.prev_action()),
         },
         Checked::Update { .. } => invalid("account entries can't be changed: publish a new plan instead"),
         Checked::Delete { .. } => invalid("account entries can't be deleted"),
@@ -210,6 +222,31 @@ fn validate_parcel(parcel: &Parcel, author: &AgentPubKey) -> ExternResult<Valida
     }
 }
 
+/// An account moves on once, to another network: this one can't be its own
+/// next version.
+fn validate_migration(migration: &Migration, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(prev_action) = prev_action else { return invalid("a migration can't open a chain") };
+    if migration.network == dna_info()?.hash {
+        return invalid("an account migrates to another network");
+    }
+    require(
+        entries_created(author, ChainFilter::new(prev_action.clone()), &[entry_type(UnitEntryTypes::Migration)?])?.is_empty(),
+        "an account migrates once",
+    )
+}
+
+/// An account arrives once, from another network.
+fn validate_arrival(arrival: &Arrival, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(prev_action) = prev_action else { return invalid("an arrival can't open a chain") };
+    if arrival.previous_network == dna_info()?.hash {
+        return invalid("an account arrives from another network");
+    }
+    require(
+        entries_created(author, ChainFilter::new(prev_action.clone()), &[entry_type(UnitEntryTypes::Arrival)?])?.is_empty(),
+        "an account arrives once",
+    )
+}
+
 fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let Some(record) = linked_record(target)? else {
         return invalid("account links must target a record");
@@ -225,6 +262,15 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
         LinkTypes::PredecessorToSuccession => decode::<Succession>(&record).map(|s| vec![s.predecessor.into()]).unwrap_or_default(),
         LinkTypes::SuccessorToSuccession => decode::<Succession>(&record).map(|_| vec![author.clone().into()]).unwrap_or_default(),
         LinkTypes::SuccessorToParcel => decode::<Parcel>(&record).map(|p| vec![p.successor.into()]).unwrap_or_default(),
+        LinkTypes::SuccessorToMigration => decode::<Migration>(&record).map(|m| vec![m.successor.into()]).unwrap_or_default(),
+        LinkTypes::AccountToArrival => decode::<Arrival>(&record).map(|_| vec![author.clone().into()]).unwrap_or_default(),
+        LinkTypes::IssuerToMigration => {
+            let issuer = base.clone().into_agent_pub_key();
+            if decode::<Migration>(&record).is_none() || !issuer.map(|i| relay_governance::is_issuer(&i)).transpose()?.unwrap_or(false) {
+                return invalid("a migration asks an issuer on the roster to carry its balance");
+            }
+            vec![base.clone()]
+        }
         LinkTypes::IssuerToReissue => {
             // Only a recovery is reissued (a hand-over moves its own money),
             // and only by an issuer on the roster.

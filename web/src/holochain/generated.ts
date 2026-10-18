@@ -11,6 +11,8 @@ export type AgentPubKey = Uint8Array;
 export type AnyLinkableHash = Uint8Array;
 /** A 64-byte Ed25519 signature. */
 export type Signature = Uint8Array;
+/** A 39-byte DNA hash: which network. */
+export type DnaHash = Uint8Array;
 /** Microseconds since the Unix epoch. */
 export type Timestamp = number;
 /** Ciphertext sealed between two agents -- opened only through a zome call. */
@@ -44,6 +46,20 @@ export interface AddressDetails {
   city: string;
   state: string;
   zip: string;
+}
+
+/**
+ * The author arriving on this network from its previous version, as the
+ * account `previous_account` there -- whose `Migration` (`migration`, on
+ * that network) names the author. This network's validation can't read
+ * another's, so apps check it there (the app carries the previous network
+ * as its `previous` role) before counting the old account's history as
+ * the author's.
+ */
+export interface Arrival {
+  previous_network: DnaHash;
+  previous_account: AgentPubKey;
+  migration: ActionHash;
 }
 
 export type Authority =
@@ -1013,6 +1029,12 @@ export interface IssuerProfile {
    * this issuer reissues its balance to the new one (see RECOVERY.md).
    */
   recovery_wait_days: number;
+  /**
+   * The next version of the network, once there is one (MIGRATION.md):
+   * its DNA. Apps offer to move people there, and this issuer carries
+   * their balances over.
+   */
+  next_network: DnaHash | null;
 }
 
 /**
@@ -1577,6 +1599,20 @@ export interface MerchantCatalog {
    * shown on receipts. Empty for none.
    */
   tax_registration: string;
+}
+
+/**
+ * The author moving their account to the next version of the network --
+ * `network`, a different DNA (see MIGRATION.md). Written just before the
+ * author closes their chain (`close_chain`), after which Holochain itself
+ * accepts nothing more from it here: whatever the account held stays
+ * exactly as it was. `successor` is the key that carries the account on
+ * there, which an issuer credits with what the ledger held at the close,
+ * once.
+ */
+export interface Migration {
+  network: DnaHash;
+  successor: AgentPubKey;
 }
 
 /**
@@ -2706,6 +2742,20 @@ export interface Standing {
    * Whether it had already been handed over -- nothing more to recover.
    */
   handed_over: boolean;
+}
+
+/**
+ * A store brought over from the previous version of the network
+ * (MIGRATION.md): `to`, the author's own store here, republished from
+ * `from`, a store on `previous_network`. Validation here can't read the
+ * previous network, so apps count `from`'s history as `to`'s only once
+ * they've checked there that `from`'s owner moved their account to the
+ * author.
+ */
+export interface StoreImport {
+  previous_network: DnaHash;
+  from: ActionHash;
+  to: ActionHash;
 }
 
 /**

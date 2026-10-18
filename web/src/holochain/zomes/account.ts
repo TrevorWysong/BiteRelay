@@ -1,7 +1,7 @@
 // Accounts: a person's recovery plan, guardians vouching, and a new key
 // taking an account over -- handed over from the old device, or recovered
 // when it's lost. See the account zome, and RECOVERY.md.
-import { callZome } from "../client";
+import { callPrevious, callZome } from "../client";
 import type { ActionHash, AgentPubKey, PlanView, RecoveryPlan, Succession, SuccessionView, VouchView } from "../types";
 
 export async function setRecoveryPlan(plan: RecoveryPlan): Promise<PlanView> {
@@ -65,4 +65,37 @@ export async function openParcels(): Promise<string[]> {
 /// Asks `issuer` to reissue the balance of the account the caller recovered.
 export async function requestReissue(issuer: AgentPubKey): Promise<void> {
   return callZome("account", "request_reissue", issuer);
+}
+
+// --- moving to the next version of the network (MIGRATION.md) ---
+
+/// Moves the caller's account to the next network and closes its chain here.
+export async function migrateOut(input: { network: Uint8Array; successor: AgentPubKey; issuer: AgentPubKey; parcel: string }): Promise<ActionHash> {
+  return callZome("account", "migrate_out", input);
+}
+
+/// Whether `agent` closed their chain here, and the network they moved to.
+export async function chainClosed(agent: AgentPubKey): Promise<{ network: Uint8Array | null; close: ActionHash } | null> {
+  return callZome("account", "chain_closed", agent);
+}
+
+/// The accounts moved to the caller's key, read on the previous network.
+export async function migrationsToMeOnPrevious(): Promise<{ account: AgentPubKey; close: ActionHash | null; network: Uint8Array }[]> {
+  return callPrevious("account", "migrations_to_me", null);
+}
+
+/// What the old account sealed to the caller's key, opened on the previous network.
+export async function openParcelsOnPrevious(): Promise<string[]> {
+  return callPrevious("account", "open_parcels", null);
+}
+
+/// Records the caller's arrival from the previous network; returns the
+/// account they arrived as. Safe to repeat.
+export async function arrive(): Promise<AgentPubKey> {
+  return callZome("account", "arrive", null);
+}
+
+/// Who `agent` was on the previous network, checked there.
+export async function arrivedFrom(agent: AgentPubKey): Promise<AgentPubKey | null> {
+  return callZome("account", "arrived_from", agent);
 }

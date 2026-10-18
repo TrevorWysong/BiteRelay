@@ -350,3 +350,13 @@ export async function moveStore(from: ActionHash): Promise<ActionHash> {
 export async function storeSuccessor(catalogRef: ActionHash): Promise<ActionHash | null> {
   return callZome("catalog", "store_successor", catalogRef);
 }
+
+/// The stores the caller's account ran on the previous network.
+export async function previousStores(): Promise<CatalogView[]> {
+  return callZome("catalog", "previous_stores", null);
+}
+
+/// Republishes a store from the previous network here; returns the new store.
+export async function importStore(from: ActionHash): Promise<ActionHash> {
+  return callZome("catalog", "import_store", from);
+}

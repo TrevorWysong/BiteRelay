@@ -12,15 +12,16 @@
 // Waiting is polled, not pushed: nothing tells a new device it's been
 // handed an account.
 import { useState } from "react";
-import { ArrowLeft, HeartHandshake, KeyRound, Smartphone } from "lucide-react";
+import { ArrowLeft, HeartHandshake, History, KeyRound, Smartphone } from "lucide-react";
 import type { AgentPubKey, PlanView, VouchView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
-import { accountsForPhraseKey, latestActionOf, mySuccession, recoveryPlanOf, requestReissue, takeOver, vouchesForMe } from "../holochain/zomes/account";
+import { accountsForPhraseKey, arrive, arrivedFrom, latestActionOf, migrationsToMeOnPrevious, mySuccession, recoveryPlanOf, requestReissue, takeOver, vouchesForMe } from "../holochain/zomes/account";
+import { hasPreviousNetwork } from "../holochain/client";
 import { bequestsToMe, listIssuers } from "../holochain/zomes/ledger";
-import { catalogsOf, moveStore } from "../holochain/zomes/catalog";
+import { catalogsOf, importStore, moveStore, previousStores } from "../holochain/zomes/catalog";
 import { AccountCode } from "./AccountCode";
 import { Button, Field, Input, Skeleton, Spinner, Textarea } from "./ui";
-import { adoptPredecessor, keyFingerprint, readPredecessor } from "../lib/accountMove";
+import { adoptPredecessor, keyFingerprint, readPredecessor, type AccountPlace } from "../lib/accountMove";
 import { describeError } from "../lib/errors";
 import { phraseKey, phraseMessage, readPhrase } from "../lib/recoveryPhrase";
 import { POLL } from "../lib/poll";
@@ -37,8 +38,14 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
   // A key that already took an account over (a reload mid-way) goes
   // straight to confirming the details.
   const { data: taken } = useResource(agentPubKey && `succession:${bytesToHex(agentPubKey)}`, mySuccession);
+  // A release that carries the previous version of the network offers to
+  // bring an account over from it (MIGRATION.md) -- and, after a reload
+  // mid-way, picks up where it was.
+  const { data: hasPrevious } = useResource(agentPubKey && `has-previous:${bytesToHex(agentPubKey)}`, hasPreviousNetwork);
+  const { data: arrived } = useResource(agentPubKey && hasPrevious ? `arrived:${bytesToHex(agentPubKey)}` : null, () => arrivedFrom(agentPubKey!));
   const [predecessor, setPredecessor] = useState<AgentPubKey | null>(null);
-  const takenOver = predecessor ?? taken?.predecessor ?? null;
+  const takenOver = predecessor ?? taken?.predecessor ?? arrived ?? null;
+  const place: AccountPlace = method === "previous" || (!!arrived && !taken) ? "previous" : "here";
 
   async function choose(next: Method) {
     setError(null);
@@ -58,7 +65,8 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
     return (
       <ConfirmDetails
         predecessor={takenOver}
-        recovered={taken ? taken.kind !== "HandOver" : method !== "device"}
+        place={place}
+        recovered={place === "previous" ? false : taken ? taken.kind !== "HandOver" : method !== "device"}
         onDone={() => {
           remember(null);
           onDone();
@@ -84,6 +92,9 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
           <h2 className="mb-1 text-lg font-bold">Bring your account here</h2>
           <p className="mb-4 text-sm text-ink-500">Your balance, ratings and history come with it.</p>
           <div className="flex flex-col gap-2">
+            {hasPrevious && (
+              <MethodCard icon={<History size={18} />} title="From the previous version of Relay" blurb="Move your account to this new version." onClick={() => choose("previous")} disabled={preparing} />
+            )}
             <MethodCard icon={<Smartphone size={18} />} title="From my other device" blurb="It still works: scan a code with it." onClick={() => choose("device")} disabled={preparing} />
             <MethodCard icon={<KeyRound size={18} />} title="With my recovery phrase" blurb="The twelve words you wrote down." onClick={() => choose("phrase")} disabled={preparing} />
             <MethodCard icon={<HeartHandshake size={18} />} title="With my guardians" blurb="People you chose vouch for this device." onClick={() => choose("guardians")} disabled={preparing} />
@@ -97,6 +108,8 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
         </>
       ) : method === "device" ? (
         <FromDevice me={agentPubKey} onTaken={setPredecessor} />
+      ) : method === "previous" ? (
+        <FromPreviousVersion me={agentPubKey} onTaken={setPredecessor} />
       ) : method === "phrase" ? (
         <FromPhrase me={agentPubKey} onTaken={setPredecessor} />
       ) : (
@@ -150,6 +163,39 @@ function FromDevice({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
       <AccountCode agent={me} note="Check this fingerprint matches the one your other device shows before you confirm there." />
       <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
         <Spinner className="h-3 w-3" /> Waiting for your other device…
+      </p>
+      {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+    </>
+  );
+}
+
+/// Waits for the previous version of the app to move the account here, then
+/// records the arrival (MIGRATION.md).
+function FromPreviousVersion({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  usePolling(
+    async () => {
+      try {
+        const moved = (await migrationsToMeOnPrevious()).find((m) => m.close);
+        if (!moved) return;
+        const account = await arrive();
+        setDone(true);
+        onTaken(account);
+      } catch (err) {
+        setError(describeError(err));
+      }
+    },
+    { pollMs: POLL.waitingDevice, background: true },
+    !done,
+  );
+  return (
+    <>
+      <h2 className="mb-1 text-lg font-bold">Move from the previous version</h2>
+      <p className="mb-4 text-sm text-ink-500">In the previous version of Relay, open Profile → Account &amp; recovery → Move to the new version, and scan this.</p>
+      <AccountCode agent={me} note="Check this fingerprint matches the one the previous version shows before you confirm there." />
+      <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
+        <Spinner className="h-3 w-3" /> Waiting for the previous version…
       </p>
       {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     </>
@@ -282,9 +328,9 @@ async function askForReissue() {
 
 /// The account's details, confirmed for this device: the name and phone it
 /// had (sealed to the old key, so carried only by a hand-over).
-function ConfirmDetails({ predecessor, recovered, onDone }: { predecessor: AgentPubKey; recovered: boolean; onDone: () => void }) {
+function ConfirmDetails({ predecessor, place, recovered, onDone }: { predecessor: AgentPubKey; place: AccountPlace; recovered: boolean; onDone: () => void }) {
   const reconnect = useSession((s) => s.reconnect);
-  const { data: known } = useResource(`predecessor:${bytesToHex(predecessor)}`, () => readPredecessor(predecessor));
+  const { data: known } = useResource(`predecessor:${place}:${bytesToHex(predecessor)}`, () => readPredecessor(predecessor, place));
   const { data: issuers } = useResource("issuers", listIssuers);
   const [name, setName] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
@@ -303,8 +349,12 @@ function ConfirmDetails({ predecessor, recovered, onDone }: { predecessor: Agent
     try {
       // Their stores first -- safe to repeat -- then their profile, so a
       // failure here can simply be tried again.
-      for (const store of await catalogsOf(predecessor)) await moveStore(store.original_action);
-      await adoptPredecessor(predecessor, known, shownName, shownPhone);
+      if (place === "previous") {
+        for (const store of await previousStores()) await importStore(store.original_action);
+      } else {
+        for (const store of await catalogsOf(predecessor)) await moveStore(store.original_action);
+      }
+      await adoptPredecessor(known, shownName, shownPhone);
       await reconnect();
       onDone();
     } catch (err) {
@@ -330,6 +380,9 @@ function ConfirmDetails({ predecessor, recovered, onDone }: { predecessor: Agent
           Your balance is reissued to this device by the network's issuer once your old device has gone unused for {wait ? `${wait} day${wait === 1 ? "" : "s"}` : "a while"} -- so nobody holding it can spend it twice.
 
         </p>
+      )}
+      {place === "previous" && (
+        <p className="mb-3 rounded-lg bg-relay-50 px-3 py-2 text-xs text-relay-800">Your balance is carried over by the network's issuer within a few minutes, and your ratings and history come with you.</p>
       )}
       {known.profile?.roles.includes("Merchant") && (
         <p className="mb-3 text-xs text-ink-500">Your stores come with you, with their menus and ratings. List them again from your store screen to take orders.</p>

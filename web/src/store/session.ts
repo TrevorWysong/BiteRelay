@@ -7,7 +7,7 @@ import { connectLauncher, isConnected, myAgentPubKey, setRestorer } from "../hol
 import { HOST } from "../holochain/host";
 import { forgetStoredIdentity, loadStoredIdentity, storedIdentityNeedsUnlock } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
-import { successionsOf } from "../holochain/zomes/account";
+import { chainClosed, successionsOf } from "../holochain/zomes/account";
 import { actionHash, decodeEntry } from "../holochain/decode";
 import { describeError } from "../lib/errors";
 import { useNetwork } from "./network";
@@ -73,6 +73,9 @@ interface SessionState {
   /// recovered after this device was lost. This key is done: the app says
   /// so instead of carrying on.
   movedTo: Uint8Array | null;
+  /// Whether this account moved to the next version of the network
+  /// (MIGRATION.md): its chain here is closed.
+  movedToNewVersion: boolean;
   /// Whether this identity has a device passkey gating `reconnect()` -- see
   /// `lib/webauthn.ts`'s own doc comment for exactly what this does and
   /// doesn't protect against. Surfaced so the Profile screen can show real
@@ -124,6 +127,7 @@ export const useSession = create<SessionState>((set, get) => ({
   profile: null,
   profileActionHash: null,
   movedTo: null,
+  movedToNewVersion: false,
   hasDeviceLock: false,
   mode: "customer",
   location: loadStoredLocation() ?? DEFAULT_LOCATION,
@@ -141,7 +145,12 @@ export const useSession = create<SessionState>((set, get) => ({
       // network's terms load alongside -- every screen past here quotes them.
       // Whether this account has moved on is read before anything else is
       // shown: a key whose account moved on mustn't carry on as if it hadn't.
-      const [profileRecord, successions] = await Promise.all([getProfileForAgent(myAgentPubKey()), successionsOf(myAgentPubKey()).catch(() => []), useNetwork.getState().load()]);
+      const [profileRecord, successions, closed] = await Promise.all([
+        getProfileForAgent(myAgentPubKey()),
+        successionsOf(myAgentPubKey()).catch(() => []),
+        chainClosed(myAgentPubKey()).catch(() => null),
+        useNetwork.getState().load(),
+      ]);
       const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
       set({
         status: "connected",
@@ -149,6 +158,7 @@ export const useSession = create<SessionState>((set, get) => ({
         profile,
         profileActionHash: profileRecord ? actionHash(profileRecord) : null,
         movedTo: successions[0]?.successor ?? null,
+        movedToNewVersion: !!closed,
         // A fresh store defaults `mode` to "customer"; restore it from the
         // profile, or a driver or merchant reloading lands on their route
         // with the customer nav.

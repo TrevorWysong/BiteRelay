@@ -9,7 +9,8 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
-import { agentId, type CashOutRequest, type IssuerLedger, type PayoutOutcome, type ReissueRequest, type Standing, type Succession } from "../src/ledger.ts";
+import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type Standing, type Succession } from "../src/ledger.ts";
+import { migrationSweep } from "../src/migrations.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
 import { sweep, type PayoutDeps } from "../src/payouts.ts";
 import { reissueSweep } from "../src/recovery.ts";
@@ -44,6 +45,9 @@ interface Accounts {
   standing: Map<string, Standing>;
   /// How long each account has existed and done -- seasoned when unset.
   standingOf?: Map<string, AccountStanding>;
+  /// This network, and the accounts moving off it.
+  network?: Uint8Array;
+  migrations?: MigrationRequest[];
 }
 
 function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
@@ -79,6 +83,11 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
     standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0, handed_over: false },
     standingOf: async (agent) => accounts.standingOf?.get(agentId(agent)) ?? SEASONED,
     currency: async () => "USD",
+    network: async () => accounts.network ?? new Uint8Array(39).fill(7),
+    async migrationRequests(after) {
+      const page = (accounts.migrations ?? []).filter((r) => after === null || r.requested_at >= after);
+      return { requests: page, cursor: page.length ? Math.max(...page.map((r) => r.requested_at)) + 1 : after, more: false };
+    },
   };
   return { ledger, grants, decisions, failGrant: () => (failNextGrant = true) };
 }
@@ -554,4 +563,27 @@ test("a large recovered balance is left for a person to approve", async () => {
   const { ledger, grants } = fakeLedger([], accounts);
   for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 50_000);
   assert.equal(grants.length, 0);
+});
+
+test("a balance moving to the next network is credited there once, only after the old chain closes", async () => {
+  const store = new Store(":memory:");
+  const next = new Uint8Array(39).fill(9);
+  const elsewhere = new Uint8Array(39).fill(8);
+  const [mover, other] = [identity().key, identity().key];
+  const [moverNew, otherNew] = [identity().key, identity().key];
+  const request: MigrationRequest = { migration: new Uint8Array(39).fill(1), account: mover, successor: moverNew, network: next, requested_at: 1_001, close: null };
+  const previousAccounts = noAccounts();
+  previousAccounts.migrations = [request, { migration: new Uint8Array(39).fill(2), account: other, successor: otherNew, network: elsewhere, requested_at: 1_002, close: new Uint8Array(39).fill(3) }];
+  previousAccounts.standing.set(agentId(mover), { balance: 4500, handed_over: false });
+  previousAccounts.standing.set(agentId(other), { balance: 999, handed_over: false });
+  const { ledger: previous } = fakeLedger([], previousAccounts);
+  const currentAccounts = noAccounts();
+  currentAccounts.network = next;
+  const { ledger: current, grants } = fakeLedger([], currentAccounts);
+
+  assert.equal(await migrationSweep(store, previous, current), 0, "not before the old chain closes");
+  request.close = new Uint8Array(39).fill(4);
+  assert.equal(await migrationSweep(store, previous, current), 1);
+  assert.deepEqual(grants, [{ to: agentId(moverNew), amount: 4500, reference: `migration:${agentId(mover)}` }], "what the closed ledger held, to the new key; a move to another network isn't this issuer's");
+  assert.equal(await migrationSweep(store, previous, current), 0, "once");
 });

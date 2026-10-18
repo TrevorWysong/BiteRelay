@@ -207,7 +207,63 @@ pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<Reputati
             _ => {}
         }
     }
+    if let Some(earlier) = on_previous_network::<_, ReputationSummary>(&target, |t| ("get_reputation_summary", t))? {
+        summary.merge(&earlier);
+    }
     Ok(summary)
+}
+
+impl ReputationSummary {
+    fn merge(&mut self, other: &Self) {
+        self.completed_count += other.completed_count;
+        self.cancelled_by_them_count += other.cancelled_by_them_count;
+        self.dispute_raised_count += other.dispute_raised_count;
+        self.dispute_resolved_against_count += other.dispute_resolved_against_count;
+        self.dropped_count += other.dropped_count;
+        self.late_count += other.late_count;
+        self.lapsed_count += other.lapsed_count;
+        self.check_in_refused_count += other.check_in_refused_count;
+        self.total_collateral_forfeited += other.total_collateral_forfeited;
+    }
+}
+
+/// Who or what `target` was on the previous version of the network, if it
+/// came over in a migration (MIGRATION.md) -- checked there by the account
+/// and catalog zomes.
+fn previous_target(target: &ReputationTarget) -> ExternResult<Option<ReputationTarget>> {
+    Ok(match target {
+        ReputationTarget::Store(catalog) => {
+            let found = match call(CallTargetCell::Local, "catalog", "imported_from".into(), None, catalog.clone())? {
+                ZomeCallResponse::Ok(io) => io.decode::<Option<ActionHash>>().ok().flatten(),
+                _ => None,
+            };
+            found.map(ReputationTarget::Store)
+        }
+        ReputationTarget::Driver(agent) | ReputationTarget::Customer(agent) => {
+            let found = match call(CallTargetCell::Local, "account", "arrived_from".into(), None, agent.clone())? {
+                ZomeCallResponse::Ok(io) => io.decode::<Option<AgentPubKey>>().ok().flatten(),
+                _ => None,
+            };
+            found.map(|previous| match target {
+                ReputationTarget::Driver(_) => ReputationTarget::Driver(previous),
+                _ => ReputationTarget::Customer(previous),
+            })
+        }
+    })
+}
+
+/// The same read of `target`'s record on the previous network, if it came
+/// over from there -- its history is its own.
+fn on_previous_network<I: Serialize + std::fmt::Debug, O: for<'de> Deserialize<'de> + std::fmt::Debug>(
+    target: &ReputationTarget,
+    request: impl FnOnce(ReputationTarget) -> (&'static str, I),
+) -> ExternResult<Option<O>> {
+    let Some(previous) = previous_target(target)? else { return Ok(None) };
+    let (function, input) = request(previous);
+    Ok(match call(CallTargetCell::OtherRole("previous".into()), "reputation", function.into(), None, input) {
+        Ok(ZomeCallResponse::Ok(io)) => io.decode().ok(),
+        _ => None,
+    })
 }
 
 // --- store/driver reviews ---
@@ -354,7 +410,23 @@ pub fn get_rating_summary(target: ReviewTarget) -> ExternResult<RatingSummary> {
         ReviewTarget::Store(catalog) => Subject::Store(catalog),
     };
     let ratings = ratings(bases_of(base, subject)?, review_link)?;
-    Ok(RatingSummary { count: ratings.len() as u32, rating_sum: ratings.iter().map(|&r| r as u32).sum() })
+    let mut summary = RatingSummary { count: ratings.len() as u32, rating_sum: ratings.iter().map(|&r| r as u32).sum() };
+    let as_reputation = match &target {
+        ReviewTarget::Store(catalog) => ReputationTarget::Store(catalog.clone()),
+        ReviewTarget::Driver(agent) => ReputationTarget::Driver(agent.clone()),
+    };
+    let earlier = on_previous_network::<_, RatingSummary>(&as_reputation, |previous| {
+        let review = match previous {
+            ReputationTarget::Store(catalog) => ReviewTarget::Store(catalog),
+            ReputationTarget::Driver(agent) | ReputationTarget::Customer(agent) => ReviewTarget::Driver(agent),
+        };
+        ("get_rating_summary", review)
+    })?;
+    if let Some(earlier) = earlier {
+        summary.count += earlier.count;
+        summary.rating_sum += earlier.rating_sum;
+    }
+    Ok(summary)
 }
 
 // --- per-item ratings -- same shape as the store/driver reviews above,

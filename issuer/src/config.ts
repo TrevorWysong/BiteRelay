@@ -13,6 +13,9 @@ export interface Config {
   appOrigins: string[];
   conductorAdminUrl: string;
   issuerAppId: string;
+  /// The issuer's app on the previous version of the network, while people
+  /// are still moving from it (MIGRATION.md) -- unset otherwise.
+  previousIssuerAppId: string | null;
   profile: {
     name: string;
     contact: string;
@@ -67,6 +70,7 @@ export function loadConfig(): Config {
       .filter(Boolean),
     conductorAdminUrl: process.env.CONDUCTOR_ADMIN_URL ?? "ws://localhost:8870",
     issuerAppId: process.env.ISSUER_APP_ID ?? "dev-issuer",
+    previousIssuerAppId: process.env.PREVIOUS_ISSUER_APP_ID || null,
     profile: {
       name: process.env.ISSUER_NAME ?? "Relay Credits",
       contact: process.env.ISSUER_CONTACT ?? "",

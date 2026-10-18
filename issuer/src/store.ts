@@ -39,6 +39,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS topup_attempts (agent TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS disputes (payment TEXT PRIMARY KEY, agent TEXT NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS deferred_cash_outs (redemption TEXT PRIMARY KEY, request TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS migrations (account TEXT PRIMARY KEY, successor TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recoveries (succession TEXT PRIMARY KEY, predecessor TEXT NOT NULL, successor TEXT NOT NULL, head TEXT, quiet_since INTEGER NOT NULL, status TEXT NOT NULL, amount INTEGER);
     `);
   }
@@ -148,6 +149,15 @@ export class Store {
     const row = this.db.prepare("SELECT agent, issued_at FROM link_nonces WHERE nonce = ?").get(nonce) as { agent: string; issued_at: number } | undefined;
     this.db.prepare("DELETE FROM link_nonces WHERE nonce = ? OR issued_at < ?").run(nonce, Date.now() - maxAgeMs);
     return !!row && row.agent === agent && Date.now() - row.issued_at <= maxAgeMs;
+  }
+
+  /// Whether an account's move to this network has been credited.
+  migrated(account: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM migrations WHERE account = ?").get(account);
+  }
+
+  recordMigration(account: string, successor: string, amount: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO migrations (account, successor, amount, at) VALUES (?, ?, ?, ?)").run(account, successor, amount, Date.now());
   }
 
   /// Starts watching a recovery this issuer was asked to reissue -- once.

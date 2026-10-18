@@ -24,3 +24,5 @@ web/dev-conductor.log
 # Production packaging (web/scripts/package.mjs)
 deploy/properties.json
 deploy/issuer.env
+deploy/relay.network.json
+deploy/releases/

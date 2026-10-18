@@ -107,3 +107,37 @@ pub struct Parcel {
     pub successor: AgentPubKey,
     pub sealed: SealedChunks,
 }
+
+/// The author moving their account to the next version of the network --
+/// `network`, a different DNA (see MIGRATION.md). Written just before the
+/// author closes their chain (`close_chain`), after which Holochain itself
+/// accepts nothing more from it here: whatever the account held stays
+/// exactly as it was. `successor` is the key that carries the account on
+/// there, which an issuer credits with what the ledger held at the close,
+/// once.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
+pub struct Migration {
+    pub network: DnaHash,
+    pub successor: AgentPubKey,
+}
+
+/// The author arriving on this network from its previous version, as the
+/// account `previous_account` there -- whose `Migration` (`migration`, on
+/// that network) names the author. This network's validation can't read
+/// another's, so apps check it there (the app carries the previous network
+/// as its `previous` role) before counting the old account's history as
+/// the author's.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
+pub struct Arrival {
+    pub previous_network: DnaHash,
+    pub previous_account: AgentPubKey,
+    pub migration: ActionHash,
+}

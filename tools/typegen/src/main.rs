@@ -94,6 +94,7 @@ const ALIASES: &[(&str, &str, &str)] = &[
     ("AgentPubKey", "Uint8Array", "A 39-byte agent public key."),
     ("AnyLinkableHash", "Uint8Array", "Any hash a link can point at."),
     ("Signature", "Uint8Array", "A 64-byte Ed25519 signature."),
+    ("DnaHash", "Uint8Array", "A 39-byte DNA hash: which network."),
     ("Timestamp", "number", "Microseconds since the Unix epoch."),
     (
         "XSalsa20Poly1305EncryptedData",

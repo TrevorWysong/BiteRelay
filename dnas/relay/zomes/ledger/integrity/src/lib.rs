@@ -172,9 +172,23 @@ fn is_ledger_entry(action: &Action) -> ExternResult<bool> {
 
 /// Every ledger entry on `agent`'s chain within `filter`, newest first.
 fn ledger_entries(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<Vec<ChainEntry>> {
+    Ok(ledger_walk(agent, filter)?.0)
+}
+
+/// The same, and whether the walk passed the chain's close (`close_chain`,
+/// moving the account to another network) -- after which nothing more moves
+/// money here. Holochain's own check of that runs only where the agent's
+/// activity is held, not where a record is: a counterparty must_get-ing a
+/// hold wouldn't see it. So the ledger checks for itself.
+fn ledger_walk(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<(Vec<ChainEntry>, bool)> {
     let mut entries = Vec::new();
+    let mut closed = false;
     for item in must_get_agent_activity(agent.clone(), filter.include_cached_entries())? {
         let action = &item.action.hashed.content;
+        if matches!(action.data, ActionData::CloseChain(_)) {
+            closed = true;
+            continue;
+        }
         if !is_ledger_entry(action)? {
             continue;
         }
@@ -187,7 +201,7 @@ fn ledger_entries(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<Vec<
         let Ok(entry) = LedgerEntry::try_from(SerializedBytes::from(bytes)) else { continue };
         entries.push(ChainEntry { hash: item.action.hashed.hash.clone(), entry });
     }
-    Ok(entries)
+    Ok((entries, closed))
 }
 
 /// The walk of an agent's chain from `chain_top` (an action on it) back to the first action
@@ -208,9 +222,12 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
             if record.action().author() != author {
                 return invalid("previous must be the author's own ledger entry");
             }
-            let between = ledger_entries(author, ChainFilter::until_hash(prev_action.clone(), previous.clone()))?;
+            let (between, closed) = ledger_walk(author, ChainFilter::until_hash(prev_action.clone(), previous.clone()))?;
             if between.iter().any(|e| &e.hash != previous) {
                 return invalid("previous must be the author's latest ledger entry");
+            }
+            if closed {
+                return invalid("this account's chain is closed: it moved to another network");
             }
             if matches!(prior.kind, LedgerKind::HandOver { .. }) {
                 return invalid("this account has been handed over: its ledger is closed");
@@ -218,8 +235,12 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
             (prior.balance, prior.in_hand)
         }
         None => {
-            if !ledger_entries(author, ChainFilter::new(prev_action.clone()))?.is_empty() {
+            let (earlier, closed) = ledger_walk(author, ChainFilter::new(prev_action.clone()))?;
+            if !earlier.is_empty() {
                 return invalid("previous must name the author's latest ledger entry");
+            }
+            if closed {
+                return invalid("this account's chain is closed: it moved to another network");
             }
             (0, InHand::default())
         }

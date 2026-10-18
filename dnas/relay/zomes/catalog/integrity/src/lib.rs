@@ -17,7 +17,7 @@ pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
 // a direct dependency on this crate wouldn't work. Re-exported here so
 // nothing else in this crate or the coordinator crate (which imports via
 // `catalog_integrity::*`) needs to change.
-pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, StoreSuccession, TaxRate};
+pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoCode, PromoRequirement, PromoReward, StoreImport, StoreSuccession, TaxRate};
 
 /// Precision used for the merchant-discovery anchor -- coarse (city-block
 /// scale), matching open orders' drop-off precision so both discovery paths
@@ -34,6 +34,7 @@ pub enum EntryTypes {
     BagClaim(BagClaim),
     ModifierGroup(ModifierGroup),
     StoreSuccession(StoreSuccession),
+    StoreImport(StoreImport),
 }
 
 #[hdk_link_types]
@@ -61,6 +62,8 @@ pub enum LinkTypes {
     CatalogToSuccessor,
     /// The same, base = the new store -- the store's line, for its ratings.
     CatalogToPredecessor,
+    /// A store brought over from the previous network, base = the store here.
+    CatalogToImport,
 }
 
 #[hdk_extern]
@@ -74,6 +77,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::BagClaim(claim) => validate_new_claim(&claim, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::ModifierGroup(group) => validate_modifier_group(&group, action.author(), None),
             EntryTypes::StoreSuccession(succession) => validate_store_succession(&succession, action.author(), action.prev_action()),
+            EntryTypes::StoreImport(import) => validate_store_import(&import, action.author(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::MerchantCatalog(catalog) => validate_catalog_update(&catalog, action.author(), &action.original_action_address),
@@ -83,6 +87,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::BagClaim(claim) => validate_claim_update(&claim, action.author(), &action.original_action_address),
             EntryTypes::ModifierGroup(group) => validate_modifier_group_update(&group, action.author(), &action.original_action_address),
             EntryTypes::StoreSuccession(_) => invalid("a store's move can't be changed"),
+            EntryTypes::StoreImport(_) => invalid("a store's import can't be changed"),
         },
         // A store's menu, promos and bags are retired by updating them
         // (unavailable, inactive), never deleted: orders and reviews cite them.
@@ -116,6 +121,24 @@ fn validate_store_succession(succession: &StoreSuccession, author: &AgentPubKey,
     let since = from.action().timestamp();
     let again = wrote_since(author, prev_action, since, ScopedEntryDefIndex::try_from(UnitEntryTypes::StoreSuccession)?, |s: &StoreSuccession| s.from == succession.from || s.to == succession.to)?;
     require(!again, "a store moves once, to one store")
+}
+
+/// A store brought over from the previous network: onto a store of the
+/// author's own, here, from another network -- each store here once. Whether
+/// the old store was really theirs is checked on the previous network, by
+/// apps (see `StoreImport`).
+fn validate_store_import(import: &StoreImport, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    let Some(prev_action) = prev_action else { return invalid("a store's import can't open a chain") };
+    if import.previous_network == dna_info()?.hash {
+        return invalid("a store is imported from another network");
+    }
+    let to = must_get_valid_record(import.to.clone())?;
+    let owns = to.action().author() == author && matches!(to.action().data, ActionData::Create(_)) && decode::<MerchantCatalog>(&to).is_some_and(|c| &c.owner == author);
+    if !owns {
+        return invalid("a store is imported onto a store of the author's own, by its original action");
+    }
+    let again = wrote_since(author, prev_action, to.action().timestamp(), ScopedEntryDefIndex::try_from(UnitEntryTypes::StoreImport)?, |i: &StoreImport| i.to == import.to || i.from == import.from)?;
+    require(!again, "a store is imported once")
 }
 
 /// A store's details, changed only by its owner: the version being updated

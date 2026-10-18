@@ -38,6 +38,26 @@ export interface IssuerProfile {
   payout_days: number;
   service_url: string;
   recovery_wait_days: number;
+  /// The next version of the network, once there is one (MIGRATION.md).
+  next_network?: Uint8Array | null;
+}
+
+/// An account moving to the next network that asked this issuer to carry
+/// its balance -- the account zome's `MigrationRequest`.
+export interface MigrationRequest {
+  migration: Uint8Array;
+  account: AgentPubKey;
+  successor: AgentPubKey;
+  network: Uint8Array;
+  requested_at: number;
+  /// The closed chain's last action, once the close is seen.
+  close: Uint8Array | null;
+}
+
+export interface MigrationRequestsPage {
+  requests: MigrationRequest[];
+  cursor: number | null;
+  more: boolean;
 }
 
 /// A key that took over an account -- `ledger`'s view of the account zome's
@@ -90,6 +110,9 @@ export interface IssuerLedger {
   standingOf(agent: AgentPubKey): Promise<AccountStanding>;
   /// The network's currency, an ISO 4217 code.
   currency(): Promise<string>;
+  /// This network's DNA hash.
+  network(): Promise<Uint8Array>;
+  migrationRequests(after: number | null): Promise<MigrationRequestsPage>;
 }
 
 /// Agent keys as the service passes them around: base64, as the app shows them.
@@ -159,6 +182,8 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
       return { since: since === null ? null : Math.floor(since / 1000), completedOrders: asCustomer + asDriver };
     },
     currency: () => call<{ currency: string }>("get_network_terms", null, "dispatch").then((t) => t.currency),
+    network: () => call<Uint8Array>("network_hash", null, "account"),
+    migrationRequests: (after) => call<MigrationRequestsPage>("get_migration_requests", { after }, "account"),
     // The app socket's transport is typed narrowly; it's a WsClient.
     close: async () => void (await (connection.appWs.client as unknown as { close(): Promise<unknown> }).close()),
   };

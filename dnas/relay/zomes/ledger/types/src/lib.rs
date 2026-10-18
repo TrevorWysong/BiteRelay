@@ -147,6 +147,11 @@ pub struct IssuerProfile {
     /// this issuer reissues its balance to the new one (see RECOVERY.md).
     #[serde(default)]
     pub recovery_wait_days: u16,
+    /// The next version of the network, once there is one (MIGRATION.md):
+    /// its DNA. Apps offer to move people there, and this issuer carries
+    /// their balances over.
+    #[serde(default)]
+    pub next_network: Option<DnaHash>,
 }
 
 /// What someone signs to show an issuer's service they hold their key -- to
@@ -202,7 +207,7 @@ mod tests {
     use super::*;
 
     fn profile(flat: u64, bps: u16) -> IssuerProfile {
-        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2, service_url: String::new(), recovery_wait_days: 7 }
+        IssuerProfile { name: "Relay Credits".into(), description: String::new(), contact: String::new(), payout_fee_cents: flat, payout_fee_basis_points: bps, min_payout_cents: 0, payout_days: 2, service_url: String::new(), recovery_wait_days: 7, next_network: None }
     }
 
     // The same cases run in web/test/wallet.test.ts -- keep them in step.

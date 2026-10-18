@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Sparkles } from "lucide-react";
 import { useSession, type Mode } from "../store/session";
 import { useCart } from "../store/cart";
 import { pageVariants } from "../lib/motion";
@@ -10,7 +10,8 @@ import { BottomNavLink } from "./BottomNavLink";
 import { MerchantNav } from "./MerchantNav";
 import { Notifier } from "./Notifier";
 import { ConnectionBanner } from "./ConnectionBanner";
-import { usePolling } from "../lib/useResource";
+import { usePolling, useResource } from "../lib/useResource";
+import { nextNetwork } from "../lib/migration";
 import { POLL } from "../lib/poll";
 import { collectIncoming } from "../lib/wallet";
 import { topUpIfLow } from "../lib/autoTopUp";
@@ -89,6 +90,7 @@ export function AppShell() {
 
       <Notifier />
       <ConnectionBanner />
+      <NewVersionBanner enabled={!!agentPubKey} />
       <main className="flex-1 overflow-y-auto pb-20">
         <AnimatedOutlet />
       </main>
@@ -117,5 +119,18 @@ export function AppShell() {
         </div>
       )}
     </div>
+  );
+}
+
+/// A line under the header once a new version of Relay is out
+/// (MIGRATION.md): moving there is the person's to start, from Account &
+/// recovery.
+function NewVersionBanner({ enabled }: { enabled: boolean }) {
+  const { data: next } = useResource(enabled ? "next-network" : null, nextNetwork, { pollMs: POLL.slow });
+  if (!next) return null;
+  return (
+    <NavLink to="/account" className="flex items-center justify-center gap-2 bg-relay-500 px-4 py-2 text-xs font-semibold text-white">
+      <Sparkles size={13} /> A new version of Relay is out. Move your account
+    </NavLink>
   );
 }

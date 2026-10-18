@@ -155,4 +155,4 @@ Each order change is signalled straight to the order's other parties, conductor 
 ## Upgrades
 
 - **Coordinator-only changes** (no change to entry types, link types or validation) keep the DNA hash. Ship a new app version and the network carries on.
-- **Integrity changes** produce a new DNA, which is a new network. Plan them as migrations: ship a version that joins the new network, and move what has to carry over, such as profiles and store menus, with the app's help.
+- **Integrity changes** produce a new DNA, which is a new network. People move their accounts to it: balances (carried by the issuer), profiles, stores and history. MIGRATION.md has the protocol and the operator's steps.

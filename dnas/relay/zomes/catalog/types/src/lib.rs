@@ -453,3 +453,20 @@ pub struct StoreSuccession {
     /// The author's succession of the old store's owner.
     pub succession: ActionHash,
 }
+
+/// A store brought over from the previous version of the network
+/// (MIGRATION.md): `to`, the author's own store here, republished from
+/// `from`, a store on `previous_network`. Validation here can't read the
+/// previous network, so apps count `from`'s history as `to`'s only once
+/// they've checked there that `from`'s owner moved their account to the
+/// author.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+// Decodes only from its own fields: a record of another type that
+// happens to share these can never pass for this one.
+#[serde(deny_unknown_fields)]
+pub struct StoreImport {
+    pub previous_network: DnaHash,
+    pub from: ActionHash,
+    pub to: ActionHash,
+}

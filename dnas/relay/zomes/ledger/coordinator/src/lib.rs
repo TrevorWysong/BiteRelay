@@ -27,6 +27,12 @@ pub(crate) fn entry_of(record: &Record) -> Option<LedgerEntry> {
     record.entry().to_app_option::<LedgerEntry>().ok().flatten()
 }
 
+/// Whether the caller closed their chain (moved to another network).
+fn chain_closed() -> ExternResult<bool> {
+    let closes = query(ChainQueryFilter::new().action_type(ActionType::CloseChain))?;
+    Ok(!closes.is_empty())
+}
+
 /// Writes the caller's next ledger entry, after their latest.
 pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
     let latest = my_entries()?.into_iter().last();
@@ -39,6 +45,9 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
     };
     if latest.as_ref().and_then(entry_of).is_some_and(|e| matches!(e.kind, LedgerKind::HandOver { .. })) {
         return Err(guest("This account has moved to a new device."));
+    }
+    if chain_closed()? {
+        return Err(guest("This account has moved to the new version of Relay."));
     }
     let in_hand = in_hand_after(in_hand, &kind)?;
     let signed = i64::try_from(amount).map_err(|_| guest("amount out of range"))?;

@@ -3,22 +3,11 @@
 // as it hands over (the parcel), and setting the new key up as the same
 // person -- their profile, vehicle, addresses and favourites.
 import { decodeHashFromBase64, encodeHashToBase64 } from "@holochain/client";
-import type { AddressDetails, AgentPubKey, Profile, RoleTag } from "../holochain/types";
-import { openParcels } from "../holochain/zomes/account";
-import {
-  addFavorite,
-  createProfile,
-  fetchProfile,
-  fetchProviderCredential,
-  getMyName,
-  getMyPhone,
-  getProfileForAgent,
-  listFavorites,
-  listMyAddresses,
-  registerProviderCredential,
-  saveAddress,
-} from "../holochain/zomes/profiles";
-import { actionHash } from "../holochain/decode";
+import type { AddressDetails, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag } from "../holochain/types";
+import { callPrevious, callZome } from "../holochain/client";
+import { openParcels, openParcelsOnPrevious } from "../holochain/zomes/account";
+import { addFavorite, createProfile, getMyName, getMyPhone, listFavorites, listMyAddresses, registerProviderCredential, saveAddress } from "../holochain/zomes/profiles";
+import { actionHash, decodeEntry } from "../holochain/decode";
 
 const CODE_PREFIX = "relay-account:";
 /// Holochain's prefix for an agent key.
@@ -73,25 +62,37 @@ function parcelContents(raw: string): ParcelContents | null {
 }
 
 /// What the new key knows of the person it's taking over for: their public
-/// profile, and what the old device sealed to it (none on a recovery).
+/// profile and vehicle, and what the old key sealed to it (none on a
+/// recovery).
 export interface Predecessor {
   profile: Profile | null;
+  vehicle: ProviderCredential | null;
   name: string;
   phone: string;
   parcel: ParcelContents | null;
 }
 
-export async function readPredecessor(predecessor: AgentPubKey): Promise<Predecessor> {
-  const [profile, parcels] = await Promise.all([fetchProfile(predecessor), openParcels()]);
+/// Where the old account lives: this network (a hand-over or recovery), or
+/// the previous version of it (a migration -- MIGRATION.md).
+export type AccountPlace = "here" | "previous";
+
+export async function readPredecessor(predecessor: AgentPubKey, where: AccountPlace = "here"): Promise<Predecessor> {
+  const call = where === "here" ? callZome : callPrevious;
+  const [profileRecord, parcels] = await Promise.all([
+    call<HcRecord | null>("profiles", "get_profile_for_agent", predecessor),
+    where === "here" ? openParcels() : openParcelsOnPrevious(),
+  ]);
+  const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
+  const vehicleRecord = profileRecord ? await call<HcRecord | null>("profiles", "get_provider_credential_for_profile", actionHash(profileRecord)).catch(() => null) : null;
   const parcel = parcels.map(parcelContents).findLast((p) => p !== null) ?? null;
-  return { profile, name: parcel?.name || profile?.display_name || "", phone: parcel?.phone ?? "", parcel };
+  return { profile, vehicle: vehicleRecord ? decodeEntry<ProviderCredential>(vehicleRecord) : null, name: parcel?.name || profile?.display_name || "", phone: parcel?.phone ?? "", parcel };
 }
 
 /// Sets the new key up as the person: their profile (as they confirm it),
 /// their vehicle if they drive, and -- handed over -- their addresses and
 /// favourites. Best-effort past the profile: a favourite whose store is
 /// gone doesn't stop the move.
-export async function adoptPredecessor(predecessor: AgentPubKey, known: Predecessor, name: string, phone: string): Promise<void> {
+export async function adoptPredecessor(known: Predecessor, name: string, phone: string): Promise<void> {
   const roles: RoleTag[] = known.profile?.roles.length ? known.profile.roles : ["Requester"];
   const record = await createProfile({
     display_name: name.trim(),
@@ -102,11 +103,7 @@ export async function adoptPredecessor(predecessor: AgentPubKey, known: Predeces
     phone: phone.trim(),
   });
   const extras: Promise<unknown>[] = [];
-  if (roles.includes("Provider")) {
-    const oldProfile = await getProfileForAgent(predecessor);
-    const vehicle = oldProfile ? await fetchProviderCredential(actionHash(oldProfile)) : null;
-    if (vehicle) extras.push(registerProviderCredential({ ...vehicle, profile_action: actionHash(record), verified: false }));
-  }
+  if (roles.includes("Provider") && known.vehicle) extras.push(registerProviderCredential({ ...known.vehicle, profile_action: actionHash(record), verified: false }));
   for (const address of known.parcel?.addresses ?? []) extras.push(saveAddress(address));
   for (const favorite of known.parcel?.favorites ?? []) extras.push(addFavorite(decodeHashFromBase64(favorite)));
   await Promise.allSettled(extras);

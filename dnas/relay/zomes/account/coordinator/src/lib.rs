@@ -6,9 +6,11 @@
 use account_integrity::*;
 use hdk::prelude::*;
 
+mod migration;
 mod plans;
 mod reissue;
 mod succession;
+pub use migration::*;
 pub use plans::*;
 pub use reissue::*;
 pub use succession::*;
@@ -43,7 +45,7 @@ pub(crate) fn decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>
 mod test_utils {
     use account_integrity::{EntryTypes, LinkTypes, Parcel, RecoveryPlan, Succession, Vouch};
     use hdk::prelude::*;
-    relay_coordinator_support::raw_link_test_externs!(AccountToPlan, PhraseKeyToPlan, GuardianToPlan, SuccessorToVouch, PredecessorToSuccession, SuccessorToSuccession, SuccessorToParcel, IssuerToReissue);
+    relay_coordinator_support::raw_link_test_externs!(AccountToPlan, PhraseKeyToPlan, GuardianToPlan, SuccessorToVouch, PredecessorToSuccession, SuccessorToSuccession, SuccessorToParcel, IssuerToReissue, IssuerToMigration, SuccessorToMigration, AccountToArrival);
 
     /// Writes each entry exactly as given, skipping the coordinator's checks
     /// -- what a modified client could.
@@ -65,5 +67,15 @@ mod test_utils {
     #[hdk_extern]
     pub fn create_raw_parcel_for_testing(parcel: Parcel) -> ExternResult<ActionHash> {
         create_entry(&EntryTypes::Parcel(parcel))
+    }
+
+    #[hdk_extern]
+    pub fn create_raw_migration_for_testing(migration: account_integrity::Migration) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::Migration(migration))
+    }
+
+    #[hdk_extern]
+    pub fn create_raw_arrival_for_testing(arrival: account_integrity::Arrival) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::Arrival(arrival))
     }
 }

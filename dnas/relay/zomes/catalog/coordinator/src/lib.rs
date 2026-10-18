@@ -758,7 +758,7 @@ pub fn list_promo_codes_for_catalog(input: ListPromoCodesInput) -> ExternResult<
 mod test_utils {
     use hdk::prelude::*;
     use catalog_integrity::{EntryTypes, LinkTypes, MerchantCatalog};
-    relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo, CatalogToSuccessor, CatalogToPredecessor);
+    relay_coordinator_support::raw_link_test_externs!(OwnerToCatalog, CatalogToMenuItem, GeohashToCatalog, CatalogToPromoCode, CatalogToBag, BagToClaim, CustomerToClaim, CatalogToLivePromo, CatalogToSuccessor, CatalogToPredecessor, CatalogToImport);
 
     /// Writes a store's move exactly as given -- what a modified client could.
     #[hdk_extern]
