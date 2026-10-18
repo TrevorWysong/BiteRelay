@@ -1,0 +1,55 @@
+// A driver's verification, as the network asks for it: who checked them
+// and until when, or -- before they're verified -- the code a verifier
+// scans to verify them.
+import { useState } from "react";
+import { BadgeCheck, ShieldQuestion } from "lucide-react";
+import type { AgentPubKey } from "../../holochain/types";
+import { driverVerification, getVerificationTerms } from "../../holochain/zomes/dispatch";
+import { AccountCode } from "../../components/AccountCode";
+import { Sheet } from "../../components/Sheet";
+import { Button, Card } from "../../components/ui";
+import { formatDate } from "../../lib/format";
+import { POLL } from "../../lib/poll";
+import { useResource } from "../../lib/useResource";
+import { CHECK_LABELS } from "../../lib/verification";
+
+export function VerificationCard({ me }: { me: AgentPubKey }) {
+  const { data: terms } = useResource("verification-terms", getVerificationTerms);
+  const { data: mine } = useResource("my-verification", () => driverVerification(me), { pollMs: POLL.slow });
+  const [showing, setShowing] = useState(false);
+  // Nothing to say on a network without verifiers.
+  if (!terms || terms.verifiers.length === 0 || mine === undefined) return null;
+
+  if (mine) {
+    return (
+      <Card className="mb-5 flex items-center gap-3 p-4">
+        <BadgeCheck size={20} className="shrink-0 text-emerald-500" />
+        <span className="text-sm">
+          <span className="block font-semibold text-ink-900 dark:text-ink-50">Verified until {formatDate(mine.expires_at)}</span>
+          <span className="block text-xs text-ink-400">{mine.checks.map((c) => CHECK_LABELS[c]).join(" · ")}</span>
+        </span>
+      </Card>
+    );
+  }
+  return (
+    <Card className="mb-5 p-4">
+      <div className="flex items-start gap-3">
+        <ShieldQuestion size={20} className="mt-0.5 shrink-0 text-amber-500" />
+        <span className="text-sm">
+          <span className="block font-semibold text-ink-900 dark:text-ink-50">{terms.required ? "Get verified to start delivering" : "Get verified"}</span>
+          <span className="block text-xs text-ink-500">
+            One of the network's verifiers checks your identity, licence and insurance, then scans your code. {terms.required ? "Until then you can't bid on orders." : "Customers see you're verified."}
+          </span>
+        </span>
+      </div>
+      <Button className="mt-3 w-full py-2 text-xs" variant="secondary" onClick={() => setShowing(true)}>
+        Show my code to a verifier
+      </Button>
+      {showing && (
+        <Sheet open onClose={() => setShowing(false)} title="Your code">
+          <AccountCode agent={me} note="A verifier scans this after checking your documents. Compare the fingerprint with theirs." />
+        </Sheet>
+      )}
+    </Card>
+  );
+}

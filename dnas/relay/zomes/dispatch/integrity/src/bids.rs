@@ -3,7 +3,7 @@
 use super::*;
 use relay_integrity_support::original_creation;
 
-pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey, timestamp: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
     if &bid.bidder != author {
         return Ok(ValidateCallbackResult::Invalid("a bid can only be authored by its own bidder".into()));
     }
@@ -17,6 +17,9 @@ pub(crate) fn validate_new_bid(bid: &Bid, author: &AgentPubKey, prev_action: Opt
         return Ok(ValidateCallbackResult::Invalid("price_offer must be greater than zero".into()));
     }
     if let Some(problem) = relay_integrity_support::amount_problem("price_offer", bid.price_offer) {
+        return Ok(ValidateCallbackResult::Invalid(problem));
+    }
+    if let Some(problem) = crate::verification::bid_verification_problem(bid, timestamp)? {
         return Ok(ValidateCallbackResult::Invalid(problem));
     }
     if bid.status != BidStatus::Open {

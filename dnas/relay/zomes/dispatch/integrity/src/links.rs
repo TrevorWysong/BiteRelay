@@ -50,6 +50,7 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
         }
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
         LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => validate_issue_link(&link),
+        LinkTypes::DriverToVerification => crate::verification::validate_verification_link(&link),
     }
 }
 
@@ -82,6 +83,10 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
         LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
+        LinkTypes::DriverToVerification => {
+            let Some(record) = linked_record(link.target)? else { return invalid("target is not a record") };
+            require(record.action().author() == link.author, "only its verifier unlinks a verification")
+        }
         LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => invalid("an order's issues, requests and settlement are a permanent record"),
         _ => validate_queue_link_delete(link),
     }

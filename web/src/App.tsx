@@ -23,6 +23,7 @@ import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
 import { Policies } from "./routes/Policies";
 import { AccountPage } from "./routes/Account";
+import VerifyPage from "./routes/Verify";
 import { MovedAway } from "./components/MovedAway";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
@@ -189,6 +190,7 @@ export default function App() {
           <Route path="/wallet" element={<Wallet />} />
           <Route path="/policies" element={<Policies />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/verify" element={<VerifyPage />} />
           <Route path="*" element={<HomeForMode />} />
         </Route>
       </Routes>

@@ -80,6 +80,11 @@ export function formatDeadline(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
+/// A day, in the viewer's locale: "12 Mar 2027".
+export function formatDate(microseconds: number): string {
+  return new Date(microseconds / 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function formatClockTime(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

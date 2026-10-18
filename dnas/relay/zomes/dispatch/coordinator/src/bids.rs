@@ -37,6 +37,12 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         return Err(wasm_error!(WasmErrorInner::Guest(driver_refusal(refusal))));
     }
 
+    // The driver's verification, where the network requires one.
+    let verification = crate::verification::driver_verification(bidder.clone())?.map(|v| v.action);
+    if verification.is_none() && relay_governance::require_verified_drivers() {
+        return Err(wasm_error!(WasmErrorInner::Guest("Drivers on this network are verified before they deliver. Ask one of its verifiers to check you.".into())));
+    }
+
     let bid = Bid {
         order_ref: current.action_address().clone(),
         bidder,
@@ -47,6 +53,7 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         collateral: required_collateral(&order),
         status: BidStatus::Open,
         created_at: sys_time()?,
+        verification,
     };
     let bid_hash = create_entry(&EntryTypes::Bid(bid))?;
     // Under the order's identity, not the exact version bid on (a scheduled
@@ -140,6 +147,9 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         return Err(wasm_error!(WasmErrorInner::Guest("that driver has withdrawn their bid".into())));
     }
     crate::accounts::ensure_not_moved(&winning_bid.bidder, "That driver")?;
+    if !crate::verification::bid_verification_stands(&winning_bid)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("That driver's verification has been withdrawn.".into())));
+    }
 
     if !input.override_warrants {
         let warrants = check_warrants(winning_bid.bidder.clone())?;

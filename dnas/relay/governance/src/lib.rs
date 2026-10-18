@@ -127,6 +127,20 @@ pub struct RelayDnaProperties {
     /// none: validation refuses an order with any.
     #[serde(default)]
     pub restricted_min_age: Option<u8>,
+    /// Who may verify drivers (`dispatch_types::DriverVerification`): the
+    /// organisations the network trusts to check a driver's identity,
+    /// licence, insurance and record -- keys, like `issuers`.
+    #[serde(default)]
+    pub verifiers: Vec<String>,
+    /// Whether a driver needs a current verification to bid. Most places'
+    /// rules for delivery platforms expect it; a network starting out may
+    /// not yet have a verifier.
+    #[serde(default)]
+    pub require_verified_drivers: Option<bool>,
+    /// The longest a verification lasts before it's renewed -- what bounds
+    /// a revocation that validation can't see (`DriverVerification`).
+    #[serde(default)]
+    pub verification_days: Option<u32>,
 }
 
 /// Services an app uses beside the network itself.
@@ -187,6 +201,28 @@ pub fn credit_limit_cents() -> u64 {
 /// production) has no issuers.
 pub fn is_issuer(agent: &AgentPubKey) -> ExternResult<bool> {
     Ok(properties().is_some_and(|p| p.issuers.contains(&agent.to_string())))
+}
+
+/// Whether `agent` may verify drivers (see `RelayDnaProperties::verifiers`).
+pub fn is_verifier(agent: &AgentPubKey) -> bool {
+    properties().is_some_and(|p| p.verifiers.contains(&agent.to_string()))
+}
+
+/// The network's driver verifiers -- those whose keys parse.
+pub fn verifiers() -> Vec<AgentPubKey> {
+    properties()
+        .map(|p| p.verifiers.iter().filter_map(|key| AgentPubKeyB64::from_b64_str(key).ok()).map(AgentPubKey::from).collect())
+        .unwrap_or_default()
+}
+
+/// Whether bidding needs a current driver verification.
+pub fn require_verified_drivers() -> bool {
+    setting(|p| p.require_verified_drivers, false)
+}
+
+/// The longest a driver verification lasts: a year unless the network says.
+pub fn verification_lifetime() -> Duration {
+    Duration::from_secs(u64::from(setting(|p| p.verification_days, 365)) * 86_400)
 }
 
 /// The network's issuers, in the roster's order -- those whose keys parse.

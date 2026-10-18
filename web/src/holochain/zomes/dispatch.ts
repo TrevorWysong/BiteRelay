@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -479,4 +479,28 @@ export async function getStoreStepsDue(): Promise<StoreStepDue[]> {
 export async function takeStoreStep(step: StoreStep, orderRef: ActionHash, beacon: Beacon): Promise<HcRecord> {
   const fn = { MoveDriverOn: "move_driver_on", RecordCollecting: "record_collecting", EndForNoDriver: "end_for_no_driver" }[step];
   return callZome("dispatch", fn, { order_ref: orderRef, beacon });
+}
+
+// --- driver verification ---
+
+/// What the network asks of drivers: whether they're verified before
+/// bidding, and who verifies them.
+export async function getVerificationTerms(): Promise<VerificationTerms> {
+  return callZome("dispatch", "get_verification_terms", null);
+}
+
+/// A driver's current verification -- `null` if none stands.
+export async function driverVerification(driver: AgentPubKey): Promise<VerificationView | null> {
+  return callZome("dispatch", "driver_verification", driver);
+}
+
+/// A verifier vouching for a driver they've checked, for `days` (at most
+/// the network's limit).
+export async function verifyDriver(driver: AgentPubKey, checks: VerificationCheck[], days: number | null): Promise<ActionHash> {
+  return callZome("dispatch", "verify_driver", { driver, checks, days });
+}
+
+/// A verifier withdrawing their verification.
+export async function revokeVerification(verification: ActionHash): Promise<void> {
+  return callZome("dispatch", "revoke_verification", verification);
 }

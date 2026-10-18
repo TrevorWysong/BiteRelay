@@ -9,6 +9,7 @@ use hdi::prelude::*;
 use relay_integrity_support::{classify, invalid, require, Checked};
 use relay_types::GeoPoint;
 
+mod verification;
 mod bids;
 mod holds;
 mod issues;
@@ -35,7 +36,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // The entry structs live in dispatch_types so other integrity zomes can
 // decode them -- see that crate's doc comment. Re-exported here so the
 // coordinator crate imports everything via `dispatch_integrity::*`.
-pub use dispatch_types::{lineage, DropoffShare, LinePricer, Chosen, ChosenInput, OrderItem, Selection, SelectionInput, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+pub use dispatch_types::{DriverVerification, VerificationCheck, lineage, DropoffShare, LinePricer, Chosen, ChosenInput, OrderItem, Selection, SelectionInput, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 // Built once per write and dropped -- boxing the large order would only
 // add an allocation.
@@ -53,6 +54,7 @@ pub enum EntryTypes {
     ItemSettlement(ItemSettlement),
     CollectRequest(CollectRequest),
     DropoffShare(DropoffShare),
+    DriverVerification(DriverVerification),
 }
 
 #[hdk_link_types]
@@ -85,6 +87,8 @@ pub enum LinkTypes {
     /// The customer's address shared with a committed driver; tagged with
     /// the driver's key.
     OrderToDropoffShare,
+    /// A driver's verifications, linked by their verifiers.
+    DriverToVerification,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -109,7 +113,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
         Checked::Create { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_new_order(&order, action.author(), action.timestamp(), action.prev_action()),
-            EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author(), action.prev_action()),
+            EntryTypes::Bid(bid) => validate_new_bid(&bid, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::RecurringOrderTemplate(template) => validate_new_recurring_template(&template, action.author()),
             EntryTypes::PickupOrder(order) => validate_new_pickup_order(&order, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::ItemIssue(issue) => issues::validate_item_issue(&issue, action.author(), action.prev_action()),
@@ -118,6 +122,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::ItemSettlement(settlement) => issues::validate_settlement(&settlement, action.author(), action.timestamp(), action.prev_action()),
             EntryTypes::CollectRequest(request) => delivery::validate_collect_request(&request, action.author(), action.prev_action()),
             EntryTypes::DropoffShare(share) => delivery::validate_dropoff_share(&share, action.author()),
+            EntryTypes::DriverVerification(verification) => verification::validate_verification(&verification, action.author(), action.timestamp()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
@@ -127,10 +132,14 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) | EntryTypes::CollectRequest(_) | EntryTypes::DropoffShare(_) => {
                 Ok(ValidateCallbackResult::Invalid("issues, requests and an order's settlement can't be changed".into()))
             }
+            EntryTypes::DriverVerification(_) => {
+                Ok(ValidateCallbackResult::Invalid("a verification is renewed with a new one, not changed".into()))
+            }
         },
         // Orders, bids and templates move by updates; their history is
         // what payments, reviews and settlements cite.
-        Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("dispatch entries can't be deleted".into())),
+        // Except a verification, which its verifier may revoke.
+        Checked::Delete { action } => verification::validate_verification_delete(&action.data.deletes_address, action.author()),
         Checked::CreateLink { link_type, action } => validate_create_link(OpLinkFields {
             link_type: &link_type,
             base: &action.base_address,

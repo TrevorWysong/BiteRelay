@@ -195,6 +195,11 @@ export interface Bid {
   collateral: number;
   status: BidStatus;
   created_at: Timestamp;
+  /**
+   * The driver's current verification (`DriverVerification`), where the
+   * network requires one to bid.
+   */
+  verification: ActionHash | null;
 }
 
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";
@@ -746,6 +751,23 @@ export type DispatchLocalSignal =
    * This agent's store's customer asked to collect this order.
    */
   | { CollectRequested: ActionHash };
+
+/**
+ * A verifier's word (one of the network's `verifiers`) that a driver
+ * passed its checks, until `expires_at`. Written on the verifier's chain,
+ * so a driver can't make one; cited by the driver's bids.
+ *
+ * A verifier revokes one by deleting it. Validation can't see a deletion
+ * -- a record, once valid, stays fetchable -- so a revoked verification
+ * still validates a bid until it expires; customers' apps check it's
+ * standing before accepting one. The network's `verification_days` bounds
+ * how long that gap can be.
+ */
+export interface DriverVerification {
+  driver: AgentPubKey;
+  checks: VerificationCheck[];
+  expires_at: Timestamp;
+}
 
 /**
  * Where a delivery goes, in full -- only ever stored sealed (see
@@ -2895,6 +2917,45 @@ export interface TemplateDetails {
    * Each order asks for a driver of its own (`DeliveryOrder::priority`).
    */
   priority: boolean;
+}
+
+/**
+ * What a verifier checked about a driver.
+ */
+export type VerificationCheck =
+  /**
+   * Who they are: an identity document, matched to them.
+   */
+  | "Identity"
+  /**
+   * A licence to drive the vehicle they deliver with.
+   */
+  | "DrivingLicence"
+  /**
+   * Insurance covering delivery.
+   */
+  | "Insurance"
+  /**
+   * A criminal-record or driving-record check, as the law allows.
+   */
+  | "Background";
+
+/**
+ * What the network asks of drivers, for the driver app.
+ */
+export interface VerificationTerms {
+  required: boolean;
+  verifiers: AgentPubKey[];
+}
+
+/**
+ * A driver's verification as their customers see it.
+ */
+export interface VerificationView {
+  action: ActionHash;
+  verifier: AgentPubKey;
+  checks: VerificationCheck[];
+  expires_at: Timestamp;
 }
 
 /**

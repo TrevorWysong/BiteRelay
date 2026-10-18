@@ -196,7 +196,7 @@ mod tests {
     }
 
     fn bid(price_offer: u64) -> Bid {
-        Bid { order_ref: ActionHash::from_raw_36(vec![9; 36]), bidder: agent(3), eta_seconds: 600, to_store_seconds: 300, price_offer, collateral: 2000, status: super::super::BidStatus::Open, created_at: Timestamp::from_micros(0) }
+        Bid { order_ref: ActionHash::from_raw_36(vec![9; 36]), bidder: agent(3), eta_seconds: 600, to_store_seconds: 300, price_offer, collateral: 2000, status: super::super::BidStatus::Open, created_at: Timestamp::from_micros(0), verification: None }
     }
 
     #[test]

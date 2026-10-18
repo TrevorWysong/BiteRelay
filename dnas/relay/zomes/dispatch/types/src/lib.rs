@@ -550,6 +550,41 @@ pub struct Bid {
     pub collateral: u64,
     pub status: BidStatus,
     pub created_at: Timestamp,
+    /// The driver's current verification (`DriverVerification`), where the
+    /// network requires one to bid.
+    #[serde(default)]
+    pub verification: Option<ActionHash>,
+}
+
+/// What a verifier checked about a driver.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VerificationCheck {
+    /// Who they are: an identity document, matched to them.
+    Identity,
+    /// A licence to drive the vehicle they deliver with.
+    DrivingLicence,
+    /// Insurance covering delivery.
+    Insurance,
+    /// A criminal-record or driving-record check, as the law allows.
+    Background,
+}
+
+/// A verifier's word (one of the network's `verifiers`) that a driver
+/// passed its checks, until `expires_at`. Written on the verifier's chain,
+/// so a driver can't make one; cited by the driver's bids.
+///
+/// A verifier revokes one by deleting it. Validation can't see a deletion
+/// -- a record, once valid, stays fetchable -- so a revoked verification
+/// still validates a bid until it expires; customers' apps check it's
+/// standing before accepting one. The network's `verification_days` bounds
+/// how long that gap can be.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DriverVerification {
+    pub driver: AgentPubKey,
+    pub checks: Vec<VerificationCheck>,
+    pub expires_at: Timestamp,
 }
 
 /// `PickupOrder`'s own, much smaller lifecycle -- see `DeliveryOrder`'s own

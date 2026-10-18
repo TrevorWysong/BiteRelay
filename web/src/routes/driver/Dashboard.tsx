@@ -31,6 +31,7 @@ import { currentBeacon } from "../../lib/timeSource";
 import { useClock } from "../../lib/useClock";
 import { useDriverSettings } from "../../store/roleSettings";
 import { DriverSettingsCard } from "./DriverSettingsCard";
+import { VerificationCard } from "./VerificationCard";
 import { useTerms } from "../../store/network";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
@@ -97,6 +98,7 @@ function dropoffPoint(row: OrderRow): GeoPoint {
 
 export function DriverDashboard() {
   const location = useSession((s) => s.location);
+  const me = useSession((s) => s.agentPubKey);
   const driverKey = myAgentPubKey();
   const driverHex = bytesToHex(driverKey);
   const [online, setOnline] = useState(false);
@@ -250,6 +252,7 @@ export function DriverDashboard() {
         </motion.button>
       </Card>
 
+      {me && <VerificationCard me={me} />}
       <DriverSettingsCard />
 
       <AnimatePresence initial={false}>

@@ -50,6 +50,7 @@ mod signals;
 mod stores;
 mod tracking;
 mod upkeep;
+mod verification;
 
 pub use bids::*;
 pub use chat::*;
@@ -83,7 +84,8 @@ mod test_utils {
         DriverToActiveDelivery,
         OrderToIssue,
         IssueToResponse,
-        OrderToDecision
+        OrderToDecision,
+        DriverToVerification
     );
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -214,6 +216,13 @@ mod test_utils {
     #[hdk_extern]
     pub fn create_raw_bid_for_testing(bid: Bid) -> ExternResult<ActionHash> {
         create_entry(&EntryTypes::Bid(bid))
+    }
+
+    /// Writes a driver verification exactly as given -- what someone off
+    /// the verifier roster could try.
+    #[hdk_extern]
+    pub fn create_raw_verification_for_testing(verification: dispatch_integrity::DriverVerification) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::DriverVerification(verification))
     }
 
     /// Updates a bid with exactly the entry given -- what a modified client

@@ -128,6 +128,8 @@ fn ranked(order_ref: &ActionHash, latest: &Record, order: &dispatch_integrity::D
         let cost = bid.price_offer.saturating_add(minutes.saturating_mul(minute_value)).saturating_add(reliability);
         let unavailable = if order.max_delivery_fee.is_some_and(|cap| bid.price_offer > cap) {
             Some("Over your delivery fee limit.".to_string())
+        } else if !crate::verification::bid_verification_stands(&bid)? {
+            Some("This driver's verification has been withdrawn.".to_string())
         } else if left.contains(&bid_ref) {
             Some("This driver left your order.".to_string())
         } else if crate::order_queues::get_driver_load(bid.bidder.clone())?.taking(order.priority, max).is_err() {
