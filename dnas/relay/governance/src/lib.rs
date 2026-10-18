@@ -115,6 +115,25 @@ pub struct RelayDnaProperties {
     /// `TimeSource`. Unset, drand's quicknet.
     #[serde(default)]
     pub time_source: Option<TimeSource>,
+    /// The map and address-search services the app uses -- the network's
+    /// own choice, never consulted by validation. Unset, OpenStreetMap's
+    /// public servers, which suit development only: their usage policies
+    /// don't allow an app's production traffic, and every lookup tells them
+    /// where someone is.
+    #[serde(default)]
+    pub services: Option<Services>,
+}
+
+/// Services an app uses beside the network itself.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Services {
+    /// Map tiles: an `{z}/{x}/{y}` template (and `{s}` for subdomains).
+    pub map_tiles_url: String,
+    /// The credit the tiles' licence requires (HTML).
+    pub map_attribution: String,
+    /// Address search: the base of a Nominatim-compatible API (`/search`,
+    /// `/reverse`) -- one's own Nominatim, or Photon's compatible endpoint.
+    pub geocoder_url: String,
 }
 
 /// A drand network (<https://drand.love>): a public randomness beacon run
@@ -170,6 +189,15 @@ pub fn issuers() -> Vec<AgentPubKey> {
     properties()
         .map(|p| p.issuers.iter().filter_map(|key| AgentPubKeyB64::from_b64_str(key).ok()).map(AgentPubKey::from).collect())
         .unwrap_or_default()
+}
+
+/// The map and address-search services apps use (see `RelayDnaProperties::services`).
+pub fn services() -> Services {
+    setting(|p| p.services, Services {
+        map_tiles_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png".into(),
+        map_attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors".into(),
+        geocoder_url: "https://nominatim.openstreetmap.org".into(),
+    })
 }
 
 /// The network's currency (ISO 4217).

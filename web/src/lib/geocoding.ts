@@ -1,14 +1,13 @@
 import type { GeoPoint } from "../holochain/types";
 
-// Free address search/reverse-lookup via Nominatim, OpenStreetMap's own
-// geocoding service -- the sibling API to the raster tiles `LiveMap.tsx`
-// already pulls from the same org, no API key or vendor account either.
-// Same "default to shared free infra now" tradeoff this project already
-// makes for its bootstrap/relay servers (architecture plan §12): the
-// public instance isn't guaranteed production capacity, but a single
-// user's own debounced, one-at-a-time search box is light, individual
-// usage, not the bulk/systematic querying its usage policy warns against.
-const BASE_URL = "https://nominatim.openstreetmap.org";
+// Address search and reverse lookup through the network's geocoder -- a
+// Nominatim-compatible API it chooses (its `services` setting): its own
+// Nominatim or Photon, or OpenStreetMap's public one in development. Every
+// lookup tells that server where someone is looking, so a network serious
+// about privacy runs its own.
+import { networkServices } from "../store/network";
+
+const baseUrl = () => networkServices().geocoder_url.replace(/\/$/, "");
 
 interface NominatimAddress {
   house_number?: string;
@@ -80,7 +79,7 @@ export interface GeocodeResult {
 export async function searchAddress(query: string, signal: AbortSignal): Promise<GeocodeResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
-  const url = `${BASE_URL}/search?format=jsonv2&addressdetails=1&limit=5&q=${encodeURIComponent(trimmed)}`;
+  const url = `${baseUrl()}/search?format=jsonv2&addressdetails=1&limit=5&q=${encodeURIComponent(trimmed)}`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Address search failed (${res.status})`);
   const rows: NominatimRow[] = await res.json();
@@ -96,7 +95,7 @@ export async function searchAddress(query: string, signal: AbortSignal): Promise
 // pill/switcher) needs the pieces separately, not just the one flattened
 // string.
 export async function reverseGeocode(point: GeoPoint, signal: AbortSignal): Promise<{ label: string; components: AddressComponents } | null> {
-  const url = `${BASE_URL}/reverse?format=jsonv2&addressdetails=1&lat=${point.lat}&lon=${point.lon}`;
+  const url = `${baseUrl()}/reverse?format=jsonv2&addressdetails=1&lat=${point.lat}&lon=${point.lon}`;
   const res = await fetch(url, { signal });
   if (!res.ok) return null;
   const row: Partial<NominatimRow> = await res.json();

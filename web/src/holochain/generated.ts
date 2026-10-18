@@ -1785,6 +1785,15 @@ export interface NetworkTerms {
    * closes.
    */
   store_listing_stake: number;
+  /**
+   * Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
+   */
+  map_tiles_url: string;
+  map_attribution: string;
+  /**
+   * A Nominatim-compatible address search API.
+   */
+  geocoder_url: string;
 }
 
 /**

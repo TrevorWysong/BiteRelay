@@ -29,6 +29,20 @@ export function currentTerms(): NetworkTerms {
   return requireTerms(useNetwork.getState().terms);
 }
 
+/// The map and address-search services the network chose (its `services`
+/// setting). Before the network's terms have loaded -- address search on the
+/// sign-up screen, in development -- OpenStreetMap's public servers, the
+/// network's own default (`relay_governance::services`).
+export function networkServices(): Pick<NetworkTerms, "map_tiles_url" | "map_attribution" | "geocoder_url"> {
+  return (
+    useNetwork.getState().terms ?? {
+      map_tiles_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      map_attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      geocoder_url: "https://nominatim.openstreetmap.org",
+    }
+  );
+}
+
 function requireTerms(terms: NetworkTerms | null): NetworkTerms {
   if (!terms) throw new Error("the network's terms are read while connecting -- this ran before that");
   return terms;

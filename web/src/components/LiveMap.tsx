@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { networkServices } from "../store/network";
 import "leaflet/dist/leaflet.css";
 import { PresenceDot } from "./ui";
 import type { GeoPoint } from "../holochain/types";
@@ -12,8 +13,6 @@ import type { GeoPoint } from "../holochain/types";
 // no API key, no vendor account, consistent with this project's "0
 // overhead" stance on infrastructure costs (architecture plan §12) --
 // the same provider `AddressSearch`'s Nominatim-backed geocoding uses.
-const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 function emojiIcon(emoji: string): L.DivIcon {
   return L.divIcon({
@@ -45,7 +44,8 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = L.map(containerRef.current, { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
-    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(map);
+    const services = networkServices();
+    L.tileLayer(services.map_tiles_url, { maxZoom: 19, attribution: services.map_attribution }).addTo(map);
     L.marker([pickup.lat, pickup.lon], { icon: PICKUP_ICON }).addTo(map).bindPopup("Pickup");
     L.marker([dropoff.lat, dropoff.lon], { icon: DROPOFF_ICON }).addTo(map).bindPopup("Dropoff");
     // A themed, dashed connector rather than a bare pair of pins -- gives

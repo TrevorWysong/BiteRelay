@@ -523,6 +523,11 @@ pub struct NetworkTerms {
     /// What listing a store sets aside, in minor units -- returned when it
     /// closes.
     pub store_listing_stake: u64,
+    /// Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
+    pub map_tiles_url: String,
+    pub map_attribution: String,
+    /// A Nominatim-compatible address search API.
+    pub geocoder_url: String,
 }
 
 #[hdk_extern]
@@ -560,6 +565,9 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
         default_bag_hold_minutes: relay_governance::default_bag_hold_minutes(),
         store_listing_stake: relay_governance::store_listing_stake(),
+        map_tiles_url: relay_governance::services().map_tiles_url,
+        map_attribution: relay_governance::services().map_attribution,
+        geocoder_url: relay_governance::services().geocoder_url,
     })
 }
 

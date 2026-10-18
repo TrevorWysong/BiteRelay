@@ -54,6 +54,9 @@ if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uh
 // it's money they deposited: on credit, a throwaway identity could post it,
 // walk away and leave the debt. So a network bundle is prepaid unless its
 // builder deliberately says otherwise.
+if (!properties.services) {
+  console.warn("deploy/properties.json sets no `services`: apps will use OpenStreetMap's public tile and search servers, whose usage policies don't allow production traffic. Set your own (DEPLOYMENT.md).");
+}
 if (properties.credit_limit_cents > 0 && process.env.RELAY_ALLOW_CREDIT !== "1") {
   fail("credit_limit_cents is above 0: drivers could post collateral on credit and walk away from it. Set it to 0, or build with RELAY_ALLOW_CREDIT=1 if you mean to extend credit.");
 }
