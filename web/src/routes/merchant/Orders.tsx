@@ -278,6 +278,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
 /// What the merchant can do next for an order they've accepted, or what
 /// they're waiting on.
 function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean; onAdvance: (action: OrderAction) => void }) {
+  const minAge = useTerms().restricted_min_age;
   const button = (label: string, action: OrderAction) => (
     <Button className="mt-3 w-full py-2 text-xs" loading={busy} onClick={() => onAdvance(action)}>
       {label}
@@ -317,7 +318,9 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
     case "MerchantConfirmed":
       return button("Mark ready for pickup", markReadyForPickup);
     case "ReadyForPickup":
-      return note("Waiting for the customer to collect it.");
+      // The customer confirmed their age when ordering; the store checks
+      // it, in person, at the counter.
+      return note("age_confirmed" in row.order && row.order.age_confirmed ? `Waiting for the customer to collect it. Age-restricted: check their ID (${minAge ?? "legal age"}+) before handing it over.` : "Waiting for the customer to collect it.");
     case "Disputed":
       return (
         <>

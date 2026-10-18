@@ -67,7 +67,10 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
     };
     let bag_record: Record = io.decode().map_err(|e| wasm_error!(e))?;
     let bag = decode_or::<GoodieBag>(&bag_record).ok_or(wasm_error!(WasmErrorInner::Guest("that isn't a goodie bag".into())))?;
-    let merchant = current_catalog(&bag.catalog_ref)?.owner;
+    let store = current_catalog(&bag.catalog_ref)?;
+    let merchant = store.owner.clone();
+    // The bag's price, and the store's tax on it.
+    let order_total = crate::pricing::bag_order_total(&store, bag.price_cents);
     let items = vec![OrderItem { item_ref: claim.bag_ref.clone(), quantity: 1, selections: Vec::new() }];
     let kitchen_notes = format!("Goodie bag: {}", bag.title);
     match claim.fulfillment {
@@ -76,10 +79,11 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 merchant,
                 catalog_ref: bag.catalog_ref,
                 items,
-                order_total: bag.price_cents,
+                order_total,
                 kitchen_notes,
                 promo_code_ref: None,
                 bag_claim_ref: Some(claim_ref),
+                age_confirmed: false,
             })?;
         }
         BagClaimFulfillment::Delivery { max_delivery_fee, .. } => {
@@ -90,7 +94,7 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 merchant,
                 catalog_ref: bag.catalog_ref,
                 items,
-                order_total: bag.price_cents,
+                order_total,
                 dropoff,
                 max_delivery_fee,
                 kitchen_notes,

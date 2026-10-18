@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { ST_PETE, actionHash, decodeEntry, retryUntilOk, testApp, useTestCoordinators } from "./helpers.js";
+import { ST_PETE, actionHash, decodeEntry, retryUntil, retryUntilOk, testApp, useTestCoordinators } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
@@ -65,6 +65,25 @@ await runScenario(async (scenario) => {
   await assert.rejects(raw(1600, 100), /tax_cents must be 183/, "nor understate it");
   await assert.rejects(raw(1500, 183), /order_total must be 1683/, "nor state it and not charge it");
   console.log("[PASS] validation refuses any tax or total but the store's");
+
+  // ===== A goodie bag is taxed at the store's default rate =====
+  const now = Date.now() * 1000;
+  const bag = actionHash(
+    await call(merchant, "catalog")<HcRecord>("create_goodie_bag", {
+      catalog_ref: store, title: "Day's end bag", description: "", photo_data_uri: "", original_value_cents: 1500, price_cents: 500, quantity_total: 1,
+      pickup_window_start: now + 1_000_000, pickup_window_end: now + 7_200_000_000, supports_pickup: true, supports_delivery: false, created_at: now,
+    }),
+  );
+  await sync();
+  const claim = actionHash(await call(customer, "catalog")<HcRecord>("claim_goodie_bag", { bag_ref: bag, fulfillment: "Pickup" }));
+  await sync();
+  await call(merchant, "catalog")("confirm_claim", claim);
+  await sync();
+  // The customer's conductor turns the confirmed claim into an order itself.
+  const bagOrder = await retryUntil(() => call(customer, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim).catch(() => null), (found) => found !== null, 60, 1000);
+  const bagTerms = decodeEntry<{ order_total: number; tax_cents: number }>(await call(customer, "dispatch")<HcRecord>("get_pickup_order", bagOrder!));
+  assert.deepEqual([bagTerms.order_total, bagTerms.tax_cents], [541, 41], "$5 at 8.25%: 41c of tax, added");
+  console.log("[PASS] a goodie bag is taxed at the store's default rate");
 
   // ===== Prices that include tax (VAT) =====
   await tax([["VAT", 2000], ["Alcohol", 2000]], true);

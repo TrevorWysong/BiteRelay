@@ -11,6 +11,7 @@ import { useCart } from "../../store/cart";
 import { formatCatalogAddress, formatCents, toMinorUnits, currencySymbol } from "../../lib/format";
 import { describeError } from "../../lib/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
+import { useTerms } from "../../store/network";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { ItemSheet } from "../../components/ItemSheet";
@@ -65,6 +66,7 @@ export function MerchantDetail() {
 
 function StorePage({ hash }: { hash: string }) {
   const navigate = useNavigate();
+  const minAge = useTerms().restricted_min_age;
   // A card click passes the catalog it already has, so the header renders
   // instantly; the fetch below replaces it with the live version (and is
   // the only source when arriving via a direct URL/refresh).
@@ -356,6 +358,11 @@ function StorePage({ hash }: { hash: string }) {
                         );
                       })()}
                     </div>
+                    {item.age_restricted && minAge && (
+                      <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                        {minAge}+ · ID at pickup
+                      </span>
+                    )}
                     {(item.dietary_tags ?? []).length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {(item.dietary_tags ?? []).map((tag) => (

@@ -15,7 +15,7 @@ function group(name: string, min: number, max: number | null, free: number, opti
   return { catalog_ref: STORE, name, min_selections: min, max_selections: max, max_per_option: 1, free_selections: free, options };
 }
 function item(price_cents: number, groups: number[]): MenuItem {
-  return { catalog_ref: STORE, name: "Latte", price_cents, available: true, description: "", photo_data_uri: "", category: "", dietary_tags: [], modifier_groups: groups.map(hash), tax_category: "" };
+  return { catalog_ref: STORE, name: "Latte", price_cents, available: true, description: "", photo_data_uri: "", category: "", dietary_tags: [], modifier_groups: groups.map(hash), tax_category: "", age_restricted: false };
 }
 const menu = (entries: [number, ModifierGroup][]): Groups => new Map(entries.map(([n, g]) => [bytesToHex(hash(n)), g]));
 const pick = (g: number, options: [number, number][]): SelectionInput => ({ group: hash(g), options: options.map(([option, quantity]) => ({ option, quantity, nested: [] })) });

@@ -6,7 +6,8 @@ import { bytesToHex, hexToBytes } from "../../../holochain/decode";
 import { groupByCategory, type ItemRow } from "../../../lib/menu";
 import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
-import { Button, Card, Field, Input, Select, StatNumber, Textarea } from "../../../components/ui";
+import { Button, Card, Checkbox, Field, Input, Select, StatNumber, Textarea } from "../../../components/ui";
+import { useTerms } from "../../../store/network";
 import { percentLabel } from "../../../lib/tax";
 import { PhotoInput } from "../../../components/PhotoInput";
 import { MAX_DESCRIPTION_CHARS, MAX_ITEM_GROUPS, MAX_LABEL_CHARS, MAX_NAME_CHARS, type TaxRate } from "../../../holochain/types";
@@ -109,7 +110,9 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
     /// The item's choice groups, by hex, in the order customers see them.
     groups: (row?.item.modifier_groups ?? []).map(bytesToHex),
     tax_category: row?.item.tax_category ?? "",
+    age_restricted: row?.item.age_restricted ?? false,
   }));
+  const minAge = useTerms().restricted_min_age;
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -126,6 +129,7 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
         dietary_tags: form.dietary_tags.split(",").map((t) => t.trim()).filter(Boolean),
         modifier_groups: form.groups.map(hexToBytes),
         tax_category: form.tax_category,
+        age_restricted: form.age_restricted,
       };
       if (row) await updateMenuItem(row.hash, { ...row.item, ...fields });
       else await addMenuItem({ catalog_ref: catalogRef, available: true, ...fields });
@@ -158,6 +162,14 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
             ))}
           </Select>
         </Field>
+      )}
+      {/* Only on a network that sells age-restricted items -- and an item
+          already marked can be unmarked anywhere. */}
+      {(minAge || form.age_restricted) && (
+        <label className="flex items-center gap-2 text-sm text-ink-600 dark:text-ink-300">
+          <Checkbox checked={form.age_restricted} onChange={(e) => set({ age_restricted: e.target.checked })} />
+          Age-restricted (alcohol, tobacco): {minAge ?? "of age"}+, collected in person with ID
+        </label>
       )}
       {groups.length > 0 && (
         <div>

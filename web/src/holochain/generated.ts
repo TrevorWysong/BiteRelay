@@ -1475,6 +1475,12 @@ export interface MenuItem {
    * empty for the store's first.
    */
   tax_category: string;
+  /**
+   * Sold only to adults (alcohol, tobacco): collected in person, where
+   * the store checks ID, and only on a network that sets the age
+   * (`relay_governance::restricted_min_age`).
+   */
+  age_restricted: boolean;
 }
 
 export interface MerchantCatalog {
@@ -1786,6 +1792,10 @@ export interface NetworkTerms {
    */
   store_listing_stake: number;
   /**
+   * The age for age-restricted items, if the network sells any.
+   */
+  restricted_min_age: number | null;
+  /**
    * Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
    */
   map_tiles_url: string;
@@ -2084,6 +2094,12 @@ export interface PickupOrder {
    * validation counts. Empty otherwise.
    */
   loyalty_proof: ActionHash[];
+  /**
+   * The customer's word that they're old enough for the order's
+   * age-restricted items, and will show ID at the counter -- required
+   * when it has any.
+   */
+  age_confirmed: boolean;
   /**
    * Why the order was cancelled -- set by the update that cancels it,
    * and checked against who wrote it. `None` until then.

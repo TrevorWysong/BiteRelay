@@ -312,6 +312,8 @@ export async function requestPickupOrder(input: {
   kitchen_notes?: string;
   promo_code_ref?: ActionHash | null;
   bag_claim_ref?: ActionHash | null;
+  /// The customer confirming their age, for age-restricted items.
+  age_confirmed?: boolean;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_pickup_order", {
     kitchen_notes: "",

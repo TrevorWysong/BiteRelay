@@ -49,6 +49,8 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
         placed_at: action_timestamp,
         store: &store,
         tax_cents: order.tax_cents,
+        delivery: false,
+        age_confirmed: order.age_confirmed,
     };
     if let Some(reason) = check_pricing(pricing)? {
         return Ok(ValidateCallbackResult::Invalid(reason));

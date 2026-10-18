@@ -29,6 +29,10 @@ pub(crate) struct OrderPricing<'a> {
     /// cites): its minimum order and its tax rates.
     pub store: &'a MerchantCatalog,
     pub tax_cents: u64,
+    /// Whether it's a delivery (a pickup otherwise).
+    pub delivery: bool,
+    /// The customer's confirmation of their age (a pickup's `age_confirmed`).
+    pub age_confirmed: bool,
 }
 
 /// The store version an order cites (`catalog_version`) -- the terms it
@@ -75,6 +79,7 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
 
     let mut priced = Vec::with_capacity(order.lines.len());
     let mut categories = Vec::with_capacity(order.lines.len());
+    let mut age_restricted = false;
     let mut pricer = LinePricer::default();
     for line in order.lines {
         if original_creation(line.priced_version.clone())? != line.item_ref {
@@ -92,6 +97,12 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
         };
         priced.push(PricedLine { item_ref: line.item_ref.clone(), base_price: item.price_cents, unit_price, quantity: line.quantity });
         categories.push(item.tax_category);
+        age_restricted |= item.age_restricted;
+    }
+    if age_restricted {
+        if let Some(problem) = age_restriction_problem(&order) {
+            return Ok(Some(problem));
+        }
     }
     if let Some(min) = order.store.min_order_cents {
         let subtotal: u64 = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
@@ -122,6 +133,20 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     };
     let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
     Ok(check_taxed_total(&order, food, &taxable, "the lines at their priced versions, less any promo discount"))
+}
+
+/// Why an order with age-restricted items (alcohol, tobacco) can't be
+/// placed, if it can't: the network must sell them at all; they're
+/// collected in person, where the store checks ID -- never delivered; and
+/// the customer confirms their age.
+fn age_restriction_problem(order: &OrderPricing<'_>) -> Option<String> {
+    let Some(age) = relay_governance::restricted_min_age() else {
+        return Some("this network doesn't sell age-restricted items".into());
+    };
+    if order.delivery {
+        return Some("age-restricted items are collected in person, where the store checks ID".into());
+    }
+    (!order.age_confirmed).then(|| format!("an order with age-restricted items needs the customer to confirm they're {age} or older"))
 }
 
 /// Whether the order's tax and total are what its food comes to under the

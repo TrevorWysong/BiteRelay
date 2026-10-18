@@ -204,7 +204,8 @@ export function Cart() {
   // entirely -- there's no driver in that vertical at all, see
   // `PickupOrder`'s own doc comment (`dispatch_integrity`) for why that's a
   // separate entry type, not a flag on this same order.
-  const [fulfillment, setFulfillment] = useState<"Delivery" | "Pickup">("Delivery");
+  const [chosenFulfillment, setFulfillment] = useState<"Delivery" | "Pickup">("Delivery");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   // Defaults to the session's saved location, but editable per order --
   // previously frozen at whatever was set once during onboarding, with no
   // way to deliver anywhere else (e.g. a friend's place) or update it after
@@ -314,6 +315,12 @@ export function Cart() {
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
   // The store's tax on the food after any promo, as validation computes it
   // (`lib/tax.ts`): added on top, or already in the prices.
+  // Age-restricted items (alcohol, tobacco) are collected in person, where
+  // the store checks ID -- the network's rule.
+  const itemOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item;
+  const ageRestricted = cart.lines.some((line) => itemOf(line.itemRef)?.age_restricted);
+  const minAge = useTerms().restricted_min_age;
+  const fulfillment: "Delivery" | "Pickup" = ageRestricted ? "Pickup" : chosenFulfillment;
   const taxCategoryOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item.tax_category ?? "";
   const taxRates = storeInfo?.taxRates ?? [];
   const taxIncluded = storeInfo?.pricesIncludeTax ?? false;
@@ -376,6 +383,7 @@ export function Cart() {
           order_total: orderTotalCents,
           kitchen_notes: kitchenNotes.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
+          age_confirmed: ageRestricted && ageConfirmed,
         });
         const orderRef = actionHash(record);
         cart.clear();
@@ -458,13 +466,24 @@ export function Cart() {
       </motion.p>
 
       <motion.div variants={fadeSlideUp} className="mb-4 flex gap-2">
-        <ToggleChip active={fulfillment === "Delivery"} onClick={() => setFulfillment("Delivery")} className="flex-1 text-center">
-          Delivery
-        </ToggleChip>
+        {!ageRestricted && (
+          <ToggleChip active={fulfillment === "Delivery"} onClick={() => setFulfillment("Delivery")} className="flex-1 text-center">
+            Delivery
+          </ToggleChip>
+        )}
         <ToggleChip active={fulfillment === "Pickup"} onClick={() => setFulfillment("Pickup")} className="flex-1 text-center">
           Pickup
         </ToggleChip>
       </motion.div>
+      {ageRestricted && (
+        <motion.label variants={fadeSlideUp} className="mb-4 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+          <Checkbox checked={ageConfirmed} onChange={(e) => setAgeConfirmed(e.target.checked)} className="mt-0.5" />
+          <span>
+            Your order has age-restricted items, so it's collected in person. I'm {minAge ?? "of legal age"}
+            {minAge ? " or older" : ""} and will show ID at the counter.
+          </span>
+        </motion.label>
+      )}
 
       <motion.div variants={fadeSlideUp}>
         <Card className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
@@ -849,6 +868,7 @@ export function Cart() {
           disabled={
             storeClosed ||
             shortOfMinimum > 0 ||
+            (ageRestricted && !ageConfirmed) ||
             (shortfallCents > 0 && !payByCard) ||
             (fulfillment === "Delivery" && (discountedSubtotalCents === 0 || maxFeeCents <= 0 || scheduleInvalid || (dropoffPreference === "LeaveAtDoor" && !doorRiskAccepted)))
           }

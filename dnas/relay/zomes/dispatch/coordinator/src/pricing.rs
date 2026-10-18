@@ -19,10 +19,30 @@ pub(crate) struct PricedOrder {
     pub order_total: u64,
     /// The tax in it.
     pub tax_cents: u64,
+    /// Whether it has age-restricted items (alcohol, tobacco).
+    pub age_restricted: bool,
     pub loyalty_proof: Vec<ActionHash>,
     /// The menu items' price before any promo -- what a store's minimum
     /// order is measured against. `None` for a goodie bag, priced on its own.
     pub menu_subtotal: Option<u64>,
+}
+
+/// Refuses age-restricted items where validation would -- told first, and
+/// plainly.
+pub(crate) fn ensure_age_rules(priced: &PricedOrder, delivery: bool, age_confirmed: bool) -> ExternResult<()> {
+    if !priced.age_restricted {
+        return Ok(());
+    }
+    let Some(age) = relay_governance::restricted_min_age() else {
+        return Err(guest("This network doesn't sell age-restricted items.".into()));
+    };
+    if delivery {
+        return Err(guest("Age-restricted items, like alcohol, are collected in person: the store checks your ID. Choose pickup.".into()));
+    }
+    if !age_confirmed {
+        return Err(guest(format!("Confirm you're {age} or older, and bring ID to collect it.")));
+    }
+    Ok(())
 }
 
 /// Refuses an order below its store's minimum (`min_order_cents`) --
@@ -38,6 +58,12 @@ pub(crate) fn ensure_store_minimum(store: &catalog_types::MerchantCatalog, price
 fn taxed(store: &MerchantCatalog, food: u64, lines: &[TaxableLine]) -> (u64, u64) {
     let tax = order_tax(lines, food, &store.tax_rates, store.prices_include_tax);
     (total_with_tax(food, tax, store.prices_include_tax), tax)
+}
+
+/// What a goodie-bag order costs the customer: the bag's price, and the
+/// store's tax at its default rate (as `price_bag_order` prices it).
+pub(crate) fn bag_order_total(store: &MerchantCatalog, price: u64) -> u64 {
+    taxed(store, price, &[TaxableLine { category: "", total: price }]).0
 }
 
 /// Prices an order at `catalog_ref`, under `store` -- the version of it the
@@ -75,6 +101,7 @@ fn price_bag_order(catalog_ref: &ActionHash, store: &MerchantCatalog, claim_ref:
         lines: vec![OrderLine { item_ref: claim.bag_ref.clone(), priced_version: claim.bag_ref, quantity: 1, selections: Vec::new() }],
         order_total,
         tax_cents,
+        age_restricted: false,
         loyalty_proof: Vec::new(),
         menu_subtotal: None,
     })
@@ -102,6 +129,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     let mut lines = Vec::with_capacity(merged.len());
     let mut priced = Vec::with_capacity(merged.len());
     let mut categories = Vec::with_capacity(merged.len());
+    let mut age_restricted = false;
     let mut pricer = LinePricer::default();
     for OrderItem { item_ref, quantity, selections } in merged {
         let record = resolve_latest_fresh(item_ref.clone())?;
@@ -117,6 +145,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
         lines.push(OrderLine { item_ref: item_ref.clone(), priced_version: record.action_address().clone(), quantity, selections });
         priced.push(PricedLine { item_ref, base_price: item.price_cents, unit_price, quantity });
         categories.push(item.tax_category);
+        age_restricted |= item.age_restricted;
     }
 
     let promo = match promo_ref {
@@ -130,7 +159,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
     let (order_total, tax_cents) = taxed(store, food, &taxable);
     let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
-    Ok(PricedOrder { lines, order_total, tax_cents, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
+    Ok(PricedOrder { lines, order_total, tax_cents, age_restricted, loyalty_proof, menu_subtotal: Some(menu_subtotal) })
 }
 
 /// How many options `selections` choose, nested ones included.

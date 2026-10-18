@@ -683,6 +683,11 @@ pub struct PickupOrder {
     /// validation counts. Empty otherwise.
     #[serde(default)]
     pub loyalty_proof: Vec<ActionHash>,
+    /// The customer's word that they're old enough for the order's
+    /// age-restricted items, and will show ID at the counter -- required
+    /// when it has any.
+    #[serde(default)]
+    pub age_confirmed: bool,
     /// Why the order was cancelled -- set by the update that cancels it,
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]

@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dhtSync, enableAndGetAgentApp, getZomeCaller, runScenario, type CallableCell, type Conductor, type PlayerApp } from "@holochain-open-dev/tryorama";
 import { encodeHashToBase64, type AgentPubKey, type Record as HcRecord } from "@holochain/client";
-import { EMPTY_HANDS, HAPP_PATH, ST_PETE, TEST_PROPERTIES, actionHash, decodeEntry, latestLedgerEntry, retryUntil, retryUntilOk, useTestCoordinators } from "./helpers.js";
+import { EMPTY_HANDS, HAPP_PATH, shareAgentsOn, ST_PETE, TEST_PROPERTIES, actionHash, decodeEntry, latestLedgerEntry, retryUntil, retryUntilOk, useTestCoordinators } from "./helpers.js";
 
 const DNA_PATH = fileURLToPath(new URL("../../../dnas/relay/workdir/relay.dna", import.meta.url));
 const OLD = "relay-v1";
@@ -57,20 +57,14 @@ await runScenario(async (scenario) => {
   const alice = await install(aliceHost, aliceKey, HAPP_PATH, { relay: settings(OLD, properties) }, "alice-old");
   const issuerNew = await install(issuerHost, issuerKey, HAPP_PATH, { relay: settings(NEW, properties) }, "issuer-new");
   const bob = await install(bobHost, bobKey, next, { relay: settings(NEW, properties), previous: settings(OLD, properties) }, "bob-next");
-  // Each network's peers, shared among the conductors on it only: a
-  // conductor knows nothing of a network it isn't on.
-  const share = async (conductors: Conductor[], network: Uint8Array) => {
-    const infos = (await Promise.all(conductors.map((c) => c.adminWs().agentInfo({ dna_hashes: [network] } as never)))).flat();
-    await Promise.all(conductors.map((c) => c.adminWs().addAgentInfo({ agent_infos: infos } as never)));
-  };
 
   const oldNetwork = issuerOld.cells[0].cell_id[0];
   const newNetwork = issuerNew.cells[0].cell_id[0];
   const bobHere = bob.namedCells.get("relay")!;
   const bobPrevious = bob.namedCells.get("previous")!;
   assert.ok(Buffer.from(bobHere.cell_id[0]).equals(Buffer.from(newNetwork)) && Buffer.from(bobPrevious.cell_id[0]).equals(Buffer.from(oldNetwork)), "two networks, as the versions would be");
-  await share([issuerHost, aliceHost, bobHost], oldNetwork);
-  await share([issuerHost, bobHost], newNetwork);
+  await shareAgentsOn([issuerHost, aliceHost, bobHost], oldNetwork);
+  await shareAgentsOn([issuerHost, bobHost], newNetwork);
   const syncOld = () => dhtSync([issuerOld, alice, { ...bob, cells: [bobPrevious] }], oldNetwork);
   const syncNew = () => dhtSync([issuerNew, { ...bob, cells: [bobHere] }], newNetwork);
   const on = (cell: CallableCell, zome: string) => getZomeCaller(cell, zome);

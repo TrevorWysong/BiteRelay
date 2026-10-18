@@ -122,6 +122,11 @@ pub struct RelayDnaProperties {
     /// where someone is.
     #[serde(default)]
     pub services: Option<Services>,
+    /// The age a customer must be to buy age-restricted items (alcohol,
+    /// tobacco) -- the law where the network runs. Unset, the network sells
+    /// none: validation refuses an order with any.
+    #[serde(default)]
+    pub restricted_min_age: Option<u8>,
 }
 
 /// Services an app uses beside the network itself.
@@ -198,6 +203,12 @@ pub fn services() -> Services {
         map_attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors".into(),
         geocoder_url: "https://nominatim.openstreetmap.org".into(),
     })
+}
+
+/// The age a customer must be to buy age-restricted items, if the network
+/// sells any (see `RelayDnaProperties::restricted_min_age`).
+pub fn restricted_min_age() -> Option<u8> {
+    properties().and_then(|p| p.restricted_min_age)
 }
 
 /// The network's currency (ISO 4217).

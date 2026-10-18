@@ -392,3 +392,11 @@ export function retryingCaller(cell: CallableCell, zome: string) {
     }
   };
 }
+
+/// Shares one network's peers among the conductors on it -- for a test that
+/// runs more than one network, where `scenario.shareAllAgents` fails: a
+/// conductor knows nothing of a network it isn't on.
+export async function shareAgentsOn(conductors: Conductor[], network: Uint8Array): Promise<void> {
+  const infos = (await Promise.all(conductors.map((c) => c.adminWs().agentInfo({ dna_hashes: [network] } as never)))).flat();
+  await Promise.all(conductors.map((c) => c.adminWs().addAgentInfo({ agent_infos: infos } as never)));
+}

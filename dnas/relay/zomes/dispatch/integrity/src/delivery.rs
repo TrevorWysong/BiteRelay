@@ -83,6 +83,8 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
         placed_at: action_timestamp,
         store: &store,
         tax_cents: order.tax_cents,
+        delivery: true,
+        age_confirmed: false,
     };
     if let Some(reason) = check_pricing(pricing)? {
         return Ok(ValidateCallbackResult::Invalid(reason));

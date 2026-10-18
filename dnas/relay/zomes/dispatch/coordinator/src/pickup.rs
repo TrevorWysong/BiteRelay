@@ -32,6 +32,9 @@ pub struct RequestPickupOrderInput {
     pub promo_code_ref: Option<ActionHash>,
     #[serde(default)]
     pub bag_claim_ref: Option<ActionHash>,
+    /// The customer confirming their age, for age-restricted items.
+    #[serde(default)]
+    pub age_confirmed: bool,
 }
 
 /// No matching/signal-fanout step here unlike `orders::request_delivery` --
@@ -56,6 +59,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
     let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
+    crate::pricing::ensure_age_rules(&priced, false, input.age_confirmed)?;
     // Open now -- a goodie bag runs on its own pickup window instead.
     if input.bag_claim_ref.is_none() {
         if let Some(reason) = closed_reason(&catalog, requested_at.as_micros()) {
@@ -73,6 +77,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         lines: priced.lines,
         order_total: priced.order_total,
         tax_cents: priced.tax_cents,
+        age_confirmed: input.age_confirmed,
         status: PickupStatus::Placed,
         requested_at,
         kitchen_note,

@@ -245,6 +245,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
     let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
+    crate::pricing::ensure_age_rules(&priced, true, false)?;
     let distance = relay_types::distance_km(catalog.location, input.dropoff);
     if distance > catalog.max_delivery_radius_km {
         return Err(wasm_error!(WasmErrorInner::Guest(format!(
@@ -523,6 +524,8 @@ pub struct NetworkTerms {
     /// What listing a store sets aside, in minor units -- returned when it
     /// closes.
     pub store_listing_stake: u64,
+    /// The age for age-restricted items, if the network sells any.
+    pub restricted_min_age: Option<u8>,
     /// Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
     pub map_tiles_url: String,
     pub map_attribution: String,
@@ -565,6 +568,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
         default_bag_hold_minutes: relay_governance::default_bag_hold_minutes(),
         store_listing_stake: relay_governance::store_listing_stake(),
+        restricted_min_age: relay_governance::restricted_min_age(),
         map_tiles_url: relay_governance::services().map_tiles_url,
         map_attribution: relay_governance::services().map_attribution,
         geocoder_url: relay_governance::services().geocoder_url,

@@ -184,6 +184,11 @@ pub struct MenuItem {
     /// empty for the store's first.
     #[serde(default)]
     pub tax_category: String,
+    /// Sold only to adults (alcohol, tobacco): collected in person, where
+    /// the store checks ID, and only on a network that sets the age
+    /// (`relay_governance::restricted_min_age`).
+    #[serde(default)]
+    pub age_restricted: bool,
 }
 
 /// What a cart must satisfy for a `PromoCode` to apply -- the "purchase
