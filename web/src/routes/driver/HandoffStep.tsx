@@ -17,14 +17,16 @@ import { Button } from "../../components/ui";
 import { PhotoInput } from "../../components/PhotoInput";
 import { QrScanner } from "../../components/QrScanner";
 import { Sheet } from "../../components/Sheet";
+import { t as translate, useT, type MessageKey } from "../../i18n";
 
-const COPY = { giver: "the customer", scan: "Scan their code", confirm: "Complete delivery", done: "Waiting for the customer to confirm in their app." };
+const COPY = { scan: "handoff.scan", confirm: "handoff.complete", done: "handoff.waiting" } as const satisfies Record<string, MessageKey>;
 
 /// A proof just written on the giver's chain takes a moment to reach this
 /// conductor; the step it completes is retried until it has.
 const RETRY_DELAYS_MS = [1500, 3000, 6000];
 
 export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: Uint8Array; order: DeliveryOrder; location: GeoPoint; onDone: () => Promise<void> }) {
+  const t = useT();
   const [photo, setPhoto] = useState("");
   const [code, setCode] = useState("");
   const [scanned, setScanned] = useState<PinSecret | null>(null);
@@ -45,17 +47,17 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
   const onScan = useCallback(
     async (text: string) => {
       const parsed = decodeHandoverCode(text);
-      if (!parsed) return setScanProblem("That isn't a Relay code.");
-      if (parsed.orderHex !== orderHex) return setScanProblem("That code is for a different order.");
+      if (!parsed) return setScanProblem(translate("scan.notRelay"));
+      if (parsed.orderHex !== orderHex) return setScanProblem(translate("scan.otherOrder"));
       // Checked here first, so a wrong code is caught on the spot; the
       // network checks it again.
-      if (!(await matchesCommitment(parsed.secret, commitment))) return setScanProblem(`That isn't ${copy.giver}'s code for this order.`);
+      if (!(await matchesCommitment(parsed.secret, commitment))) return setScanProblem(translate("handoff.wrongCode"));
       navigator.vibrate?.(40);
       setScanned(parsed.secret);
       setScanProblem(null);
       setScanning(false);
     },
-    [orderHex, commitment, copy.giver],
+    [orderHex, commitment],
   );
 
   async function record(extra: { scanned?: PinSecret; left_at_door?: boolean }): Promise<Uint8Array> {
@@ -127,14 +129,13 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
         <div className="flex items-start gap-3 rounded-2xl bg-ink-50 p-4 dark:bg-ink-800/60">
           <DoorOpen size={20} className="mt-0.5 shrink-0 text-ink-500" />
           <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">
-            <span className="font-semibold text-ink-900 dark:text-ink-50">Leave it at the door.</span> The customer chose this and accepted the risk. Take a
-            photo of where you left it: it's their proof, and yours.
+            <span className="font-semibold text-ink-900 dark:text-ink-50">{t("handoff.door")}</span> {t("handoff.doorDetail")}
           </p>
         </div>
         <PhotoInput value={photo} onChange={setPhoto} shape="banner" className="w-full" />
         {error && <ErrorNote message={error} />}
         <Button className="w-full" loading={busy} disabled={!photo} onClick={finishAtDoor}>
-          Left at the door
+          {t("handoff.leftAtDoor")}
         </Button>
       </div>
     );
@@ -147,14 +148,14 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
           <motion.div key="verified" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex items-center gap-3 rounded-2xl bg-green-50 p-4 dark:bg-green-900/20">
             <CheckCircle2 size={28} className="shrink-0 text-green-600" />
             <div>
-              <p className="text-sm font-bold text-green-800 dark:text-green-200">Code verified</p>
-              <p className="text-xs text-green-700/80 dark:text-green-300/80">You're paid as soon as you confirm.</p>
+              <p className="text-sm font-bold text-green-800 dark:text-green-200">{t("handoff.verified")}</p>
+              <p className="text-xs text-green-700/80 dark:text-green-300/80">{t("handoff.paidOnConfirm")}</p>
             </div>
           </motion.div>
         ) : waitingForGiver ? (
           <motion.div key="waiting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-start gap-3 rounded-2xl bg-ink-50 p-4 dark:bg-ink-800/60">
             <Smartphone size={20} className="mt-0.5 shrink-0 text-ink-500" />
-            <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">{copy.done}</p>
+            <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">{t(copy.done)}</p>
           </motion.div>
         ) : (
           <motion.div key="collect" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-3">
@@ -166,9 +167,9 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
               className="flex items-center justify-center gap-2 rounded-2xl bg-ink-900 py-3.5 text-sm font-semibold text-white transition hover:opacity-90 dark:bg-ink-50 dark:text-ink-900"
             >
               <ScanLine size={17} />
-              {copy.scan}
+              {t(copy.scan)}
             </button>
-            <p className="text-center text-[11px] font-semibold uppercase tracking-wide text-ink-400">or type the code they read out</p>
+            <p className="text-center text-[11px] font-semibold uppercase tracking-wide text-ink-400">{t("handoff.orType")}</p>
             <PinField value={code} onChange={setCode} />
           </motion.div>
         )}
@@ -176,7 +177,7 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
 
       {!waitingForGiver && (
         <div>
-          <p className="mb-2 text-xs font-semibold text-ink-500">Photo at drop-off (optional)</p>
+          <p className="mb-2 text-xs font-semibold text-ink-500">{t("handoff.photo")}</p>
           <PhotoInput value={photo} onChange={setPhoto} shape="banner" className="w-full" />
         </div>
       )}
@@ -184,24 +185,24 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
       {error && <ErrorNote message={error} />}
       {scanned ? (
         <Button className="w-full" loading={busy} onClick={finishWithScan}>
-          {copy.confirm}
+          {t(copy.confirm)}
         </Button>
       ) : waitingForGiver ? (
         <Button variant="ghost" className="w-full" loading={busy} onClick={checkAgain}>
-          Check again
+          {t("handoff.checkAgain")}
         </Button>
       ) : (
         <>
           <Button className="w-full" loading={busy} disabled={code.length !== HANDOFF_CODE_DIGITS} onClick={finishWithCode}>
-            {copy.confirm}
+            {t(copy.confirm)}
           </Button>
           <button onClick={askGiverToConfirm} disabled={busy} className="-mt-1 text-center text-xs font-semibold text-ink-500 underline-offset-4 hover:underline disabled:opacity-50">
-            They'll confirm in their app
+            {t("handoff.theyConfirm")}
           </button>
         </>
       )}
 
-      <Sheet open={scanning} onClose={() => setScanning(false)} title={copy.scan} subtitle="It's under their code, on their order screen.">
+      <Sheet open={scanning} onClose={() => setScanning(false)} title={t(copy.scan)} subtitle={t("handoff.scanSubtitle")}>
         <QrScanner onScan={onScan} />
         <AnimatePresence>
           {scanProblem && (
@@ -211,7 +212,7 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
           )}
         </AnimatePresence>
         <button onClick={() => setScanning(false)} className="mt-4 w-full py-2 text-sm font-semibold text-ink-500 hover:text-ink-800 dark:hover:text-ink-200">
-          Type the code instead
+          {t("handoff.typeInstead")}
         </button>
       </Sheet>
     </div>
@@ -227,7 +228,7 @@ function ErrorNote({ message }: { message: string }) {
 function PinField({ value, onChange }: { value: string; onChange: (pin: string) => void }) {
   return (
     <label className="group relative block">
-      <span className="sr-only">Their {HANDOFF_CODE_DIGITS}-digit code</span>
+      <span className="sr-only">{translate("handoff.digits", { count: HANDOFF_CODE_DIGITS })}</span>
       <input
         inputMode="numeric"
         autoComplete="one-time-code"

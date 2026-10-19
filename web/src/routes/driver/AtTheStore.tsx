@@ -29,12 +29,14 @@ import { Button, Input } from "../../components/ui";
 import { QrSvg } from "../../components/HandoverCode";
 import { QrScanner } from "../../components/QrScanner";
 import { Sheet } from "../../components/Sheet";
+import { t as translate, useT } from "../../i18n";
 
 type Props = { orderRef: Uint8Array; order: DeliveryOrder; location: GeoPoint; onDone: () => Promise<void> };
 
 /// On the way, or at the counter not yet checked in: check in with the
 /// store's code.
 export function StoreCheckIn({ orderRef, onDone }: Props) {
+  const t = useT();
   const [scanning, setScanning] = useState(false);
   const [code, setCode] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -61,8 +63,8 @@ export function StoreCheckIn({ orderRef, onDone }: Props) {
   const onScan = useCallback(
     (text: string) => {
       const parsed = decodeHandoverCode(text);
-      if (!parsed) return setProblem("That isn't a Relay code.");
-      if (parsed.orderHex !== orderHex) return setProblem("That code is for a different order.");
+      if (!parsed) return setProblem(translate("scan.notRelay"));
+      if (parsed.orderHex !== orderHex) return setProblem(translate("scan.otherOrder"));
       navigator.vibrate?.(40);
       setProblem(null);
       setCode(parsed.secret.pin);
@@ -93,21 +95,21 @@ export function StoreCheckIn({ orderRef, onDone }: Props) {
         }}
         className="flex items-center justify-center gap-2 rounded-2xl bg-ink-900 py-3.5 text-sm font-semibold text-white transition hover:opacity-90 dark:bg-ink-50 dark:text-ink-900"
       >
-        <ScanLine size={17} /> At the store? Scan its code to check in
+        <ScanLine size={17} /> {t("store.checkIn.scan")}
       </button>
       <div className="flex items-center gap-2">
-        <Input inputMode="numeric" maxLength={HANDOFF_CODE_DIGITS} placeholder="or type its digits" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, HANDOFF_CODE_DIGITS))} className="py-2 text-sm" />
+        <Input inputMode="numeric" maxLength={HANDOFF_CODE_DIGITS} placeholder={t("store.checkIn.type")} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, HANDOFF_CODE_DIGITS))} className="py-2 text-sm" />
         <Button variant="secondary" className="px-4 py-2 text-xs" loading={busy} disabled={code.length !== HANDOFF_CODE_DIGITS} onClick={() => checkIn(code)}>
-          Check in
+          {t("store.checkIn.button")}
         </Button>
       </div>
-      <p className="text-xs leading-relaxed text-ink-400">Checked in, the store can't hand your order to someone else, and it pays your fee if it keeps you waiting too long.</p>
+      <p className="text-xs leading-relaxed text-ink-400">{t("store.checkIn.why")}</p>
       <button onClick={() => setReporting(true)} className="text-center text-xs font-medium text-ink-400 hover:text-ink-600">
-        The store won't check me in
+        {t("store.checkIn.refused")}
       </button>
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
 
-      <Sheet open={scanning} onClose={() => setScanning(false)} title="Scan the store's code" subtitle="It's at the counter, or on the store's screen for this order.">
+      <Sheet open={scanning} onClose={() => setScanning(false)} title={t("store.checkIn.scanTitle")} subtitle={t("store.checkIn.scanSubtitle")}>
         <QrScanner onScan={onScan} />
         <AnimatePresence>
           {problem && (
@@ -121,15 +123,15 @@ export function StoreCheckIn({ orderRef, onDone }: Props) {
       <Sheet
         open={reporting}
         onClose={() => setReporting(false)}
-        title="Report the store?"
-        subtitle="The network can't check who's right, so a report moves no money. It shows on the store's record, which drivers see when choosing work."
+        title={t("store.report.title")}
+        subtitle={t("store.report.subtitle")}
         footer={
           <Button loading={busy} onClick={report} className="w-full">
-            Report it
+            {t("store.report.button")}
           </Button>
         }
       >
-        <p className="text-sm leading-relaxed text-ink-500">Ask them to scan your code instead, or to read out theirs. If you can't get the order, you can drop it. If the store has started cooking, you answer for the food unless another driver takes it on.</p>
+        <p className="text-sm leading-relaxed text-ink-500">{t("store.report.detail")}</p>
       </Sheet>
     </div>
   );
@@ -138,6 +140,7 @@ export function StoreCheckIn({ orderRef, onDone }: Props) {
 /// Checked in: show the store the driver's own code to hand the order over,
 /// and -- once the network's wait is up -- call the store late.
 export function StorePickup({ orderRef, order, location, onDone }: Props) {
+  const t = useT();
   const now = useClock(15_000);
   const orderHex = bytesToHex(orderRef);
   const me = myAgentPubKey();
@@ -191,45 +194,45 @@ export function StorePickup({ orderRef, order, location, onDone }: Props) {
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-3 rounded-2xl bg-green-50 p-4 dark:bg-green-900/20">
         <Store size={20} className="mt-0.5 shrink-0 text-green-700" />
-        <p className="text-xs leading-relaxed text-green-800 dark:text-green-200">You're checked in. When the order's ready, the store scans your code to hand it over.</p>
+        <p className="text-xs leading-relaxed text-green-800 dark:text-green-200">{t("store.pickup.checkedIn")}</p>
       </div>
       {leg ? (
         <div className="flex flex-col items-center rounded-2xl bg-white p-4 ring-1 ring-ink-100 dark:ring-ink-800">
           <QrSvg text={encodePickupCode(orderHex, leg)} size={196} />
-          <p className="mt-2 text-center text-xs text-ink-500">Show this to the store. You're picked up the moment they scan it.</p>
+          <p className="mt-2 text-center text-xs text-ink-500">{t("store.pickup.show")}</p>
           <button onClick={checkAgain} disabled={busy} className="mt-2 text-xs font-semibold text-ink-500 underline-offset-4 hover:underline disabled:opacity-50">
-            They've handed it over? Check again
+            {t("store.pickup.checkAgain")}
           </button>
         </div>
       ) : (
         <Button className="w-full" loading={busy} onClick={showCode}>
-          Show my pickup code
+          {t("store.pickup.showCode")}
         </Button>
       )}
       {lateAfter !== null && !late && (
         <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-400">
           <Clock3 size={14} className="mt-0.5 shrink-0" />
-          If it isn't ready by {formatClockTime(lateAfter)}, you can call the store late and leave: the store pays your fee.
+          {t("store.pickup.lateAt", { time: formatClockTime(lateAfter) })}
         </p>
       )}
       {late && (
         <Button variant="secondary" className="w-full" onClick={() => setConfirmingLate(true)}>
-          The store is late: get paid and go
+          {t("store.pickup.late")}
         </Button>
       )}
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
       <Sheet
         open={confirmingLate}
         onClose={() => setConfirmingLate(false)}
-        title="Call the store late?"
-        subtitle="It's kept you waiting past its wait. You're paid your whole delivery fee by the store, your collateral comes back, and the order goes to another driver."
+        title={t("store.pickup.lateTitle")}
+        subtitle={t("store.pickup.lateSubtitle")}
         footer={
           <Button loading={busy} onClick={callLate} className="w-full">
-            Call it late
+            {t("store.pickup.lateButton")}
           </Button>
         }
       >
-        <p className="text-sm text-ink-500">It shows on the store's record, not yours. If the store hands the order over first, deliver it instead.</p>
+        <p className="text-sm text-ink-500">{t("store.pickup.lateRecord")}</p>
       </Sheet>
     </div>
   );

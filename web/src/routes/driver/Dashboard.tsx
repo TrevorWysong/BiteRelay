@@ -17,7 +17,8 @@ import { ChatPanel } from "../../components/ChatPanel";
 import { HandoffStep } from "./HandoffStep";
 import { StoreCheckIn, StorePickup } from "./AtTheStore";
 import { averageRating, getRatingSummary, getReputationSummary } from "../../holochain/zomes/reputation";
-import { formatCents, formatEta, formatClockTime, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
+import { formatCents, formatDistance, formatEta, formatClockTime, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
+import { useT, type MessageKey } from "../../i18n";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
@@ -34,10 +35,10 @@ import { DriverSettingsCard } from "./DriverSettingsCard";
 import { VerificationCard } from "./VerificationCard";
 import { useTerms } from "../../store/network";
 
-const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
-  LeaveAtDoor: "Leave at door",
-  HandToMe: "Hand to me",
-  MeetOutside: "Meet outside",
+const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], MessageKey> = {
+  LeaveAtDoor: "cart.drop.leaveAtDoor",
+  HandToMe: "cart.drop.handToMe",
+  MeetOutside: "cart.drop.meetOutside",
 };
 
 // Live location is only meaningful once the driver has committed and is
@@ -98,6 +99,7 @@ function dropoffPoint(row: OrderRow): GeoPoint {
 
 export function DriverDashboard() {
   const location = useSession((s) => s.location);
+  const t = useT();
   const me = useSession((s) => s.agentPubKey);
   const driverKey = myAgentPubKey();
   const driverHex = bytesToHex(driverKey);
@@ -234,14 +236,14 @@ export function DriverDashboard() {
         <div>
           <p className="flex items-center gap-2 text-sm font-bold text-ink-900 dark:text-ink-50">
             <PresenceDot live={online} />
-            {online ? "You're online" : "You're offline"}
+            {online ? t("drive.online") : t("drive.offline")}
           </p>
-          <p className="text-xs text-ink-400">{online ? "Nearby customers can see and signal you directly" : "Go online to start receiving orders"}</p>
+          <p className="text-xs text-ink-400">{online ? t("drive.onlineDetail") : t("drive.offlineDetail")}</p>
           {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} size={11} />}
         </div>
         <motion.button
           onClick={toggleOnline}
-          aria-label={online ? "Go offline" : "Go online"}
+          aria-label={online ? t("drive.goOffline") : t("drive.goOnline")}
           whileTap={{ scale: 0.92 }}
           animate={{ backgroundColor: online ? "#22c55e" : "#ece9e6" }}
           transition={{ duration: 0.25 }}
@@ -259,7 +261,7 @@ export function DriverDashboard() {
         {activeOrders.length > 0 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mb-5 flex flex-col gap-4">
             <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
-              Active {activeOrders.length === 1 ? "delivery" : `deliveries (${activeOrders.length})`}
+              {t("drive.active", { count: activeOrders.length })}
             </p>
             {activeOrders.length > 1 && <SuggestedRoute orders={activeOrders} location={location} />}
             {activeOrders.map((row) => (
@@ -275,7 +277,7 @@ export function DriverDashboard() {
         <>
           <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink-400">
             <MapPin size={14} className="text-relay-500" />
-            {activeOrders.length === 0 ? "Nearby open orders" : "Add-ons on your way"}
+            {activeOrders.length === 0 ? t("drive.nearby") : t("drive.addOns")}
           </div>
           {sortedNearby === null && (
             <div className="flex flex-col gap-3">
@@ -290,9 +292,9 @@ export function DriverDashboard() {
           )}
           {sortedNearby?.length === 0 &&
             (activeOrders.length === 0 ? (
-              <EmptyState icon={<Bike size={28} />} title="No open orders nearby" subtitle="This refreshes automatically as new orders are placed near you." />
+              <EmptyState icon={<Bike size={28} />} title={t("drive.noneNearby")} subtitle={t("drive.noneNearbyDetail")} />
             ) : (
-              <EmptyState icon={<Route size={28} />} title="No add-ons on your way" subtitle="Orders from your stores, or going near your drop-offs, show up here." />
+              <EmptyState icon={<Route size={28} />} title={t("drive.noAddOns")} subtitle={t("drive.noAddOnsDetail")} />
             ))}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-3">
             {sortedNearby?.map(({ hash, order }) => (
@@ -314,9 +316,7 @@ export function DriverDashboard() {
 
       {online && refusal !== null && (
         <p className="rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-center text-xs text-ink-400">
-          {refusal === "CarryingPriority"
-            ? "You're on a priority delivery, which goes on its own. New orders show up again once it's delivered."
-            : `You have ${rules.maxAtOnce} order${rules.maxAtOnce === 1 ? "" : "s"}, the most you take at once. New orders show up again once you deliver one.`}
+          {refusal === "CarryingPriority" ? t("drive.onPriority") : t("drive.atLimit", { count: rules.maxAtOnce })}
         </p>
       )}
 
@@ -329,6 +329,7 @@ export function DriverDashboard() {
 /// locations are read once per set of stores being served.
 function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: GeoPoint }) {
   const storeHexes = [...new Set(orders.map((row) => bytesToHex(row.order.catalog_ref)))].sort();
+  const t = useT();
   const { data: stores } = useResource(`route-stores:${storeHexes.join(",")}`, async () => {
     const entries = await Promise.all(
       storeHexes.map(async (hex) => {
@@ -352,28 +353,29 @@ function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: Ge
   return (
     <Card className="p-4">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <Route size={13} /> Suggested route
+        <Route size={13} /> {t("drive.route")}
       </p>
       <ol className="flex flex-col gap-1.5">
         {stops.map((stop, i) => {
           const order = byHex.get(stop.id)!.order;
-          const label = stop.kind === "pickup" ? `Pick up at ${stores[bytesToHex(order.catalog_ref)]?.name ?? "the store"}` : `Drop off (${DROPOFF_PREFERENCE_LABEL[order.dropoff_preference].toLowerCase()})`;
+          const label = stop.kind === "pickup" ? t("drive.pickUpAt", { store: stores[bytesToHex(order.catalog_ref)]?.name ?? t("order.theStore") }) : t("drive.dropOffAs", { how: t(DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]) });
           return (
             <li key={`${stop.id}-${stop.kind}`} className="flex items-center gap-2 text-sm">
               <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-relay-500/15 text-[11px] font-bold text-relay-600">{i + 1}</span>
               <span className="flex-1 text-ink-800 dark:text-ink-100">{label}</span>
-              <span className="text-xs text-ink-400">{stop.legKm.toFixed(1)} km</span>
+              <span className="text-xs text-ink-400">{formatDistance(stop.legKm)}</span>
             </li>
           );
         })}
       </ol>
-      <p className="mt-2 text-[11px] text-ink-400">Straight-line distances, nearest stop first; every pickup comes before its drop-off.</p>
+      <p className="mt-2 text-[11px] text-ink-400">{t("drive.routeNote")}</p>
     </Card>
   );
 }
 
 function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; location: { lat: number; lon: number }; onAdvanced: () => Promise<void> }) {
   const terms = useTerms();
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
@@ -405,36 +407,36 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   return (
     <Card className="border-2 border-relay-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
-      {row.order.ready_by !== null && BEFORE_PICKUP.includes(row.order.status) && <p className="mt-2 text-xs text-ink-500">Food ready at the store by {formatClockTime(row.order.ready_by)}.</p>}
-      {row.dropoff?.recipient && <p className="mt-2 text-sm font-semibold text-ink-900 dark:text-ink-50">Deliver to {row.dropoff.recipient}</p>}
-      {!row.dropoff && row.order.status === "BidAccepted" && <p className="mt-2 text-xs text-ink-400">You'll see the customer's address once you've committed to it.</p>}
-      <p className="mt-2 text-xs font-semibold text-relay-600">Drop-off: {DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference]}</p>
+      {row.order.ready_by !== null && BEFORE_PICKUP.includes(row.order.status) && <p className="mt-2 text-xs text-ink-500">{t("drive.readyBy", { time: formatClockTime(row.order.ready_by) })}</p>}
+      {row.dropoff?.recipient && <p className="mt-2 text-sm font-semibold text-ink-900 dark:text-ink-50">{t("drive.deliverTo", { name: row.dropoff.recipient })}</p>}
+      {!row.dropoff && row.order.status === "BidAccepted" && <p className="mt-2 text-xs text-ink-400">{t("drive.addressAfterCommit")}</p>}
+      <p className="mt-2 text-xs font-semibold text-relay-600">{t("order.dropoffLabel")} {t(DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference])}</p>
       {row.dropoff?.notes && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
-          <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off notes: </span>
+          <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.dropoffNotesLabel")} </span>
           {row.dropoff.notes}
         </p>
       )}
       <div className="mt-4 flex flex-col gap-1 text-sm">
         <div className="flex items-center justify-between">
-          <span className="text-ink-400">Delivery fee</span>
+          <span className="text-ink-400">{t("cart.deliveryFee")}</span>
           <span className="text-ink-900 dark:text-ink-50">{formatCents(row.bid?.price_offer ?? 0)}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-ink-400">Tip</span>
+          <span className="text-ink-400">{t("cart.tip")}</span>
           <span className="text-ink-900 dark:text-ink-50">{formatCents(row.order.tip_cents)}</span>
         </div>
         <div className="flex items-center justify-between border-t border-ink-100 dark:border-ink-800 pt-2 mt-1">
-          <span className="text-ink-400">Total payout</span>
+          <span className="text-ink-400">{t("drive.totalPayout")}</span>
           <StatNumber tone="success" className="text-lg">{formatCents((row.bid?.price_offer ?? 0) + row.order.tip_cents)}</StatNumber>
         </div>
       </div>
       <div className="mt-4">
         {row.order.status === "BidAccepted" && (
           <div className="flex flex-col gap-2">
-            <p className="text-center text-xs text-ink-400">You got it. Your app is committing you, setting aside {formatCents(row.order.order_total)} collateral until it's delivered.</p>
+            <p className="text-center text-xs text-ink-400">{t("drive.committing", { amount: formatCents(row.order.order_total) })}</p>
             <Button variant="secondary" className="w-full" loading={busy} onClick={commit}>
-              Commit now
+              {t("drive.commitNow")}
             </Button>
           </div>
         )}
@@ -443,31 +445,31 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
         {(row.order.status === "PickedUp" || row.order.status === "Disputed") && <HandoffStep orderRef={row.hash} order={row.order} location={location} onDone={onAdvanced} />}
       </div>
       <div className="mt-4">
-        <ChatPanel orderRef={row.hash} title="Chat with customer" />
+        <ChatPanel orderRef={row.hash} title={t("drive.chat")} />
       </div>
       {BEFORE_PICKUP.includes(row.order.status) && (
         <button onClick={() => setDropping(true)} className="mt-3 w-full text-center text-xs font-medium text-ink-400 hover:text-ink-600">
-          Can't make it? Drop this delivery
+          {t("drive.cantMakeIt")}
         </button>
       )}
       {error && <p className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
       <Sheet
         open={dropping}
         onClose={() => setDropping(false)}
-        title="Drop this delivery?"
-        subtitle="It goes back to drivers nearby, and you're not paid for it. Dropped deliveries show on your record, which customers see when choosing a bid."
+        title={t("drive.dropTitle")}
+        subtitle={t("drive.dropSubtitle")}
         footer={
           <Button variant="danger" loading={busy} onClick={drop} className="w-full">
-            Drop it
+            {t("drive.dropIt")}
           </Button>
         }
       >
         {cooking ? (
           <p className="text-sm leading-relaxed text-ink-500">
-            The store has started cooking it. If no other driver takes it on within {Math.round(terms.replacement_window_secs / 60)} minutes, your {formatCents(row.order.order_total)} collateral pays the store for the food. If the store hasn't checked you in when you're there, report it instead.
+            {t("drive.dropCooking", { minutes: Math.round(terms.replacement_window_secs / 60), amount: formatCents(row.order.order_total) })}
           </p>
         ) : (
-          <p className="text-sm leading-relaxed text-ink-500">The store hasn't started cooking it, so your collateral comes back.</p>
+          <p className="text-sm leading-relaxed text-ink-500">{t("drive.dropNotCooking")}</p>
         )}
       </Sheet>
     </Card>
@@ -497,6 +499,7 @@ function BidCard({
   // be, then on to the drop-off at the driver's usual speed -- until they
   // type their own.
   const speedKmh = useDriverSettings((s) => s.travelSpeedKmh);
+  const t = useT();
   const storeHex = bytesToHex(order.catalog_ref);
   const { data: storeAt = null } = useResource(`store-location:${storeHex}`, async () => decodeEntry<MerchantCatalog>(await getCatalog(order.catalog_ref)).location);
   const now = useClock(30_000);
@@ -512,50 +515,50 @@ function BidCard({
     <Card className="p-4">
       <div className="flex items-center justify-between">
         <p className="flex items-baseline gap-1 text-sm font-bold text-ink-900 dark:text-ink-50">
-          <StatNumber className="text-base">{formatCents(order.order_total)}</StatNumber> order
+          {t("order.heading")}<StatNumber className="text-base">{formatCents(order.order_total)}</StatNumber>
         </p>
         {eta !== null && <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>}
       </div>
       {sameMerchant ? (
         <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-relay-600">
-          <Link2 size={12} /> Same restaurant as your current pickup
+          <Link2 size={12} /> {t("drive.sameStore")}
         </p>
       ) : (
         nearbyDropoffKm !== null &&
         nearbyDropoffKm !== undefined &&
         nearbyDropoffKm <= detourKm && (
           <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-presence-600">
-            <Link2 size={12} /> {nearbyDropoffKm < 0.1 ? "Same drop-off area" : `${nearbyDropoffKm.toFixed(1)}km from your other drop-off`}
+            <Link2 size={12} /> {nearbyDropoffKm < 0.1 ? t("drive.sameArea") : t("drive.nearOther", { distance: formatDistance(nearbyDropoffKm) })}
           </p>
         )
       )}
       <p className="mt-1 text-xs text-ink-400">
-        {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
-        {order.ready_by !== null && <span> · ready {formatClockTime(order.ready_by)}</span>}
-        {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {formatCents(order.tip_cents)} tip</span>}
+        {t("orders.items", { count: itemCount(order) })}
+        {order.ready_by !== null && <span> · {t("drive.ready", { time: formatClockTime(order.ready_by) })}</span>}
+        {order.tip_cents > 0 && <span className="font-semibold text-presence-600"> · {t("drive.tipAmount", { amount: formatCents(order.tip_cents) })}</span>}
       </p>
       {order.priority && (
         <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-          <Zap size={12} /> Priority: no other orders on this trip
+          <Zap size={12} /> {t("drive.priority")}
         </p>
       )}
       <CustomerHistory customer={order.requester} />
       {store && (store.late_count > 0 || store.check_in_refused_count > 0) && (
         <p className="mt-1 text-xs font-semibold text-amber-600">
-          This store has kept drivers waiting {store.late_count} time{store.late_count === 1 ? "" : "s"}, and {store.check_in_refused_count} reported it wouldn't check them in.
+          {t("drive.storeRecord", { late: store.late_count, refused: store.check_in_refused_count })}
         </p>
       )}
       {/* Validation requires it when they commit. */}
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
-        <ShieldCheck size={12} /> If you're chosen, you set aside {formatCents(order.order_total)} collateral until it's delivered.
+        <ShieldCheck size={12} /> {t("drive.collateral", { amount: formatCents(order.order_total) })}
       </p>
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">
-          ETA (min)
+          {t("drive.eta")}
           <Input type="number" min={1} value={eta ?? ""} onChange={(e) => setEta(Math.max(1, Math.round(Number(e.target.value))))} className="mt-1 py-1.5 text-sm" />
         </label>
         <label className="flex-1 text-xs text-ink-400">
-          Your fee
+          {t("drive.yourFee")}
           <Input
             type="number"
             min={0}
@@ -567,7 +570,7 @@ function BidCard({
           />
         </label>
         <Button className="mt-4 px-4 py-2 text-xs" loading={loading} disabled={eta === null} onClick={() => eta !== null && onBid({ etaMinutes: eta, toStoreMinutes: Math.min(estimate?.toStoreMinutes ?? eta, eta) }, fee)}>
-          Bid
+          {t("drive.bid")}
         </Button>
       </div>
     </Card>
