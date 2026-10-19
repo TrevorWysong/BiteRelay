@@ -20,6 +20,7 @@ import { useResource } from "../lib/useResource";
 import type { CartLine } from "../store/cart";
 import { Button, Skeleton } from "./ui";
 import { Sheet } from "./Sheet";
+import { useT } from "../i18n";
 
 /// An item's groups and every group they open, at their latest.
 async function fetchItemGroups(catalogRef: ActionHash, row: ItemRow): Promise<Groups> {
@@ -33,6 +34,7 @@ async function fetchItemGroups(catalogRef: ActionHash, row: ItemRow): Promise<Gr
 }
 
 export function ItemSheet({ catalogRef, row, editing, onClose, onDone }: { catalogRef: ActionHash; row: ItemRow; editing?: CartLine; onClose: () => void; onDone: (line: CartLine) => void }) {
+  const t = useT();
   const { item } = row;
   const { data: groups, error } = useResource(`item-groups:${bytesToHex(row.version)}`, () => fetchItemGroups(catalogRef, row));
   const [selections, setSelections] = useState<SelectionInput[]>(editing?.selections ?? emptySelections(item.modifier_groups));
@@ -64,7 +66,7 @@ export function ItemSheet({ catalogRef, row, editing, onClose, onDone }: { catal
         <div className="flex items-center gap-3">
           <Stepper value={quantity} min={1} max={99} onChange={setQuantity} />
           <Button className="flex-1" disabled={!groups} onClick={done}>
-            {editing ? "Update" : "Add to cart"} · {formatCents(unit * quantity)}
+            {editing ? t("item.update") : t("item.add")} · {formatCents(unit * quantity)}
           </Button>
         </div>
       }
@@ -72,7 +74,7 @@ export function ItemSheet({ catalogRef, row, editing, onClose, onDone }: { catal
       {item.photo_data_uri && <img src={item.photo_data_uri} alt="" className="-mx-5 -mt-3 mb-4 aspect-[16/9] w-[calc(100%+2.5rem)] max-w-none object-cover" />}
       <p className="text-base font-semibold tabular-nums text-ink-900 dark:text-ink-50">{formatCents(item.price_cents)}</p>
       {item.description && <p className="mt-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">{item.description}</p>}
-      {error ? <p className="mt-4 text-sm text-red-600 dark:text-red-400">Couldn't load this item's options. Try again in a moment.</p> : null}
+      {error ? <p className="mt-4 text-sm text-red-600 dark:text-red-400">{t("item.loadFailed")}</p> : null}
       {!groups && !error && (
         <div className="mt-6 flex flex-col gap-3">
           <Skeleton className="h-6 w-1/2" />
@@ -111,6 +113,7 @@ function GroupPicker({
 }) {
   const count = selection.options.reduce((n, c) => n + c.quantity, 0);
   const required = group.min_selections > 0;
+  const t = useT();
   const full = group.max_selections !== null && count >= group.max_selections;
   const met = count >= group.min_selections;
   const missing = attempted && !met;
@@ -124,7 +127,7 @@ function GroupPicker({
           <h3 className={`font-bold text-ink-900 dark:text-ink-50 ${nested ? "text-sm" : "text-base"}`}>{group.name}</h3>
           <p className={`text-xs ${missing ? "font-semibold text-red-600 dark:text-red-400" : "text-ink-400"}`}>
             {rangeLabel(group).replace(/^./, (c) => c.toUpperCase())}
-            {group.free_selections > 0 && ` · ${group.free_selections} free`}
+            {group.free_selections > 0 && ` · ${t("item.free", { count: group.free_selections })}`}
           </p>
         </div>
         {required && (
@@ -134,7 +137,7 @@ function GroupPicker({
             }`}
           >
             {met && <Check size={12} />}
-            Required
+            {t("item.required")}
           </span>
         )}
       </div>
@@ -151,7 +154,7 @@ function GroupPicker({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px] text-ink-900 dark:text-ink-50">{option.name}</span>
               {(option.price_cents > 0 || !option.available) && (
-                <span className="block text-xs tabular-nums text-ink-500 dark:text-ink-400">{option.available ? `+${formatCents(option.price_cents)}` : "Sold out"}</span>
+                <span className="block text-xs tabular-nums text-ink-500 dark:text-ink-400">{option.available ? `+${formatCents(option.price_cents)}` : t("item.soldOut")}</span>
               )}
             </span>
           );
@@ -199,21 +202,22 @@ function GroupPicker({
 /// A "+" until the option's chosen, then "- n +" -- as DoorDash shows an
 /// option that can be added more than once.
 function CompactStepper({ value, max, label, onChange }: { value: number; max: number; label: string; onChange: (value: number) => void }) {
+  const t = useT();
   const button = "grid h-8 w-8 place-items-center rounded-full transition disabled:opacity-30";
   if (value === 0) {
     return (
-      <button type="button" aria-label={`Add ${label}`} disabled={max === 0} className={`${button} border border-ink-200 text-ink-900 hover:bg-ink-100 dark:border-ink-700 dark:text-ink-50 dark:hover:bg-ink-800`} onClick={() => onChange(1)}>
+      <button type="button" aria-label={t("store.add", { item: label })} disabled={max === 0} className={`${button} border border-ink-200 text-ink-900 hover:bg-ink-100 dark:border-ink-700 dark:text-ink-50 dark:hover:bg-ink-800`} onClick={() => onChange(1)}>
         <Plus size={16} />
       </button>
     );
   }
   return (
     <div className="flex shrink-0 items-center gap-1 rounded-full bg-ink-100 p-0.5 dark:bg-ink-800">
-      <button type="button" aria-label={`Fewer ${label}`} className={`${button} text-ink-700 hover:bg-white dark:text-ink-200 dark:hover:bg-ink-700`} onClick={() => onChange(value - 1)}>
+      <button type="button" aria-label={t("item.fewerOf", { item: label })} className={`${button} text-ink-700 hover:bg-white dark:text-ink-200 dark:hover:bg-ink-700`} onClick={() => onChange(value - 1)}>
         <Minus size={15} />
       </button>
       <span className="w-5 text-center text-sm font-bold tabular-nums text-ink-900 dark:text-ink-50">{value}</span>
-      <button type="button" aria-label={`More ${label}`} className={`${button} text-ink-700 hover:bg-white dark:text-ink-200 dark:hover:bg-ink-700`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+      <button type="button" aria-label={t("item.moreOf", { item: label })} className={`${button} text-ink-700 hover:bg-white dark:text-ink-200 dark:hover:bg-ink-700`} disabled={value >= max} onClick={() => onChange(value + 1)}>
         <Plus size={15} />
       </button>
     </div>
@@ -221,14 +225,15 @@ function CompactStepper({ value, max, label, onChange }: { value: number; max: n
 }
 
 function Stepper({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (value: number) => void }) {
+  const t = useT();
   const button = "grid h-9 w-9 place-items-center rounded-full transition disabled:opacity-30 text-ink-700 hover:bg-white dark:text-ink-200 dark:hover:bg-ink-700";
   return (
     <div className="flex shrink-0 items-center gap-1 rounded-full bg-ink-100 p-0.5 dark:bg-ink-800">
-      <button type="button" aria-label="Fewer" className={button} disabled={value <= min} onClick={() => onChange(value - 1)}>
+      <button type="button" aria-label={t("item.fewer")} className={button} disabled={value <= min} onClick={() => onChange(value - 1)}>
         <Minus size={16} />
       </button>
       <span className="w-6 text-center text-sm font-bold tabular-nums text-ink-900 dark:text-ink-50">{value}</span>
-      <button type="button" aria-label="More" className={button} disabled={value >= max} onClick={() => onChange(value + 1)}>
+      <button type="button" aria-label={t("item.more")} className={button} disabled={value >= max} onClick={() => onChange(value + 1)}>
         <Plus size={16} />
       </button>
     </div>

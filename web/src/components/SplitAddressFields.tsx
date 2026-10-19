@@ -2,6 +2,7 @@ import { Field, Input } from "./ui";
 import { AddressSearch } from "./AddressSearch";
 import type { GeoPoint } from "../holochain/types";
 import { MAX_PLACE_CHARS, MAX_POSTAL_CODE_CHARS } from "../holochain/types";
+import { useT } from "../i18n";
 
 export interface SplitAddress {
   street: string;
@@ -30,7 +31,7 @@ export function SplitAddressFields({
   address,
   onAddressChange,
   pointIsEditable = true,
-  streetLabel = "Street address",
+  streetLabel,
 }: {
   point: GeoPoint;
   onPointChange: (p: GeoPoint) => void;
@@ -45,28 +46,29 @@ export function SplitAddressFields({
   pointIsEditable?: boolean;
   streetLabel?: string;
 }) {
+  const t = useT();
   return (
     <>
       <AddressSearch
         value={point}
         onChange={onPointChange}
         onSelectComponents={(c) => onAddressChange({ street: c.street, city: c.city, state: c.state, zip: c.zip })}
-        label={streetLabel}
-        placeholder="Search for an address…"
+        label={streetLabel ?? t("address.street")}
+        placeholder={t("address.search")}
         displayAfterSelect="street"
         allowManualCoordinates={pointIsEditable}
         showLocationWarning={pointIsEditable}
         initialQuery={address.street}
       />
-      <Field label="City">
-        <Input maxLength={MAX_PLACE_CHARS} value={address.city} onChange={(e) => onAddressChange({ ...address, city: e.target.value })} placeholder="Saint Petersburg" />
+      <Field label={t("address.city")}>
+        <Input maxLength={MAX_PLACE_CHARS} value={address.city} onChange={(e) => onAddressChange({ ...address, city: e.target.value })} />
       </Field>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="State/Province">
-          <Input maxLength={MAX_PLACE_CHARS} value={address.state} onChange={(e) => onAddressChange({ ...address, state: e.target.value })} placeholder="FL" />
+        <Field label={t("address.region")}>
+          <Input maxLength={MAX_PLACE_CHARS} value={address.state} onChange={(e) => onAddressChange({ ...address, state: e.target.value })} />
         </Field>
-        <Field label="Postal code">
-          <Input maxLength={MAX_POSTAL_CODE_CHARS} value={address.zip} onChange={(e) => onAddressChange({ ...address, zip: e.target.value })} placeholder="33710" />
+        <Field label={t("address.postalCode")}>
+          <Input maxLength={MAX_POSTAL_CODE_CHARS} value={address.zip} onChange={(e) => onAddressChange({ ...address, zip: e.target.value })} />
         </Field>
       </div>
     </>

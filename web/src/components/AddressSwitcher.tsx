@@ -11,6 +11,7 @@ import { Button, Input } from "./ui";
 import type { AddressComponents } from "../lib/geocoding";
 import type { GeoPoint, AddressDetails } from "../holochain/types";
 import { MAX_LABEL_CHARS } from "../holochain/types";
+import { useT } from "../i18n";
 
 interface AddressRow {
   hash: Uint8Array;
@@ -51,13 +52,15 @@ export function AddressSwitcher({
   value,
   onChange,
   onValidate,
-  label = "Choose a delivery address",
+  label: labelProp,
 }: {
   value?: GeoPoint;
   onChange?: (point: GeoPoint) => void;
   onValidate?: (point: GeoPoint) => string | null;
   label?: string;
 } = {}) {
+  const t = useT();
+  const label = labelProp ?? t("address.choose");
   const sessionLocation = useSession((s) => s.location);
   const setSessionLocation = useSession((s) => s.setLocation);
   const location = value ?? sessionLocation;
@@ -147,7 +150,7 @@ export function AddressSwitcher({
   // to the full label when there's no street component to show (e.g. a
   // manually-entered lat/lon with nothing nearby to resolve a house
   // number against).
-  const pillText = current?.components.street || current?.label || "Set a delivery address";
+  const pillText = current?.components.street || current?.label || t("address.set");
 
   return (
     <>
@@ -188,7 +191,7 @@ export function AddressSwitcher({
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-3">
                   {current?.components.street && (
                     <div className="mb-4 rounded-xl bg-relay-50 dark:bg-relay-900/20 p-3">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-relay-600 dark:text-relay-400">Currently using</p>
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-relay-600 dark:text-relay-400">{t("address.current")}</p>
                       <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{current.components.street}</p>
                       <p className="text-xs text-ink-400">{cityStateZip(current.components)}</p>
                     </div>
@@ -198,29 +201,29 @@ export function AddressSwitcher({
                     value={location}
                     onChange={(point) => setPicked((prev) => ({ point, components: prev?.components ?? { street: "", city: "", state: "", zip: "" } }))}
                     onSelectComponents={(components) => setPicked((prev) => (prev ? { ...prev, components } : null))}
-                    label="Search for a new address"
-                    placeholder="Enter a street address…"
+                    label={t("address.searchNew")}
+                    placeholder={t("address.enterStreet")}
                   />
 
                   {picked && (
                     <div className="mt-3 flex items-center gap-2 rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
-                      <Input maxLength={MAX_LABEL_CHARS} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g. Home, Work)" className="flex-1" />
+                      <Input maxLength={MAX_LABEL_CHARS} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder={t("address.labelPlaceholder")} className="flex-1" />
                       <Button loading={saving} disabled={!newLabel.trim()} onClick={saveCurrentPick} className="px-3 py-2.5 text-xs">
-                        <Plus size={14} /> Save
+                        <Plus size={14} /> {t("common.save")}
                       </Button>
                     </div>
                   )}
                   {picked && (
                     <button onClick={() => pickAddress(picked.point)} className="mt-2 text-xs font-semibold text-relay-600 underline-offset-2 hover:underline">
-                      Just use this address once, without saving
+                      {t("address.useOnce")}
                     </button>
                   )}
                   {validationError && <p className="mt-2 text-xs font-semibold text-red-500">{validationError}</p>}
 
                   <div className="mt-5">
-                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Saved addresses</p>
-                    {addresses === null && <p className="text-xs text-ink-400">Loading…</p>}
-                    {addresses?.length === 0 && <p className="text-xs text-ink-400">No saved addresses yet -- search above and save one for next time.</p>}
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{t("address.saved")}</p>
+                    {addresses === null && <p className="text-xs text-ink-400">{t("common.loading")}</p>}
+                    {addresses?.length === 0 && <p className="text-xs text-ink-400">{t("address.noneSaved")}</p>}
                     <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
                       {addresses?.map((row) => {
                         const hex = bytesToHex(row.hash);

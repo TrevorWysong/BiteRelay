@@ -5,6 +5,7 @@ import { Input, Spinner } from "./ui";
 import { searchAddress, reverseGeocode } from "../lib/geocoding";
 import type { GeoPoint } from "../holochain/types";
 import type { AddressComponents, GeocodeResult } from "../lib/geocoding";
+import { useT } from "../i18n";
 
 const DEBOUNCE_MS = 500;
 
@@ -12,8 +13,8 @@ export function AddressSearch({
   value,
   onChange,
   onSelectComponents,
-  label = "Delivery location",
-  placeholder = "Search for an address…",
+  label: labelProp,
+  placeholder: placeholderProp,
   displayAfterSelect = "label",
   allowManualCoordinates = true,
   showLocationWarning = true,
@@ -57,6 +58,9 @@ export function AddressSearch({
   /// state, not a controlled value kept in sync on every render.
   initialQuery?: string;
 }) {
+  const t = useT();
+  const label = labelProp ?? t("store.deliveryLocation");
+  const placeholder = placeholderProp ?? t("address.search");
   const [query, setQuery] = useState(initialQuery ?? "");
   const [results, setResults] = useState<GeocodeResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -150,12 +154,12 @@ export function AddressSearch({
             {searching && <Spinner className="pointer-events-none absolute right-3 h-4 w-4 text-ink-400" />}
           </div>
           {showLocationWarning && !confirmed && !open && query.trim() && (
-            <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">Pick an address below to update the location -- your previous one is still in use until you do.</p>
+            <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">{t("address.pickBelow")}</p>
           )}
           {open && (
             <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-ink-200/70 dark:border-ink-700/70 bg-white dark:bg-ink-900 shadow-lg">
               {results.length === 0 && !searching && (
-                <p className="px-3.5 py-2.5 text-xs text-ink-400">{searchError ? "Couldn't search right now -- try again" : "No matches"}</p>
+                <p className="px-3.5 py-2.5 text-xs text-ink-400">{searchError ? t("address.searchError") : t("address.noMatches")}</p>
               )}
               {results.map((result, i) => (
                 <button
@@ -176,7 +180,7 @@ export function AddressSearch({
           )}
           {allowManualCoordinates && (
             <button type="button" onClick={() => setManual(true)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-relay-600 hover:underline">
-              Enter coordinates manually
+              {t("address.manual")}
             </button>
           )}
         </div>
@@ -184,16 +188,16 @@ export function AddressSearch({
         <div>
           <div className="flex gap-2">
             <label className="flex-1 text-xs text-ink-400">
-              Latitude
+              {t("address.latitude")}
               <Input type="number" step="any" value={value.lat} onChange={(e) => onChange({ ...value, lat: Number(e.target.value) })} className="mt-1" />
             </label>
             <label className="flex-1 text-xs text-ink-400">
-              Longitude
+              {t("address.longitude")}
               <Input type="number" step="any" value={value.lon} onChange={(e) => onChange({ ...value, lon: Number(e.target.value) })} className="mt-1" />
             </label>
           </div>
           <button type="button" onClick={() => setManual(false)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-relay-600 hover:underline">
-            Search by address instead
+            {t("address.byAddress")}
           </button>
         </div>
       )}

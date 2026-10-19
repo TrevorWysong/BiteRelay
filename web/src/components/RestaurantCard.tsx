@@ -10,6 +10,7 @@ import { StarRating } from "./StarRating";
 import { fadeSlideUp } from "../lib/motion";
 import clsx from "clsx";
 import { storeStatus } from "../lib/storeHours";
+import { useT } from "../i18n";
 
 // Purely-cosmetic fallback for a merchant with no banner photo set yet --
 // deterministic per catalog action hash so the same restaurant always
@@ -47,6 +48,7 @@ interface Props {
 }
 
 export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount, customer, favorited, onToggleFavorite }: Props) {
+  const t = useT();
   const status = storeStatus(catalog, now);
   const estimate = customer ? deliveryEstimate(catalog, customer) : null;
   const gradient = pick(GRADIENTS, catalogHash);
@@ -74,7 +76,7 @@ export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount,
           )}
           {!status.open && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-              <Badge tone="neutral">Closed</Badge>
+              <Badge tone="neutral">{t("hours.closed")}</Badge>
             </div>
           )}
           {onToggleFavorite && (
@@ -97,7 +99,7 @@ export function RestaurantCard({ catalogHash, catalog, now, rating, reviewCount,
             {rating !== undefined && reviewCount ? (
               <StarRating value={rating} count={reviewCount} size={11} />
             ) : (
-              <span>{catalog.cuisine_type || "New"}</span>
+              <span>{catalog.cuisine_type || t("card.new")}</span>
             )}
           </div>
           <p className={clsx("mt-1 flex min-w-0 items-center gap-1 truncate text-xs", status.open ? "text-presence-600" : "text-ink-400")}>

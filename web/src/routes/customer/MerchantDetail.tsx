@@ -12,7 +12,7 @@ import { formatCatalogAddress, formatCents, toMinorUnits, currencySymbol } from 
 import { describeError } from "../../lib/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { useTerms } from "../../store/network";
-import { useT } from "../../i18n";
+import { appLocale, useT } from "../../i18n";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { ItemSheet } from "../../components/ItemSheet";
@@ -231,10 +231,10 @@ function StorePage({ hash }: { hash: string }) {
             {status?.label}
           </span>
           {catalog.cuisine_type && <span>{catalog.cuisine_type}</span>}
-          {catalog.busy_extra_minutes > 0 && <span className="font-semibold text-amber-600">Busy · about {catalog.prep_minutes + catalog.busy_extra_minutes} min to prepare</span>}
-          {record && record.late_count > 0 && <span className="font-semibold text-amber-600">Kept drivers waiting {record.late_count}×</span>}
-          {record && record.check_in_refused_count > 0 && <span className="font-semibold text-amber-600">{record.check_in_refused_count} driver report{record.check_in_refused_count === 1 ? "" : "s"}</span>}
-          {catalog.min_order_cents !== null && <span>{formatCents(catalog.min_order_cents)} minimum</span>}
+          {catalog.busy_extra_minutes > 0 && <span className="font-semibold text-amber-600">{t("store.busy", { minutes: catalog.prep_minutes + catalog.busy_extra_minutes })}</span>}
+          {record && record.late_count > 0 && <span className="font-semibold text-amber-600">{t("store.late", { count: record.late_count })}</span>}
+          {record && record.check_in_refused_count > 0 && <span className="font-semibold text-amber-600">{t("store.reports", { count: record.check_in_refused_count })}</span>}
+          {catalog.min_order_cents !== null && <span>{t("store.minimum", { amount: formatCents(catalog.min_order_cents) })}</span>}
           {formatCatalogAddress(catalog) && (
             <span className="flex items-center gap-1">
               <MapPin size={12} /> {formatCatalogAddress(catalog)}
@@ -250,7 +250,7 @@ function StorePage({ hash }: { hash: string }) {
         {bags.length > 0 && (
           <motion.div variants={fadeSlideUp} className="mt-6">
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-              <PackageOpen size={13} className="text-relay-500" /> Goodie bags available here
+              <PackageOpen size={13} className="text-relay-500" /> {t("store.bags")}
             </p>
             <div className="flex flex-col gap-2">
               {bags.map((row) => {
@@ -279,7 +279,7 @@ function StorePage({ hash }: { hash: string }) {
                         className="shrink-0 px-3 py-1.5 text-xs"
                         onClick={() => openClaim(row)}
                       >
-                        {claimed ? "Claimed" : open ? "Cancel" : "Claim"}
+                        {claimed ? t("store.claimed") : open ? t("common.cancel") : t("store.claim")}
                       </Button>
                     </div>
 
@@ -297,20 +297,20 @@ function StorePage({ hash }: { hash: string }) {
                                       claimFulfillment === f ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"
                                     }`}
                                   >
-                                    {f}
+                                    {t(f === "Pickup" ? "cart.pickup" : "cart.delivery")}
                                   </button>
                                 ))}
                               </div>
                             )}
                             {claimFulfillment === "Delivery" && (
                               <>
-                                <AddressSearch value={claimDropoff} onChange={setClaimDropoff} label="Delivery location" />
-                                <Input type="number" min={0} step={0.5} value={claimFee} onChange={(e) => setClaimFee(Number(e.target.value))} placeholder="Max delivery fee" prefix={currencySymbol()} />
+                                <AddressSearch value={claimDropoff} onChange={setClaimDropoff} label={t("store.deliveryLocation")} />
+                                <Input type="number" min={0} step={0.5} value={claimFee} onChange={(e) => setClaimFee(Number(e.target.value))} placeholder={t("store.maxFee")} prefix={currencySymbol()} />
                               </>
                             )}
                             {claimError && <p className="text-xs text-red-500">{claimError}</p>}
                             <Button loading={submittingClaim} onClick={() => submitClaim(row)} className="py-2 text-xs">
-                              Confirm claim
+                              {t("store.confirmClaim")}
                             </Button>
                           </div>
                         </motion.div>
@@ -325,7 +325,7 @@ function StorePage({ hash }: { hash: string }) {
 
         {dietaryTags.length > 0 && (
           <div className="mt-6 flex items-center gap-2">
-            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-ink-300 dark:text-ink-600">Diet</span>
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-ink-300 dark:text-ink-600">{t("store.diet")}</span>
             <ChipRow>
               {dietaryTags.map((tag) => (
                 <Chip key={tag} active={dietaryFilter.includes(tag)} onClick={() => setDietaryFilter((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))} tone="brand">
@@ -374,12 +374,12 @@ function StorePage({ hash }: { hash: string }) {
                         ))}
                       </div>
                     )}
-                    {!item.available && <span className="text-xs font-medium text-red-600">Currently unavailable</span>}
+                    {!item.available && <span className="text-xs font-medium text-red-600">{t("store.unavailable")}</span>}
                   </div>
                   <motion.button
                     whileTap={{ scale: 0.85 }}
                     disabled={!item.available || !status?.open}
-                    aria-label={`Add ${item.name}`}
+                    aria-label={t("store.add", { item: item.name })}
                     onClick={() => addItem(row)}
                     className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-900 dark:bg-white text-white dark:text-ink-900 transition hover:scale-105 disabled:bg-ink-200 disabled:text-ink-400"
                   >
@@ -392,26 +392,26 @@ function StorePage({ hash }: { hash: string }) {
           </motion.div>
         ))}
 
-        {items.length === 0 && <p className="mt-6 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">This merchant hasn't published any menu items yet.</p>}
+        {items.length === 0 && <p className="mt-6 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">{t("store.noMenu")}</p>}
 
         {reviews.length > 0 && (
           <motion.div variants={fadeSlideUp} className="mt-6">
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-              <Star size={13} /> Reviews
+              <Star size={13} /> {t("store.reviews")}
             </p>
             <div className="flex flex-col gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
               {reviews.map((r, i) => (
                 <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-3 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between">
                     <StarRating value={r.rating} size={12} />
-                    <span className="text-[11px] text-ink-300">{new Date(r.created_at / 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                    <span className="text-[11px] text-ink-300">{new Date(r.created_at / 1000).toLocaleDateString(appLocale(), { month: "short", day: "numeric" })}</span>
                   </div>
                   {r.comment && <p className="mt-1 text-sm text-ink-600 dark:text-ink-300">{r.comment}</p>}
                 </div>
               ))}
               {reviewsBefore !== null && (
                 <Button variant="ghost" loading={loadingMoreReviews} onClick={loadMoreReviews} className="w-full py-2 text-xs">
-                  Show older reviews
+                  {t("store.olderReviews")}
                 </Button>
               )}
             </div>

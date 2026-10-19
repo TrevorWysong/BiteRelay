@@ -13,6 +13,7 @@ import { shortAgentId } from "../lib/format";
 import type { ActionHash } from "../holochain/types";
 import { Button, Input } from "./ui";
 import { MAX_NOTE_CHARS } from "../holochain/types";
+import { useT } from "../i18n";
 
 interface ChatLine {
   from: Uint8Array;
@@ -20,7 +21,8 @@ interface ChatLine {
   sentAt: number;
 }
 
-export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; title?: string }) {
+export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: string }) {
+  const t = useT();
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -63,9 +65,9 @@ export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; 
 
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-3">
-      <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{title}</p>
+      <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{title ?? t("chat.title")}</p>
       <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-        {lines.length === 0 && <p className="text-xs text-ink-400">No messages yet.</p>}
+        {lines.length === 0 && <p className="text-xs text-ink-400">{t("chat.empty")}</p>}
         {lines.map((line, i) => {
           const mine = bytesEqual(line.from, me);
           return (
@@ -85,7 +87,7 @@ export function ChatPanel({ orderRef, title = "Chat" }: { orderRef: ActionHash; 
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Message..."
+          placeholder={t("chat.placeholder")}
           className="flex-1 rounded-full py-1.5 text-xs"
         />
         <Button className="px-3 py-1.5" loading={sending} onClick={send}>

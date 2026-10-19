@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { networkServices } from "../store/network";
+import { t as translate } from "../i18n";
 import "leaflet/dist/leaflet.css";
 import { PresenceDot } from "./ui";
 import type { GeoPoint } from "../holochain/types";
@@ -46,8 +47,8 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
     const map = L.map(containerRef.current, { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
     const services = networkServices();
     L.tileLayer(services.map_tiles_url, { maxZoom: 19, attribution: services.map_attribution }).addTo(map);
-    L.marker([pickup.lat, pickup.lon], { icon: PICKUP_ICON }).addTo(map).bindPopup("Pickup");
-    L.marker([dropoff.lat, dropoff.lon], { icon: DROPOFF_ICON }).addTo(map).bindPopup("Dropoff");
+    L.marker([pickup.lat, pickup.lon], { icon: PICKUP_ICON }).addTo(map).bindPopup(translate("cart.pickup"));
+    L.marker([dropoff.lat, dropoff.lon], { icon: DROPOFF_ICON }).addTo(map).bindPopup(translate("cart.dropoff"));
     // A themed, dashed connector rather than a bare pair of pins -- gives
     // the route a visual through-line in the brand color without claiming
     // to be a real routed path (it's a straight line, not turn-by-turn).
@@ -90,7 +91,7 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
       {driver && (
         <div className="pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-white/90 dark:bg-ink-900/90 px-2.5 py-1 text-[10px] font-bold text-ink-700 dark:text-ink-200 shadow backdrop-blur-sm">
           <PresenceDot />
-          Live
+          {translate("map.live")}
         </div>
       )}
     </div>
