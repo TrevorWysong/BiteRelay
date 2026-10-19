@@ -15,6 +15,7 @@ import { describeError } from "../../../lib/errors";
 import { currencySymbol, fromMinorUnits, toMinorUnits } from "../../../lib/format";
 import { fadeSlideUp } from "../../../lib/motion";
 import { Button, Card, Field, Input, Select, Switch } from "../../../components/ui";
+import { useT } from "../../../i18n";
 
 /// One of the store's choice groups: its identity and latest content.
 export interface GroupRow {
@@ -25,15 +26,16 @@ export interface GroupRow {
 type Editing = { kind: "new" } | { kind: "edit"; row: GroupRow } | null;
 
 export function ChoicesSection({ catalogRef, groups, onChanged }: { catalogRef: Uint8Array; groups: GroupRow[]; onChanged: () => Promise<void> }) {
+  const t = useT();
   const [editing, setEditing] = useState<Editing>(null);
   return (
     <motion.div variants={fadeSlideUp} className="mb-6">
       <div className="mb-3 flex items-center justify-between">
         <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-          <ListChecks size={13} /> Choices
+          <ListChecks size={13} /> {t("choicesEditor.title")}
         </p>
         <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setEditing(editing ? null : { kind: "new" })}>
-          {editing ? <X size={14} /> : <Plus size={14} />} {editing ? "Cancel" : "Add choice group"}
+          {editing ? <X size={14} /> : <Plus size={14} />} {editing ? t("common.cancel") : t("choicesEditor.add")}
         </Button>
       </div>
 
@@ -55,7 +57,7 @@ export function ChoicesSection({ catalogRef, groups, onChanged }: { catalogRef: 
 
       {groups.length === 0 && !editing ? (
         <p className="rounded-2xl border border-ink-100 bg-white p-4 text-xs leading-relaxed text-ink-400 dark:border-ink-800 dark:bg-ink-900">
-          Sizes, add-ons and sides. Make a group once ("Milk", "Choose a side"), then add it to every item that offers it.
+          {t("choicesEditor.empty")}
         </p>
       ) : (
         <div className="flex flex-col divide-y divide-ink-100 rounded-2xl border border-ink-100 bg-white dark:divide-ink-800 dark:border-ink-800 dark:bg-ink-900">
@@ -64,10 +66,10 @@ export function ChoicesSection({ catalogRef, groups, onChanged }: { catalogRef: 
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.group.name}</p>
                 <p className="truncate text-xs text-ink-400">
-                  {row.group.min_selections > 0 ? "Required" : "Optional"} · {rangeLabel(row.group)} · {row.group.options.map((o) => o.name).join(", ")}
+                  {row.group.min_selections > 0 ? t("item.required") : t("choicesEditor.optional")} · {rangeLabel(row.group)} · {row.group.options.map((o) => o.name).join(", ")}
                 </p>
               </div>
-              <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={`Edit ${row.group.name}`}>
+              <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={t("choicesEditor.edit", { name: row.group.name })}>
                 <Pencil size={14} />
               </button>
             </div>
@@ -89,6 +91,7 @@ interface OptionDraft {
 }
 
 function GroupForm({ catalogRef, row, others, onSaved }: { catalogRef: Uint8Array; row: GroupRow | null; others: GroupRow[]; onSaved: () => Promise<void> }) {
+  const t = useT();
   const initial = row?.group;
   const [name, setName] = useState(initial?.name ?? "");
   const [required, setRequired] = useState((initial?.min_selections ?? 1) > 0);
@@ -134,60 +137,60 @@ function GroupForm({ catalogRef, row, others, onSaved }: { catalogRef: Uint8Arra
 
   return (
     <Card className="mb-4 flex flex-col gap-3 p-4">
-      <Field label="Group name">
-        <Input maxLength={MAX_NAME_CHARS} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Choose a size" />
+      <Field label={t("choicesEditor.name")}>
+        <Input maxLength={MAX_NAME_CHARS} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("choicesEditor.namePlaceholder")} />
       </Field>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-semibold text-ink-800 dark:text-ink-100">Required</span>
-        <Switch label="Required" checked={required} onChange={setRequired} />
+        <span className="text-sm font-semibold text-ink-800 dark:text-ink-100">{t("item.required")}</span>
+        <Switch label={t("item.required")} checked={required} onChange={setRequired} />
       </div>
       <div className="grid grid-cols-3 gap-2">
         {required && (
-          <Field label="At least">
+          <Field label={t("choicesEditor.atLeast")}>
             <Input type="number" min={1} value={min} onChange={(e) => setMin(Math.max(1, Math.floor(Number(e.target.value))))} />
           </Field>
         )}
-        <Field label="At most">
-          <Input type="number" min={1} value={max} onChange={(e) => setMax(e.target.value)} placeholder="No limit" />
+        <Field label={t("choicesEditor.atMost")}>
+          <Input type="number" min={1} value={max} onChange={(e) => setMax(e.target.value)} placeholder={t("storeSettings.noLimit")} />
         </Field>
-        <Field label="Free">
+        <Field label={t("choicesEditor.free")}>
           <Input type="number" min={0} value={free} onChange={(e) => setFree(Math.max(0, Math.floor(Number(e.target.value))))} />
         </Field>
       </div>
-      <Field label="Each option up to">
+      <Field label={t("choicesEditor.perOption")}>
         <Select value={perOption} onChange={(e) => setPerOption(Number(e.target.value))}>
           {Array.from({ length: MAX_OPTION_QUANTITY }, (_, i) => i + 1).map((n) => (
             <option key={n} value={n}>
-              {n === 1 ? "Once" : `${n} times`}
+              {t("choicesEditor.times", { count: n })}
             </option>
           ))}
         </Select>
       </Field>
 
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-semibold text-ink-500">Options</p>
+        <p className="text-xs font-semibold text-ink-500">{t("choicesEditor.options")}</p>
         {options.map((o) => (
           <div key={o.id} className="rounded-xl border border-ink-100 p-2.5 dark:border-ink-800">
             <div className="flex items-center gap-2">
-              <Input className="min-w-0 flex-1" maxLength={MAX_NAME_CHARS} value={o.name} onChange={(e) => setOption(o.id, { name: e.target.value })} placeholder="Option name" />
+              <Input className="min-w-0 flex-1" maxLength={MAX_NAME_CHARS} value={o.name} onChange={(e) => setOption(o.id, { name: e.target.value })} placeholder={t("choicesEditor.optionName")} />
               <div className="w-28 shrink-0">
-                <Input className="pl-8" type="number" inputMode="decimal" min={0} step={0.01} value={o.price} onChange={(e) => setOption(o.id, { price: e.target.value })} placeholder="0.00" prefix={`+${currencySymbol()}`} aria-label={`${o.name || "Option"} price`} />
+                <Input className="pl-8" type="number" inputMode="decimal" min={0} step={0.01} value={o.price} onChange={(e) => setOption(o.id, { price: e.target.value })} placeholder="0.00" prefix={`+${currencySymbol()}`} aria-label={t("choicesEditor.price", { option: o.name || t("choicesEditor.option") })} />
               </div>
-              <button type="button" aria-label="Remove option" disabled={options.length === 1} onClick={() => setOptions((all) => all.filter((x) => x.id !== o.id))} className="text-ink-400 hover:text-red-600 disabled:opacity-30">
+              <button type="button" aria-label={t("choicesEditor.remove")} disabled={options.length === 1} onClick={() => setOptions((all) => all.filter((x) => x.id !== o.id))} className="text-ink-400 hover:text-red-600 disabled:opacity-30">
                 <Trash2 size={15} />
               </button>
             </div>
             <div className="mt-2 flex items-center gap-3">
               <label className="flex items-center gap-2 text-xs text-ink-500">
-                <Switch label={`${o.name || "Option"} in stock`} checked={o.available} onChange={(available) => setOption(o.id, { available })} />
-                {o.available ? "In stock" : "Sold out"}
+                <Switch label={t("choicesEditor.inStockOf", { option: o.name || t("choicesEditor.option") })} checked={o.available} onChange={(available) => setOption(o.id, { available })} />
+                {o.available ? t("choicesEditor.inStock") : t("item.soldOut")}
               </label>
               {others.length > 0 && (
                 <Select className="flex-1 py-1.5 text-xs" value={o.opens} onChange={(e) => setOption(o.id, { opens: e.target.value })}>
-                  <option value="">Nothing more to choose</option>
+                  <option value="">{t("choicesEditor.nothingMore")}</option>
                   {others.map((g) => (
                     <option key={bytesToHex(g.hash)} value={bytesToHex(g.hash)}>
-                      Then choose: {g.group.name}
+                      {t("choicesEditor.thenChoose", { name: g.group.name })}
                     </option>
                   ))}
                 </Select>
@@ -204,17 +207,18 @@ function GroupForm({ catalogRef, row, others, onSaved }: { catalogRef: Uint8Arra
               setNextId((n) => n + 1);
             }}
           >
-            <Plus size={14} /> Add option
+            <Plus size={14} /> {t("choicesEditor.addOption")}
           </Button>
         )}
       </div>
 
       {(problem || error) && <p className="text-xs text-red-600 dark:text-red-400">{error ?? problem}</p>}
       <p className="text-[11px] leading-relaxed text-ink-400">
-        {free > 0 ? `The ${free} cheapest choices are free. ` : ""}Changes apply to every item with this group, for new orders; orders already placed keep the prices they were placed at.
+        {free > 0 ? `${t("choicesEditor.cheapestFree", { count: free })} ` : ""}
+        {t("choicesEditor.changesApply")}
       </p>
       <Button loading={saving} disabled={!!problem} onClick={save} className="py-2 text-xs">
-        {row ? "Save group" : "Create group"}
+        {row ? t("choicesEditor.save") : t("choicesEditor.create")}
       </Button>
     </Card>
   );
