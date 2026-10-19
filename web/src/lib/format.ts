@@ -1,4 +1,5 @@
 import { useNetwork } from "../store/network";
+import { appLocale } from "../i18n";
 
 const formatters = new Map<string, Intl.NumberFormat>();
 
@@ -8,10 +9,11 @@ const formatters = new Map<string, Intl.NumberFormat>();
 function currencyFormat(): Intl.NumberFormat | null {
   const currency = useNetwork.getState().terms?.currency;
   if (!currency) return null;
-  let formatter = formatters.get(currency);
+  const key = `${appLocale()}:${currency}`;
+  let formatter = formatters.get(key);
   if (!formatter) {
-    formatter = new Intl.NumberFormat(undefined, { style: "currency", currency });
-    formatters.set(currency, formatter);
+    formatter = new Intl.NumberFormat(appLocale(), { style: "currency", currency });
+    formatters.set(key, formatter);
   }
   return formatter;
 }
@@ -77,16 +79,16 @@ export function shortAgentId(agent: Uint8Array): string {
 /// A Holochain timestamp (microseconds) as a time of day: "6:42 PM".
 /// A deadline that may be a day off, with its weekday: "Fri 6:42 PM".
 export function formatDeadline(microseconds: number): string {
-  return new Date(microseconds / 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  return new Date(microseconds / 1000).toLocaleString(appLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
 /// A day, in the viewer's locale: "12 Mar 2027".
 export function formatDate(microseconds: number): string {
-  return new Date(microseconds / 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(microseconds / 1000).toLocaleDateString(appLocale(), { day: "numeric", month: "short", year: "numeric" });
 }
 
 export function formatClockTime(microseconds: number): string {
-  return new Date(microseconds / 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(microseconds / 1000).toLocaleTimeString(appLocale(), { hour: "numeric", minute: "2-digit" });
 }
 
 /// Places whose road distances are in miles.

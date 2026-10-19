@@ -7,6 +7,7 @@ import { useResource } from "../lib/useResource";
 import { useTerms } from "../store/network";
 import { BottomNavLink } from "./BottomNavLink";
 import { POLL, isOrderSignal } from "../lib/poll";
+import { useT } from "../i18n";
 
 /// The store side's bottom navigation, and its alert for orders waiting to
 /// be accepted: a badge on Orders, and -- on any other screen -- a banner,
@@ -14,6 +15,7 @@ import { POLL, isOrderSignal } from "../lib/poll";
 /// every new-order signal, and polled in case one was missed.
 export function MerchantNav() {
   const stores = useMyStores();
+  const t = useT();
   const windowSecs = useTerms().store_response_secs;
   const { pathname } = useLocation();
   const { data } = useResource(
@@ -42,8 +44,8 @@ export function MerchantNav() {
           </motion.div>
         )}
       </AnimatePresence>
-      <BottomNavLink to="/merchant" icon={ClipboardList} label="Orders" badge={waiting} />
-      <BottomNavLink to="/merchant/catalog" icon={Store} label="Menu" />
+      <BottomNavLink to="/merchant" icon={ClipboardList} label={t("nav.orders")} badge={waiting} />
+      <BottomNavLink to="/merchant/catalog" icon={Store} label={t("nav.menu")} />
     </>
   );
 }

@@ -12,11 +12,13 @@ import { formatDate } from "../../lib/format";
 import { POLL } from "../../lib/poll";
 import { useResource } from "../../lib/useResource";
 import { CHECK_LABELS } from "../../lib/verification";
+import { useT } from "../../i18n";
 
 export function VerificationCard({ me }: { me: AgentPubKey }) {
   const { data: terms } = useResource("verification-terms", getVerificationTerms);
   const { data: mine } = useResource("my-verification", () => driverVerification(me), { pollMs: POLL.slow });
   const [showing, setShowing] = useState(false);
+  const t = useT();
   // Nothing to say on a network without verifiers.
   if (!terms || terms.verifiers.length === 0 || mine === undefined) return null;
 
@@ -25,7 +27,7 @@ export function VerificationCard({ me }: { me: AgentPubKey }) {
       <Card className="mb-5 flex items-center gap-3 p-4">
         <BadgeCheck size={20} className="shrink-0 text-emerald-500" />
         <span className="text-sm">
-          <span className="block font-semibold text-ink-900 dark:text-ink-50">Verified until {formatDate(mine.expires_at)}</span>
+          <span className="block font-semibold text-ink-900 dark:text-ink-50">{t("verification.until", { date: formatDate(mine.expires_at) })}</span>
           <span className="block text-xs text-ink-400">{mine.checks.map((c) => CHECK_LABELS[c]).join(" · ")}</span>
         </span>
       </Card>
@@ -36,14 +38,14 @@ export function VerificationCard({ me }: { me: AgentPubKey }) {
       <div className="flex items-start gap-3">
         <ShieldQuestion size={20} className="mt-0.5 shrink-0 text-amber-500" />
         <span className="text-sm">
-          <span className="block font-semibold text-ink-900 dark:text-ink-50">{terms.required ? "Get verified to start delivering" : "Get verified"}</span>
+          <span className="block font-semibold text-ink-900 dark:text-ink-50">{t(terms.required ? "verification.getVerifiedRequired" : "verification.getVerified")}</span>
           <span className="block text-xs text-ink-500">
             One of the network's verifiers checks your identity, licence and insurance, then scans your code. {terms.required ? "Until then you can't bid on orders." : "Customers see you're verified."}
           </span>
         </span>
       </div>
       <Button className="mt-3 w-full py-2 text-xs" variant="secondary" onClick={() => setShowing(true)}>
-        Show my code to a verifier
+        {t("verification.showCode")}
       </Button>
       {showing && (
         <Sheet open onClose={() => setShowing(false)} title="Your code">

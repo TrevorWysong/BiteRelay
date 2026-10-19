@@ -19,6 +19,7 @@ import { describeError } from "../lib/errors";
 import type { ProviderCredential, RatingSummary, Review } from "../holochain/types";
 import { HOST } from "../holochain/host";
 import { NotificationSettings } from "../components/NotificationSettings";
+import { LanguagePicker } from "../components/LanguagePicker";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
 import { DEV_ADMIN_URL } from "../lib/devNode";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
@@ -243,6 +244,7 @@ export function ProfilePage() {
       )}
 
       <motion.div variants={fadeSlideUp}>
+      <LanguagePicker />
       <NotificationSettings runsStore={!!profile?.roles.includes("Merchant")} />
       <Card className="mb-4 p-4">
         <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Your identity</p>

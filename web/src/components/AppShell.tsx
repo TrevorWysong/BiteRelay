@@ -17,6 +17,7 @@ import { collectIncoming } from "../lib/wallet";
 import { topUpIfLow } from "../lib/autoTopUp";
 import { bytesToHex } from "../holochain/decode";
 import { useCustomerSettings } from "../store/roleSettings";
+import { useT } from "../i18n";
 
 /// Wraps whichever route is active in a short fade+rise so navigating
 /// between screens (Browse -> cart, an order's detail page, switching
@@ -39,6 +40,7 @@ export function AppShell() {
   const { mode, setMode, profile, agentPubKey } = useSession();
   const cartCount = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const navigate = useNavigate();
+  const t = useT();
   const roles = profile?.roles ?? [];
   // Funds an issuer added, and cash-outs it declined, land in the balance
   // without anyone having to open the wallet.
@@ -77,7 +79,7 @@ export function AppShell() {
                     mode === m ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400"
                   )}
                 >
-                  {m === "customer" ? "Order" : m === "driver" ? "Drive" : "Sell"}
+                  {t(`mode.${m}`)}
                 </button>
               ))}
             </div>
@@ -98,15 +100,15 @@ export function AppShell() {
       <nav className="fixed bottom-0 left-1/2 z-20 flex w-full max-w-md -translate-x-1/2 border-t border-ink-100 dark:border-ink-800 bg-white/95 dark:bg-ink-900/95 backdrop-blur px-2 pb-[env(safe-area-inset-bottom)]">
         {mode === "customer" && (
           <>
-            <BottomNavLink to="/customer" icon={Home} label="Browse" />
-            <BottomNavLink to="/customer/cart" icon={ShoppingCart} label="Cart" badge={cartCount} />
-            <BottomNavLink to="/customer/orders" icon={ClipboardList} label="Orders" />
+            <BottomNavLink to="/customer" icon={Home} label={t("nav.browse")} />
+            <BottomNavLink to="/customer/cart" icon={ShoppingCart} label={t("nav.cart")} badge={cartCount} />
+            <BottomNavLink to="/customer/orders" icon={ClipboardList} label={t("nav.orders")} />
           </>
         )}
         {mode === "driver" && (
           <>
-            <BottomNavLink to="/driver" icon={Car} label="Dash" />
-            <BottomNavLink to="/driver/earnings" icon={DollarSign} label="Earnings" />
+            <BottomNavLink to="/driver" icon={Car} label={t("nav.dash")} />
+            <BottomNavLink to="/driver/earnings" icon={DollarSign} label={t("nav.earnings")} />
           </>
         )}
         {mode === "merchant" && <MerchantNav />}
@@ -115,7 +117,7 @@ export function AppShell() {
       {agentPubKey && (
         <div className="fixed left-2 top-2 z-30 hidden items-center gap-1 rounded-full bg-black/70 px-2 py-1 text-[10px] text-white lg:flex">
           <PresenceDot />
-          connected
+          {t("shell.connected")}
         </div>
       )}
     </div>
@@ -127,10 +129,11 @@ export function AppShell() {
 /// recovery.
 function NewVersionBanner({ enabled }: { enabled: boolean }) {
   const { data: next } = useResource(enabled ? "next-network" : null, nextNetwork, { pollMs: POLL.slow });
+  const t = useT();
   if (!next) return null;
   return (
     <NavLink to="/account" className="flex items-center justify-center gap-2 bg-relay-500 px-4 py-2 text-xs font-semibold text-white">
-      <Sparkles size={13} /> A new version of Relay is out. Move your account
+      <Sparkles size={13} /> {t("shell.newVersion")}
     </NavLink>
   );
 }

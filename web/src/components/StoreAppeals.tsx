@@ -11,9 +11,11 @@ import { useResource } from "../lib/useResource";
 import { useTerms } from "../store/network";
 import { EvidenceSheet } from "./OrderAppeal";
 import { Button, Card } from "./ui";
+import { useT } from "../i18n";
 
 export function StoreAppeals() {
   const appeals = useTerms().appeals;
+  const t = useT();
   const { data, reload } = useResource(appeals ? "appeals-against-me" : null, getAppealsAgainstMe, { pollMs: POLL.slow });
   const [answering, setAnswering] = useState<AppealView | null>(null);
   const waiting = (data ?? []).filter((a) => !a.answered && !a.ruling);
@@ -21,7 +23,7 @@ export function StoreAppeals() {
   return (
     <Card className="mb-4 p-4">
       <p className="flex items-center gap-2 font-bold text-ink-900 dark:text-ink-50">
-        <Gavel size={16} /> {waiting.length === 1 ? "A customer appealed your decision" : `${waiting.length} customers appealed your decisions`}
+        <Gavel size={16} /> {t("appeal.storeWaiting", { count: waiting.length })}
       </p>
       <p className="mt-0.5 text-xs text-ink-500">The network's arbiter decides; an award comes out of your next cash-out. Give your side.</p>
       <ul className="mt-3 flex flex-col gap-2">

@@ -4,6 +4,10 @@ import { HashRouter } from "react-router-dom";
 import "./index.css";
 import App from "./App";
 import { HOST } from "./holochain/host";
+import { loadLocale } from "./i18n";
+
+// The person's language first, so the first screen is already in it.
+await loadLocale();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

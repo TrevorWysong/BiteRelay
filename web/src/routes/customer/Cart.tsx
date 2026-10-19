@@ -16,6 +16,7 @@ import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { formatCents, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
 import { useCustomerSettings } from "../../store/roleSettings";
 import { useTerms } from "../../store/network";
+import { useT } from "../../i18n";
 import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
 import { fetchMenu, type ItemRow } from "../../lib/menu";
 import { WEEKDAYS } from "../../lib/recurrence";
@@ -320,6 +321,7 @@ export function Cart() {
   const itemOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item;
   const ageRestricted = cart.lines.some((line) => itemOf(line.itemRef)?.age_restricted);
   const minAge = useTerms().restricted_min_age;
+  const t = useT();
   const fulfillment: "Delivery" | "Pickup" = ageRestricted ? "Pickup" : chosenFulfillment;
   const taxCategoryOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item.tax_category ?? "";
   const taxRates = storeInfo?.taxRates ?? [];
@@ -478,10 +480,7 @@ export function Cart() {
       {ageRestricted && (
         <motion.label variants={fadeSlideUp} className="mb-4 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
           <Checkbox checked={ageConfirmed} onChange={(e) => setAgeConfirmed(e.target.checked)} className="mt-0.5" />
-          <span>
-            Your order has age-restricted items, so it's collected in person. I'm {minAge ?? "of legal age"}
-            {minAge ? " or older" : ""} and will show ID at the counter.
-          </span>
+          <span>{t("age.confirm", { age: minAge ?? 18 })}</span>
         </motion.label>
       )}
 

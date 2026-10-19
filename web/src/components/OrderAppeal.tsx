@@ -16,9 +16,11 @@ import { useTerms } from "../store/network";
 import { Button, Input, Textarea } from "./ui";
 import { PhotoInput } from "./PhotoInput";
 import { Sheet } from "./Sheet";
+import { useT } from "../i18n";
 
 export function OrderAppeal({ orderRef, role, kept }: { orderRef: Uint8Array; role: "customer" | "store"; kept: number }) {
   const terms = useTerms();
+  const t = useT();
   const { data: appeal, reload } = useResource(terms.appeals ? `appeal:${bytesToHex(orderRef)}` : null, () => getAppealForOrder(orderRef), { pollMs: POLL.slow });
   const [open, setOpen] = useState(false);
   if (!terms.appeals || appeal === undefined) return null;
@@ -31,9 +33,9 @@ export function OrderAppeal({ orderRef, role, kept }: { orderRef: Uint8Array; ro
         <AppealStatus appeal={appeal} role={role} onAnswer={() => setOpen(true)} />
       ) : (
         <>
-          <p className="mb-2 text-xs text-ink-500">Disagree with the store? You can appeal to the network's arbiter within {days} days of its decision.</p>
+          <p className="mb-2 text-xs text-ink-500">{t("appeal.window", { days })}</p>
           <Button variant="ghost" className="w-full" onClick={() => setOpen(true)}>
-            <Gavel size={15} /> Appeal the store's decision
+            <Gavel size={15} /> {t("appeal.cta")}
           </Button>
         </>
       )}
@@ -57,25 +59,26 @@ export function OrderAppeal({ orderRef, role, kept }: { orderRef: Uint8Array; ro
 
 function AppealStatus({ appeal, role, onAnswer }: { appeal: AppealView; role: "customer" | "store"; onAnswer: () => void }) {
   const ruling = appeal.ruling;
+  const t = useT();
   return (
     <div className="flex items-start gap-3">
       <Gavel size={18} className="mt-0.5 shrink-0 text-relay-500" />
       <div className="min-w-0 flex-1 text-sm">
         {ruling ? (
           <>
-            <p className="font-semibold text-ink-900 dark:text-ink-50">{ruling.award > 0 ? `The arbiter awarded ${formatCents(ruling.award)}` : "The arbiter dismissed the appeal"}</p>
+            <p className="font-semibold text-ink-900 dark:text-ink-50">{ruling.award > 0 ? t("appeal.awarded", { amount: formatCents(ruling.award) }) : t("appeal.dismissed")}</p>
             {ruling.reasons && <p className="mt-0.5 text-xs text-ink-500">“{ruling.reasons}”</p>}
             {ruling.award > 0 && (
-              <p className="mt-1 text-xs text-ink-400">{role === "customer" ? "It's paid to your balance from the store's next cash-out." : "It comes out of your next cash-out."}</p>
+              <p className="mt-1 text-xs text-ink-400">{role === "customer" ? t("appeal.paidToYou") : t("appeal.paidByYou")}</p>
             )}
           </>
         ) : (
           <>
-            <p className="font-semibold text-ink-900 dark:text-ink-50">{role === "customer" ? `Appealed for ${formatCents(appeal.amount)}` : `The customer appealed for ${formatCents(appeal.amount)}`}</p>
-            <p className="mt-0.5 text-xs text-ink-500">{appeal.answered ? "Both sides are in. The arbiter will decide." : role === "store" ? "Give the arbiter your side." : "Waiting for the store's side, then the arbiter decides."}</p>
+            <p className="font-semibold text-ink-900 dark:text-ink-50">{t(role === "customer" ? "appeal.appealedFor" : "appeal.customerAppealedFor", { amount: formatCents(appeal.amount) })}</p>
+            <p className="mt-0.5 text-xs text-ink-500">{t(appeal.answered ? "appeal.bothIn" : role === "store" ? "appeal.giveSide" : "appeal.waitingStore")}</p>
             {role === "store" && !appeal.answered && (
               <Button className="mt-2 py-2 text-xs" onClick={onAnswer}>
-                Give your side
+                {t("appeal.giveSideButton")}
               </Button>
             )}
           </>
