@@ -6,6 +6,7 @@ import { bytesToHex } from "../holochain/decode";
 import { formatCents } from "../lib/format";
 import { useResource } from "../lib/useResource";
 import { Card, Skeleton } from "./ui";
+import { useT } from "../i18n";
 
 export function OrderLines({ orderRef, prices = false, className = "" }: { orderRef: Uint8Array; prices?: boolean; className?: string }) {
   const { data: lines } = useResource(`order-lines:${bytesToHex(orderRef)}`, () => getOrderLines(orderRef));
@@ -34,13 +35,14 @@ export function OrderLines({ orderRef, prices = false, className = "" }: { order
 
 /// The order's lines in a card that opens on tap -- "Your order (3 items)".
 export function OrderSummary({ orderRef, count }: { orderRef: Uint8Array; count: number }) {
+  const t = useT();
   return (
     <Card className="mt-4 p-4">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold text-ink-900 dark:text-ink-50">
-          Your order ({count} item{count === 1 ? "" : "s"})
-          <span className="text-xs font-normal text-ink-400 group-open:hidden">Show</span>
-          <span className="hidden text-xs font-normal text-ink-400 group-open:inline">Hide</span>
+          {t("lines.summary", { count })}
+          <span className="text-xs font-normal text-ink-400 group-open:hidden">{t("common.show")}</span>
+          <span className="hidden text-xs font-normal text-ink-400 group-open:inline">{t("common.hide")}</span>
         </summary>
         <OrderLines orderRef={orderRef} prices className="mt-3" />
       </details>

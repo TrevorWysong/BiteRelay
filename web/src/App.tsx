@@ -25,6 +25,7 @@ import { Policies } from "./routes/Policies";
 import { AccountPage } from "./routes/Account";
 import VerifyPage from "./routes/Verify";
 import ArbitratePage from "./routes/Arbitrate";
+import { useLocale } from "./i18n";
 import { MovedAway } from "./components/MovedAway";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
@@ -162,10 +163,13 @@ function NoHost() {
 }
 
 export default function App() {
+  // A change of language remounts the screens, so every word -- including
+  // those a screen computed once -- is read again in the new one.
+  const locale = useLocale((s) => s.locale);
   if (HOST === "none") return <NoHost />;
   return (
     <SessionBootstrap>
-      <Routes>
+      <Routes key={locale}>
         <Route path="/onboarding" element={<Onboarding />} />
         <Route
           element={

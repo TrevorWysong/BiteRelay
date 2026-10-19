@@ -17,12 +17,13 @@ import { describeRecurrence } from "../../lib/recurrence";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { BagClaim, GoodieBag, MerchantCatalog, RecurringOrderTemplate, Timestamp } from "../../holochain/types";
 import { POLL } from "../../lib/poll";
+import { t as translate, useT, type MessageKey } from "../../i18n";
 
 
 const TABS = [
-  { value: "active", label: "In progress" },
-  { value: "past", label: "Past" },
-] as const;
+  { value: "active", label: "orders.tab.active" },
+  { value: "past", label: "orders.tab.past" },
+] as const satisfies readonly { value: string; label: MessageKey }[];
 
 /// A customer's orders the way DoorDash/Uber Eats show them: what's **in
 /// progress** (polled, and re-read on every dispatch signal -- cheap, since
@@ -31,12 +32,13 @@ const TABS = [
 /// customer's own queues (see `dispatch_integrity::order_queues`), so
 /// neither ever reads their whole order history at once.
 export function Orders() {
+  const t = useT();
   const [tab, setTab] = useState<"active" | "past">("active");
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4 pb-8">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Your orders</h1>
-        <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{t("orders.title")}</h1>
+        <SegmentedTabs tabs={TABS.map((x) => ({ ...x, label: t(x.label) }))} value={tab} onChange={setTab} />
       </motion.div>
       <RecurringOrders />
       {tab === "active" ? <ActiveOrders /> : <PastOrders />}
@@ -45,6 +47,7 @@ export function Orders() {
 }
 
 function ActiveOrders() {
+  const t = useT();
   // Scheduled orders are sent to their stores by the customer's conductor
   // when due (`dispatch::upkeep`) -- nothing to do here but show them.
   const { data: rows } = useResource("customer-active-orders", async () => (await getMyActiveOrders()).map(toOrderRow), { pollMs: POLL.signalled, refreshOn: () => true });
@@ -54,7 +57,7 @@ function ActiveOrders() {
     <>
       <PendingClaims />
       {rows.length === 0 ? (
-        <EmptyState icon={<ClipboardList size={32} />} title="No orders in progress" subtitle="Place one from Browse to track it here." />
+        <EmptyState icon={<ClipboardList size={32} />} title={t("orders.emptyActive")} subtitle={t("orders.emptyActiveDetail")} />
       ) : (
         <div className="flex flex-col gap-3">
           <AnimatePresence initial={false}>
@@ -79,6 +82,7 @@ interface PastState {
 /// ones are filtered out here (they're on the other tab) -- a page can come
 /// back shorter than its limit, which "Load more" handles like any other.
 function PastOrders() {
+  const t = useT();
   const [loadingMore, setLoadingMore] = useState(false);
   const { data, mutate } = useResource<PastState>("customer-order-history", () => fetchPast(null));
 
@@ -95,7 +99,7 @@ function PastOrders() {
 
   if (data === undefined) return <ListSkeleton />;
   if (data.rows.length === 0 && data.nextBefore === null) {
-    return <EmptyState icon={<ClipboardList size={32} />} title="No past orders" subtitle="Orders you've received or cancelled show up here." />;
+    return <EmptyState icon={<ClipboardList size={32} />} title={t("orders.emptyPast")} subtitle={t("orders.emptyPastDetail")} />;
   }
   return (
     <div className="flex flex-col gap-3">
@@ -106,7 +110,7 @@ function PastOrders() {
       ))}
       {data.nextBefore !== null && (
         <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="w-full py-2 text-xs">
-          Load more
+          {t("common.loadMore")}
         </Button>
       )}
     </div>
@@ -119,6 +123,7 @@ async function fetchPast(before: Timestamp | null): Promise<PastState> {
 }
 
 function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: boolean; children?: React.ReactNode }) {
+  const t = useT();
   const count = itemCount(row.order);
   return (
     <Card className="flex items-center gap-2 p-4">
@@ -126,13 +131,13 @@ function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: bool
         <div className="mb-0.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
           <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-relay-600" : "text-presence-600")}>
             {row.kind === "Delivery" ? <Bike size={11} /> : <ShoppingBag size={11} />}
-            {row.kind}
+            {t(row.kind === "Delivery" ? "cart.delivery" : "cart.pickup")}
           </span>
           {showTime && <span className="font-normal normal-case tracking-normal text-ink-300">{timeAgo(row.order.requested_at)}</span>}
         </div>
         <StatNumber className="text-sm">{formatCents(row.order.order_total)}</StatNumber>
         <p className="text-xs text-ink-400">
-          {count} item{count === 1 ? "" : "s"}
+          {t("orders.items", { count })}
         </p>
       </Link>
       {row.kind === "Delivery" ? <StatusBadge status={row.order.status} /> : <PickupStatusBadge status={row.order.status} />}
@@ -145,6 +150,7 @@ function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: bool
 /// an item since removed is dropped and a repriced one takes its new price,
 /// rather than failing the whole reorder over one stale line.
 function ReorderButton({ row }: { row: OrderRow }) {
+  const t = useT();
   const cart = useCart();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -164,7 +170,7 @@ function ReorderButton({ row }: { row: OrderRow }) {
   }
 
   return (
-    <Button variant="ghost" className="px-2.5 py-1.5 text-xs" loading={busy} onClick={reorder} aria-label="Reorder">
+    <Button variant="ghost" className="px-2.5 py-1.5 text-xs" loading={busy} onClick={reorder} aria-label={t("orders.reorder")}>
       <RotateCcw size={13} />
     </Button>
   );
@@ -174,6 +180,7 @@ function ReorderButton({ row }: { row: OrderRow }) {
 /// turned into a real order by the customer's conductor (`dispatch::claims`)
 /// and shows up as an order instead.
 function PendingClaims() {
+  const t = useT();
   const { data: claims } = useResource(
     "customer-pending-claims",
     async () => {
@@ -183,7 +190,7 @@ function PendingClaims() {
           hex: bytesToHex(hash),
           title: await getGoodieBag(claim.bag_ref)
             .then((r) => decodeEntry<GoodieBag>(r).title)
-            .catch(() => "Goodie bag"),
+            .catch(() => translate("orders.goodieBag")),
         })),
       );
     },
@@ -193,13 +200,13 @@ function PendingClaims() {
   return (
     <div className="mb-5">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <PackageOpen size={13} className="text-relay-500" /> Pending goodie bag claims
+        <PackageOpen size={13} className="text-relay-500" /> {t("orders.pendingClaims")}
       </p>
       <div className="flex flex-col gap-2">
         {claims.map((claim) => (
           <Card key={claim.hex} className="p-3.5">
             <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{claim.title}</p>
-            <p className="text-xs text-ink-400">Waiting for the store to confirm</p>
+            <p className="text-xs text-ink-400">{t("orders.waitingStoreConfirm")}</p>
           </Card>
         ))}
       </div>
@@ -210,6 +217,7 @@ function PendingClaims() {
 /// Recurring templates only change through this section's own toggle
 /// (which reloads them), so they're read once, not polled.
 function RecurringOrders() {
+  const t = useT();
   const [toggling, setToggling] = useState<string | null>(null);
   const { data: templates, reload } = useResource("customer-recurring", async () =>
     Promise.all(
@@ -217,7 +225,7 @@ function RecurringOrders() {
         const template = decodeEntry<RecurringOrderTemplate>(view.record);
         const storeName = await getCatalog(template.catalog_ref)
           .then((cr) => decodeEntry<MerchantCatalog>(cr).business_name)
-          .catch(() => "Restaurant");
+          .catch(() => translate("orders.restaurant"));
         return { hash: view.original_action, hex: bytesToHex(view.original_action), template, storeName };
       }),
     ),
@@ -237,7 +245,7 @@ function RecurringOrders() {
   return (
     <div className="mb-5">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <Repeat size={13} /> Recurring orders
+        <Repeat size={13} /> {t("orders.recurring")}
       </p>
       <div className="flex flex-col gap-2">
         {templates.map(({ hash, hex, template, storeName }) => (
@@ -247,7 +255,7 @@ function RecurringOrders() {
               <p className="text-xs text-ink-400">{describeRecurrence(template.recurrence)}</p>
             </div>
             <Button variant={template.active ? "secondary" : "ghost"} className="px-3 py-1.5 text-xs" loading={toggling === hex} onClick={() => toggle(hash, hex, template.active)}>
-              {template.active ? <Pause size={13} /> : <Play size={13} />} {template.active ? "Active" : "Paused"}
+              {template.active ? <Pause size={13} /> : <Play size={13} />} {template.active ? t("orders.active") : t("orders.paused")}
             </Button>
           </Card>
         ))}

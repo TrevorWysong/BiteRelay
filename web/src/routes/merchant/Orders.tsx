@@ -229,7 +229,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
     row.kind === "Delivery" ? (ref) => declineOrder(ref, reason) : (ref) => declinePickupOrder(ref, reason);
   return (
     <>
-      <ResponseCountdown deadlineMs={deadlineMs} windowSecs={windowSecs} now={now} label="Accept by" />
+      <ResponseCountdown deadlineMs={deadlineMs} windowSecs={windowSecs} now={now} label="merchantOrders.acceptBy" />
       {choosingReason ? (
         <div className="mt-3">
           <p className="mb-1.5 text-xs font-semibold text-ink-500">Why are you declining? The customer will see this.</p>

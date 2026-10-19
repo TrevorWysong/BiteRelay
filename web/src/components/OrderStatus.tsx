@@ -5,26 +5,27 @@ import type { Cancellation, DeliveryStatus, PickupStatus } from "../holochain/ty
 import { cancellationText } from "../lib/storeAnswers";
 import { Badge } from "./ui";
 import { fadeSlideUp } from "../lib/motion";
+import { useT, type MessageKey } from "../i18n";
 
 /// The kitchen starts once a driver has committed, so an order no driver
 /// takes costs nobody anything.
-const STEPS: { status: DeliveryStatus; label: string }[] = [
-  { status: "Placed", label: "Order placed" },
-  { status: "Open", label: "Store accepted · finding a driver" },
-  { status: "BidAccepted", label: "Driver found" },
-  { status: "DriverEnRouteToMerchant", label: "Driver on the way to the store" },
-  { status: "MerchantConfirmed", label: "Being prepared" },
-  { status: "DriverAtStore", label: "Driver at the store" },
-  { status: "PickedUp", label: "Picked up" },
-  { status: "Delivered", label: "Delivered" },
+const STEPS: { status: DeliveryStatus; label: MessageKey }[] = [
+  { status: "Placed", label: "status.step.placed" },
+  { status: "Open", label: "status.step.findingDriver" },
+  { status: "BidAccepted", label: "status.step.driverFound" },
+  { status: "DriverEnRouteToMerchant", label: "status.step.driverToStore" },
+  { status: "MerchantConfirmed", label: "status.step.preparing" },
+  { status: "DriverAtStore", label: "status.step.driverAtStore" },
+  { status: "PickedUp", label: "status.step.pickedUp" },
+  { status: "Delivered", label: "status.step.delivered" },
 ];
 
 /// The path when no driver brought it and the customer collects it.
-const COLLECT_STEPS: { status: DeliveryStatus; label: string }[] = [
-  { status: "Placed", label: "Order placed" },
-  { status: "Open", label: "Store accepted" },
-  { status: "Collecting", label: "You're collecting it" },
-  { status: "Collected", label: "Collected" },
+const COLLECT_STEPS: { status: DeliveryStatus; label: MessageKey }[] = [
+  { status: "Placed", label: "status.step.placed" },
+  { status: "Open", label: "status.step.storeAccepted" },
+  { status: "Collecting", label: "status.step.collecting" },
+  { status: "Collected", label: "status.step.collected" },
 ];
 
 function statusTone(status: DeliveryStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
@@ -47,7 +48,8 @@ function statusTone(status: DeliveryStatus): "neutral" | "brand" | "success" | "
 }
 
 export function StatusBadge({ status }: { status: DeliveryStatus }) {
-  return <Badge tone={statusTone(status)}>{status.replace(/([A-Z])/g, " $1").trim()}</Badge>;
+  const t = useT();
+  return <Badge tone={statusTone(status)}>{t(`status.delivery.${status}`)}</Badge>;
 }
 
 function TerminalBanner({ icon, tone, children }: { icon: React.ReactNode; tone: "neutral" | "danger"; children: React.ReactNode }) {
@@ -70,10 +72,11 @@ function TerminalBanner({ icon, tone, children }: { icon: React.ReactNode; tone:
 /// of just snapping to its done state -- the one place in this app where
 /// *progress itself* (not just a list appearing) deserves motion.
 export function OrderStatusTimeline({ status, cancellation = null }: { status: DeliveryStatus; cancellation?: Cancellation | null }) {
+  const t = useT();
   if (status === "Scheduled") {
     return (
       <TerminalBanner icon={<Clock size={20} />} tone="neutral">
-        Scheduled for later. We'll send it to the store closer to the time.
+        {t("status.scheduled")}
       </TerminalBanner>
     );
   }
@@ -87,7 +90,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
   if (status === "Disputed") {
     return (
       <TerminalBanner icon={<AlertTriangle size={20} />} tone="danger">
-        The customer says this order never arrived. The store decides.
+        {t("status.disputed")}
       </TerminalBanner>
     );
   }
@@ -129,7 +132,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
               )}
             </div>
             <div className={clsx("pt-1 text-sm font-medium", done || active ? "text-ink-900 dark:text-ink-50" : "text-ink-400 dark:text-ink-600")}>
-              {step.label}
+              {t(step.label)}
               {active && <span className="ml-2 inline-block h-2 w-2 rounded-full bg-presence-500 animate-pulse align-middle" />}
             </div>
           </li>
@@ -139,11 +142,11 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
   );
 }
 
-const PICKUP_STEPS: { status: PickupStatus; label: string }[] = [
-  { status: "Placed", label: "Order placed" },
-  { status: "MerchantConfirmed", label: "Store accepted · preparing" },
-  { status: "ReadyForPickup", label: "Ready for pickup" },
-  { status: "PickedUp", label: "Picked up" },
+const PICKUP_STEPS: { status: PickupStatus; label: MessageKey }[] = [
+  { status: "Placed", label: "status.step.placed" },
+  { status: "MerchantConfirmed", label: "status.step.acceptedPreparing" },
+  { status: "ReadyForPickup", label: "status.step.ready" },
+  { status: "PickedUp", label: "status.step.pickedUp" },
 ];
 
 function pickupStatusTone(status: PickupStatus): "neutral" | "brand" | "success" | "warn" | "danger" {
@@ -162,7 +165,8 @@ function pickupStatusTone(status: PickupStatus): "neutral" | "brand" | "success"
 }
 
 export function PickupStatusBadge({ status }: { status: PickupStatus }) {
-  return <Badge tone={pickupStatusTone(status)}>{status.replace(/([A-Z])/g, " $1").trim()}</Badge>;
+  const t = useT();
+  return <Badge tone={pickupStatusTone(status)}>{t(`status.pickup.${status}`)}</Badge>;
 }
 
 /// `OrderStatusTimeline`'s pickup sibling -- a separate, smaller `STEPS`
@@ -172,6 +176,7 @@ export function PickupStatusBadge({ status }: { status: PickupStatus }) {
 /// doc comment in `dispatch_integrity` for why this is a wholly separate
 /// vertical).
 export function PickupStatusTimeline({ status, cancellation = null }: { status: PickupStatus; cancellation?: Cancellation | null }) {
+  const t = useT();
   if (status === "Cancelled") {
     return (
       <TerminalBanner icon={<XCircle size={20} />} tone="neutral">
@@ -182,7 +187,7 @@ export function PickupStatusTimeline({ status, cancellation = null }: { status: 
   if (status === "Disputed") {
     return (
       <TerminalBanner icon={<AlertTriangle size={20} />} tone="danger">
-        The customer says this order never arrived. The store decides.
+        {t("status.disputed")}
       </TerminalBanner>
     );
   }
@@ -222,7 +227,7 @@ export function PickupStatusTimeline({ status, cancellation = null }: { status: 
               )}
             </div>
             <div className={clsx("pt-1 text-sm font-medium", done || active ? "text-ink-900 dark:text-ink-50" : "text-ink-400 dark:text-ink-600")}>
-              {step.label}
+              {t(step.label)}
               {active && <span className="ml-2 inline-block h-2 w-2 rounded-full bg-presence-500 animate-pulse align-middle" />}
             </div>
           </li>

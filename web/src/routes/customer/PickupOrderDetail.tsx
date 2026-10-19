@@ -21,6 +21,7 @@ import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
+import { useT } from "../../i18n";
 
 
 /// `OrderDetail`'s pickup sibling -- no bids, no driver, no live map, no
@@ -33,6 +34,7 @@ export function PickupOrderDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
   const orderRef = hexToBytes(hash);
   const [disputing, setDisputing] = useState(false);
+  const t = useT();
   const [completing, setCompleting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,7 +150,7 @@ export function PickupOrderDetail() {
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
         <h1 className="flex items-baseline gap-1.5 text-xl font-black text-ink-900 dark:text-ink-50">
-          <StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber> pickup
+          {t("pickup.heading")}<StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber>
         </h1>
         <PickupStatusBadge status={order.status} />
       </motion.div>
@@ -169,7 +171,7 @@ export function PickupOrderDetail() {
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Note for the store: </span>
+              <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.storeNoteLabel")} </span>
               {details.kitchen_note}
             </p>
           </Card>
@@ -186,7 +188,7 @@ export function PickupOrderDetail() {
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <ChefHat size={20} className="text-relay-600" />
           <p className="text-sm text-relay-700 dark:text-relay-300">
-            The store is preparing your order{order.ready_by !== null && <>, ready by <strong>{formatClockTime(order.ready_by)}</strong></>}. This screen updates automatically.
+            {order.ready_by !== null ? t("pickup.preparingBy", { time: formatClockTime(order.ready_by) }) : t("pickup.preparing")}
           </p>
         </motion.div>
       )}
@@ -196,15 +198,15 @@ export function PickupOrderDetail() {
           <div className="flex items-center gap-3">
             <ChefHat size={20} className="text-relay-600" />
             <p className="text-sm text-relay-700 dark:text-relay-300">
-              {order.status === "Disputed" ? "You've told the store there's a problem. They'll hand it over, or cancel it and refund you." : "Your order is ready for pickup."}
+              {order.status === "Disputed" ? t("pickup.disputed") : t("pickup.ready")}
             </p>
           </div>
           <Button loading={completing} onClick={confirmPickup}>
-            I picked this up
+            {t("pickup.pickedUp")}
           </Button>
           {order.status === "ReadyForPickup" && (
             <button onClick={fileDispute} disabled={disputing} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline disabled:opacity-50 dark:text-relay-300">
-              Can't get your order?
+              {t("pickup.cantGet")}
             </button>
           )}
         </motion.div>
@@ -221,19 +223,19 @@ export function PickupOrderDetail() {
       {order.status === "PickedUp" && canRateStore && (
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-5 flex flex-col gap-4 p-4">
-            <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Rate your order</p>
+            <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{t("order.rate.title")}</p>
             <div>
-              <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
+              <p className="mb-1 text-xs font-semibold text-ink-500">{t("order.rate.store")}</p>
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
+              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder={t("order.rate.storePlaceholder")} className="mt-2" />}
             </div>
             {canRateItems && (
               <div>
-                <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
+                <p className="mb-1 text-xs font-semibold text-ink-500">{t("order.rate.items")}</p>
                 <div className="flex flex-col gap-2">
                   {[...new Set(order.lines.map((line) => bytesToHex(line.item_ref)))].map((hex) => (
                     <div key={hex} className="flex items-center justify-between">
-                      <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
+                      <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? t("order.item")}</span>
                       <StarRatingInput value={itemRatings[hex] ?? 0} onChange={(v) => setItemRatings((prev) => ({ ...prev, [hex]: v }))} size={16} />
                     </div>
                   ))}
@@ -241,7 +243,7 @@ export function PickupOrderDetail() {
               </div>
             )}
             <Button loading={submittingReview} disabled={merchantRating === 0 && (!canRateItems || Object.values(itemRatings).every((r) => r === 0))} onClick={submitReviews}>
-              Submit review
+              {t("order.rate.submit")}
             </Button>
           </Card>
         </motion.div>
@@ -250,7 +252,7 @@ export function PickupOrderDetail() {
       {order.status === "PickedUp" && storeRated === true && !selfOrder && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
           <CheckCircle2 size={20} />
-          <p className="text-sm">Thanks for your feedback!</p>
+          <p className="text-sm">{t("order.rate.thanks")}</p>
         </motion.div>
       )}
 
