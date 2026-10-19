@@ -30,6 +30,7 @@ import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
+import { useT, type MessageKey } from "../../i18n";
 import { HandoverCode } from "../../components/HandoverCode";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 
@@ -37,10 +38,10 @@ import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 // order.accepted_bid to exist) and before the delivery's own terminal state.
 const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 
-const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], string> = {
-  LeaveAtDoor: "Leave at door",
-  HandToMe: "Hand to me",
-  MeetOutside: "Meet outside",
+const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], MessageKey> = {
+  LeaveAtDoor: "cart.drop.leaveAtDoor",
+  HandToMe: "cart.drop.handToMe",
+  MeetOutside: "cart.drop.meetOutside",
 };
 
 interface DriverStats {
@@ -90,17 +91,18 @@ interface BidRow {
 const ORDER_SIGNALS = (signal: LocalSignal) => "BidPlaced" in signal || "BidAccepted" in signal || "BidReleased" in signal || isOrderSignal(signal);
 
 /// What the customer's told while a driver has their order.
-const DRIVER_PROGRESS: Partial<Record<DeliveryOrder["status"], string>> = {
-  BidAccepted: "A driver is taking your order. This screen updates automatically as they go.",
-  DriverEnRouteToMerchant: "Your driver is on the way to the store, and the kitchen is starting on your order.",
-  MerchantConfirmed: "Your order is being prepared, and your driver is on the way to the store.",
-  DriverAtStore: "Your driver is at the store, waiting for your order.",
+const DRIVER_PROGRESS: Partial<Record<DeliveryOrder["status"], MessageKey>> = {
+  BidAccepted: "order.progress.bidAccepted",
+  DriverEnRouteToMerchant: "order.progress.enRoute",
+  MerchantConfirmed: "order.progress.confirmed",
+  DriverAtStore: "order.progress.atStore",
 };
 
 export function OrderDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
   const orderRef = hexToBytes(hash);
   const terms = useTerms();
+  const t = useT();
   const [accepting, setAccepting] = useState<string | null>(null);
   const [confirmingCollected, setConfirmingCollected] = useState(false);
   const [disputing, setDisputing] = useState(false);
@@ -356,12 +358,12 @@ export function OrderDetail() {
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
         <h1 className="flex items-baseline gap-1.5 text-xl font-black text-ink-900 dark:text-ink-50">
-          <StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber> order
+          {t("order.heading")}<StatNumber className="text-xl">{formatCents(order.order_total)}</StatNumber>
         </h1>
         <div className="flex items-center gap-1.5">
           {order.priority && (
             <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-              <Zap size={11} /> Priority
+              <Zap size={11} /> {t("cart.speed.priority")}
             </span>
           )}
           <StatusBadge status={order.status} />
@@ -379,12 +381,12 @@ export function OrderDetail() {
           <OrderStatusTimeline status={order.status} cancellation={order.cancellation} />
           {order.ready_by !== null && ["Open", "BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"].includes(order.status) && (
             <p className="mt-3 border-t border-ink-100 dark:border-ink-800 pt-3 text-xs text-ink-500">
-              The store expects it ready by <span className="font-semibold text-ink-900 dark:text-ink-50">{formatClockTime(order.ready_by)}</span>.
+              {t("order.readyBy", { time: formatClockTime(order.ready_by) })}
             </p>
           )}
           {order.ready_by === null && order.prep_minutes !== null && ["Open", "BidAccepted"].includes(order.status) && (
             <p className="mt-3 border-t border-ink-100 dark:border-ink-800 pt-3 text-xs text-ink-500">
-              The store starts cooking once a driver is on the way, and expects it to take about <span className="font-semibold text-ink-900 dark:text-ink-50">{order.prep_minutes} minutes</span>.
+              {t("order.prepAfterDriver", { minutes: order.prep_minutes })}
             </p>
           )}
         </Card>
@@ -399,24 +401,24 @@ export function OrderDetail() {
       <motion.div variants={fadeSlideUp}>
         <Card className="mt-3 flex flex-col gap-1 p-4 text-sm">
           <p className="text-ink-500">
-            <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off: </span>
-            {DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]}
+            <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.dropoffLabel")} </span>
+            {t(DROPOFF_PREFERENCE_LABEL[order.dropoff_preference])}
           </p>
           {details?.dropoff?.notes && (
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Drop-off notes: </span>
+              <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.dropoffNotesLabel")} </span>
               {details.dropoff.notes}
             </p>
           )}
           {details?.kitchen_note && (
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Note for the store: </span>
+              <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.storeNoteLabel")} </span>
               {details.kitchen_note}
             </p>
           )}
           {order.tip_cents > 0 && (
             <p className="text-ink-500">
-              <span className="font-semibold text-ink-900 dark:text-ink-50">Tip: </span>
+              <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.tipLabel")} </span>
               {formatCents(order.tip_cents)}
             </p>
           )}
@@ -425,7 +427,7 @@ export function OrderDetail() {
 
       {order.status === "Open" && (
         <motion.div variants={fadeSlideUp} className="mt-5">
-          <h2 className="mb-2 text-sm font-bold text-ink-900 dark:text-ink-50">Driver bids</h2>
+          <h2 className="mb-2 text-sm font-bold text-ink-900 dark:text-ink-50">{t("order.bids")}</h2>
           {bids === null && (
             <div className="flex flex-col gap-2">
               {Array.from({ length: 2 }).map((_, i) => (
@@ -436,10 +438,10 @@ export function OrderDetail() {
               ))}
             </div>
           )}
-          {bids?.length === 0 && <p className="text-xs text-ink-400">Waiting for a nearby driver to bid. This updates live.</p>}
+          {bids?.length === 0 && <p className="text-xs text-ink-400">{t("order.waitingBids")}</p>}
           {order.auto_match && firstBidAt !== null && (
             <p className="mb-2 text-xs leading-relaxed text-ink-500">
-              Your app picks the best match at {formatClockTime(firstBidAt + terms.bid_window_secs * 1_000_000)}: the lowest fee, counting each minute until delivery as {formatCents(terms.minute_value_cents)} and a driver's dropped orders against them. You can pick one yourself before then.
+              {t("order.autoMatchAt", { time: formatClockTime(firstBidAt + terms.bid_window_secs * 1_000_000), minuteValue: formatCents(terms.minute_value_cents) })}
             </p>
           )}
           <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2">
@@ -452,26 +454,26 @@ export function OrderDetail() {
                     <Card className="flex items-center justify-between p-3.5">
                       <div>
                         <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
-                          {stats?.displayName || `Driver ${shortAgentId(bid.bidder)}`} · {formatEta(bid.eta_seconds)}
-                          {bestMatch && bytesEqual(bestMatch.bid, bidHash) && <span className="ml-2 rounded-full bg-relay-100 px-2 py-0.5 text-[10px] font-bold text-relay-700 dark:bg-relay-900/30 dark:text-relay-300">Best match</span>}
+                          {stats?.displayName || t("order.driverNamed", { id: shortAgentId(bid.bidder) })} · {formatEta(bid.eta_seconds)}
+                          {bestMatch && bytesEqual(bestMatch.bid, bidHash) && <span className="ml-2 rounded-full bg-relay-100 px-2 py-0.5 text-[10px] font-bold text-relay-700 dark:bg-relay-900/30 dark:text-relay-300">{t("order.bestMatch")}</span>}
                         </p>
-                        <p className="text-xs text-ink-400">Delivery fee {formatCents(bid.price_offer)}</p>
+                        <p className="text-xs text-ink-400">{t("order.bidFee", { amount: formatCents(bid.price_offer) })}</p>
                         {stats && (
                           <div className="mt-1 flex items-center gap-1.5">
                             {stats.reviewCount > 0 ? (
                               <StarRating value={stats.avgRating} count={stats.reviewCount} size={11} />
                             ) : (
-                              <span className="text-xs text-ink-400">No reviews yet</span>
+                              <span className="text-xs text-ink-400">{t("order.noReviews")}</span>
                             )}
-                            <span className="text-xs text-ink-400">· {stats.completedCount} completed</span>
-                            {stats.droppedCount > 0 && <span className="text-xs text-amber-600">· {stats.droppedCount} dropped</span>}
-                            {stats.lapsedCount > 0 && <span className="text-xs text-ink-400">· {stats.lapsedCount} not taken up</span>}
+                            <span className="text-xs text-ink-400">· {t("order.completed", { count: stats.completedCount })}</span>
+                            {stats.droppedCount > 0 && <span className="text-xs text-amber-600">· {t("order.dropped", { count: stats.droppedCount })}</span>}
+                            {stats.lapsedCount > 0 && <span className="text-xs text-ink-400">· {t("order.lapsed", { count: stats.lapsedCount })}</span>}
                           </div>
                         )}
                         {load && <p className="mt-1 text-xs text-ink-400">{describeLoad(load)}</p>}
                         {complaints && (
                           <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-                            <AlertTriangle size={12} /> {w.count} verified complaint{w.count === 1 ? "" : "s"} on record
+                            <AlertTriangle size={12} /> {t("order.complaints", { count: w.count })}
                           </p>
                         )}
                       </div>
@@ -484,7 +486,7 @@ export function OrderDetail() {
                           loading={accepting === bytesToHex(bidHash)}
                           onClick={() => pickBid(bidHash, complaints)}
                         >
-                          {complaints ? "Accept anyway" : "Accept"}
+                          {complaints ? t("order.acceptAnyway") : t("order.accept")}
                         </Button>
                       )}
                     </Card>
@@ -499,7 +501,7 @@ export function OrderDetail() {
       {["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"].includes(order.status) && (
         <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <Bike size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">{DRIVER_PROGRESS[order.status]}</p>
+          <p className="text-sm text-relay-700 dark:text-relay-300">{DRIVER_PROGRESS[order.status] && t(DRIVER_PROGRESS[order.status]!)}</p>
         </motion.div>
       )}
 
@@ -513,8 +515,7 @@ export function OrderDetail() {
         <motion.div variants={fadeSlideUp} className="mt-4 flex items-start gap-3 rounded-2xl border border-ink-100 p-4 dark:border-ink-800">
           <DoorOpen size={20} className="mt-0.5 shrink-0 text-ink-400" />
           <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">
-            <span className="font-semibold text-ink-900 dark:text-ink-50">Leaving it at your door.</span> Your driver will photograph where. As you chose, it's
-            delivered once it's left there.
+            <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.door.title")}</span> {t("order.door.detail")}
           </p>
         </motion.div>
       )}
@@ -523,45 +524,44 @@ export function OrderDetail() {
         <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
           <div className="flex items-center gap-3">
             <Bike size={20} className="text-relay-600" />
-            <p className="text-sm text-relay-700 dark:text-relay-300">Your driver has picked up your order.</p>
+            <p className="text-sm text-relay-700 dark:text-relay-300">{t("order.pickedUp")}</p>
           </div>
           {order.collateral_hold && (
             <p className="flex items-start gap-2 text-xs text-relay-700 dark:text-relay-300">
               <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-              Your driver has set aside {formatCents(order.order_total)}, the value of your food, until it reaches you.
+              {t("order.collateral", { amount: formatCents(order.order_total) })}
             </p>
           )}
           {dropoff ? (
-            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">Your driver says they handed it over at {formatClockTime(dropoff.at)}. Confirm you have it.</p>
+            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">{t("order.handedAt", { time: formatClockTime(dropoff.at) })}</p>
           ) : handedOver ? (
             <p className="text-xs text-relay-700 dark:text-relay-300">
-              When it's in your hands, let your driver scan your code, or confirm here. Missing an item? Confirm first, then report it.
+              {t("order.confirmHint")}
             </p>
           ) : null}
           {handedOver && (
             <Button loading={completing} onClick={confirmReceipt}>
-              I have my order
+              {t("order.haveIt")}
             </Button>
           )}
           <AnimatePresence mode="wait" initial={false}>
             {confirmingClaim ? (
               <motion.div key="claim" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-xl bg-white p-3 dark:bg-ink-900">
                 <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">
-                  We'll tell the store. If your driver doesn't deliver it, the store refunds you in full, and your driver pays for the food. Only say so if it's
-                  true: it goes on your record if it arrives.
+                  {t("order.claim.warning")}
                 </p>
                 <div className="mt-3 flex gap-2">
                   <Button variant="ghost" className="flex-1 py-2" onClick={() => setConfirmingClaim(false)}>
-                    Back
+                    {t("common.back")}
                   </Button>
                   <Button variant="danger" className="flex-1 py-2" loading={disputing} onClick={claimItNeverArrived}>
-                    It never arrived
+                    {t("order.claim.button")}
                   </Button>
                 </div>
               </motion.div>
             ) : (
               <motion.button key="ask" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setConfirmingClaim(true)} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline dark:text-relay-300">
-                It never arrived?
+                {t("order.claim.ask")}
               </motion.button>
             )}
           </AnimatePresence>
@@ -571,21 +571,21 @@ export function OrderDetail() {
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && pickup && details?.dropoff && (
         <motion.div variants={fadeSlideUp} className="mt-4">
           <LiveMap pickup={pickup} dropoff={details.dropoff.point} driver={driverLocation} />
-          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">Waiting for your driver's live location. Not every device shares this.</p>}
+          {!driverLocation && <p className="mt-1 text-center text-xs text-ink-400">{t("order.waitingLocation")}</p>}
         </motion.div>
       )}
 
       {ACTIVE_DELIVERY_STATUSES.includes(order.status) && (
         <motion.div variants={fadeSlideUp} className="mt-4">
-          <ChatPanel orderRef={orderRef} title="Chat with your driver" />
+          <ChatPanel orderRef={orderRef} title={t("order.chat")} />
         </motion.div>
       )}
 
       {dropoffPhoto && (
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-4 p-4">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Photo at drop-off</p>
-            <img src={dropoffPhoto} alt="Delivery drop-off" className="w-full rounded-xl object-cover" />
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{t("order.dropoffPhoto")}</p>
+            <img src={dropoffPhoto} alt={t("order.dropoffPhoto")} className="w-full rounded-xl object-cover" />
           </Card>
         </motion.div>
       )}
@@ -597,13 +597,13 @@ export function OrderDetail() {
       {collecting && (
         <motion.div variants={fadeSlideUp}>
           <Card className="mt-4 p-4">
-            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">Collect it from {store?.name ?? "the store"}</p>
+            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("order.collectFrom", { store: store?.name ?? t("order.theStore") })}</p>
             {store?.address && <p className="mt-0.5 text-xs text-ink-400">{store.address}</p>}
             <p className="mt-2 text-xs leading-relaxed text-ink-400">
-              Show your code at the counter. The store scans it to hand your order over, or tap below once you have it.
+              {t("order.collectHint")}
             </p>
             <Button loading={confirmingCollected} onClick={confirmCollectedHere} className="mt-3 w-full">
-              I've got my order
+              {t("order.gotIt")}
             </Button>
           </Card>
         </motion.div>
@@ -612,7 +612,7 @@ export function OrderDetail() {
       {order.status === "Open" && (
         <motion.div variants={fadeSlideUp} className="mt-6">
           <Button variant="ghost" loading={cancelling} onClick={cancel} className="w-full">
-            Cancel order
+            {t("order.cancel")}
           </Button>
         </motion.div>
       )}
@@ -629,12 +629,11 @@ export function OrderDetail() {
           <AlertTriangle size={20} className="mt-0.5 shrink-0" />
           {decisions?.not_delivered ? (
             <p className="text-sm">
-              <span className="font-semibold">Refunded.</span> The store confirmed it never arrived. Your payment is back in your balance.
+              <span className="font-semibold">{t("order.refunded")}</span> {t("order.refundedDetail")}
             </p>
           ) : (
             <p className="text-sm">
-              You've told the store it never arrived. If your driver still turns up, let them hand it over as usual. Otherwise the store refunds you
-              {decisions?.claim_decided_after ? ` by ${formatDeadline(decisions.claim_decided_after)}` : " shortly"}.
+              {decisions?.claim_decided_after ? t("order.claimedBy", { time: formatDeadline(decisions.claim_decided_after) }) : t("order.claimedSoon")}
             </p>
           )}
         </motion.div>
@@ -643,29 +642,29 @@ export function OrderDetail() {
       {received(order.status) && rated && !ratingDone && (
         <motion.div variants={fadeSlideUp}>
         <Card className="mt-5 flex flex-col gap-4 p-4">
-          <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Rate your order</p>
+          <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{t("order.rate.title")}</p>
           {canRateStore && (
             <div>
-              <p className="mb-1 text-xs font-semibold text-ink-500">The restaurant</p>
+              <p className="mb-1 text-xs font-semibold text-ink-500">{t("order.rate.store")}</p>
               <StarRatingInput value={merchantRating} onChange={setMerchantRating} />
-              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder="How was the food?" className="mt-2" />}
+              {merchantRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={merchantComment} onChange={(e) => setMerchantComment(e.target.value)} rows={2} placeholder={t("order.rate.storePlaceholder")} className="mt-2" />}
             </div>
           )}
           {canRateDriver && (
             <div>
-              <p className="mb-1 text-xs font-semibold text-ink-500">Your driver</p>
+              <p className="mb-1 text-xs font-semibold text-ink-500">{t("order.rate.driver")}</p>
               <StarRatingInput value={driverRating} onChange={setDriverRating} />
-              {driverRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder="How was the delivery?" className="mt-2" />}
+              {driverRating > 0 && <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={driverComment} onChange={(e) => setDriverComment(e.target.value)} rows={2} placeholder={t("order.rate.driverPlaceholder")} className="mt-2" />}
             </div>
           )}
           {/* A goodie bag isn't itemized -- its one line is the bag, not a menu item -- so there's nothing per-item to rate. */}
           {canRateItems && (
             <div>
-              <p className="mb-1 text-xs font-semibold text-ink-500">Rate individual items</p>
+              <p className="mb-1 text-xs font-semibold text-ink-500">{t("order.rate.items")}</p>
               <div className="flex flex-col gap-2">
                 {[...new Set(order.lines.map((line) => bytesToHex(line.item_ref)))].map((hex) => (
                   <div key={hex} className="flex items-center justify-between">
-                    <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? "Item"}</span>
+                    <span className="text-sm text-ink-700 dark:text-ink-300">{itemNames[hex] ?? t("order.item")}</span>
                     <StarRatingInput
                       value={itemRatings[hex] ?? 0}
                       onChange={(v) => setItemRatings((prev) => ({ ...prev, [hex]: v }))}
@@ -681,7 +680,7 @@ export function OrderDetail() {
             disabled={(canRateStore ? merchantRating : 0) === 0 && (canRateDriver ? driverRating : 0) === 0 && (!canRateItems || Object.values(itemRatings).every((r) => r === 0))}
             onClick={submitReviews}
           >
-            Submit review
+            {t("order.rate.submit")}
           </Button>
         </Card>
         </motion.div>
@@ -690,7 +689,7 @@ export function OrderDetail() {
       {received(order.status) && ratingDone && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-5 flex items-center gap-3 rounded-2xl bg-presence-500/10 p-4 text-presence-600 dark:text-presence-400">
           <CheckCircle2 size={20} />
-          <p className="text-sm">Thanks for your feedback!</p>
+          <p className="text-sm">{t("order.rate.thanks")}</p>
         </motion.div>
       )}
 
