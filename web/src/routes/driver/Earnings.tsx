@@ -10,8 +10,10 @@ import { Card, Skeleton, StatNumber } from "../../components/ui";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { EarningsReport } from "./EarningsReport";
+import { useT } from "../../i18n";
 
 export function Earnings() {
+  const t = useT();
   const me = myAgentPubKey();
   const meHex = bytesToHex(me);
   const { data: balance } = useResource(`balance:${meHex}`, () => getBalance(me));
@@ -22,7 +24,7 @@ export function Earnings() {
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4 pb-8">
       <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
-        Earnings
+        {t("nav.earnings")}
       </motion.h1>
 
       <motion.div variants={fadeSlideUp}>
@@ -31,11 +33,11 @@ export function Earnings() {
             <Wallet size={20} />
           </div>
           <div className="flex-1">
-            <p className="text-xs text-ink-400">Balance</p>
+            <p className="text-xs text-ink-400">{t("wallet.balance")}</p>
             {balance === undefined ? <Skeleton className="mt-1 h-7 w-24" /> : <StatNumber className="text-2xl">{formatCents(balance)}</StatNumber>}
           </div>
           <Link to="/wallet" className="inline-flex items-center gap-1 rounded-full bg-relay-500 px-3.5 py-2 text-xs font-semibold text-white">
-            <ArrowUpRight size={14} /> Cash out
+            <ArrowUpRight size={14} /> {t("wallet.cashOut")}
           </Link>
         </Card>
       </motion.div>
@@ -45,14 +47,13 @@ export function Earnings() {
       </motion.div>
 
       <motion.p variants={fadeSlideUp} className="mb-4 rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-xs text-ink-500 dark:text-ink-400">
-        Your fees and tips land in your balance as each delivery settles. Cash out through the network's issuer whenever you like; it pays you
-        outside the network, and every cent is on your own ledger.
+        {t("earnings.note")}
       </motion.p>
 
       <motion.div variants={fadeSlideUp}>
         <Card className="p-5">
           <p className="mb-3 flex items-center gap-2 text-sm font-bold text-ink-900 dark:text-ink-50">
-            <ShieldCheck size={16} className="text-presence-600" /> Reputation
+            <ShieldCheck size={16} className="text-presence-600" /> {t("earnings.reputation")}
           </p>
           {rep === undefined ? (
             <div className="grid grid-cols-2 gap-3">
@@ -63,10 +64,10 @@ export function Earnings() {
             </div>
           ) : (
             <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="grid grid-cols-2 gap-3 text-sm">
-              <Stat label="Completed" value={rep.completed_count} tone="success" />
-              <Stat label="Cancelled by them" value={rep.cancelled_by_them_count} />
-              <Stat label="Disputes raised" value={rep.dispute_raised_count} />
-              <Stat label="Resolved against you" value={rep.dispute_resolved_against_count} tone={rep.dispute_resolved_against_count > 0 ? "danger" : "default"} />
+              <Stat label={t("earnings.completed")} value={rep.completed_count} tone="success" />
+              <Stat label={t("earnings.cancelled")} value={rep.cancelled_by_them_count} />
+              <Stat label={t("earnings.disputes")} value={rep.dispute_raised_count} />
+              <Stat label={t("earnings.against")} value={rep.dispute_resolved_against_count} tone={rep.dispute_resolved_against_count > 0 ? "danger" : "default"} />
             </motion.div>
           )}
         </Card>

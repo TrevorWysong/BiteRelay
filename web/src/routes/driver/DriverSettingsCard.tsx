@@ -9,17 +9,19 @@ import { Card, Input, Switch } from "../../components/ui";
 import { currencySymbol, formatCents, fromMinorUnits, toMinorUnits } from "../../lib/format";
 import { useTerms } from "../../store/network";
 import { useDriverSettings } from "../../store/roleSettings";
+import { useT } from "../../i18n";
 
 export function DriverSettingsCard() {
+  const t = useT();
   const networkMax = useTerms().max_concurrent_deliveries;
   const { limits, travelSpeedKmh, setLimits, setTravelSpeed, autoBid, setAutoBid } = useDriverSettings();
   const [open, setOpen] = useState(false);
   const atOnce = Math.min(limits.maxAtOnce ?? networkMax, networkMax);
   const summary = [
-    `Up to ${atOnce} at once`,
-    limits.takePriority ? "priority orders on" : "no priority orders",
-    limits.minFeeCents > 0 ? `${formatCents(limits.minFeeCents)}+ fees` : null,
-    autoBid.on ? `bidding ${formatCents(autoBid.perKmCents)}/km` : null,
+    t("driverSettings.upTo", { count: atOnce }),
+    limits.takePriority ? t("driverSettings.priorityOn") : t("driverSettings.priorityOff"),
+    limits.minFeeCents > 0 ? t("driverSettings.minFee", { amount: formatCents(limits.minFeeCents) }) : null,
+    autoBid.on ? t("driverSettings.bidding", { amount: formatCents(autoBid.perKmCents) }) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -30,7 +32,7 @@ export function DriverSettingsCard() {
         <span className="flex items-center gap-2">
           <SlidersHorizontal size={16} className="text-ink-400" />
           <span>
-            <span className="block text-sm font-semibold text-ink-900 dark:text-ink-50">What you take on</span>
+            <span className="block text-sm font-semibold text-ink-900 dark:text-ink-50">{t("driverSettings.title")}</span>
             <span className="block text-xs text-ink-400">{summary}</span>
           </span>
         </span>
@@ -41,7 +43,7 @@ export function DriverSettingsCard() {
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
             <div className="mt-4 flex flex-col gap-4">
               <div>
-                <p className="mb-2 text-xs font-semibold text-ink-500">Most orders at once</p>
+                <p className="mb-2 text-xs font-semibold text-ink-500">{t("driverSettings.most")}</p>
                 <div className="flex gap-2">
                   {Array.from({ length: networkMax }, (_, i) => i + 1).map((count) => (
                     <button
@@ -53,18 +55,18 @@ export function DriverSettingsCard() {
                     </button>
                   ))}
                 </div>
-                <p className="mt-1.5 text-[11px] text-ink-400">The network allows {networkMax}. Add-ons are only offered on your way.</p>
+                <p className="mt-1.5 text-[11px] text-ink-400">{t("driverSettings.networkAllows", { count: networkMax })}</p>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span>
-                  <span className="block text-xs font-semibold text-ink-500">Priority orders</span>
-                  <span className="block text-[11px] text-ink-400">Delivered on their own, with nothing else in hand. They usually pay more.</span>
+                  <span className="block text-xs font-semibold text-ink-500">{t("driverSettings.priority")}</span>
+                  <span className="block text-[11px] text-ink-400">{t("driverSettings.priorityDetail")}</span>
                 </span>
-                <Switch checked={limits.takePriority} onChange={(takePriority) => setLimits({ takePriority })} label="Take priority orders" />
+                <Switch checked={limits.takePriority} onChange={(takePriority) => setLimits({ takePriority })} label={t("driverSettings.takePriority")} />
               </div>
               <div className="flex gap-3">
                 <label className="flex-1 text-xs font-semibold text-ink-500">
-                  Lowest fee you'll see
+                  {t("driverSettings.lowestFee")}
                   <Input
                     type="number"
                     min={0}
@@ -76,22 +78,22 @@ export function DriverSettingsCard() {
                   />
                 </label>
                 <label className="flex-1 text-xs font-semibold text-ink-500">
-                  Your usual speed
+                  {t("driverSettings.speed")}
                   <Input type="number" min={1} step={1} value={travelSpeedKmh} onChange={(e) => setTravelSpeed(Math.max(1, Math.round(Number(e.target.value))))} suffix="km/h" className="mt-1 py-1.5 text-sm" />
                 </label>
               </div>
-              <p className="text-[11px] text-ink-400">Your speed is what your bids' ETAs are estimated from. You can always change an ETA before bidding.</p>
+              <p className="text-[11px] text-ink-400">{t("driverSettings.speedNote")}</p>
               <div className="flex items-center justify-between gap-3 border-t border-ink-100 pt-4 dark:border-ink-800">
                 <span>
-                  <span className="block text-xs font-semibold text-ink-500">Bid for me</span>
-                  <span className="block text-[11px] text-ink-400">While you're online, your app bids on every order you're offered, at your rate. A customer who accepts gets you at once.</span>
+                  <span className="block text-xs font-semibold text-ink-500">{t("driverSettings.autoBid")}</span>
+                  <span className="block text-[11px] text-ink-400">{t("driverSettings.autoBidDetail")}</span>
                 </span>
-                <Switch checked={autoBid.on} onChange={(on) => setAutoBid({ on })} label="Bid automatically" />
+                <Switch checked={autoBid.on} onChange={(on) => setAutoBid({ on })} label={t("driverSettings.autoBidLabel")} />
               </div>
               {autoBid.on && (
                 <div className="flex gap-3">
                   <label className="flex-1 text-xs font-semibold text-ink-500">
-                    Your rate per km
+                    {t("driverSettings.rate")}
                     <Input
                       type="number"
                       min={0}
@@ -103,12 +105,12 @@ export function DriverSettingsCard() {
                     />
                   </label>
                   <label className="flex-1 text-xs font-semibold text-ink-500">
-                    Skip stores reported
-                    <Input type="number" min={1} step={1} value={autoBid.skipRefusals} onChange={(e) => setAutoBid({ skipRefusals: Math.max(1, Math.round(Number(e.target.value))) })} suffix="times" className="mt-1 py-1.5 text-sm" />
+                    {t("driverSettings.skip")}
+                    <Input type="number" min={1} step={1} value={autoBid.skipRefusals} onChange={(e) => setAutoBid({ skipRefusals: Math.max(1, Math.round(Number(e.target.value))) })} suffix={t("driverSettings.times")} className="mt-1 py-1.5 text-sm" />
                   </label>
                 </div>
               )}
-              {autoBid.on && <p className="text-[11px] text-ink-400">A trip is to the store and on to the drop-off; you never bid under your lowest fee, nor over a customer's cap. Stores other drivers report for refusing to check them in are skipped.</p>}
+              {autoBid.on && <p className="text-[11px] text-ink-400">{t("driverSettings.autoBidNote")}</p>}
             </div>
           </motion.div>
         )}

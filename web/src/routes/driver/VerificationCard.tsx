@@ -40,7 +40,7 @@ export function VerificationCard({ me }: { me: AgentPubKey }) {
         <span className="text-sm">
           <span className="block font-semibold text-ink-900 dark:text-ink-50">{t(terms.required ? "verification.getVerifiedRequired" : "verification.getVerified")}</span>
           <span className="block text-xs text-ink-500">
-            One of the network's verifiers checks your identity, licence and insurance, then scans your code. {terms.required ? "Until then you can't bid on orders." : "Customers see you're verified."}
+            {t("verification.how")} {terms.required ? t("verification.untilThen") : t("verification.customersSee")}
           </span>
         </span>
       </div>
@@ -48,8 +48,8 @@ export function VerificationCard({ me }: { me: AgentPubKey }) {
         {t("verification.showCode")}
       </Button>
       {showing && (
-        <Sheet open onClose={() => setShowing(false)} title="Your code">
-          <AccountCode agent={me} note="A verifier scans this after checking your documents. Compare the fingerprint with theirs." />
+        <Sheet open onClose={() => setShowing(false)} title={t("verification.yourCode")}>
+          <AccountCode agent={me} note={t("verification.codeNote")} />
         </Sheet>
       )}
     </Card>
