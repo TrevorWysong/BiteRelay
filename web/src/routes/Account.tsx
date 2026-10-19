@@ -27,11 +27,14 @@ import { newPhrase, phraseKey } from "../lib/recoveryPhrase";
 import { useResource } from "../lib/useResource";
 import { useGuardianNames } from "../store/guardianNames";
 import { useSession } from "../store/session";
+import { t as translate, useT } from "../i18n";
+import { formatDate } from "../lib/format";
 
 type Open = "phrase" | "guardians" | "move" | "help" | "code" | "upgrade" | null;
 
 export function AccountPage() {
   const agentPubKey = useSession((s) => s.agentPubKey);
+  const t = useT();
   const hex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data: plan, reload } = useResource(hex && `plan:${hex}`, myRecoveryPlan);
   const { data: wards } = useResource(hex && `wards:${hex}`, myWards, { pollMs: POLL.slow });
@@ -58,10 +61,10 @@ export function AccountPage() {
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center gap-2">
-        <Link to="/profile" aria-label="Back" className="grid h-9 w-9 place-items-center rounded-full bg-ink-100 text-ink-500 dark:bg-ink-800">
+        <Link to="/profile" aria-label={t("common.back")} className="grid h-9 w-9 place-items-center rounded-full bg-ink-100 text-ink-500 dark:bg-ink-800">
           <ArrowLeft size={18} />
         </Link>
-        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Account &amp; recovery</h1>
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{t("profile.account")}</h1>
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
@@ -74,11 +77,9 @@ export function AccountPage() {
                 {protectedAccount ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
               </span>
               <div>
-                <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{protectedAccount ? "You can get your account back" : "Set up a way back in"}</p>
+                <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{protectedAccount ? t("account.protected") : t("account.unprotected")}</p>
                 <p className="mt-0.5 text-xs leading-relaxed text-ink-500">
-                  {protectedAccount
-                    ? "If you lose this device, your recovery phrase or your guardians bring your account, history and balance to a new one."
-                    : "Your account lives on this device. There's no company that can reset it, so if you lose the device without a recovery phrase or guardians, the account and its balance are gone."}
+                  {protectedAccount ? t("account.protectedDetail") : t("account.unprotectedDetail")}
                 </p>
               </div>
             </div>
@@ -88,72 +89,72 @@ export function AccountPage() {
 
       {docket && docket.length > 0 && (
         <motion.div variants={fadeSlideUp}>
-          <Section title="Arbiter">
-            <Row icon={<Gavel size={18} />} title="Appeals" detail={`${docket.filter((a) => !a.ruling).length} waiting for your ruling`} onClick={() => navigate("/arbitrate")} />
+          <Section title={t("account.arbiter")}>
+            <Row icon={<Gavel size={18} />} title={t("account.appeals")} detail={t("account.waitingRuling", { count: docket.filter((a) => !a.ruling).length })} onClick={() => navigate("/arbitrate")} />
           </Section>
         </motion.div>
       )}
 
       {isVerifier && (
         <motion.div variants={fadeSlideUp}>
-          <Section title="Verifier">
-            <Row icon={<ShieldCheck size={18} />} title="Verify a driver" detail="Scan a driver's code after checking their documents" onClick={() => navigate("/verify")} />
+          <Section title={t("account.verifier")}>
+            <Row icon={<ShieldCheck size={18} />} title={t("verify.title")} detail={t("account.verifyDetail")} onClick={() => navigate("/verify")} />
           </Section>
         </motion.div>
       )}
 
       {next && (
         <motion.div variants={fadeSlideUp}>
-          <Section title="New version">
-            <Row icon={<Sparkles size={18} />} title="Move to the new version of Relay" detail="Your account, balance, stores and history come with you" onClick={() => setOpen("upgrade")} />
+          <Section title={t("account.newVersion")}>
+            <Row icon={<Sparkles size={18} />} title={t("account.upgrade")} detail={t("account.upgradeDetail")} onClick={() => setOpen("upgrade")} />
           </Section>
         </motion.div>
       )}
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="Ways back in">
+        <Section title={t("account.waysBack")}>
           <Row
             icon={<KeyRound size={18} />}
-            title="Recovery phrase"
-            detail={hasPhrase ? `Set up ${new Date(plan!.published_at / 1000).toLocaleDateString()}` : "Twelve words you write down"}
-            badge={hasPhrase ? <Badge tone="success">On</Badge> : <Badge>Off</Badge>}
+            title={t("account.phrase")}
+            detail={hasPhrase ? t("account.setUpOn", { date: formatDate(plan!.published_at) }) : t("account.phraseDetail")}
+            badge={hasPhrase ? <Badge tone="success">{t("account.on")}</Badge> : <Badge>{t("account.off")}</Badge>}
             onClick={() => setOpen("phrase")}
           />
           <Row
             icon={<Users size={18} />}
-            title="Guardians"
+            title={t("account.guardians")}
             detail={
               guardianCount > 0
-                ? `${plan!.guardians.map((g) => names[encodeHashToBase64(g)] || keyFingerprint(g)).join(", ")} · any ${plan!.threshold} can vouch`
-                : "People you trust vouch for you"
+                ? `${plan!.guardians.map((g) => names[encodeHashToBase64(g)] || keyFingerprint(g)).join(", ")} · ${t("account.anyCanVouch", { count: plan!.threshold })}`
+                : t("account.guardiansDetail")
             }
-            badge={guardianCount > 0 ? <Badge tone="success">{guardianCount}</Badge> : <Badge>Off</Badge>}
+            badge={guardianCount > 0 ? <Badge tone="success">{guardianCount}</Badge> : <Badge>{t("account.off")}</Badge>}
             onClick={() => setOpen("guardians")}
           />
         </Section>
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="This device">
-          <Row icon={<Smartphone size={18} />} title="Move to a new device" detail="Your account, balance and history go with you" onClick={() => setOpen("move")} />
-          <Row icon={<QrCode size={18} />} title="Your account code" detail="Show it to someone making you their guardian" onClick={() => setOpen("code")} />
+        <Section title={t("account.thisDevice")}>
+          <Row icon={<Smartphone size={18} />} title={t("account.move")} detail={t("account.moveDetail")} onClick={() => setOpen("move")} />
+          <Row icon={<QrCode size={18} />} title={t("account.code")} detail={t("account.codeDetail")} onClick={() => setOpen("code")} />
         </Section>
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="People you guard">
+        <Section title={t("account.wards")}>
           {wards === undefined ? (
             <div className="p-4">
               <Skeleton className="h-10 w-full" />
             </div>
           ) : wards.length === 0 ? (
-            <p className="p-4 text-sm text-ink-400">Nobody has made you a guardian yet. They'd scan your account code.</p>
+            <p className="p-4 text-sm text-ink-400">{t("account.noWards")}</p>
           ) : (
             <>
               {wards.map((ward) => (
                 <WardRow key={bytesToHex(ward.account)} ward={ward} />
               ))}
-              <Row icon={<HeartHandshake size={18} />} title="Help someone recover" detail="Vouch for their new device" onClick={() => setOpen("help")} />
+              <Row icon={<HeartHandshake size={18} />} title={t("account.help")} detail={t("account.helpDetail")} onClick={() => setOpen("help")} />
             </>
           )}
         </Section>
@@ -165,8 +166,8 @@ export function AccountPage() {
       {open === "upgrade" && next && <UpgradeSheet me={agentPubKey} next={next} onClose={close} />}
       {open === "help" && wards && <HelpRecoverSheet wards={wards} me={agentPubKey} onClose={close} />}
       {open === "code" && (
-        <Sheet open onClose={close} title="Your account code" subtitle="Someone making you their guardian scans this.">
-          <AccountCode agent={agentPubKey} note="Read the fingerprint aloud so they can check it matches what their screen shows." />
+        <Sheet open onClose={close} title={t("account.code")} subtitle={t("account.codeSubtitle")}>
+          <AccountCode agent={agentPubKey} note={t("account.codeNote")} />
         </Sheet>
       )}
     </motion.div>
@@ -201,18 +202,19 @@ function Row({ icon, title, detail, badge, onClick }: { icon: React.ReactNode; t
 function useDisplayName(agent: AgentPubKey): string {
   const named = useGuardianNames((s) => s.names[encodeHashToBase64(agent)]);
   const { data: profile } = useResource(named ? null : `profile:${bytesToHex(agent)}`, () => fetchProfile(agent));
-  return named || profile?.display_name || `Account ${keyFingerprint(agent)}`;
+  return named || profile?.display_name || translate("account.named", { fingerprint: keyFingerprint(agent) });
 }
 
 function WardRow({ ward }: { ward: PlanView }) {
   const name = useDisplayName(ward.account);
+  const t = useT();
   return (
     <div className="flex items-center gap-3 p-4">
       <HeartHandshake size={18} className="text-ink-400" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{name}</p>
         <p className="text-xs text-ink-400">
-          One of {ward.guardians.length} guardians · {ward.threshold} needed
+          {t("account.wardDetail", { count: ward.guardians.length, needed: ward.threshold })}
         </p>
       </div>
     </div>
@@ -234,6 +236,7 @@ const WORDS_CHECKED = 3;
 
 function PhraseSheet({ plan, onClose, onSaved }: { plan: PlanView | null; onClose: () => void; onSaved: () => Promise<void> }) {
   const [step, setStep] = useState<"intro" | "words" | "check">("intro");
+  const t = useT();
   // Made once, kept only in memory while the sheet is open.
   const [phrase] = useState(() => newPhrase());
   const [asked] = useState(() => pickPositions(phrase.length, WORDS_CHECKED));
@@ -244,7 +247,7 @@ function PhraseSheet({ plan, onClose, onSaved }: { plan: PlanView | null; onClos
 
   async function save() {
     if (asked.some((position, i) => answers[i].trim().toLowerCase() !== phrase[position].toLowerCase())) {
-      setError("Those words don't match. Check what you wrote down.");
+      setError(t("account.phraseMismatch"));
       return;
     }
     setBusy(true);
@@ -273,31 +276,31 @@ function PhraseSheet({ plan, onClose, onSaved }: { plan: PlanView | null; onClos
     <Sheet
       open
       onClose={onClose}
-      title="Recovery phrase"
-      subtitle={step === "check" ? "Type these words from what you wrote down." : "Twelve words that bring your account back on any device."}
+      title={t("account.phrase")}
+      subtitle={step === "check" ? t("account.phraseCheck") : t("account.phraseSubtitle")}
       footer={
         <>
           {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
           {step === "intro" && (
             <>
               <Button className="w-full" onClick={() => setStep("words")}>
-                {replacing ? "Make a new phrase" : "Show my words"}
+                {replacing ? t("account.newPhrase") : t("account.showWords")}
               </Button>
               {replacing && (
                 <button type="button" onClick={turnOff} disabled={busy} className="mt-3 w-full text-center text-xs font-semibold text-red-600">
-                  Turn the recovery phrase off
+                  {t("account.phraseOff")}
                 </button>
               )}
             </>
           )}
           {step === "words" && (
             <Button className="w-full" onClick={() => setStep("check")}>
-              I've written them down
+              {t("account.written")}
             </Button>
           )}
           {step === "check" && (
             <Button className="w-full" loading={busy} disabled={answers.some((a) => !a.trim())} onClick={save}>
-              {replacing ? "Replace my recovery phrase" : "Turn on my recovery phrase"}
+              {replacing ? t("account.replacePhrase") : t("account.turnOnPhrase")}
             </Button>
           )}
         </>
@@ -305,9 +308,9 @@ function PhraseSheet({ plan, onClose, onSaved }: { plan: PlanView | null; onClos
     >
       {step === "intro" && (
         <ul className="flex flex-col gap-3 text-sm text-ink-600 dark:text-ink-300">
-          <li>Write the words on paper and keep it somewhere safe. Don't screenshot them or store them online.</li>
-          <li>Anyone with the words can take over your account and its balance. Nobody from Relay will ever ask for them.</li>
-          {replacing && <li className="font-semibold">Your old phrase stops working as soon as you save the new one.</li>}
+          <li>{t("account.phraseTip1")}</li>
+          <li>{t("account.phraseTip2")}</li>
+          {replacing && <li className="font-semibold">{t("account.phraseTip3")}</li>}
         </ul>
       )}
       {step === "words" && (
@@ -323,9 +326,9 @@ function PhraseSheet({ plan, onClose, onSaved }: { plan: PlanView | null; onClos
       {step === "check" && (
         <div className="flex flex-col gap-3">
           {asked.map((position, i) => (
-            <Field key={position} label={`Word ${position + 1}`}>
+            <Field key={position} label={t("account.word", { n: position + 1 })}>
               <Input
-                aria-label={`Word ${position + 1}`}
+                aria-label={t("account.word", { n: position + 1 })}
                 autoCapitalize="none"
                 autoComplete="off"
                 spellCheck={false}
@@ -353,6 +356,7 @@ function pickPositions(length: number, count: number): number[] {
 
 function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null; me: AgentPubKey; onClose: () => void; onSaved: () => Promise<void> }) {
   const { names, setName } = useGuardianNames();
+  const t = useT();
   const [guardians, setGuardians] = useState<AgentPubKey[]>(plan?.guardians ?? []);
   const [threshold, setThreshold] = useState(plan?.threshold || 1);
   const [adding, setAdding] = useState<AgentPubKey | "scan" | null>(null);
@@ -363,8 +367,8 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
 
   function scanned(key: AgentPubKey) {
     setError(null);
-    if (same(key, me)) return setError("That's your own code: scan your guardian's.");
-    if (guardians.some((g) => same(g, key))) return setError("They're already one of your guardians.");
+    if (same(key, me)) return setError(t("account.ownCodeGuardian"));
+    if (guardians.some((g) => same(g, key))) return setError(t("account.alreadyGuardian"));
     setAdding(key);
   }
 
@@ -394,25 +398,25 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
 
   if (adding !== null) {
     return (
-      <Sheet open onClose={() => setAdding(null)} title="Add a guardian" subtitle={adding === "scan" ? "Scan the account code on their phone (Profile → Account & recovery)." : "Check it's really them."}>
+      <Sheet open onClose={() => setAdding(null)} title={t("account.addGuardian")} subtitle={adding === "scan" ? t("account.scanGuardian") : t("account.checkThem")}>
         {adding === "scan" ? (
           <>
             {error && <p className="mb-3 text-xs text-red-600 dark:text-red-400">{error}</p>}
-            <AccountCodeReader onKey={scanned} prompt="Point at your guardian's account code" />
+            <AccountCodeReader onKey={scanned} prompt={t("account.pointGuardian")} />
           </>
         ) : (
           <div className="flex flex-col gap-4">
             <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
-              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">Fingerprint</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("code.fingerprint")}</p>
               <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(adding)}</p>
-              <p className="mt-1 text-xs text-ink-500">It should match the one on their screen.</p>
+              <p className="mt-1 text-xs text-ink-500">{t("account.shouldMatch")}</p>
             </div>
-            <Field label="What do you call them?">
-              <Input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Sam" />
+            <Field label={t("account.callThem")}>
+              <Input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} />
             </Field>
-            <p className="text-xs text-ink-400">Only you see this name.</p>
+            <p className="text-xs text-ink-400">{t("account.onlyYou")}</p>
             <Button disabled={!newName.trim()} onClick={add}>
-              Add {newName.trim() || "guardian"}
+              {t("account.addNamed", { name: newName.trim() || t("account.guardian") })}
             </Button>
           </div>
         )}
@@ -424,13 +428,13 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
     <Sheet
       open
       onClose={onClose}
-      title="Guardians"
-      subtitle="If you lose your device, enough of them vouch for your new one -- after you've spoken, so they know it's you."
+      title={t("account.guardians")}
+      subtitle={t("account.guardiansSubtitle")}
       footer={
         <>
           {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
           <Button className="w-full" loading={busy} onClick={save}>
-            Save guardians
+            {t("account.saveGuardians")}
           </Button>
         </>
       }
@@ -440,12 +444,12 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
           <li key={bytesToHex(g)} className="flex items-center gap-3 rounded-2xl border border-ink-100 p-3 dark:border-ink-800">
             <Users size={16} className="text-ink-400" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{names[encodeHashToBase64(g)] || "Guardian"}</span>
+              <span className="block truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{names[encodeHashToBase64(g)] || t("account.guardianCap")}</span>
               <span className="block font-mono text-xs text-ink-400">{keyFingerprint(g)}</span>
             </span>
             <button
               type="button"
-              aria-label="Remove"
+              aria-label={t("common.remove")}
               onClick={() => {
                 const next = guardians.filter((x) => !same(x, g));
                 setGuardians(next);
@@ -460,23 +464,23 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
       </ul>
       {guardians.length < MAX_GUARDIANS && (
         <Button variant="ghost" className="w-full" onClick={() => setAdding("scan")}>
-          <UserPlus size={16} /> Add a guardian
+          <UserPlus size={16} /> {t("account.addGuardian")}
         </Button>
       )}
       {guardians.length > 0 && (
-        <Field label="How many must vouch" className="mt-4">
+        <Field label={t("account.howMany")} className="mt-4">
           <Select value={threshold} onChange={(e) => setThreshold(Number(e.target.value))}>
             {guardians.map((_, i) => (
               <option key={i} value={i + 1}>
-                {i + 1} of {guardians.length}
-                {i + 1 > guardians.length / 2 ? "" : " (fewer than half: easier, less safe)"}
+                {t("account.ofCount", { n: i + 1, count: guardians.length })}
+                {i + 1 > guardians.length / 2 ? "" : ` ${t("account.fewerThanHalf")}`}
               </option>
             ))}
           </Select>
         </Field>
       )}
       <p className="mt-3 text-xs leading-relaxed text-ink-400">
-        Pick people who know you and use Relay. They can't touch your account on their own: only enough of them together, for a device you're recovering onto.
+        {t("account.pickPeople")}
       </p>
     </Sheet>
   );
@@ -484,6 +488,7 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
 
 function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
   const merchant = useSession((s) => !!s.profile?.roles.includes("Merchant"));
+  const t = useT();
   const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -511,14 +516,14 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
     <Sheet
       open
       onClose={onClose}
-      title="Move to a new device"
-      subtitle={successor ? "Check the fingerprint matches your new device." : "On your new device, open Relay and choose “I already have an account”, then “From my other device”. Scan the code it shows."}
+      title={t("account.move")}
+      subtitle={successor ? t("account.checkNewDevice") : t("account.moveHow")}
       footer={
         successor ? (
           <>
             {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
             <Button className="w-full" loading={busy} onClick={move}>
-              Move my account
+              {t("account.moveMine")}
             </Button>
           </>
         ) : undefined
@@ -527,20 +532,20 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
       {successor ? (
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">New device</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("account.newDevice")}</p>
             <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(successor)}</p>
           </div>
           <ul className="flex flex-col gap-2 text-sm text-ink-600 dark:text-ink-300">
-            <li>Your balance, name, phone, saved addresses and favourites go to the new device, sealed so only it can read them.</li>
-            <li>Your ratings and history follow you.</li>
-            {merchant && <li>Your stores move too: their listings close here, and you list them again from your new phone.</li>}
-            <li className="font-semibold">This device stops working for Relay once you move. Finish any orders in progress first.</li>
+            <li>{t("account.moveWhat1")}</li>
+            <li>{t("account.moveWhat2")}</li>
+            {merchant && <li>{t("account.moveStores")}</li>}
+            <li className="font-semibold">{t("account.moveStops")}</li>
           </ul>
         </div>
       ) : (
         <AccountCodeReader
-          prompt="Point at the code on your new device"
-          onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError("That's this device's own code.") : setSuccessor(key))}
+          prompt={t("account.pointNewDevice")}
+          onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError(t("account.thisDeviceCode")) : setSuccessor(key))}
         />
       )}
       {!successor && error && <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
@@ -551,6 +556,7 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
 function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: AgentPubKey; onClose: () => void }) {
   const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
   const [wardHex, setWardHex] = useState(wards.length === 1 ? bytesToHex(wards[0].account) : "");
+  const t = useT();
   const [spoken, setSpoken] = useState(false);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -573,8 +579,8 @@ function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: Agent
 
   if (done) {
     return (
-      <Sheet open onClose={onClose} title="You've vouched" subtitle="Their new device picks it up on its own.">
-        <p className="text-sm text-ink-600 dark:text-ink-300">Once enough of their guardians have vouched, their account moves to the new device.</p>
+      <Sheet open onClose={onClose} title={t("account.vouched")} subtitle={t("account.vouchedSubtitle")}>
+        <p className="text-sm text-ink-600 dark:text-ink-300">{t("account.vouchedDetail")}</p>
       </Sheet>
     );
   }
@@ -583,14 +589,14 @@ function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: Agent
     <Sheet
       open
       onClose={onClose}
-      title="Help someone recover"
-      subtitle={successor ? "Only vouch once you're sure it's them." : "Ask them for the code on their new device's screen."}
+      title={t("account.help")}
+      subtitle={successor ? t("account.onlyIfSure") : t("account.askCode")}
       footer={
         successor ? (
           <>
             {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
             <Button className="w-full" loading={busy} disabled={!ward || !spoken} onClick={vouchForThem}>
-              Vouch for this device
+              {t("account.vouch")}
             </Button>
           </>
         ) : undefined
@@ -599,9 +605,9 @@ function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: Agent
       {successor ? (
         <div className="flex flex-col gap-4">
           {wards.length > 1 && (
-            <Field label="Who is recovering?">
+            <Field label={t("account.whoRecovering")}>
               <Select value={wardHex} onChange={(e) => setWardHex(e.target.value)}>
-                <option value="">Choose…</option>
+                <option value="">{t("account.choose")}</option>
                 {wards.map((w) => (
                   <WardOption key={bytesToHex(w.account)} ward={w} />
                 ))}
@@ -609,20 +615,20 @@ function HelpRecoverSheet({ wards, me, onClose }: { wards: PlanView[]; me: Agent
             </Field>
           )}
           <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">Their new device</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("account.theirDevice")}</p>
             <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(successor)}</p>
-            <p className="mt-1 text-xs text-ink-500">Ask them to read out the fingerprint on their screen. It should match.</p>
+            <p className="mt-1 text-xs text-ink-500">{t("account.readFingerprint")}</p>
           </div>
           <label className="flex items-start gap-2 text-sm text-ink-600 dark:text-ink-300">
             <Checkbox checked={spoken} onChange={(e) => setSpoken(e.target.checked)} className="mt-0.5" />
-            I've spoken to them myself, in person or by a call I know is them, and they asked me to vouch for this device.
+            {t("account.spoken")}
           </label>
-          <p className="text-xs text-ink-400">Someone pretending to be them could take their account and its balance. A message or email alone isn't enough.</p>
+          <p className="text-xs text-ink-400">{t("account.impersonation")}</p>
         </div>
       ) : (
         <AccountCodeReader
-          prompt="Point at the code on their new device"
-          onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError("That's your own code.") : setSuccessor(key))}
+          prompt={t("account.pointTheirDevice")}
+          onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError(t("account.ownCode")) : setSuccessor(key))}
         />
       )}
       {!successor && error && <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
@@ -639,6 +645,7 @@ function WardOption({ ward }: { ward: PlanView }) {
 /// seals what's private to it, records the move and closes its chain here.
 /// The issuer carries the balance over.
 function UpgradeSheet({ me, next, onClose }: { me: AgentPubKey; next: { network: Uint8Array; issuer: AgentPubKey }; onClose: () => void }) {
+  const t = useT();
   const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -665,14 +672,14 @@ function UpgradeSheet({ me, next, onClose }: { me: AgentPubKey; next: { network:
     <Sheet
       open
       onClose={onClose}
-      title="Move to the new version"
-      subtitle={successor ? "Check the fingerprint matches the new version." : "Install the new version of Relay, open it, choose “I already have an account”, then “From the previous version”. Scan the code it shows."}
+      title={t("account.upgradeTitle")}
+      subtitle={successor ? t("account.checkNewVersion") : t("account.upgradeHow")}
       footer={
         successor ? (
           <>
             {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
             <Button className="w-full" loading={busy} onClick={move}>
-              Move my account
+              {t("account.moveMine")}
             </Button>
           </>
         ) : undefined
@@ -681,17 +688,17 @@ function UpgradeSheet({ me, next, onClose }: { me: AgentPubKey; next: { network:
       {successor ? (
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">New version</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("account.newVersion")}</p>
             <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(successor)}</p>
           </div>
           <ul className="flex flex-col gap-2 text-sm text-ink-600 dark:text-ink-300">
-            <li>Your balance is carried over by the network's issuer within a few minutes.</li>
-            <li>Your name, phone, saved addresses, favourites, stores and ratings come with you.</li>
-            <li className="font-semibold">This version stops working for your account once you move. Finish any orders in progress first.</li>
+            <li>{t("account.upgradeWhat1")}</li>
+            <li>{t("account.upgradeWhat2")}</li>
+            <li className="font-semibold">{t("account.upgradeStops")}</li>
           </ul>
         </div>
       ) : (
-        <AccountCodeReader prompt="Point at the code in the new version" onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError("That's this version's own code.") : setSuccessor(key))} />
+        <AccountCodeReader prompt={t("account.pointNewVersion")} onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError(t("account.thisVersionCode")) : setSuccessor(key))} />
       )}
       {!successor && error && <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
     </Sheet>
