@@ -19,10 +19,11 @@ import { Button, Card, Textarea } from "./ui";
 import { PhotoInput } from "./PhotoInput";
 import { Sheet } from "./Sheet";
 import { OrderAppeal } from "./OrderAppeal";
+import { t as translate, useT, type MessageKey } from "../i18n";
 
 type Role = "customer" | "store";
 
-const KIND_LABEL: Record<IssueKind, string> = { Missing: "Missing", Wrong: "Wrong item" };
+const KIND_LABEL: Record<IssueKind, MessageKey> = { Missing: "issues.missing", Wrong: "issues.wrong" };
 
 export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Role }) {
   const hex = bytesToHex(orderRef);
@@ -89,20 +90,18 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
 
 function headline(role: Role, decisions: OrderDecisions, count: number, settling: boolean): string {
   const refund = decisions.refund;
-  if (refund !== null) return refund > 0 ? `${formatCents(refund)} refunded for missing or wrong items` : role === "store" ? "Settled: no refund" : "The store declined your report";
-  if (settling) return "Settling reports";
-  if (role === "store") return count === 1 ? "The customer reported a problem" : `The customer reported ${count} problems`;
-  return count ? "Your report is in" : "Missing or wrong items?";
+  if (refund !== null) return refund > 0 ? translate("issues.refunded", { amount: formatCents(refund) }) : role === "store" ? translate("issues.noRefund") : translate("issues.declined");
+  if (settling) return translate("issues.settling");
+  if (role === "store") return translate("issues.storeReported", { count });
+  return count ? translate("issues.reportIn") : translate("issues.ask");
 }
 
 function subline(role: Role, decisions: OrderDecisions, settling: boolean): string {
-  if (decisions.refund !== null) return role === "customer" ? "Returned to your balance." : "The rest of the food's payment is yours.";
-  if (settling) return "The report window has closed. Refunds are issued within a few minutes.";
+  if (decisions.refund !== null) return role === "customer" ? translate("issues.returned") : translate("issues.restYours");
+  if (settling) return translate("issues.windowClosed");
   const until = decisions.reports_until !== null ? formatDeadline(decisions.reports_until) : null;
-  if (role === "store") return `Accept or decline each report${until ? ` by ${until}` : ""}. Your answer is final; reports you don't answer are refunded.`;
-  return until
-    ? `You can report problems until ${until}. The store reviews each report and has the final say; refunds are issued when that window closes.`
-    : "You can report problems for a while after your order arrives. The store reviews each report and has the final say.";
+  if (role === "store") return until ? translate("issues.storeAnswerBy", { time: until }) : translate("issues.storeAnswer");
+  return until ? translate("issues.reportUntil", { time: until }) : translate("issues.reportForAWhile");
 }
 
 function StorePayoutNote({ decisions, orderTotal }: { decisions: OrderDecisions; orderTotal: number }) {
@@ -110,12 +109,13 @@ function StorePayoutNote({ decisions, orderTotal }: { decisions: OrderDecisions;
   return (
     <p className="mt-4 flex items-center gap-2 rounded-2xl bg-ink-50 px-4 py-3 text-xs text-ink-600 dark:bg-ink-800/60 dark:text-ink-300">
       <Clock3 size={14} className="shrink-0 text-ink-400" />
-      {formatCents(orderTotal)} for the food is released at {formatDeadline(decisions.reports_until)}, once the customer's window to report problems closes.
+      {translate("issues.payoutAt", { amount: formatCents(orderTotal), time: formatDeadline(decisions.reports_until) })}
     </p>
   );
 }
 
 function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueView; items: IssueItems; role: Role; canAnswer: boolean; onAnswered: () => Promise<void> }) {
+  const t = useT();
   const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
   const [confirmDecline, setConfirmDecline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +146,7 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
               <span className="font-semibold tabular-nums text-ink-900 dark:text-ink-50">{line.quantity}×</span>
               <span className="truncate text-ink-800 dark:text-ink-100">{nameOf(line.line)}</span>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${line.kind === "Missing" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200" : "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-200"}`}>
-                {KIND_LABEL[line.kind]}
+                {t(KIND_LABEL[line.kind])}
               </span>
             </li>
           ))}
@@ -156,7 +156,7 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
 
       {issue.evidence && (issue.evidence.note || issue.evidence.photo_data_uri) && (
         <div className="mt-3 flex gap-3 rounded-xl bg-ink-50 p-3 dark:bg-ink-800/60">
-          {issue.evidence.photo_data_uri && <img src={issue.evidence.photo_data_uri} alt="Photo from the customer" className="h-16 w-16 shrink-0 rounded-lg object-cover" />}
+          {issue.evidence.photo_data_uri && <img src={issue.evidence.photo_data_uri} alt={t("issues.customerPhoto")} className="h-16 w-16 shrink-0 rounded-lg object-cover" />}
           {issue.evidence.note && <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">“{issue.evidence.note}”</p>}
         </div>
       )}
@@ -170,23 +170,23 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
         <AnimatePresence mode="wait" initial={false}>
           {confirmDecline ? (
             <motion.div key="confirm" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-3 rounded-xl border border-ink-200 p-3 dark:border-ink-700">
-              <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">The customer won't be refunded for this, and your answer is final. Decline only if the order left your store complete.</p>
+              <p className="text-xs leading-relaxed text-ink-600 dark:text-ink-300">{t("issues.declineWarning")}</p>
               <div className="mt-3 flex gap-2">
                 <Button variant="ghost" className="flex-1 py-2" onClick={() => setConfirmDecline(false)}>
-                  Back
+                  {t("common.back")}
                 </Button>
                 <Button variant="secondary" className="flex-1 py-2" loading={busy === "decline"} onClick={() => answer(false)}>
-                  Decline report
+                  {t("issues.declineReport")}
                 </Button>
               </div>
             </motion.div>
           ) : (
             <motion.div key="answer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-3 flex gap-2">
               <Button variant="ghost" className="flex-1 py-2" disabled={busy !== null} onClick={() => setConfirmDecline(true)}>
-                Decline
+                {t("issues.decline")}
               </Button>
               <Button className="flex-1 py-2" loading={busy === "accept"} disabled={busy !== null} onClick={() => answer(true)}>
-                Accept · refund {formatCents(issue.value)}
+                {t("issues.acceptRefund", { amount: formatCents(issue.value) })}
               </Button>
             </motion.div>
           )}
@@ -200,10 +200,10 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
 function StatusChip({ accepted, role }: { accepted: boolean | null; role: Role }) {
   const [Icon, label, tone] =
     accepted === true
-      ? [CheckCircle2, role === "store" ? "You accepted" : "Store accepted", "text-green-700 dark:text-green-300"]
+      ? [CheckCircle2, translate(role === "store" ? "issues.youAccepted" : "issues.storeAccepted"), "text-green-700 dark:text-green-300"]
       : accepted === false
-        ? [XCircle, role === "store" ? "You declined" : "The store declined this", "text-ink-600 dark:text-ink-300"]
-        : [Clock3, role === "store" ? "Waiting on your answer" : "Waiting on the store", "text-ink-500 dark:text-ink-400"];
+        ? [XCircle, translate(role === "store" ? "issues.youDeclined" : "issues.storeDeclined"), "text-ink-600 dark:text-ink-300"]
+        : [Clock3, translate(role === "store" ? "issues.waitingYou" : "issues.waitingStore"), "text-ink-500 dark:text-ink-400"];
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${tone}`}>
       <Icon size={14} /> {label}
@@ -232,6 +232,7 @@ function ReportIssueSheet({
   onReported: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Draft>({});
+  const t = useT();
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState("");
   const [busy, setBusy] = useState(false);
@@ -276,13 +277,13 @@ function ReportIssueSheet({
     <Sheet
       open={open}
       onClose={onClose}
-      title="What went wrong?"
-      subtitle="Choose the items that were missing or wrong."
+      title={t("issues.sheetTitle")}
+      subtitle={t("issues.sheetSubtitle")}
       footer={
         <>
           {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
           <Button className="w-full" disabled={claimed.length === 0} loading={busy} onClick={submit}>
-            {claimed.length ? `Report · ${formatCents(estimate)} refund` : "Choose an item"}
+            {claimed.length ? t("issues.reportButton", { amount: formatCents(estimate) }) : t("issues.chooseItem")}
           </Button>
         </>
       }
@@ -299,7 +300,8 @@ function ReportIssueSheet({
                   <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{line.name}</p>
                   {line.choices.length > 0 && <p className="truncate text-xs text-ink-500">{line.choices.join(", ")}</p>}
                   <p className="text-xs text-ink-400">
-                    {line.quantity} ordered · {formatCents(line.unit_price_cents)} each{max < line.quantity && ` · ${line.quantity - max} reported`}
+                    {t("issues.ordered", { count: line.quantity })} · {t("cart.each", { price: formatCents(line.unit_price_cents) })}
+                    {max < line.quantity && ` · ${t("issues.alreadyReported", { count: line.quantity - max })}`}
                   </p>
                 </div>
                 <Stepper value={units} max={Math.max(0, max)} onChange={(q) => setUnits(position, q)} />
@@ -317,7 +319,7 @@ function ReportIssueSheet({
                           }`}
                         >
                           {kind === "Missing" ? <AlertCircle size={13} /> : <Repeat2 size={13} />}
-                          {kind === "Missing" ? "Missing" : "Wrong item"}
+                          {t(KIND_LABEL[kind])}
                         </button>
                       ))}
                     </div>
@@ -330,30 +332,31 @@ function ReportIssueSheet({
       </ul>
 
       <div className="mt-5">
-        <p className="mb-2 text-xs font-semibold text-ink-500">Tell the store more (optional)</p>
-        <Textarea value={note} maxLength={MAX_NOTE_CHARS} rows={3} placeholder="e.g. Got a chicken sandwich instead of the veggie one." onChange={(e) => setNote(e.target.value)} />
+        <p className="mb-2 text-xs font-semibold text-ink-500">{t("issues.tellMore")}</p>
+        <Textarea value={note} maxLength={MAX_NOTE_CHARS} rows={3} placeholder={t("issues.notePlaceholder")} onChange={(e) => setNote(e.target.value)} />
       </div>
       <div className="mt-4">
-        <p className="mb-2 text-xs font-semibold text-ink-500">Add a photo (optional, helps if the store disagrees)</p>
+        <p className="mb-2 text-xs font-semibold text-ink-500">{t("issues.addPhoto")}</p>
         <PhotoInput value={photo} onChange={setPhoto} shape="banner" className="w-full" />
       </div>
       <p className="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-ink-400">
         <ShieldCheck size={13} className="mt-0.5 shrink-0" />
-        Only the store can see your note and photo. If it accepts your report or doesn't answer, the refund is issued when your window closes.
+        {t("issues.privacy")}
       </p>
     </Sheet>
   );
 }
 
 function Stepper({ value, max, onChange }: { value: number; max: number; onChange: (value: number) => void }) {
+  const t = useT();
   const button = "grid h-8 w-8 place-items-center rounded-full transition disabled:opacity-30";
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <button aria-label="Fewer" className={`${button} bg-ink-100 text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200`} disabled={value === 0} onClick={() => onChange(value - 1)}>
+      <button aria-label={t("item.fewer")} className={`${button} bg-ink-100 text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200`} disabled={value === 0} onClick={() => onChange(value - 1)}>
         <Minus size={15} />
       </button>
       <span className="w-5 text-center text-sm font-bold tabular-nums text-ink-900 dark:text-ink-50">{value}</span>
-      <button aria-label="More" className={`${button} bg-relay-500 text-white hover:bg-relay-600`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+      <button aria-label={t("item.more")} className={`${button} bg-relay-500 text-white hover:bg-relay-600`} disabled={value >= max} onClick={() => onChange(value + 1)}>
         <Plus size={15} />
       </button>
     </div>

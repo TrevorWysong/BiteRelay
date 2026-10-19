@@ -17,6 +17,7 @@ import { cardFormSecret, payWithSavedCard, publishableKey, savedCard, type Payab
 import { POLL } from "../lib/poll";
 import { usePolling, useResource } from "../lib/useResource";
 import { collectIncoming } from "../lib/wallet";
+import { t as translate, useT } from "../i18n";
 
 /// How long to wait on the funds before saying they'll come shortly.
 const LANDING_PATIENCE_MS = 60_000;
@@ -51,6 +52,7 @@ export function CardPaySheet({
   /// The funds are in the balance.
   onPaid: () => void | Promise<void>;
 }) {
+  const t = useT();
   // What's being paid, fixed for the sheet's life: a parent re-reading its
   // data mustn't remount a card form someone's typing into.
   const [{ serviceUrl, issuerKey, amount }] = useState(() => ({
@@ -102,7 +104,7 @@ export function CardPaySheet({
       let destroy = () => {};
       (async () => {
         const stripe = await loadStripe(await publishableKey(serviceUrl));
-        if (!stripe) throw new Error("The card form couldn't load. Check your connection and try again.");
+        if (!stripe) throw new Error(t("card.loadFailed"));
         const from = await getBalance(agent);
         if (gone) return;
         const form = await stripe.initEmbeddedCheckout({
@@ -136,15 +138,15 @@ export function CardPaySheet({
           <>
             {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
             <Button className="w-full" loading={busy} onClick={payWithCard}>
-              Pay {formatCents(amount)} with {cardName(card.brand)} •••• {card.last4}
+              {t("card.payWith", { amount: formatCents(amount), card: `${cardName(card.brand)} •••• ${card.last4}` })}
             </Button>
             <button type="button" onClick={() => setStep({ kind: "form" })} className="mt-3 w-full text-center text-xs font-semibold text-ink-500 hover:text-ink-700 dark:hover:text-ink-300">
-              Use another card
+              {t("card.another")}
             </button>
           </>
         ) : step.kind === "slow" ? (
           <Button variant="ghost" className="w-full" onClick={onClose}>
-            Close
+            {t("common.close")}
           </Button>
         ) : undefined
       }
@@ -152,9 +154,9 @@ export function CardPaySheet({
       {waiting ? (
         <div className="flex flex-col items-center py-8 text-center">
           {step.kind === "landing" ? <Loader2 size={28} className="animate-spin text-relay-500" /> : <CreditCard size={28} className="text-ink-400" />}
-          <p className="mt-3 text-sm font-semibold text-ink-900 dark:text-ink-50">{step.kind === "landing" ? `Adding ${formatCents(amount)} to your balance…` : "Your payment went through"}</p>
+          <p className="mt-3 text-sm font-semibold text-ink-900 dark:text-ink-50">{step.kind === "landing" ? t("card.adding", { amount: formatCents(amount) }) : t("card.wentThrough")}</p>
           <p className="mt-1 max-w-xs text-xs text-ink-500">
-            {step.kind === "landing" ? "This takes a few seconds." : "It's taking longer than usual to reach your balance. It will arrive on its own; you can close this."}
+            {step.kind === "landing" ? t("card.fewSeconds") : t("card.slow")}
           </p>
         </div>
       ) : step.kind === "form" || noSavedCard ? (
@@ -169,7 +171,7 @@ export function CardPaySheet({
             <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
               {cardName(card.brand)} •••• {card.last4}
             </p>
-            <p className="text-xs text-ink-400">Saved with {issuer.profile.name}</p>
+            <p className="text-xs text-ink-400">{t("card.savedWith", { issuer: issuer.profile.name })}</p>
           </div>
         </div>
       ) : (
@@ -190,5 +192,5 @@ function cardName(brand: string): string {
     diners: "Diners",
     unionpay: "UnionPay",
   };
-  return names[brand] ?? "Card";
+  return names[brand] ?? translate("card.generic");
 }
