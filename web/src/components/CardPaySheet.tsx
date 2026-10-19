@@ -104,7 +104,7 @@ export function CardPaySheet({
       let destroy = () => {};
       (async () => {
         const stripe = await loadStripe(await publishableKey(serviceUrl));
-        if (!stripe) throw new Error(t("card.loadFailed"));
+        if (!stripe) throw new Error(translate("card.loadFailed"));
         const from = await getBalance(agent);
         if (gone) return;
         const form = await stripe.initEmbeddedCheckout({

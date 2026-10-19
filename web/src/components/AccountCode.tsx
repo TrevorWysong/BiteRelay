@@ -10,7 +10,7 @@ import { accountCode, keyFingerprint, readAccountCode } from "../lib/accountMove
 import { QrSvg } from "./HandoverCode";
 import { QrScanner } from "./QrScanner";
 import { Button, Input } from "./ui";
-import { useT } from "../i18n";
+import { t as translate, useT } from "../i18n";
 
 export function AccountCode({ agent, note }: { agent: AgentPubKey; note: string }) {
   const t = useT();
@@ -53,7 +53,7 @@ export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey)
     (scanned: string) => {
       const key = readAccountCode(scanned);
       if (key) onKey(key);
-      else setProblem(t("code.notAccount"));
+      else setProblem(translate("code.notAccount"));
     },
     [onKey],
   );
