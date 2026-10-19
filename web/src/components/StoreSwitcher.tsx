@@ -5,6 +5,7 @@ import { Check, ChevronDown, Plus, Store } from "lucide-react";
 import clsx from "clsx";
 import { useActiveStore, useMerchantStores } from "../store/merchantStores";
 import { formatCatalogAddress } from "../lib/format";
+import { useT } from "../i18n";
 
 /// The Uber Eats Manager / DoorDash Merchant Portal-style store picker at
 /// the top of a merchant's per-store screens: shows which store you're
@@ -12,6 +13,7 @@ import { formatCatalogAddress } from "../lib/format";
 /// store gets added. Inline (an expanding card) rather than a fixed sheet,
 /// so none of AddressSwitcher's portal workaround is needed here.
 export function StoreSwitcher() {
+  const t = useT();
   const navigate = useNavigate();
   const stores = useMerchantStores((s) => s.stores) ?? [];
   const setActive = useMerchantStores((s) => s.setActive);
@@ -27,7 +29,7 @@ export function StoreSwitcher() {
           <Store size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">{stores.length > 1 ? `Store · ${stores.length} total` : "Store"}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">{stores.length > 1 ? t("switcher.many", { count: stores.length }) : t("role.Merchant")}</p>
           <p className="truncate text-sm font-bold text-ink-900 dark:text-ink-50">{active.catalog.business_name}</p>
         </div>
         <motion.span animate={{ rotate: open ? 180 : 0 }} className="text-ink-400">
@@ -50,10 +52,10 @@ export function StoreSwitcher() {
                   }}
                   className={clsx("flex w-full items-center gap-3 px-4 py-3 text-left transition", selected ? "bg-relay-50 dark:bg-relay-900/20" : "hover:bg-ink-50 dark:hover:bg-ink-800/60")}
                 >
-                  <span className={clsx("h-2 w-2 shrink-0 rounded-full", row.catalog.is_open ? "bg-presence-500" : "bg-ink-300 dark:bg-ink-600")} title={row.catalog.is_open ? "Open" : "Closed"} />
+                  <span className={clsx("h-2 w-2 shrink-0 rounded-full", row.catalog.is_open ? "bg-presence-500" : "bg-ink-300 dark:bg-ink-600")} title={row.catalog.is_open ? t("hours.open") : t("hours.closed")} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.catalog.business_name}</p>
-                    <p className="truncate text-xs text-ink-400">{address || (row.catalog.is_open ? "Open" : "Closed")}</p>
+                    <p className="truncate text-xs text-ink-400">{address || (row.catalog.is_open ? t("hours.open") : t("hours.closed"))}</p>
                   </div>
                   {selected && <Check size={16} className="shrink-0 text-relay-600" />}
                 </button>

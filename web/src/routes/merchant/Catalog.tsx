@@ -21,6 +21,7 @@ import { ChoicesSection, type GroupRow } from "./catalog/ChoicesSection";
 import { GoodieBagsSection } from "./catalog/GoodieBagsSection";
 import { StoreReviews } from "./catalog/StoreReviews";
 import type { MerchantCatalog as Catalog, ModifierGroup } from "../../holochain/types";
+import { useT } from "../../i18n";
 
 /// The Menu tab: everything about the *currently selected* store (see
 /// `StoreSwitcher`/`merchantStores.ts`). Each store renders as its own keyed
@@ -60,6 +61,7 @@ async function fetchStore(catalogRef: Uint8Array) {
 
 function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; openDetailsOnArrival: boolean }) {
   const loadStores = useMerchantStores((s) => s.load);
+  const t = useT();
   const catalogRef = hexToBytes(storeHex);
   const { data, reload } = useResource(`store:${storeHex}`, () => fetchStore(catalogRef));
   const { data: rating } = useResource(`store-rating:${storeHex}`, () => getRatingSummary({ Store: catalogRef }));
@@ -101,7 +103,7 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
             }}
             className="rounded-full px-3 py-1.5 text-xs font-semibold text-white"
           >
-            {catalog.is_open ? "Open" : "Closed"} · toggle
+            {catalog.is_open ? t("hours.open") : t("hours.closed")} · {t("catalog.toggle")}
           </motion.button>
         </motion.div>
         {avgRating !== null && rating && <StarRating value={avgRating} count={rating.count} />}

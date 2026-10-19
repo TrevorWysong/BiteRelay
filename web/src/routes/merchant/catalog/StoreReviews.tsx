@@ -6,6 +6,7 @@ import { useResource } from "../../../lib/useResource";
 import { Button, Card } from "../../../components/ui";
 import { StarRating } from "../../../components/StarRating";
 import type { Review, Timestamp } from "../../../holochain/types";
+import { useT } from "../../../i18n";
 
 interface ReviewFeed {
   reviews: Review[];
@@ -16,6 +17,7 @@ interface ReviewFeed {
 /// stores, and never their driving (see `reputation_integrity`).
 export function StoreReviews({ storeHex, catalogRef }: { storeHex: string; catalogRef: Uint8Array }) {
   const [loadingMore, setLoadingMore] = useState(false);
+  const t = useT();
   const { data, mutate } = useResource<ReviewFeed>(`store-reviews:${storeHex}`, async () => {
     const page = await getReviewsFor({ Store: catalogRef });
     return { reviews: page.reviews.map((r) => decodeEntry<Review>(r)), before: page.next_before };
@@ -36,7 +38,7 @@ export function StoreReviews({ storeHex, catalogRef }: { storeHex: string; catal
   return (
     <Card className="p-4">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <Star size={13} /> Reviews
+        <Star size={13} /> {t("store.reviews")}
       </p>
       <div className="flex flex-col gap-3">
         {/* One store review per order, so the order identifies it. */}
@@ -52,7 +54,7 @@ export function StoreReviews({ storeHex, catalogRef }: { storeHex: string; catal
       </div>
       {data.before !== null && (
         <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="mt-3 w-full py-2 text-xs">
-          Show older reviews
+          {t("store.olderReviews")}
         </Button>
       )}
     </Card>

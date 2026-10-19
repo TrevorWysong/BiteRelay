@@ -13,6 +13,7 @@ import { PhotoInput } from "../../../components/PhotoInput";
 import { MAX_DESCRIPTION_CHARS, MAX_ITEM_GROUPS, MAX_LABEL_CHARS, MAX_NAME_CHARS, type TaxRate } from "../../../holochain/types";
 import { Check } from "lucide-react";
 import type { GroupRow } from "./ChoicesSection";
+import { useT } from "../../../i18n";
 
 /// What the editor is open for: a new item, an existing one, or nothing.
 type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
@@ -20,6 +21,7 @@ type Editing = { kind: "new" } | { kind: "edit"; row: ItemRow } | null;
 /// The store's menu, grouped by category, with an add/edit form. Changes go
 /// through `onChanged`, which reloads the menu (the promo form reads it too).
 export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: { catalogRef: Uint8Array; items: ItemRow[]; groups: GroupRow[]; taxRates: TaxRate[]; onChanged: () => Promise<void> }) {
+  const t = useT();
   const [editing, setEditing] = useState<Editing>(null);
   const grouped = groupByCategory(items);
 
@@ -31,9 +33,9 @@ export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: 
   return (
     <>
       <motion.div variants={fadeSlideUp} className="mb-3 flex items-center justify-between">
-        <p className="text-xs font-bold uppercase tracking-wide text-ink-400">Menu</p>
+        <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{t("nav.menu")}</p>
         <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setEditing(editing ? null : { kind: "new" })}>
-          <Plus size={14} /> {editing ? "Cancel" : "Add item"}
+          <Plus size={14} /> {editing ? t("common.cancel") : t("menuEditor.add")}
         </Button>
       </motion.div>
 
@@ -57,7 +59,7 @@ export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: 
       </AnimatePresence>
 
       {items.length === 0 && !editing && (
-        <p className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">No menu items yet.</p>
+        <p className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">{t("menuEditor.none")}</p>
       )}
 
       <motion.div variants={staggerContainer} initial="hidden" animate="visible">
@@ -83,9 +85,9 @@ export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: 
                     onClick={() => toggleAvailable(row)}
                     className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${row.item.available ? "bg-presence-500/15 text-presence-600" : "bg-ink-100 text-ink-400"}`}
                   >
-                    {row.item.available ? "Available" : "Sold out"}
+                    {row.item.available ? t("menuEditor.available") : t("item.soldOut")}
                   </motion.button>
-                  <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={`Edit ${row.item.name}`}>
+                  <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={t("choicesEditor.edit", { name: row.item.name })}>
                     <Pencil size={14} />
                   </button>
                 </div>
@@ -113,6 +115,7 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
     age_restricted: row?.item.age_restricted ?? false,
   }));
   const minAge = useTerms().restricted_min_age;
+  const t = useT();
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -144,20 +147,20 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
       <div className="flex gap-3">
         <PhotoInput value={form.photo_data_uri} onChange={(v) => set({ photo_data_uri: v })} shape="circle" className="shrink-0" />
         <div className="flex flex-1 flex-col gap-2">
-          <Input maxLength={MAX_NAME_CHARS} value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Item name" />
+          <Input maxLength={MAX_NAME_CHARS} value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder={t("menuEditor.name")} />
           <Input type="number" min={0} step={0.5} value={form.price} onChange={(e) => set({ price: Number(e.target.value) })} placeholder="0.00" prefix={currencySymbol()} />
         </div>
       </div>
-      <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder="Description" />
-      <Input maxLength={MAX_LABEL_CHARS} value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category (e.g. Appetizers)" />
-      <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder="Dietary tags, comma separated (Vegetarian, Spicy)" />
+      <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder={t("storeSettings.description")} />
+      <Input maxLength={MAX_LABEL_CHARS} value={form.category} onChange={(e) => set({ category: e.target.value })} placeholder={t("menuEditor.category")} />
+      <Input value={form.dietary_tags} onChange={(e) => set({ dietary_tags: e.target.value })} placeholder={t("menuEditor.tags")} />
       {taxRates.length > 1 && (
-        <Field label="Tax">
+        <Field label={t("cart.tax")}>
           <Select value={form.tax_category} onChange={(e) => set({ tax_category: e.target.value })}>
             {taxRates.map((rate, i) => (
               <option key={rate.category} value={i === 0 ? "" : rate.category}>
                 {rate.category} · {percentLabel(rate.basis_points)}
-                {i === 0 ? " (default)" : ""}
+                {i === 0 ? ` ${t("menuEditor.default")}` : ""}
               </option>
             ))}
           </Select>
@@ -168,12 +171,12 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
       {(minAge || form.age_restricted) && (
         <label className="flex items-center gap-2 text-sm text-ink-600 dark:text-ink-300">
           <Checkbox checked={form.age_restricted} onChange={(e) => set({ age_restricted: e.target.checked })} />
-          Age-restricted (alcohol, tobacco): {minAge ?? "of age"}+, collected in person with ID
+          {t("menuEditor.ageRestricted", { age: minAge ?? 18 })}
         </label>
       )}
       {groups.length > 0 && (
         <div>
-          <p className="mb-1.5 text-xs font-semibold text-ink-500">Choices, in the order customers see them</p>
+          <p className="mb-1.5 text-xs font-semibold text-ink-500">{t("menuEditor.choices")}</p>
           <div className="flex flex-wrap gap-1.5">
             {groups.map((g) => {
               const hex = bytesToHex(g.hash);
@@ -196,7 +199,7 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
         </div>
       )}
       <Button loading={saving} disabled={!form.name.trim()} onClick={save} className="py-2 text-xs">
-        {row ? "Save changes" : "Add to menu"}
+        {row ? t("menuEditor.save") : t("menuEditor.addToMenu")}
       </Button>
     </Card>
   );

@@ -12,6 +12,7 @@ import { describeError } from "../../lib/errors";
 import { MAX_NAME_CHARS } from "../../holochain/types";
 import { formatCents } from "../../lib/format";
 import { useTerms } from "../../store/network";
+import { useT } from "../../i18n";
 
 /// Publishing a storefront -- the same form whether it's a merchant's very
 /// first store (rendered inline by Catalog.tsx when they have none yet) or
@@ -20,6 +21,7 @@ import { useTerms } from "../../store/network";
 /// store: its own menu, promos, goodie bags, order queue and ratings.
 export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
   const stake = useTerms().store_listing_stake;
+  const t = useT();
   const navigate = useNavigate();
   const location = useSession((s) => s.location);
   const setLocation = useSession((s) => s.setLocation);
@@ -64,39 +66,37 @@ export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-4 pt-8">
       {!firstStore && (
         <button onClick={() => navigate(-1)} className="mb-4 flex items-center gap-1 text-xs font-semibold text-ink-400 hover:text-ink-700">
-          <ArrowLeft size={14} /> Back
+          <ArrowLeft size={14} /> {t("common.back")}
         </button>
       )}
       <div className="mb-5 flex flex-col items-center gap-2 text-center">
         <div className="grid h-12 w-12 place-items-center rounded-2xl bg-relay-100 dark:bg-relay-900/30 text-relay-600">
           <Store size={22} />
         </div>
-        <h1 className="text-lg font-black text-ink-900 dark:text-ink-50">{firstStore ? "Publish your storefront" : "Add another store"}</h1>
+        <h1 className="text-lg font-black text-ink-900 dark:text-ink-50">{firstStore ? t("newStore.first") : t("newStore.another")}</h1>
         <p className="text-xs text-ink-400">
-          {firstStore
-            ? "This creates your restaurant's storefront, visible to customers near your current location right away."
-            : "A separate storefront with its own menu, orders and ratings. You can switch between stores at any time."}
+          {firstStore ? t("newStore.firstDetail") : t("newStore.anotherDetail")}
         </p>
       </div>
       <Card className="flex flex-col gap-3 p-5">
-        <Field label="Business name">
-          <Input maxLength={MAX_NAME_CHARS} value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder={firstStore ? "Cara's Kitchen" : "Cara's Kitchen – Downtown"} />
+        <Field label={t("newStore.name")}>
+          <Input maxLength={MAX_NAME_CHARS} value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder={firstStore ? t("newStore.namePlaceholder") : t("newStore.namePlaceholderAnother")} />
         </Field>
         <SplitAddressFields
           point={pickupLocation}
           onPointChange={setPickupLocation}
           address={{ street: addressDraft.address_street, city: addressDraft.address_city, state: addressDraft.address_state, zip: addressDraft.address_zip }}
           onAddressChange={(a) => setAddressDraft({ address_street: a.street, address_city: a.city, address_state: a.state, address_zip: a.zip })}
-          streetLabel="Pickup location"
+          streetLabel={t("newStore.pickupLocation")}
         />
         {stake > 0 && (
           <p className="text-xs leading-relaxed text-ink-400">
-            Listing a store sets aside a {formatCents(stake)} deposit from your balance, returned when you close it. It keeps the neighbourhood's listings real.
+            {t("newStore.stake", { amount: formatCents(stake) })}
           </p>
         )}
         {error && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</p>}
         <Button loading={publishing} disabled={!businessName.trim()} onClick={publish}>
-          {firstStore ? "Publish catalog" : "Publish store"}
+          {firstStore ? t("newStore.publishFirst") : t("newStore.publish")}
         </Button>
       </Card>
     </motion.div>
