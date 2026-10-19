@@ -9,6 +9,7 @@ import { useResource } from "../../lib/useResource";
 import { Card, Skeleton, StatNumber } from "../../components/ui";
 import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { EarningsReport } from "./EarningsReport";
 
 export function Earnings() {
   const me = myAgentPubKey();
@@ -37,6 +38,10 @@ export function Earnings() {
             <ArrowUpRight size={14} /> Cash out
           </Link>
         </Card>
+      </motion.div>
+
+      <motion.div variants={fadeSlideUp}>
+        <EarningsReport meHex={meHex} />
       </motion.div>
 
       <motion.p variants={fadeSlideUp} className="mb-4 rounded-xl bg-ink-100/60 dark:bg-ink-800/60 px-4 py-3 text-xs text-ink-500 dark:text-ink-400">
