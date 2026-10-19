@@ -25,6 +25,7 @@ import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS, payoutSetupU
 import { useSession } from "../store/session";
 import { useCustomerSettings } from "../store/roleSettings";
 import { useTerms } from "../store/network";
+import { appLocale, useT } from "../i18n";
 
 interface WalletData {
   balance: number;
@@ -42,6 +43,7 @@ async function fetchWallet(agent: Uint8Array): Promise<WalletData> {
 
 export function Wallet() {
   const { agentPubKey, profile } = useSession();
+  const t = useT();
   const hex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data, reload } = useResource(hex && `wallet:${hex}`, () => fetchWallet(agentPubKey!), { pollMs: POLL.unsignalled });
   const [cashingOut, setCashingOut] = useState(false);
@@ -59,7 +61,7 @@ export function Wallet() {
       </div>
     );
   }
-  const issuerName = (issuer: Uint8Array) => data.issuers.find((i) => bytesToHex(i.issuer) === bytesToHex(issuer))?.profile?.name ?? "An issuer";
+  const issuerName = (issuer: Uint8Array) => data.issuers.find((i) => bytesToHex(i.issuer) === bytesToHex(issuer))?.profile?.name ?? t("wallet.anIssuer");
   const available = Math.max(0, data.balance);
   const canCashOut = data.issuers.length > 0 && available >= terms.min_redemption_cents;
   const payable = data.issuers.filter(isPayable);
@@ -67,7 +69,7 @@ export function Wallet() {
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
       <motion.h1 variants={fadeSlideUp} className="mb-4 text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">
-        Wallet
+        {t("wallet.title")}
       </motion.h1>
 
       <motion.div variants={fadeSlideUp}>
@@ -77,28 +79,28 @@ export function Wallet() {
               <WalletIcon size={20} />
             </span>
             <div>
-              <p className="text-xs text-ink-400">Balance</p>
+              <p className="text-xs text-ink-400">{t("wallet.balance")}</p>
               <StatNumber className="text-3xl" tone={data.balance < 0 ? "danger" : "default"}>
                 {formatCents(data.balance)}
               </StatNumber>
             </div>
           </div>
-          {data.balance < 0 && <p className="mt-3 text-xs text-ink-500">This network lets your balance run below zero; you'll need to add funds before you can cash out.</p>}
+          {data.balance < 0 && <p className="mt-3 text-xs text-ink-500">{t("wallet.belowZero")}</p>}
           <Button className="mt-4 w-full" disabled={!canCashOut} onClick={() => setCashingOut(true)}>
-            <ArrowUpRight size={16} /> Cash out
+            <ArrowUpRight size={16} /> {t("wallet.cashOut")}
           </Button>
           {!canCashOut && (
             <p className="mt-2 text-center text-xs text-ink-400">
-              {data.issuers.length === 0 ? "This network has no issuer to pay out through yet." : `You can cash out once you have ${formatCents(terms.min_redemption_cents)} or more.`}
+              {data.issuers.length === 0 ? t("wallet.noIssuerPayout") : t("wallet.minimum", { amount: formatCents(terms.min_redemption_cents) })}
             </p>
           )}
         </Card>
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="Cash-outs">
+        <Section title={t("wallet.cashOuts")}>
           {data.cashOuts.length === 0 ? (
-            <p className="p-4 text-sm text-ink-400">Nothing cashed out yet. Your earnings stay in your balance until you do.</p>
+            <p className="p-4 text-sm text-ink-400">{t("wallet.noCashOuts")}</p>
           ) : (
             <ul className="divide-y divide-ink-100 dark:divide-ink-800">
               {data.cashOuts.map((c) => (
@@ -110,9 +112,9 @@ export function Wallet() {
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
-        <Section title="Adding funds and payouts">
+        <Section title={t("wallet.issuers")}>
           {data.issuers.length === 0 ? (
-            <p className="p-4 text-sm text-ink-400">This network has no issuer yet.</p>
+            <p className="p-4 text-sm text-ink-400">{t("wallet.noIssuer")}</p>
           ) : (
             <ul className="divide-y divide-ink-100 dark:divide-ink-800">
               {data.issuers.map((i) => (
@@ -125,7 +127,7 @@ export function Wallet() {
 
       {payable.length > 0 && (
         <motion.div variants={fadeSlideUp}>
-          <Section title="Auto top-up">
+          <Section title={t("wallet.autoTopUp")}>
             <AutoTopUpRow issuer={payable[0]} agent={agentPubKey!} />
           </Section>
         </motion.div>
@@ -134,7 +136,7 @@ export function Wallet() {
       <motion.div variants={fadeSlideUp}>
         <Link to="/transparency" className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white p-4 dark:border-ink-800 dark:bg-ink-900">
           <ArrowDownToLine size={18} className="text-ink-400" />
-          <span className="flex-1 text-sm font-semibold text-ink-900 dark:text-ink-50">Every payment in and out</span>
+          <span className="flex-1 text-sm font-semibold text-ink-900 dark:text-ink-50">{t("wallet.everyPayment")}</span>
           <ChevronRight size={16} className="text-ink-300" />
         </Link>
       </motion.div>
@@ -174,6 +176,7 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const profile = issuer.profile;
+  const t = useT();
 
   async function setUpPayouts() {
     if (!profile?.service_url) return;
@@ -193,7 +196,7 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
       <div className="flex items-start gap-3">
         <Landmark size={18} className="mt-0.5 shrink-0 text-ink-400" />
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{profile?.name ?? "Unnamed issuer"}</p>
+          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{profile?.name ?? t("wallet.unnamedIssuer")}</p>
           {profile?.description && <p className="mt-0.5 text-xs leading-relaxed text-ink-500">{profile.description}</p>}
           {profile?.contact && <p className="mt-1 break-all text-xs text-ink-400">{profile.contact}</p>}
         </div>
@@ -201,10 +204,10 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
       {onAddFunds && (
         <div className="mt-3 flex gap-2">
           <Button className="flex-1 py-2 text-xs" onClick={onAddFunds}>
-            <Plus size={14} /> Add funds
+            <Plus size={14} /> {t("wallet.addFunds")}
           </Button>
           <Button variant="ghost" className="flex-1 py-2 text-xs" loading={busy} onClick={setUpPayouts}>
-            <Landmark size={14} /> Payout account
+            <Landmark size={14} /> {t("wallet.payoutAccount")}
           </Button>
         </div>
       )}
@@ -219,25 +222,26 @@ const TOP_UP_PRESETS = [2000, 5000, 10_000];
 /// Adding funds by card: an amount, then paying it in the app.
 function AddFundsSheet({ issuer, agent, onClose, onPaid }: { issuer: PayableIssuer; agent: Uint8Array; onClose: () => void; onPaid: () => Promise<void> }) {
   const [amount, setAmount] = useState("50.00");
+  const t = useT();
   const [paying, setPaying] = useState(false);
   const cents = toMinorUnits(Number(amount) || 0);
   const problem =
-    cents < MIN_CARD_PAYMENT_CENTS ? `Add ${formatCents(MIN_CARD_PAYMENT_CENTS)} or more.` : cents > MAX_CARD_PAYMENT_CENTS ? `Add up to ${formatCents(MAX_CARD_PAYMENT_CENTS)} at a time.` : null;
+    cents < MIN_CARD_PAYMENT_CENTS ? t("wallet.addAtLeast", { amount: formatCents(MIN_CARD_PAYMENT_CENTS) }) : cents > MAX_CARD_PAYMENT_CENTS ? t("wallet.addAtMost", { amount: formatCents(MAX_CARD_PAYMENT_CENTS) }) : null;
 
   if (paying) {
-    return <CardPaySheet issuer={issuer} agent={agent} amount={cents} title={`Add ${formatCents(cents)}`} subtitle={`Paid through ${issuer.profile.name}. No fee to add funds.`} onClose={onClose} onPaid={onPaid} />;
+    return <CardPaySheet issuer={issuer} agent={agent} amount={cents} title={t("wallet.addAmount", { amount: formatCents(cents) })} subtitle={t("wallet.paidThrough", { issuer: issuer.profile.name })} onClose={onClose} onPaid={onPaid} />;
   }
   return (
     <Sheet
       open
       onClose={onClose}
-      title="Add funds"
-      subtitle={`Pay by card through ${issuer.profile.name}. It's in your balance as soon as the payment goes through.`}
+      title={t("wallet.addFunds")}
+      subtitle={t("wallet.addSubtitle", { issuer: issuer.profile.name })}
       footer={
         <>
           {problem && amount !== "" && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{problem}</p>}
           <Button className="w-full" disabled={!!problem} onClick={() => setPaying(true)}>
-            Continue · {formatCents(cents)}
+            {t("common.continue")} · {formatCents(cents)}
           </Button>
         </>
       }
@@ -254,10 +258,10 @@ function AddFundsSheet({ issuer, agent, onClose, onPaid }: { issuer: PayableIssu
           </button>
         ))}
       </div>
-      <Field label="Amount">
+      <Field label={t("wallet.amount")}>
         <Input type="number" inputMode="decimal" min={0} step={0.01} value={amount} onChange={(e) => setAmount(e.target.value)} prefix={currencySymbol()} />
       </Field>
-      <p className="mt-3 text-xs text-ink-400">No fee to add funds. Whatever you don't spend can go back to your card when you cash out.</p>
+      <p className="mt-3 text-xs text-ink-400">{t("wallet.addNote")}</p>
     </Sheet>
   );
 }
@@ -270,6 +274,7 @@ const AUTO_TOP_UP_AMOUNTS = [2500, 5000, 10_000];
 function AutoTopUpRow({ issuer, agent }: { issuer: PayableIssuer; agent: Uint8Array }) {
   const hex = bytesToHex(agent);
   const setting = useCustomerSettings((s) => s.autoTopUps[hex]);
+  const t = useT();
   const setAutoTopUp = useCustomerSettings((s) => s.setAutoTopUp);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -281,7 +286,7 @@ function AutoTopUpRow({ issuer, agent }: { issuer: PayableIssuer; agent: Uint8Ar
     try {
       // It charges the card saved last time: there has to be one.
       if (!(await savedCard(issuer.profile.service_url, issuer.issuer, agent))) {
-        setError("Add funds by card once first -- that card is what auto top-up uses.");
+        setError(t("wallet.needCard"));
         return;
       }
       setAutoTopUp(hex, { issuer: bytesToHex(issuer.issuer), belowCents: AUTO_TOP_UP_BELOW[0], amountCents: AUTO_TOP_UP_AMOUNTS[0] });
@@ -297,14 +302,14 @@ function AutoTopUpRow({ issuer, agent }: { issuer: PayableIssuer; agent: Uint8Ar
       <div className="flex items-start gap-3">
         <RefreshCw size={18} className="mt-0.5 shrink-0 text-ink-400" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">Top up automatically</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-500">When your balance runs low, this device adds funds with your saved card through {issuer.profile.name}.</p>
+          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("wallet.autoTitle")}</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-500">{t("wallet.autoDetail", { issuer: issuer.profile.name })}</p>
         </div>
-        <Switch checked={!!setting} disabled={busy} onChange={turn} label="Top up automatically" />
+        <Switch checked={!!setting} disabled={busy} onChange={turn} label={t("wallet.autoTitle")} />
       </div>
       {setting && (
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Field label="When below">
+          <Field label={t("wallet.whenBelow")}>
             <Select value={setting.belowCents} onChange={(e) => setAutoTopUp(hex, { ...setting, belowCents: Number(e.target.value) })}>
               {AUTO_TOP_UP_BELOW.map((c) => (
                 <option key={c} value={c}>
@@ -313,7 +318,7 @@ function AutoTopUpRow({ issuer, agent }: { issuer: PayableIssuer; agent: Uint8Ar
               ))}
             </Select>
           </Field>
-          <Field label="Add">
+          <Field label={t("wallet.add")}>
             <Select value={setting.amountCents} onChange={(e) => setAutoTopUp(hex, { ...setting, amountCents: Number(e.target.value) })}>
               {AUTO_TOP_UP_AMOUNTS.map((c) => (
                 <option key={c} value={c}>
@@ -340,8 +345,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function CashOutRow({ cashOut, issuerName }: { cashOut: CashOutView; issuerName: string }) {
   const { label, tone } = cashOutStatusLabel(cashOut.status);
+  const t = useT();
   const status = cashOut.status;
-  const detail = status === "Pending" ? null : "Paid" in status ? `Reference ${status.Paid.reference}` : "Declined" in status ? status.Declined.reason : status.Returned.reason;
+  const detail = status === "Pending" ? null : "Paid" in status ? t("wallet.reference", { reference: status.Paid.reference }) : "Declined" in status ? status.Declined.reason : status.Returned.reason;
   return (
     <li className="flex items-start gap-3 p-4">
       <Banknote size={18} className="mt-0.5 shrink-0 text-ink-400" />
@@ -351,7 +357,7 @@ function CashOutRow({ cashOut, issuerName }: { cashOut: CashOutView; issuerName:
           <Badge tone={tone}>{label}</Badge>
         </div>
         <p className="mt-0.5 text-xs text-ink-400">
-          {issuerName} · {new Date(cashOut.requested_at / 1000).toLocaleDateString([], { month: "short", day: "numeric" })}
+          {issuerName} · {new Date(cashOut.requested_at / 1000).toLocaleDateString(appLocale(), { month: "short", day: "numeric" })}
         </p>
         {detail && <p className="mt-1 break-all text-xs text-ink-500">{detail}</p>}
       </div>
@@ -375,6 +381,7 @@ function CashOutSheet({
   onDone: () => Promise<void>;
 }) {
   const [issuerHex, setIssuerHex] = useState(bytesToHex(issuers[0].issuer));
+  const t = useT();
   const [amount, setAmount] = useState(fromMinorUnits(available).toFixed(2));
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
@@ -384,7 +391,7 @@ function CashOutSheet({
   const profile = chosen.profile;
   const cents = toMinorUnits(Number(amount) || 0);
   const least = Math.max(minimum, profile?.min_payout_cents ?? 0);
-  const problem = cents < least ? `Cash out ${formatCents(least)} or more.` : cents > available ? `You have ${formatCents(available)} to cash out.` : null;
+  const problem = cents < least ? t("wallet.cashOutAtLeast", { amount: formatCents(least) }) : cents > available ? t("wallet.cashOutAtMost", { amount: formatCents(available) }) : null;
   const net = profile ? payoutAfterFees(profile, cents) : cents;
 
   async function submit() {
@@ -405,19 +412,19 @@ function CashOutSheet({
     <Sheet
       open
       onClose={onClose}
-      title="Cash out"
-      subtitle="Your issuer pays it to your payout account -- or, without one, refunds it to the card you paid with."
+      title={t("wallet.cashOut")}
+      subtitle={t("wallet.cashOutSubtitle")}
       footer={
         <>
           {(error || problem) && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error ?? problem}</p>}
           <Button className="w-full" disabled={!!problem} loading={busy} onClick={submit}>
-            Cash out {formatCents(cents)}
+            {t("wallet.cashOutAmount", { amount: formatCents(cents) })}
           </Button>
         </>
       }
     >
       {issuers.length > 1 && (
-        <div role="radiogroup" aria-label="Pay out through" className="mb-4 flex flex-col gap-2">
+        <div role="radiogroup" aria-label={t("wallet.payOutThrough")} className="mb-4 flex flex-col gap-2">
           {issuers.map((i) => {
             const hex = bytesToHex(i.issuer);
             const selected = hex === issuerHex;
@@ -430,52 +437,52 @@ function CashOutSheet({
                 onClick={() => setIssuerHex(hex)}
                 className={`rounded-2xl border p-3 text-left transition ${selected ? "border-relay-500 bg-relay-50/50 dark:bg-relay-900/10" : "border-ink-100 dark:border-ink-800"}`}
               >
-                <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{i.profile?.name ?? "Unnamed issuer"}</p>
-                {i.profile && <p className="text-xs text-ink-500">{feeLabel(i.profile, formatCents)} · usually {i.profile.payout_days} day{i.profile.payout_days === 1 ? "" : "s"}</p>}
+                <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{i.profile?.name ?? t("wallet.unnamedIssuer")}</p>
+                {i.profile && <p className="text-xs text-ink-500">{feeLabel(i.profile, formatCents)} · {t("wallet.usuallyDays", { count: i.profile.payout_days })}</p>}
               </button>
             );
           })}
         </div>
       )}
 
-      <Field label="Amount">
+      <Field label={t("wallet.amount")}>
         <div className="flex gap-2">
           <div className="flex-1">
             <Input type="number" inputMode="decimal" min={0} step={0.01} value={amount} onChange={(e) => setAmount(e.target.value)} prefix={currencySymbol()} />
           </div>
           <Button variant="ghost" className="px-3 py-2 text-xs" onClick={() => setAmount(fromMinorUnits(available).toFixed(2))}>
-            All {formatCents(available)}
+            {t("wallet.all", { amount: formatCents(available) })}
           </Button>
         </div>
       </Field>
 
       <div className="mt-4 rounded-2xl bg-ink-50 p-4 dark:bg-ink-800/60">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-ink-500">{profile ? feeLabel(profile, formatCents) : "Fee"}</span>
+          <span className="text-ink-500">{profile ? feeLabel(profile, formatCents) : t("wallet.feeLabel")}</span>
           <span className="tabular-nums text-ink-700 dark:text-ink-200">{formatCents(cents - net)}</span>
         </div>
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-sm font-semibold text-ink-900 dark:text-ink-50">You'll receive</span>
+          <span className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("wallet.receive")}</span>
           <StatNumber className="text-lg">{formatCents(net)}</StatNumber>
         </div>
         {profile && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-400">
-            <Clock3 size={12} /> Usually arrives within {profile.payout_days} day{profile.payout_days === 1 ? "" : "s"}, from {profile.name}.
+            <Clock3 size={12} /> {t("wallet.arrivesWithin", { count: profile.payout_days, issuer: profile.name })}
           </p>
         )}
       </div>
 
       <div className="mt-4">
         <div className="mb-1 flex items-center gap-1">
-          <span className="text-xs font-semibold text-ink-500">Payout details (optional)</span>
-          <InfoTip label="Who can read this">Sealed so only {profile?.name ?? "the issuer"} can read it. Most people set up their payout account with the issuer once and leave this empty.</InfoTip>
+          <span className="text-xs font-semibold text-ink-500">{t("wallet.details")}</span>
+          <InfoTip label={t("wallet.whoReads")}>{t("wallet.sealedTo", { issuer: profile?.name ?? t("wallet.theIssuer") })}</InfoTip>
         </div>
-        <Textarea rows={2} maxLength={MAX_NOTE_CHARS} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Only if your issuer asks for it" />
+        <Textarea rows={2} maxLength={MAX_NOTE_CHARS} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder={t("wallet.detailsPlaceholder")} />
       </div>
 
       {merchant && (
         <p className="mt-4 text-xs leading-relaxed text-ink-500">
-          Your stores set aside each driver's fee from this balance when they check a driver in. Keep enough for your next orders, or stores can't accept deliveries.
+          {t("wallet.storeNote")}
         </p>
       )}
     </Sheet>
