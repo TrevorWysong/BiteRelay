@@ -28,10 +28,12 @@ import { POLL } from "../lib/poll";
 import { usePolling, useResource } from "../lib/useResource";
 import { useSession } from "../store/session";
 import { remember, rememberedMethod, type Method } from "../lib/restoring";
+import { t as translate, useT } from "../i18n";
 
 
 export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: string; onBack: () => void; onDone: () => void }) {
   const { agentPubKey, prepareNewDevice } = useSession();
+  const t = useT();
   const [method, setMethod] = useState<Method | null>(() => (agentPubKey ? rememberedMethod() : null));
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,23 +87,23 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
   return (
     <div>
       <button type="button" onClick={back} className="mb-3 flex items-center gap-1 text-xs font-semibold text-ink-500 hover:text-ink-700">
-        <ArrowLeft size={14} /> Back
+        <ArrowLeft size={14} /> {t("common.back")}
       </button>
       {!method || !agentPubKey ? (
         <>
-          <h2 className="mb-1 text-lg font-bold">Bring your account here</h2>
-          <p className="mb-4 text-sm text-ink-500">Your balance, ratings and history come with it.</p>
+          <h2 className="mb-1 text-lg font-bold">{t("restore.title")}</h2>
+          <p className="mb-4 text-sm text-ink-500">{t("restore.subtitle")}</p>
           <div className="flex flex-col gap-2">
             {hasPrevious && (
-              <MethodCard icon={<History size={18} />} title="From the previous version of Relay" blurb="Move your account to this new version." onClick={() => choose("previous")} disabled={preparing} />
+              <MethodCard icon={<History size={18} />} title={t("restore.previous")} blurb={t("restore.previousBlurb")} onClick={() => choose("previous")} disabled={preparing} />
             )}
-            <MethodCard icon={<Smartphone size={18} />} title="From my other device" blurb="It still works: scan a code with it." onClick={() => choose("device")} disabled={preparing} />
-            <MethodCard icon={<KeyRound size={18} />} title="With my recovery phrase" blurb="The twelve words you wrote down." onClick={() => choose("phrase")} disabled={preparing} />
-            <MethodCard icon={<HeartHandshake size={18} />} title="With my guardians" blurb="People you chose vouch for this device." onClick={() => choose("guardians")} disabled={preparing} />
+            <MethodCard icon={<Smartphone size={18} />} title={t("restore.device")} blurb={t("restore.deviceBlurb")} onClick={() => choose("device")} disabled={preparing} />
+            <MethodCard icon={<KeyRound size={18} />} title={t("restore.phrase")} blurb={t("restore.phraseBlurb")} onClick={() => choose("phrase")} disabled={preparing} />
+            <MethodCard icon={<HeartHandshake size={18} />} title={t("restore.guardians")} blurb={t("restore.guardiansBlurb")} onClick={() => choose("guardians")} disabled={preparing} />
           </div>
           {preparing && (
             <p className="mt-3 flex items-center justify-center gap-2 text-xs text-ink-500">
-              <Spinner className="h-3 w-3" /> Setting up this device…
+              <Spinner className="h-3 w-3" /> {t("restore.settingUp")}
             </p>
           )}
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
@@ -133,6 +135,7 @@ function MethodCard({ icon, title, blurb, onClick, disabled }: { icon: React.Rea
 
 /// Waits for the old device to hand the account over, then takes it.
 function FromDevice({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const finish = (predecessor: AgentPubKey) => {
@@ -158,11 +161,11 @@ function FromDevice({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
   );
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">Scan this with your other device</h2>
-      <p className="mb-4 text-sm text-ink-500">On it, open Profile → Account &amp; recovery → Move to a new device.</p>
-      <AccountCode agent={me} note="Check this fingerprint matches the one your other device shows before you confirm there." />
+      <h2 className="mb-1 text-lg font-bold">{t("restore.scanOther")}</h2>
+      <p className="mb-4 text-sm text-ink-500">{t("restore.scanOtherHow")}</p>
+      <AccountCode agent={me} note={t("restore.scanOtherNote")} />
       <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
-        <Spinner className="h-3 w-3" /> Waiting for your other device…
+        <Spinner className="h-3 w-3" /> {t("restore.waitingOther")}
       </p>
       {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     </>
@@ -172,6 +175,7 @@ function FromDevice({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
 /// Waits for the previous version of the app to move the account here, then
 /// records the arrival (MIGRATION.md).
 function FromPreviousVersion({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   usePolling(
@@ -191,11 +195,11 @@ function FromPreviousVersion({ me, onTaken }: { me: AgentPubKey; onTaken: (prede
   );
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">Move from the previous version</h2>
-      <p className="mb-4 text-sm text-ink-500">In the previous version of Relay, open Profile → Account &amp; recovery → Move to the new version, and scan this.</p>
-      <AccountCode agent={me} note="Check this fingerprint matches the one the previous version shows before you confirm there." />
+      <h2 className="mb-1 text-lg font-bold">{t("restore.fromPrevious")}</h2>
+      <p className="mb-4 text-sm text-ink-500">{t("restore.fromPreviousHow")}</p>
+      <AccountCode agent={me} note={t("restore.fromPreviousNote")} />
       <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
-        <Spinner className="h-3 w-3" /> Waiting for the previous version…
+        <Spinner className="h-3 w-3" /> {t("restore.waitingPrevious")}
       </p>
       {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     </>
@@ -205,6 +209,7 @@ function FromPreviousVersion({ me, onTaken }: { me: AgentPubKey; onTaken: (prede
 /// The recovery phrase, typed in: finds the account it recovers and signs
 /// for this key.
 function FromPhrase({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+  const t = useT();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +217,7 @@ function FromPhrase({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
   async function recover() {
     const phrase = readPhrase(text);
     if (!phrase) {
-      setError("That isn't a recovery phrase: check you have all twelve words, spelled as you wrote them.");
+      setError(t("restore.notPhrase"));
       return;
     }
     setBusy(true);
@@ -220,7 +225,7 @@ function FromPhrase({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
     try {
       const key = phraseKey(phrase);
       const [account]: PlanView[] = await accountsForPhraseKey(key.publicKey);
-      if (!account) throw new Error("No account uses this phrase. Check the words, and that you set it up before losing your device.");
+      if (!account) throw new Error(t("restore.noAccount"));
       const head = await whereItStands(account.account);
       await takeOver({ predecessor: account.account, authority: { Phrase: { plan: account.plan, head, signature: key.sign(phraseMessage(account.account, me, head)) } } });
       await askForReissue();
@@ -233,12 +238,12 @@ function FromPhrase({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
 
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">Your recovery phrase</h2>
-      <p className="mb-4 text-sm text-ink-500">The twelve words, in order. They stay on this device.</p>
-      <Textarea rows={4} autoCapitalize="none" autoComplete="off" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} placeholder="word word word …" className="font-mono" />
+      <h2 className="mb-1 text-lg font-bold">{t("restore.phraseTitle")}</h2>
+      <p className="mb-4 text-sm text-ink-500">{t("restore.phraseDetail")}</p>
+      <Textarea rows={4} autoCapitalize="none" autoComplete="off" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} placeholder={t("restore.phrasePlaceholder")} className="font-mono" />
       {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
       <Button className="mt-4 w-full" loading={busy} disabled={!text.trim()} onClick={recover}>
-        Recover my account
+        {t("restore.recover")}
       </Button>
     </>
   );
@@ -247,6 +252,7 @@ function FromPhrase({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: A
 /// Shows this device's code to guardians, and takes the account over once
 /// enough of them have vouched.
 function FromGuardians({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+  const t = useT();
   const [progress, setProgress] = useState<{ vouched: number; needed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -277,12 +283,12 @@ function FromGuardians({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor
   );
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">Ask your guardians</h2>
-      <p className="mb-4 text-sm text-ink-500">Call or meet them, then have them scan this in Profile → Account &amp; recovery → Help someone recover.</p>
-      <AccountCode agent={me} note="Read the fingerprint to them so they can check it." />
+      <h2 className="mb-1 text-lg font-bold">{t("restore.askGuardians")}</h2>
+      <p className="mb-4 text-sm text-ink-500">{t("restore.askGuardiansHow")}</p>
+      <AccountCode agent={me} note={t("restore.askGuardiansNote")} />
       <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
         <Spinner className="h-3 w-3" />
-        {progress ? `${progress.vouched} of ${progress.needed} guardians have vouched` : "Waiting for your guardians…"}
+        {progress ? t("restore.vouchedCount", { n: progress.vouched, count: progress.needed }) : t("restore.waitingGuardians")}
       </p>
       {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     </>
@@ -314,7 +320,7 @@ async function whereItStands(account: AgentPubKey): Promise<Uint8Array> {
     if (head) return head;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("Your account isn't reachable yet. Check your connection and try again in a moment.");
+  throw new Error(translate("restore.unreachable"));
 }
 
 const STANDING_ATTEMPTS = 15;
@@ -330,6 +336,7 @@ async function askForReissue() {
 /// had (sealed to the old key, so carried only by a hand-over).
 function ConfirmDetails({ predecessor, place, recovered, onDone }: { predecessor: AgentPubKey; place: AccountPlace; recovered: boolean; onDone: () => void }) {
   const reconnect = useSession((s) => s.reconnect);
+  const t = useT();
   const { data: known } = useResource(`predecessor:${place}:${bytesToHex(predecessor)}`, () => readPredecessor(predecessor, place));
   const { data: issuers } = useResource("issuers", listIssuers);
   const [name, setName] = useState<string | null>(null);
@@ -365,31 +372,30 @@ function ConfirmDetails({ predecessor, place, recovered, onDone }: { predecessor
 
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">Your account is here</h2>
+      <h2 className="mb-1 text-lg font-bold">{t("restore.here")}</h2>
       <p className="mb-4 text-sm text-ink-500">
-        From the account {keyFingerprint(predecessor)}. {recovered ? "Check your details: the old device kept some of them private." : "Your details came with it."}
+        {t("restore.fromAccount", { fingerprint: keyFingerprint(predecessor) })} {recovered ? t("restore.checkDetails") : t("restore.detailsCame")}
       </p>
-      <Field label="Your name" className="mb-3">
-        <Input value={shownName} onChange={(e) => setName(e.target.value)} placeholder="Alex Rivera" />
+      <Field label={t("onboarding.name")} className="mb-3">
+        <Input value={shownName} onChange={(e) => setName(e.target.value)} placeholder={t("onboarding.namePlaceholder")} />
       </Field>
-      <Field label="Phone (optional)" className="mb-3">
+      <Field label={t("onboarding.phone")} className="mb-3">
         <Input value={shownPhone} onChange={(e) => setPhone(e.target.value)} />
       </Field>
       {recovered && (
         <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Your balance is reissued to this device by the network's issuer once your old device has gone unused for {wait ? `${wait} day${wait === 1 ? "" : "s"}` : "a while"} -- so nobody holding it can spend it twice.
-
+          {wait ? t("restore.reissueDays", { count: wait }) : t("restore.reissue")}
         </p>
       )}
       {place === "previous" && (
-        <p className="mb-3 rounded-lg bg-relay-50 px-3 py-2 text-xs text-relay-800">Your balance is carried over by the network's issuer within a few minutes, and your ratings and history come with you.</p>
+        <p className="mb-3 rounded-lg bg-relay-50 px-3 py-2 text-xs text-relay-800">{t("restore.carried")}</p>
       )}
       {known.profile?.roles.includes("Merchant") && (
-        <p className="mb-3 text-xs text-ink-500">Your stores come with you, with their menus and ratings. List them again from your store screen to take orders.</p>
+        <p className="mb-3 text-xs text-ink-500">{t("restore.stores")}</p>
       )}
       {error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
       <Button className="w-full" loading={busy} disabled={!shownName.trim()} onClick={finish}>
-        Enter Relay
+        {t("onboarding.enter")}
       </Button>
     </>
   );
