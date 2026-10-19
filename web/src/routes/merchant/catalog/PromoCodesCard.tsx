@@ -11,6 +11,7 @@ import { buildRequirement, buildReward, EMPTY_PROMO_FORM, type PromoForm, type R
 import type { PromoCode, Timestamp } from "../../../holochain/types";
 import { MAX_PROMO_CODE_CHARS } from "../../../holochain/types";
 import { currencySymbol } from "../../../lib/format";
+import { useT } from "../../../i18n";
 
 interface PromoRow {
   /// The code's identity (its original action) -- what orders reference.
@@ -35,6 +36,7 @@ async function fetchPromoPage(catalogRef: Uint8Array, before: Timestamp | null):
 /// Every promo code the store has created, newest first, a page at a time
 /// -- plus the form for a new one.
 export function PromoCodesCard({ storeHex, catalogRef, items }: { storeHex: string; catalogRef: Uint8Array; items: ItemRow[] }) {
+  const t = useT();
   const [showForm, setShowForm] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -72,10 +74,10 @@ export function PromoCodesCard({ storeHex, catalogRef, items }: { storeHex: stri
     <Card className="mb-4 p-4">
       <div className="mb-2 flex items-center justify-between">
         <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-          <Tag size={13} /> Promo codes
+          <Tag size={13} /> {t("promoEditor.title")}
         </p>
         <Button variant="ghost" className="px-3 py-1.5 text-xs" onClick={() => setShowForm((v) => !v)}>
-          <Plus size={14} /> {showForm ? "Cancel" : "New code"}
+          <Plus size={14} /> {showForm ? t("common.cancel") : t("promoEditor.new")}
         </Button>
       </div>
       <AnimatePresence initial={false}>
@@ -92,7 +94,7 @@ export function PromoCodesCard({ storeHex, catalogRef, items }: { storeHex: stri
         )}
       </AnimatePresence>
       {data && rows.length === 0 && !showForm ? (
-        <p className="text-sm text-ink-400">No promo codes yet.</p>
+        <p className="text-sm text-ink-400">{t("promoEditor.none")}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {rows.map((row) => (
@@ -100,20 +102,20 @@ export function PromoCodesCard({ storeHex, catalogRef, items }: { storeHex: stri
               <div>
                 <p className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-50">
                   {row.promo.code}
-                  {row.promo.auto_apply && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-presence-600">auto</span>}
+                  {row.promo.auto_apply && <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-presence-600">{t("promoEditor.auto")}</span>}
                 </p>
                 <p className="text-xs text-ink-400">
                   {describeRequirement(row.promo.requirement, itemName)} · {describeReward(row.promo.reward, itemName)}
                 </p>
               </div>
               <Button variant={row.promo.active ? "secondary" : "ghost"} className="px-3 py-1.5 text-xs" loading={toggling === row.hex} onClick={() => toggle(row)}>
-                {row.promo.active ? "Active" : "Inactive"}
+                {row.promo.active ? t("orders.active") : t("promoEditor.inactive")}
               </Button>
             </div>
           ))}
           {data?.nextBefore && (
             <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="w-full py-2 text-xs">
-              Show older codes
+              {t("promoEditor.older")}
             </Button>
           )}
         </div>
@@ -125,6 +127,7 @@ export function PromoCodesCard({ storeHex, catalogRef, items }: { storeHex: stri
 /// Owns its own draft, so closing it (or creating a code) throws the draft
 /// away by unmounting -- nothing to reset by hand.
 function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: Uint8Array; items: ItemRow[]; itemName: (hex: string) => string | undefined; onCreated: () => Promise<void> }) {
+  const t = useT();
   const [form, setForm] = useState<PromoForm>(EMPTY_PROMO_FORM);
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<PromoForm>) => setForm((f) => ({ ...f, ...patch }));
@@ -145,7 +148,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
 
   const itemSelect = (value: string, onChange: (hex: string) => void) => (
     <Select value={value} onChange={(e) => onChange(e.target.value)} className="flex-1">
-      <option value="">Select an item…</option>
+      <option value="">{t("promoEditor.selectItem")}</option>
       {items.map((row) => (
         <option key={bytesToHex(row.hash)} value={bytesToHex(row.hash)}>
           {row.item.name}
@@ -163,50 +166,50 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
       exit={{ opacity: 0, height: 0 }}
       className="mb-3 flex flex-col gap-3 rounded-2xl border border-ink-200/70 dark:border-ink-700/70 bg-white dark:bg-ink-900/40 p-4 shadow-sm"
     >
-      <Input maxLength={MAX_PROMO_CODE_CHARS} value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder="CODE (e.g. WELCOME10)" className="font-mono uppercase tracking-wide" />
+      <Input maxLength={MAX_PROMO_CODE_CHARS} value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder={t("promoEditor.codePlaceholder")} className="font-mono uppercase tracking-wide" />
 
       <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
         <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
-          <ListChecks size={13} className="text-relay-500" /> Requirement
+          <ListChecks size={13} className="text-relay-500" /> {t("promoEditor.requirement")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={form.requirementKind} onChange={(e) => set({ requirementKind: e.target.value as RequirementKind })} className="flex-1 min-w-[11rem]">
-            <option value="none">No requirement (always eligible)</option>
-            <option value="minSpend">Minimum spend</option>
-            <option value="minItemQty">Minimum quantity of an item</option>
-            <option value="loyalty">Order count at this restaurant</option>
+            <option value="none">{t("promoEditor.req.none")}</option>
+            <option value="minSpend">{t("promoEditor.req.spend")}</option>
+            <option value="minItemQty">{t("promoEditor.req.quantity")}</option>
+            <option value="loyalty">{t("promoEditor.req.loyalty")}</option>
           </Select>
           {form.requirementKind === "minSpend" && (
             <Input type="number" min={0.01} step={0.5} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} prefix={currencySymbol()} className="w-24" />
           )}
           {form.requirementKind === "loyalty" && (
-            <Input type="number" min={1} step={1} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} placeholder="Prior orders" className="w-28" />
+            <Input type="number" min={1} step={1} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} placeholder={t("promoEditor.priorOrders")} className="w-28" />
           )}
         </div>
         {form.requirementKind === "loyalty" && (
           <label className="mt-2.5 flex items-center gap-2 text-xs text-ink-400">
             <Checkbox checked={form.autoApply} onChange={(e) => set({ autoApply: e.target.checked })} />
-            Apply automatically, no code needed. Eligible customers get it without typing anything
+            {t("promoEditor.autoApply")}
           </label>
         )}
         {form.requirementKind === "minItemQty" && (
           <div className="mt-2.5 flex items-center gap-2">
             {itemSelect(form.requirementItemHex, (hex) => set({ requirementItemHex: hex }))}
-            <Input type="number" min={1} step={1} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} placeholder="Qty" className="w-20" />
+            <Input type="number" min={1} step={1} value={form.requirementAmount} onChange={(e) => set({ requirementAmount: Number(e.target.value) })} placeholder={t("promoEditor.qty")} className="w-20" />
           </div>
         )}
       </div>
 
       <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
         <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
-          <Gift size={13} className="text-relay-500" /> Reward
+          <Gift size={13} className="text-relay-500" /> {t("promoEditor.reward")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={form.rewardKind} onChange={(e) => set({ rewardKind: e.target.value as RewardKind })} className="flex-1 min-w-[11rem]">
-            <option value="percentOffSubtotal">% off order</option>
-            <option value="flatOffSubtotal">$ off order</option>
-            <option value="freeItem">Free item (e.g. BOGO)</option>
-            <option value="percentOffItem">% off an item</option>
+            <option value="percentOffSubtotal">{t("promoEditor.rew.percentOrder")}</option>
+            <option value="flatOffSubtotal">{t("promoEditor.rew.flatOrder", { currency: currencySymbol() })}</option>
+            <option value="freeItem">{t("promoEditor.rew.free")}</option>
+            <option value="percentOffItem">{t("promoEditor.rew.percentItem")}</option>
           </Select>
           {form.rewardKind !== "freeItem" && (
             <Input
@@ -225,7 +228,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
         {itemReward && (
           <div className="mt-2.5 flex items-center gap-2">
             {itemSelect(form.rewardItemHex, (hex) => set({ rewardItemHex: hex }))}
-            <Input type="number" min={1} step={1} value={form.rewardQuantity} onChange={(e) => set({ rewardQuantity: Number(e.target.value) })} placeholder="Qty" className="w-20" />
+            <Input type="number" min={1} step={1} value={form.rewardQuantity} onChange={(e) => set({ rewardQuantity: Number(e.target.value) })} placeholder={t("promoEditor.qty")} className="w-20" />
           </div>
         )}
       </div>
@@ -240,7 +243,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
       )}
 
       <Button loading={saving} disabled={!ready} onClick={save} className="py-2.5 text-xs">
-        Create promo code
+        {t("promoEditor.create")}
       </Button>
     </motion.div>
   );
