@@ -34,7 +34,7 @@ import { currentBeacon } from "../../lib/timeSource";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, formatClockTime, formatDeadline, timeAgo } from "../../lib/format";
+import { formatCents, formatClockTime, formatDeadline, formatEta, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { DeclineReason, Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
@@ -45,12 +45,13 @@ import { OrderIssues } from "../../components/OrderIssues";
 import { StoreAppeals } from "../../components/StoreAppeals";
 import { HandoverCode } from "../../components/HandoverCode";
 import { unconfirmedPickup } from "../../lib/handoffs";
+import { useT, type MessageKey } from "../../i18n";
 
 
 const TABS = [
-  { value: "active", label: "Active" },
-  { value: "history", label: "History" },
-] as const;
+  { value: "active", label: "merchantOrders.tab.active" },
+  { value: "history", label: "merchantOrders.tab.history" },
+] as const satisfies readonly { value: string; label: MessageKey }[];
 
 /// "All stores" isn't a store hex, so it can't collide with one.
 const ALL_STORES = "all";
@@ -68,6 +69,7 @@ const PREP_CHOICES = [5, 10, 15, 20, 30, 45, 60];
 /// makes this" is the first thing a multi-store owner needs to know.
 export function MerchantOrders() {
   const navigate = useNavigate();
+  const t = useT();
   const stores = useMyStores();
   useStoreSteps((stores?.length ?? 0) > 0);
   const [filter, setFilter] = useState(ALL_STORES);
@@ -84,26 +86,26 @@ export function MerchantOrders() {
   if (stores.length === 0) {
     return (
       <div className="flex flex-col items-center px-4">
-        <EmptyState icon={<Store size={32} />} title="No storefront yet" subtitle="Publish a storefront to start receiving orders." />
-        <Button onClick={() => navigate("/merchant/catalog")}>Set up your store</Button>
+        <EmptyState icon={<Store size={32} />} title={t("merchantOrders.noStore")} subtitle={t("merchantOrders.noStoreDetail")} />
+        <Button onClick={() => navigate("/merchant/catalog")}>{t("merchantOrders.setUp")}</Button>
       </div>
     );
   }
 
-  const label = (hex: string) => (multiStore ? (storeName.get(hex) ?? "Store") : null);
-  const scope = effectiveFilter === ALL_STORES ? "your stores" : "this store";
+  const label = (hex: string) => (multiStore ? (storeName.get(hex) ?? t("role.Merchant")) : null);
+  const scope = effectiveFilter === ALL_STORES ? t("merchantOrders.yourStores") : t("merchantOrders.thisStore");
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pt-4 pb-8">
       <motion.div variants={fadeSlideUp} className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Orders</h1>
-        <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
+        <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">{t("nav.orders")}</h1>
+        <SegmentedTabs tabs={TABS.map((x) => ({ ...x, label: t(x.label) }))} value={tab} onChange={setTab} />
       </motion.div>
       <StoreAppeals />
       {multiStore && (
         <ChipRow>
           <Chip active={effectiveFilter === ALL_STORES} onClick={() => setFilter(ALL_STORES)} tone="brand">
-            All stores
+            {t("merchantOrders.allStores")}
           </Chip>
           {stores.map((s) => (
             <Chip key={s.hex} active={effectiveFilter === s.hex} onClick={() => setFilter(s.hex)} tone="brand">
@@ -144,6 +146,7 @@ interface ListProps {
 /// orders. Oldest first: the order a kitchen works through them.
 function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
   const [busyHex, setBusyHex] = useState<string | null>(null);
+  const t = useT();
   // Why an action on an order failed, by order -- e.g. an order the store
   // can't accept because it's priced from an outdated menu.
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -175,7 +178,7 @@ function ActiveQueue({ stores, storeLabel, scope }: ListProps) {
 
   if (rows === undefined) return <QueueSkeleton />;
   if (rows.length === 0) {
-    return <EmptyState icon={<ClipboardList size={32} />} title="No active orders" subtitle={`New orders for ${scope} show up here automatically.`} />;
+    return <EmptyState icon={<ClipboardList size={32} />} title={t("merchantOrders.noActive")} subtitle={t("merchantOrders.noActiveDetail", { scope })} />;
   }
   return (
     <div className="flex flex-col gap-3">
@@ -215,6 +218,7 @@ type OrderAction = (ref: Uint8Array) => Promise<unknown>;
 /// customer's conductor cancels it.
 function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { row: QueueRow; windowSecs: number; now: number; defaultPrep: number; busy: boolean; onAdvance: (action: OrderAction) => void }) {
   const [choosingReason, setChoosingReason] = useState(false);
+  const t = useT();
   // How long this one will take -- the store's usual time unless the
   // kitchen picks another; the customer is told when it'll be ready.
   const [prep, setPrep] = useState(defaultPrep);
@@ -222,7 +226,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
   const prepChoices = [...new Set([defaultPrep, ...PREP_CHOICES])].filter((m) => m <= maxPrep).sort((a, b) => a - b);
   const deadlineMs = responseDeadlineMs(row.writtenAt, windowSecs);
   if (now >= deadlineMs) {
-    return <p className="mt-2 text-xs text-ink-400">Not accepted in time, so the customer's order is being cancelled.</p>;
+    return <p className="mt-2 text-xs text-ink-400">{t("merchantOrders.tooLate")}</p>;
   }
   const accept: OrderAction = row.kind === "Delivery" ? (ref) => acceptDeliveryOrder(ref, prep) : (ref) => acceptPickupOrder(ref, prep);
   const decline = (reason: DeclineReason): OrderAction =>
@@ -232,7 +236,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
       <ResponseCountdown deadlineMs={deadlineMs} windowSecs={windowSecs} now={now} label="merchantOrders.acceptBy" />
       {choosingReason ? (
         <div className="mt-3">
-          <p className="mb-1.5 text-xs font-semibold text-ink-500">Why are you declining? The customer will see this.</p>
+          <p className="mb-1.5 text-xs font-semibold text-ink-500">{t("merchantOrders.whyDecline")}</p>
           <div className="flex flex-wrap gap-1.5">
             {DECLINE_REASONS.map((reason) => (
               <Button key={reason} variant="ghost" className="px-3 py-1.5 text-xs" disabled={busy} onClick={() => onAdvance(decline(reason))}>
@@ -240,14 +244,14 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
               </Button>
             ))}
             <Button variant="ghost" className="px-3 py-1.5 text-xs text-ink-400" disabled={busy} onClick={() => setChoosingReason(false)}>
-              Back
+              {t("common.back")}
             </Button>
           </div>
         </div>
       ) : (
         <>
-          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar" role="radiogroup" aria-label="Ready in">
-            <span className="shrink-0 text-[11px] font-semibold text-ink-500">Ready in</span>
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar" role="radiogroup" aria-label={t("merchantOrders.readyIn")}>
+            <span className="shrink-0 text-[11px] font-semibold text-ink-500">{t("merchantOrders.readyIn")}</span>
             {prepChoices.map((minutes) => (
               <button
                 key={minutes}
@@ -259,16 +263,16 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
                   prep === minutes ? "bg-ink-900 text-white dark:bg-white dark:text-ink-900" : "bg-ink-100 text-ink-500 dark:bg-ink-800",
                 )}
               >
-                {minutes} min
+                {formatEta(minutes * 60)}
               </button>
             ))}
           </div>
           <div className="mt-2 flex gap-2">
             <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={busy} onClick={() => setChoosingReason(true)}>
-              Decline
+              {t("issues.decline")}
             </Button>
             <Button className="flex-[2] py-2 text-xs" loading={busy} onClick={() => onAdvance(accept)}>
-              Accept · {prep} min
+              {t("order.accept")} · {formatEta(prep * 60)}
             </Button>
           </div>
         </>
@@ -281,6 +285,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
 /// they're waiting on.
 function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean; onAdvance: (action: OrderAction) => void }) {
   const minAge = useTerms().restricted_min_age;
+  const t = useT();
   const button = (label: string, action: OrderAction) => (
     <Button className="mt-3 w-full py-2 text-xs" loading={busy} onClick={() => onAdvance(action)}>
       {label}
@@ -290,24 +295,24 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
   if (row.kind === "Delivery") {
     switch (row.order.status) {
       case "Open":
-        return note("Finding a driver. You'll start cooking once one is on the way.");
+        return note(t("merchantOrders.findingDriver"));
       case "BidAccepted":
-        return note("A driver has been found, and is committing to it. If they don't, your app offers it to another.");
+        return note(t("merchantOrders.driverFound"));
       case "DriverEnRouteToMerchant":
         return (
           <>
-            {note("A driver is on the way. Your app starts the clock on cooking as soon as it hears.")}
-            {button("Start cooking", (ref) => setOrderStatus(ref, "MerchantConfirmed"))}
+            {note(t("merchantOrders.driverOnWay"))}
+            {button(t("merchantOrders.startCooking"), (ref) => setOrderStatus(ref, "MerchantConfirmed"))}
           </>
         );
       case "Scheduled":
-        return note("Scheduled for later -- it comes to you to accept at its requested time.");
+        return note(t("merchantOrders.scheduled"));
       case "MerchantConfirmed":
         return <PickupHandoff orderHex={row.hex} orderRef={row.ref} checkedIn={false} />;
       case "DriverAtStore":
         return <PickupHandoff orderHex={row.hex} orderRef={row.ref} checkedIn />;
       case "PickedUp":
-        return note("Out for delivery.");
+        return note(t("merchantOrders.outForDelivery"));
       case "Disputed":
         return <NeverArrivedClaim orderHex={row.hex} orderRef={row.ref} />;
       case "Collecting":
@@ -318,16 +323,16 @@ function ActiveActions({ row, busy, onAdvance }: { row: QueueRow; busy: boolean;
   }
   switch (row.order.status) {
     case "MerchantConfirmed":
-      return button("Mark ready for pickup", markReadyForPickup);
+      return button(t("merchantOrders.markReady"), markReadyForPickup);
     case "ReadyForPickup":
       // The customer confirmed their age when ordering; the store checks
       // it, in person, at the counter.
-      return note("age_confirmed" in row.order && row.order.age_confirmed ? `Waiting for the customer to collect it. Age-restricted: check their ID (${minAge ?? "legal age"}+) before handing it over.` : "Waiting for the customer to collect it.");
+      return note("age_confirmed" in row.order && row.order.age_confirmed ? t("merchantOrders.waitingCollectId", { age: minAge ?? 18 }) : t("merchantOrders.waitingCollect"));
     case "Disputed":
       return (
         <>
-          {note("The customer says they can't get their order. Hand it over (they'll confirm it), or refund them.")}
-          {button("Refund the customer", (ref) => declinePickupOrder(ref, "Other"))}
+          {note(t("merchantOrders.cantGet"))}
+          {button(t("merchantOrders.refund"), (ref) => declinePickupOrder(ref, "Other"))}
         </>
       );
     default:
@@ -347,6 +352,7 @@ interface HistoryState {
 function OrderHistory({ stores, storeLabel, scope }: ListProps) {
   const terms = useTerms();
   const [loadingMore, setLoadingMore] = useState(false);
+  const t = useT();
   const { data, mutate } = useResource<HistoryState>(`merchant-history:${storesKey(stores)}`, () => fetchHistoryPages(stores, null));
   const hasMore = !!data && Object.values(data.cursors).some((cursor) => cursor !== null);
 
@@ -365,7 +371,7 @@ function OrderHistory({ stores, storeLabel, scope }: ListProps) {
   }
 
   if (data === undefined) return <QueueSkeleton />;
-  if (data.rows.length === 0) return <EmptyState icon={<ClipboardList size={32} />} title="No orders yet" subtitle={`Every order ${scope} receives will be listed here.`} />;
+  if (data.rows.length === 0) return <EmptyState icon={<ClipboardList size={32} />} title={t("merchantOrders.noOrders")} subtitle={t("merchantOrders.noOrdersDetail", { scope })} />;
   return (
     <div className="flex flex-col gap-3">
       {data.rows.map((row) => (
@@ -375,7 +381,7 @@ function OrderHistory({ stores, storeLabel, scope }: ListProps) {
       ))}
       {hasMore && (
         <Button variant="ghost" loading={loadingMore} onClick={loadMore} className="w-full py-2 text-xs">
-          Load more
+          {t("common.loadMore")}
         </Button>
       )}
     </div>
@@ -402,13 +408,14 @@ function mayHaveOpenIssues(row: QueueRow, terms: { report_window_secs: number; a
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {
   const { order } = row;
+  const t = useT();
   const count = itemCount(order);
   return (
     <Card className="p-4">
       <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
         <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-relay-600" : "text-presence-600")}>
           {row.kind === "Delivery" ? <Bike size={11} /> : <ShoppingBag size={11} />}
-          {row.kind === "Delivery" ? "Delivery" : "Pickup"}
+          {t(row.kind === "Delivery" ? "cart.delivery" : "cart.pickup")}
         </span>
         {storeLabel && (
           <span className="flex items-center gap-1 text-ink-400">
@@ -422,8 +429,8 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
         {row.kind === "Delivery" ? <StatusBadge status={row.order.status} /> : <PickupStatusBadge status={row.order.status} />}
       </div>
       <p className="mt-1 text-xs text-ink-400">
-        {count} item{count === 1 ? "" : "s"}
-        {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · ready by {formatClockTime(order.ready_by)}</span>}
+        {t("orders.items", { count })}
+        {order.ready_by !== null && !isFinished(row) && <span className="font-semibold text-ink-600 dark:text-ink-300"> · {t("merchantOrders.readyBy", { time: formatClockTime(order.ready_by) })}</span>}
       </p>
       {!isFinished(row) && <OrderLines orderRef={row.ref} className="mt-3 rounded-xl bg-ink-50 p-3 dark:bg-ink-800/60" />}
       {(order.kitchen_note || order.sealed_customer_name) && <ForTheStore orderHex={row.hex} orderRef={row.ref} />}
@@ -441,6 +448,7 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
 function PickupHandoff({ orderHex, orderRef, checkedIn }: { orderHex: string; orderRef: Uint8Array; checkedIn: boolean }) {
   const terms = useTerms();
   const [scanning, setScanning] = useState(false);
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { data: code } = useResource(checkedIn ? null : `pickup-code:${orderHex}`, () => getMyPickupCode(orderRef));
@@ -464,7 +472,7 @@ function PickupHandoff({ orderHex, orderRef, checkedIn }: { orderHex: string; or
   function scanned(text: string) {
     const parsed = decodePickupCode(text);
     if (!parsed || parsed.orderHex !== orderHex) {
-      setError("That isn't this order's driver code.");
+      setError(t("merchantOrders.notDriverCode"));
       return;
     }
     void handOver(parsed.leg);
@@ -474,27 +482,27 @@ function PickupHandoff({ orderHex, orderRef, checkedIn }: { orderHex: string; or
     <div className="mt-3 flex flex-col gap-2">
       {checkedIn ? (
         <p className="text-xs text-ink-400">
-          The driver is checked in.
-          {timing?.store_late_after != null && ` If it isn't ready by ${formatClockTime(timing.store_late_after)}, they can call you late: the customer is refunded and you pay their fee.`}
+          {t("merchantOrders.checkedIn")}
+          {timing?.store_late_after != null && ` ${t("merchantOrders.lateAt", { time: formatClockTime(timing.store_late_after) })}`}
         </p>
       ) : (
-        <p className="text-xs text-ink-400">Cooking. The driver scans this code at your counter to check in; scanning theirs hands the order over.</p>
+        <p className="text-xs text-ink-400">{t("merchantOrders.cooking")}</p>
       )}
       {code && <HandoverCode orderRef={orderRef} secret={code} giver="store" />}
       {scanning ? (
         <QrScanner onScan={scanned} />
       ) : (
         <Button className="w-full py-2 text-xs" loading={busy} onClick={() => setScanning(true)}>
-          Hand it over: scan the driver's code
+          {t("merchantOrders.handOver")}
         </Button>
       )}
       {pickup && (
         <Button variant="ghost" className="w-full py-2 text-xs" loading={busy} onClick={() => handOver(pickup)}>
-          Confirm handed to driver
+          {t("merchantOrders.confirmHanded")}
         </Button>
       )}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      <p className="text-[11px] text-ink-400">Wait {Math.round(terms.store_wait_secs / 60)} minutes past the ready time and a checked-in driver may call you late.</p>
+      <p className="text-[11px] text-ink-400">{t("merchantOrders.waitNote", { minutes: Math.round(terms.store_wait_secs / 60) })}</p>
     </div>
   );
 }
@@ -505,10 +513,11 @@ function PickupHandoff({ orderHex, orderRef, checkedIn }: { orderHex: string; or
 /// the food -- or the store can decide now.
 function NeverArrivedClaim({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
   const [deciding, setDeciding] = useState(false);
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const { data: decisions, reload } = useResource(`order-decisions:${orderHex}`, () => getOrderDecisions(orderRef), { pollMs: POLL.signalled });
   if (!decisions) return null;
-  if (decisions.not_delivered) return <p className="mt-2 text-xs text-ink-400">Never arrived: the customer is refunded, and the driver's collateral covers the food.</p>;
+  if (decisions.not_delivered) return <p className="mt-2 text-xs text-ink-400">{t("merchantOrders.neverArrived")}</p>;
   async function decide() {
     setDeciding(true);
     setError(null);
@@ -524,11 +533,11 @@ function NeverArrivedClaim({ orderHex, orderRef }: { orderHex: string; orderRef:
   return (
     <div className="mt-3 rounded-xl bg-amber-50 p-3 dark:bg-amber-900/20">
       <p className="text-xs leading-relaxed text-amber-900 dark:text-amber-100">
-        <span className="font-semibold">The customer says it never arrived.</span> If the driver doesn't deliver it, it's refunded
-        {decisions.claim_decided_after ? ` at ${formatDeadline(decisions.claim_decided_after)}` : ""}, and the driver's collateral pays you for the food.
+        <span className="font-semibold">{t("merchantOrders.claimTitle")}</span>{" "}
+        {decisions.claim_decided_after ? t("merchantOrders.claimAt", { time: formatDeadline(decisions.claim_decided_after) }) : t("merchantOrders.claim")}
       </p>
       <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={deciding} onClick={decide}>
-        Refund now
+        {t("merchantOrders.refundNow")}
       </Button>
       {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
@@ -538,11 +547,12 @@ function NeverArrivedClaim({ orderHex, orderRef }: { orderHex: string; orderRef:
 /// Who the order's for and their note for the kitchen -- both sealed to
 /// the store, opened by the zome. Read once per order: they never change.
 function ForTheStore({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8Array }) {
+  const t = useT();
   const { data } = useResource(`for-the-store:${orderHex}`, () => getOrderPrivateDetails(orderRef));
   if (!data) return null;
   return (
     <>
-      {data.customer_name && <p className="mt-1 text-xs font-semibold text-ink-700 dark:text-ink-200">For {data.customer_name}</p>}
+      {data.customer_name && <p className="mt-1 text-xs font-semibold text-ink-700 dark:text-ink-200">{t("merchantOrders.forName", { name: data.customer_name })}</p>}
       {data.kitchen_note && <p className="mt-1 text-xs italic text-ink-500">"{data.kitchen_note}"</p>}
     </>
   );
@@ -554,6 +564,7 @@ function ForTheStore({ orderHex, orderRef }: { orderHex: string; orderRef: Uint8
 /// price.
 function CollectionHandoff({ row }: { row: QueueRow }) {
   const windowSecs = useTerms().collection_window_secs;
+  const t = useT();
   const now = useClock(30_000);
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -576,7 +587,7 @@ function CollectionHandoff({ row }: { row: QueueRow }) {
   function scanned(text: string) {
     const code = decodeHandoverCode(text);
     if (!code || code.orderHex !== row.hex) {
-      setProblem("That isn't this order's code.");
+      setProblem(t("merchantOrders.notOrderCode"));
       return;
     }
     void act(() => handOverCollection(row.ref, code.secret));
@@ -584,19 +595,19 @@ function CollectionHandoff({ row }: { row: QueueRow }) {
 
   return (
     <div className="mt-3">
-      <p className="text-xs text-ink-400">No driver came, so the customer is collecting it. Scan their code when they arrive.</p>
+      <p className="text-xs text-ink-400">{t("merchantOrders.collecting")}</p>
       {scanning ? (
         <div className="mt-2">
           <QrScanner onScan={scanned} />
         </div>
       ) : (
         <Button className="mt-2 w-full py-2 text-xs" loading={busy} onClick={() => setScanning(true)}>
-          Scan their code
+          {t("handoff.scan")}
         </Button>
       )}
       {overdue && (
         <Button variant="ghost" className="mt-2 w-full py-2 text-xs" loading={busy} onClick={() => act(async () => markNotCollected(row.ref, await currentBeacon()))}>
-          They never came
+          {t("merchantOrders.neverCame")}
         </Button>
       )}
       {problem && <p className="mt-2 text-xs text-red-600">{problem}</p>}
