@@ -19,6 +19,7 @@ import { staggerContainer } from "../../lib/motion";
 import { POLL } from "../../lib/poll";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
+import { useT } from "../../i18n";
 
 interface Row {
   hash: Uint8Array;
@@ -57,6 +58,7 @@ function CardSkeleton() {
 
 export function Browse() {
   const now = useClock();
+  const t = useT();
   const navigate = useNavigate();
   const location = useSession((s) => s.location);
   const [query, setQuery] = useState("");
@@ -144,7 +146,7 @@ export function Browse() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search restaurants, cuisines, diets"
+          placeholder={t("browse.search")}
           className="w-full bg-transparent text-sm outline-none"
         />
       </div>
@@ -152,7 +154,7 @@ export function Browse() {
       {bags.length > 0 && (
         <div className="mb-5">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-            <PackageOpen size={13} className="text-relay-500" /> Goodie bags near me
+            <PackageOpen size={13} className="text-relay-500" /> {t("browse.bagsNearMe")}
           </p>
           <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
             {bags.map((row) => (
@@ -168,7 +170,7 @@ export function Browse() {
                 )}
                 <div className="p-2.5">
                   <p className="truncate text-xs font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
-                  <p className="truncate text-[11px] text-ink-400">{catalogNameByHex.get(bytesToHex(row.bag.catalog_ref)) ?? "Nearby restaurant"}</p>
+                  <p className="truncate text-[11px] text-ink-400">{catalogNameByHex.get(bytesToHex(row.bag.catalog_ref)) ?? t("browse.nearbyRestaurant")}</p>
                   <div className="mt-1 flex items-center gap-1.5">
                     <span className="text-sm font-black text-relay-600 dark:text-relay-400">{formatCents(row.bag.price_cents)}</span>
                     <span className="text-[11px] text-ink-400 line-through">{formatCents(row.bag.original_value_cents)}</span>
@@ -180,15 +182,15 @@ export function Browse() {
         </div>
       )}
 
-      <h1 className="mb-1 text-xl font-black tracking-tight">Restaurants near you</h1>
+      <h1 className="mb-1 text-xl font-black tracking-tight">{t("browse.title")}</h1>
       <p className="mb-4 text-xs text-ink-400">
-        {rows?.length ?? "…"} restaurant{rows?.length === 1 ? "" : "s"} open near you right now.
+        {rows === undefined ? "…" : t("browse.openCount", { count: rows.length })}
       </p>
 
       {cuisines.length > 0 && (
         <ChipRow>
           <Chip active={cuisine === null} onClick={() => setCuisine(null)}>
-            All
+            {t("browse.all")}
           </Chip>
           {cuisines.map((c) => (
             <Chip key={c} active={cuisine === c} onClick={() => setCuisine(c)}>
@@ -201,7 +203,7 @@ export function Browse() {
       <div className="mb-3 flex items-center gap-2">
         <Chip active={favoritesOnly} onClick={() => setFavoritesOnly((v) => !v)} tone="danger">
           <span className="flex items-center gap-1">
-            <Heart size={12} fill={favoritesOnly ? "currentColor" : "none"} /> Favorites
+            <Heart size={12} fill={favoritesOnly ? "currentColor" : "none"} /> {t("browse.favorites")}
           </span>
         </Chip>
         <div className="ml-auto flex items-center gap-1 rounded-full bg-ink-100 dark:bg-ink-800 p-1 text-xs font-semibold">
@@ -210,11 +212,11 @@ export function Browse() {
               key={s}
               onClick={() => setSort(s)}
               className={clsx(
-                "rounded-full px-2.5 py-1 capitalize transition",
+                "rounded-full px-2.5 py-1 transition",
                 sort === s ? "bg-white dark:bg-ink-950 shadow-sm text-ink-900 dark:text-white" : "text-ink-400"
               )}
             >
-              {s}
+              {t(`browse.sort.${s}`)}
             </button>
           ))}
         </div>
@@ -229,7 +231,7 @@ export function Browse() {
       )}
 
       {rows !== undefined && filtered?.length === 0 && (
-        <EmptyState title="No restaurants nearby yet" subtitle="Switch to Sell mode to add one and see how it looks here." />
+        <EmptyState title={t("browse.emptyTitle")} subtitle={t("browse.emptySubtitle")} />
       )}
 
       {filtered && filtered.length > 0 && (
