@@ -38,8 +38,8 @@ export function MerchantNav() {
           >
             <NavLink to="/merchant" className="flex items-center gap-3 rounded-2xl bg-relay-500 px-4 py-3 text-sm font-semibold text-white shadow-[var(--shadow-glow)]">
               <BellRing size={18} className="animate-pulse" />
-              {waiting === 1 ? "1 new order is waiting for you" : `${waiting} new orders are waiting for you`}
-              <span className="ml-auto text-xs font-bold uppercase tracking-wide">Review</span>
+              {t("merchantNav.waiting", { count: waiting })}
+              <span className="ml-auto text-xs font-bold uppercase tracking-wide">{t("merchantNav.review")}</span>
             </NavLink>
           </motion.div>
         )}

@@ -68,7 +68,7 @@ export function PhotoInput({ value, onChange, shape = "circle", className }: Pro
         )}
         {!busy && value && (
           <span className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] font-semibold text-white backdrop-blur-sm transition group-hover:bg-black/75">
-            <Camera size={11} /> Change
+            <Camera size={11} /> {t("photo.change")}
           </span>
         )}
       </button>

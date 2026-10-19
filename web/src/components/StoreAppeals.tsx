@@ -25,23 +25,23 @@ export function StoreAppeals() {
       <p className="flex items-center gap-2 font-bold text-ink-900 dark:text-ink-50">
         <Gavel size={16} /> {t("appeal.storeWaiting", { count: waiting.length })}
       </p>
-      <p className="mt-0.5 text-xs text-ink-500">The network's arbiter decides; an award comes out of your next cash-out. Give your side.</p>
+      <p className="mt-0.5 text-xs text-ink-500">{t("appeal.storeIntro")}</p>
       <ul className="mt-3 flex flex-col gap-2">
         {waiting.map((appeal) => (
           <li key={bytesToHex(appeal.appeal)} className="flex items-center justify-between gap-3 text-sm">
             <span>
-              Asks {formatCents(appeal.amount)} of a {formatCents(appeal.order_total)} order
+              {t("appeal.storeAsks", { amount: formatCents(appeal.amount), total: formatCents(appeal.order_total) })}
             </span>
             <Button className="py-1.5 text-xs" onClick={() => setAnswering(appeal)}>
-              Give your side
+              {t("appeal.giveSideButton")}
             </Button>
           </li>
         ))}
       </ul>
       {answering && (
         <EvidenceSheet
-          title="Your side"
-          subtitle="Only the arbiter sees what you send."
+          title={t("appeal.yourSide")}
+          subtitle={t("appeal.onlyArbiter")}
           maxAmount={null}
           onClose={() => setAnswering(null)}
           onSend={async ({ note, photo }) => {

@@ -18,7 +18,8 @@ const walk = (dir) => {
 walk(root);
 
 // Text between tags that reads as words, and the props people read.
-const JSX_TEXT = />\s*([A-Z][A-Za-z'’,.!? -]{2,})\s*[<{]/g;
+// (Not `=> Promise<...>`: type syntax, not text.)
+const JSX_TEXT = /(?<![=-])>\s*(?!Promise<)([A-Z][A-Za-z'’,.!? -]{2,})\s*[<{]/g;
 const PROPS = /\b(?:label|title|subtitle|placeholder|detail|prompt|note|aria-label)="([^"]*[A-Za-z]{2,}[^"]*)"/g;
 const rows = files
   .map((file) => {

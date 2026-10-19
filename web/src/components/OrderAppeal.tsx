@@ -41,8 +41,8 @@ export function OrderAppeal({ orderRef, role, kept }: { orderRef: Uint8Array; ro
       )}
       {open && (
         <EvidenceSheet
-          title={appeal ? "Your side" : "Appeal to the arbiter"}
-          subtitle={appeal ? "Only the arbiter sees what you send." : "The arbiter sees this and the store's side, then decides. Their award comes from the store."}
+          title={appeal ? t("appeal.yourSide") : t("appeal.toArbiter")}
+          subtitle={appeal ? t("appeal.onlyArbiter") : t("appeal.howItWorks")}
           maxAmount={appeal ? null : kept}
           onClose={() => setOpen(false)}
           onSend={async ({ amount, note, photo }) => {
@@ -102,6 +102,7 @@ export function EvidenceSheet({
   onClose: () => void;
   onSend: (input: { amount: number; note: string; photo: string }) => Promise<void>;
 }) {
+  const t = useT();
   const [amount, setAmount] = useState(maxAmount === null ? 0 : fromMinorUnits(maxAmount));
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState("");
@@ -129,7 +130,7 @@ export function EvidenceSheet({
         <>
           {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
           <Button className="w-full" loading={busy} disabled={!note.trim() || (maxAmount !== null && (amount <= 0 || toMinorUnits(amount) > maxAmount))} onClick={send}>
-            Send
+            {t("appeal.send")}
           </Button>
         </>
       }
@@ -137,11 +138,11 @@ export function EvidenceSheet({
       <div className="flex flex-col gap-3">
         {maxAmount !== null && (
           <div>
-            <p className="mb-1 text-xs font-semibold text-ink-500">What you ask for (up to {formatCents(maxAmount)})</p>
+            <p className="mb-1 text-xs font-semibold text-ink-500">{t("appeal.askFor", { amount: formatCents(maxAmount) })}</p>
             <Input type="number" min={0} step={0.5} value={amount} onChange={(e) => setAmount(Number(e.target.value))} prefix={currencySymbol()} />
           </div>
         )}
-        <Textarea maxLength={MAX_NOTE_CHARS} rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened" />
+        <Textarea maxLength={MAX_NOTE_CHARS} rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("appeal.whatHappened")} />
         <PhotoInput value={photo} onChange={setPhoto} />
       </div>
     </Sheet>

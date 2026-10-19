@@ -66,7 +66,7 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
       {role === "customer" && open && !settling && (
         <div className="border-t border-ink-100 p-4 dark:border-ink-800">
           <Button variant="ghost" className="w-full" onClick={() => setReporting(true)}>
-            {issues.length ? "Report something else" : "Report missing or wrong items"}
+            {issues.length ? translate("issues.reportMore") : translate("issues.report")}
           </Button>
         </div>
       )}
@@ -121,7 +121,7 @@ function IssueRow({ issue, items, role, canAnswer, onAnswered }: { issue: IssueV
   const [error, setError] = useState<string | null>(null);
   const nameOf = (line: number) => {
     const ordered = items.lines[line];
-    return ordered ? [ordered.name, ...ordered.choices].join(", ") : "An item";
+    return ordered ? [ordered.name, ...ordered.choices].join(", ") : translate("issues.anItem");
   };
 
   async function answer(accept: boolean) {

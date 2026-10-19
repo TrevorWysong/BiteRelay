@@ -65,7 +65,7 @@ export function StoreSwitcher() {
               onClick={() => navigate("/merchant/stores/new")}
               className="flex w-full items-center gap-3 border-t border-ink-100 dark:border-ink-800 px-4 py-3 text-left text-sm font-semibold text-relay-600 hover:bg-ink-50 dark:hover:bg-ink-800/60"
             >
-              <Plus size={16} /> Add another store
+              <Plus size={16} /> {t("newStore.another")}
             </button>
           </motion.div>
         )}

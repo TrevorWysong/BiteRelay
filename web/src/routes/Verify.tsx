@@ -14,25 +14,28 @@ import { useResource } from "../lib/useResource";
 import { ALL_CHECKS, checkLabel } from "../lib/verification";
 import { bytesToHex } from "../holochain/decode";
 import { useSession } from "../store/session";
+import { useT } from "../i18n";
 
 export default function VerifyPage() {
   const me = useSession((s) => s.agentPubKey);
+  const t = useT();
   const { data: terms } = useResource("verification-terms", getVerificationTerms);
   const [driver, setDriver] = useState<AgentPubKey | null>(null);
   if (!terms || !me) return null;
   if (!terms.verifiers.some((v) => bytesToHex(v) === bytesToHex(me))) {
-    return <p className="p-6 text-sm text-ink-500">Only the network's verifiers verify drivers.</p>;
+    return <p className="p-6 text-sm text-ink-500">{t("verify.onlyVerifiers")}</p>;
   }
   return (
     <div className="mx-auto max-w-md px-4 py-6">
-      <h1 className="mb-1 text-xl font-black text-ink-900 dark:text-ink-50">Verify a driver</h1>
-      <p className="mb-5 text-sm text-ink-500">Check their documents first, then scan the code on their Drive screen.</p>
-      {driver ? <DriverForm key={bytesToHex(driver)} driver={driver} onDone={() => setDriver(null)} /> : <AccountCodeReader prompt="Point at the driver's code" onKey={setDriver} />}
+      <h1 className="mb-1 text-xl font-black text-ink-900 dark:text-ink-50">{t("verify.title")}</h1>
+      <p className="mb-5 text-sm text-ink-500">{t("verify.intro")}</p>
+      {driver ? <DriverForm key={bytesToHex(driver)} driver={driver} onDone={() => setDriver(null)} /> : <AccountCodeReader prompt={t("verify.point")} onKey={setDriver} />}
     </div>
   );
 }
 
 function DriverForm({ driver, onDone }: { driver: AgentPubKey; onDone: () => void }) {
+  const t = useT();
   const { data: current, reload } = useResource(`verification:${bytesToHex(driver)}`, () => driverVerification(driver));
   const [checks, setChecks] = useState<VerificationCheck[]>(["Identity", "DrivingLicence", "Insurance"]);
   const [days, setDays] = useState<number | "">("");
@@ -57,13 +60,13 @@ function DriverForm({ driver, onDone }: { driver: AgentPubKey; onDone: () => voi
   return (
     <Card className="flex flex-col gap-4 p-4">
       <div className="text-center">
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">Driver</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("cart.driver")}</p>
         <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(driver)}</p>
-        <p className="text-xs text-ink-400">Compare it with the one on their screen.</p>
+        <p className="text-xs text-ink-400">{t("verify.compare")}</p>
       </div>
       {current && (
         <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200">
-          <BadgeCheck size={16} /> Verified until {formatDate(current.expires_at)}
+          <BadgeCheck size={16} /> {t("verification.until", { date: formatDate(current.expires_at) })}
         </div>
       )}
       <div className="flex flex-col gap-2">
@@ -74,21 +77,21 @@ function DriverForm({ driver, onDone }: { driver: AgentPubKey; onDone: () => voi
           </label>
         ))}
       </div>
-      <Field label="Days it lasts (blank for the network's longest)">
+      <Field label={t("verify.days")}>
         <Input type="number" min={1} value={days} onChange={(e) => setDays(e.target.value === "" ? "" : Math.max(1, Number(e.target.value)))} />
       </Field>
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-      {done && <p className="text-xs text-emerald-600">Done.</p>}
+      {done && <p className="text-xs text-emerald-600">{t("verify.done")}</p>}
       <Button loading={busy} disabled={checks.length === 0} onClick={() => run(() => verifyDriver(driver, checks, days === "" ? null : days))}>
-        {current ? "Renew verification" : "Verify driver"}
+        {current ? t("verify.renew") : t("verify.verify")}
       </Button>
       {current && (
         <Button variant="secondary" loading={busy} onClick={() => run(() => revokeVerification(current.action))}>
-          Withdraw verification
+          {t("verify.withdraw")}
         </Button>
       )}
       <button className="text-xs font-semibold text-relay-600" onClick={onDone}>
-        Another driver
+        {t("verify.another")}
       </button>
     </Card>
   );
