@@ -12,6 +12,7 @@ import { lineKey, type CartLine } from "../store/cart";
 import type { ActionHash, PromoCode, PromoRequirement, PromoReward } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { formatCents } from "./format";
+import { t } from "../i18n";
 
 /// The cart's lines of `itemRef` -- the same item may be on several, with
 /// different choices.
@@ -108,32 +109,26 @@ export function evaluatePromo(promo: PromoCode, lines: CartLine[], subtotalCents
 /// menu loaded for their own purposes (merchant catalog editing, customer
 /// browsing), so this takes a lookup rather than fetching anything itself.
 export function describeRequirement(requirement: PromoRequirement, itemName: (hex: string) => string | undefined): string {
-  if (requirement === "None") return "No purchase requirement";
-  if ("MinimumSpend" in requirement) return `Spend ${formatCents(requirement.MinimumSpend)} or more`;
+  if (requirement === "None") return t("promo.req.none");
+  if ("MinimumSpend" in requirement) return t("promo.req.spend", { amount: formatCents(requirement.MinimumSpend) });
   if ("MinimumItemQuantity" in requirement) {
     const { item_ref, quantity } = requirement.MinimumItemQuantity;
-    const name = itemName(bytesToHex(item_ref)) ?? "a qualifying item";
-    return `Buy ${quantity}+ ${name}`;
+    return t("promo.req.buy", { quantity, item: itemName(bytesToHex(item_ref)) ?? t("promo.qualifyingItem") });
   }
-  if ("LoyaltyOrderCount" in requirement) {
-    const n = requirement.LoyaltyOrderCount;
-    return `Order here ${n}+ time${n === 1 ? "" : "s"}`;
-  }
-  return "Unknown requirement";
+  if ("LoyaltyOrderCount" in requirement) return t("promo.req.loyalty", { count: requirement.LoyaltyOrderCount });
+  return t("promo.req.unknown");
 }
 
 export function describeReward(reward: PromoReward, itemName: (hex: string) => string | undefined): string {
-  if ("PercentOffSubtotal" in reward) return `${reward.PercentOffSubtotal}% off the order`;
-  if ("FlatOffSubtotal" in reward) return `${formatCents(reward.FlatOffSubtotal)} off the order`;
+  if ("PercentOffSubtotal" in reward) return t("promo.reward.percentOrder", { percent: reward.PercentOffSubtotal });
+  if ("FlatOffSubtotal" in reward) return t("promo.reward.flatOrder", { amount: formatCents(reward.FlatOffSubtotal) });
   if ("FreeItem" in reward) {
     const { item_ref, quantity } = reward.FreeItem;
-    const name = itemName(bytesToHex(item_ref)) ?? "item";
-    return quantity === 1 ? `Get a free ${name}` : `Get ${quantity} free ${name}`;
+    return t("promo.reward.free", { count: quantity, item: itemName(bytesToHex(item_ref)) ?? t("promo.item") });
   }
   if ("PercentOffItem" in reward) {
     const { item_ref, percent, quantity } = reward.PercentOffItem;
-    const name = itemName(bytesToHex(item_ref)) ?? "item";
-    return `${percent}% off ${quantity > 1 ? `${quantity}x ` : ""}${name}`;
+    return t("promo.reward.percentItem", { percent, count: quantity, item: itemName(bytesToHex(item_ref)) ?? t("promo.item") });
   }
-  return "Unknown reward";
+  return t("promo.reward.unknown");
 }

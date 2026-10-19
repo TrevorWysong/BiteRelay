@@ -1,5 +1,5 @@
 import { useNetwork } from "../store/network";
-import { appLocale } from "../i18n";
+import { appLocale, t } from "../i18n";
 
 const formatters = new Map<string, Intl.NumberFormat>();
 
@@ -58,17 +58,17 @@ export function formatCatalogAddress(catalog: { address_street: string; address_
 }
 
 export function formatEta(seconds: number): string {
-  const minutes = Math.round(seconds / 60);
-  return `${minutes} min`;
+  return new Intl.NumberFormat(appLocale(), { style: "unit", unit: "minute", unitDisplay: "short" }).format(Math.round(seconds / 60));
 }
 
 export function timeAgo(microseconds: number): string {
   const ms = microseconds / 1000;
   const deltaS = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (deltaS < 60) return "just now";
-  if (deltaS < 3600) return `${Math.round(deltaS / 60)}m ago`;
-  if (deltaS < 86400) return `${Math.round(deltaS / 3600)}h ago`;
-  return `${Math.round(deltaS / 86400)}d ago`;
+  if (deltaS < 60) return t("time.justNow");
+  const relative = new Intl.RelativeTimeFormat(appLocale(), { style: "narrow" });
+  if (deltaS < 3600) return relative.format(-Math.round(deltaS / 60), "minute");
+  if (deltaS < 86400) return relative.format(-Math.round(deltaS / 3600), "hour");
+  return relative.format(-Math.round(deltaS / 86400), "day");
 }
 
 export function shortAgentId(agent: Uint8Array): string {

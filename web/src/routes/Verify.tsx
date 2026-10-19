@@ -11,7 +11,7 @@ import { keyFingerprint } from "../lib/accountMove";
 import { describeError } from "../lib/errors";
 import { formatDate } from "../lib/format";
 import { useResource } from "../lib/useResource";
-import { ALL_CHECKS, CHECK_LABELS } from "../lib/verification";
+import { ALL_CHECKS, checkLabel } from "../lib/verification";
 import { bytesToHex } from "../holochain/decode";
 import { useSession } from "../store/session";
 
@@ -70,7 +70,7 @@ function DriverForm({ driver, onDone }: { driver: AgentPubKey; onDone: () => voi
         {ALL_CHECKS.map((check) => (
           <label key={check} className="flex items-center gap-2 text-sm">
             <Checkbox checked={checks.includes(check)} onChange={(e) => setChecks(e.target.checked ? [...checks, check] : checks.filter((c) => c !== check))} />
-            {CHECK_LABELS[check]}
+            {checkLabel(check)}
           </label>
         ))}
       </div>

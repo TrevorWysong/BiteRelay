@@ -7,6 +7,7 @@
 import type { ActionHash, ChosenInput, MenuItem, ModifierGroup, SelectionInput } from "../holochain/types";
 import { MAX_CHOICE_DEPTH, MAX_LINE_CHOICES } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
+import { t } from "../i18n";
 
 /// A store's choice groups at their latest, by original action (hex).
 export type Groups = Map<string, ModifierGroup>;
@@ -25,12 +26,12 @@ export function linePrice(item: MenuItem, selections: SelectionInput[], groups: 
 
 function priceSelections(refs: ActionHash[], selections: SelectionInput[], groups: Groups, depth: number, budget: { left: number }): Priced {
   if (selections.length !== refs.length || selections.some((s, i) => bytesToHex(s.group) !== bytesToHex(refs[i]))) {
-    return { ok: false, reason: "Choose from each of the item's options." };
+    return { ok: false, reason: t("choices.chooseEach") };
   }
   let total = 0;
   for (const selection of selections) {
     const group = groups.get(bytesToHex(selection.group));
-    if (!group) return { ok: false, reason: "These options have changed. Reopen the item." };
+    if (!group) return { ok: false, reason: t("choices.changed") };
     const priced = priceGroup(group, selection, groups, depth, budget);
     if (!priced.ok) return priced;
     total += priced.price;
@@ -43,26 +44,26 @@ function priceGroup(group: ModifierGroup, selection: SelectionInput, groups: Gro
   let nestedCost = 0;
   let previous = -1;
   for (const chosen of selection.options) {
-    if (chosen.option <= previous) return { ok: false, reason: `${group.name}: each option once.` };
+    if (chosen.option <= previous) return { ok: false, reason: t("choices.once", { group: group.name }) };
     previous = chosen.option;
-    if (budget.left === 0) return { ok: false, reason: `At most ${MAX_LINE_CHOICES} choices on one item.` };
+    if (budget.left === 0) return { ok: false, reason: t("choices.atMost", { count: MAX_LINE_CHOICES }) };
     budget.left -= 1;
     const option = group.options.find((o) => o.id === chosen.option && o.available);
-    if (!option) return { ok: false, reason: `A choice in ${group.name} isn't on offer any more.` };
-    if (chosen.quantity < 1 || chosen.quantity > group.max_per_option) return { ok: false, reason: `${option.name}: choose 1 to ${group.max_per_option}.` };
+    if (!option) return { ok: false, reason: t("choices.gone", { group: group.name }) };
+    if (chosen.quantity < 1 || chosen.quantity > group.max_per_option) return { ok: false, reason: t("choices.perOption", { option: option.name, max: group.max_per_option }) };
     for (let i = 0; i < chosen.quantity; i++) units.push(option.price_cents);
     if (option.nested_group) {
-      if (depth >= MAX_CHOICE_DEPTH) return { ok: false, reason: "These choices nest too deep." };
+      if (depth >= MAX_CHOICE_DEPTH) return { ok: false, reason: t("choices.tooDeep") };
       const nested = priceSelections([option.nested_group], chosen.nested, groups, depth + 1, budget);
       if (!nested.ok) return nested;
       nestedCost += nested.price * chosen.quantity;
     } else if (chosen.nested.length > 0) {
-      return { ok: false, reason: `${option.name} has nothing more to choose.` };
+      return { ok: false, reason: t("choices.nothingMore", { option: option.name }) };
     }
   }
   const count = units.length;
   if (count < group.min_selections || (group.max_selections !== null && count > group.max_selections)) {
-    return { ok: false, reason: `${group.name}: ${rangeLabel(group)}.` };
+    return { ok: false, reason: t("choices.range", { group: group.name, range: rangeLabel(group) }) };
   }
   units.sort((a, b) => a - b);
   const charged = units.slice(group.free_selections).reduce((sum, p) => sum + p, 0);
@@ -72,9 +73,9 @@ function priceGroup(group: ModifierGroup, selection: SelectionInput, groups: Gro
 /// "Choose 1", "Choose up to 3", "Choose 2 to 4" -- what a group asks for.
 export function rangeLabel(group: ModifierGroup): string {
   const { min_selections: min, max_selections: max } = group;
-  if (max !== null && min === max) return `choose ${max}`;
-  if (min === 0) return max === null ? "choose any" : `choose up to ${max}`;
-  return max === null ? `choose at least ${min}` : `choose ${min} to ${max}`;
+  if (max !== null && min === max) return t("choices.exactly", { count: max });
+  if (min === 0) return max === null ? t("choices.any") : t("choices.upTo", { count: max });
+  return max === null ? t("choices.atLeast", { count: min }) : t("choices.between", { min, max });
 }
 
 /// Whether a group takes one option only -- shown as radio buttons.
@@ -145,15 +146,15 @@ export function selectionsKey(selections: SelectionInput[]): string {
 /// What a store's group form would be refused for, if anything -- the
 /// network's rules (`ModifierGroup::problem`), told first.
 export function groupProblem(group: ModifierGroup): string | null {
-  if (!group.name.trim()) return "Give the group a name.";
-  if (group.options.length === 0) return "Add at least one option.";
-  if (group.options.some((o) => !o.name.trim())) return "Every option needs a name.";
-  if (new Set(group.options.map((o) => o.id)).size !== group.options.length) return "Each option needs its own id.";
+  if (!group.name.trim()) return t("choices.problem.name");
+  if (group.options.length === 0) return t("choices.problem.noOptions");
+  if (group.options.some((o) => !o.name.trim())) return t("choices.problem.optionName");
+  if (new Set(group.options.map((o) => o.id)).size !== group.options.length) return t("choices.problem.ids");
   const most = group.options.length * group.max_per_option;
-  if (group.min_selections > most) return "It can't require more choices than it offers.";
+  if (group.min_selections > most) return t("choices.problem.minTooHigh");
   if (group.max_selections !== null && (group.max_selections < 1 || group.max_selections < group.min_selections || group.max_selections > most)) {
-    return "The most choices must be at least 1, at least the fewest, and no more than it offers.";
+    return t("choices.problem.max");
   }
-  if (group.free_selections > (group.max_selections ?? most)) return "It can't give more free choices than can be chosen.";
+  if (group.free_selections > (group.max_selections ?? most)) return t("choices.problem.free");
   return null;
 }

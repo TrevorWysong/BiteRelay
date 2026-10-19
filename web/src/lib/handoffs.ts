@@ -5,6 +5,7 @@ import { acknowledgeLeg, getLegsForOrder, getReceiptForLeg } from "../holochain/
 import { completeDelivery } from "../holochain/zomes/dispatch";
 import { actionHash, decodeEntry } from "../holochain/decode";
 import type { Leg, LegKind } from "../holochain/types";
+import { t } from "../i18n";
 
 /// The driver's most recent handoff of `kind` on an order, if it's reached
 /// this device yet.
@@ -23,7 +24,7 @@ export class HandoffNotYetHere extends Error {}
 /// which pays for it.
 export async function confirmDeliveryReceived(orderRef: Uint8Array): Promise<void> {
   const dropoff = await latestLeg(orderRef, "CustomerHandoff");
-  if (!dropoff) throw new HandoffNotYetHere("Your driver hasn't marked the order handed over yet.");
+  if (!dropoff) throw new HandoffNotYetHere(t("handoff.notYet"));
   await acknowledgeLeg(dropoff);
   await completeDelivery(orderRef);
 }

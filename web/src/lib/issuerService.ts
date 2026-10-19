@@ -10,6 +10,7 @@
 import { encodeHashToBase64 } from "@holochain/client";
 import type { AgentPubKey, IssuerProfile, IssuerRequest, IssuerView } from "../holochain/types";
 import { signIssuerLink } from "../holochain/zomes/ledger";
+import { t } from "../i18n";
 
 async function call<T>(serviceUrl: string, path: string, body?: unknown): Promise<T> {
   const url = `${serviceUrl.replace(/\/$/, "")}${path}`;
@@ -24,7 +25,7 @@ async function call<T>(serviceUrl: string, path: string, body?: unknown): Promis
         },
   );
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? "The issuer's service didn't answer. Try again shortly.");
+  if (!res.ok) throw new Error(data.error ?? t("issuer.noAnswer"));
   return data;
 }
 

@@ -11,7 +11,7 @@ import { Button, Card } from "../../components/ui";
 import { formatDate } from "../../lib/format";
 import { POLL } from "../../lib/poll";
 import { useResource } from "../../lib/useResource";
-import { CHECK_LABELS } from "../../lib/verification";
+import { checkLabel } from "../../lib/verification";
 import { useT } from "../../i18n";
 
 export function VerificationCard({ me }: { me: AgentPubKey }) {
@@ -28,7 +28,7 @@ export function VerificationCard({ me }: { me: AgentPubKey }) {
         <BadgeCheck size={20} className="shrink-0 text-emerald-500" />
         <span className="text-sm">
           <span className="block font-semibold text-ink-900 dark:text-ink-50">{t("verification.until", { date: formatDate(mine.expires_at) })}</span>
-          <span className="block text-xs text-ink-400">{mine.checks.map((c) => CHECK_LABELS[c]).join(" · ")}</span>
+          <span className="block text-xs text-ink-400">{mine.checks.map((c) => checkLabel(c)).join(" · ")}</span>
         </span>
       </Card>
     );

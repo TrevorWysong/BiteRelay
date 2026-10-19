@@ -6,6 +6,7 @@ import type { GeoPoint } from "../holochain/types";
 // lookup tells that server where someone is looking, so a network serious
 // about privacy runs its own.
 import { networkServices } from "../store/network";
+import { t } from "../i18n";
 
 const baseUrl = () => networkServices().geocoder_url.replace(/\/$/, "");
 
@@ -81,7 +82,7 @@ export async function searchAddress(query: string, signal: AbortSignal): Promise
   if (!trimmed) return [];
   const url = `${baseUrl()}/search?format=jsonv2&addressdetails=1&limit=5&q=${encodeURIComponent(trimmed)}`;
   const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`Address search failed (${res.status})`);
+  if (!res.ok) throw new Error(t("address.searchFailed", { status: res.status }));
   const rows: NominatimRow[] = await res.json();
   return rows.map((row) => {
     const components = addressComponents(row.address);

@@ -7,6 +7,7 @@
 // conductor, and refuses outright past a hard ceiling rather than silently
 // uploading something huge.
 
+import { t } from "../i18n";
 import { currentTerms } from "../store/network";
 
 const MAX_DIMENSION = 640;
@@ -28,7 +29,7 @@ export async function fileToResizedDataUri(file: File): Promise<string> {
   const dataUri = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
   // The network's ceiling (`max_image_bytes`) -- validation refuses more.
   if (dataUri.length > currentTerms().max_image_bytes) {
-    throw new Error(`Image is still too large after resizing (${Math.round(dataUri.length / 1024)}KB) -- try a smaller or simpler photo.`);
+    throw new Error(t("image.tooLarge", { size: Math.round(dataUri.length / 1024) }));
   }
   return dataUri;
 }

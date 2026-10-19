@@ -4,6 +4,7 @@
 // issuer's terms say it pays.
 import type { CashOutStatus, IssuerProfile } from "../holochain/types";
 import { collectGrants, reclaimDeclinedCashOuts } from "../holochain/zomes/ledger";
+import { t } from "../i18n";
 
 /// What a cash-out of `amount` comes to after `profile`'s fee -- rounded in
 /// the earner's favour, never below nothing.
@@ -15,15 +16,15 @@ export function payoutAfterFees(profile: Pick<IssuerProfile, "payout_fee_cents" 
 /// An issuer's fee, in words: "25¢ + 0.25%", "No fee".
 export function feeLabel(profile: Pick<IssuerProfile, "payout_fee_cents" | "payout_fee_basis_points">, formatCents: (cents: number) => string): string {
   const parts = [profile.payout_fee_cents > 0 ? formatCents(profile.payout_fee_cents) : null, profile.payout_fee_basis_points > 0 ? `${(profile.payout_fee_basis_points / 100).toFixed(2).replace(/\.?0+$/, "")}%` : null].filter(Boolean);
-  return parts.length ? `${parts.join(" + ")} fee` : "No fee";
+  return parts.length ? t("wallet.fee", { fee: parts.join(" + ") }) : t("wallet.noFee");
 }
 
 /// Where a cash-out stands, for its chip.
 export function cashOutStatusLabel(status: CashOutStatus): { label: string; tone: "neutral" | "success" | "warn" } {
-  if (status === "Pending") return { label: "Processing", tone: "neutral" };
-  if ("Paid" in status) return { label: "Paid", tone: "success" };
-  if ("Declined" in status) return { label: "Declined -- returning", tone: "warn" };
-  return { label: "Declined -- returned", tone: "warn" };
+  if (status === "Pending") return { label: t("wallet.status.processing"), tone: "neutral" };
+  if ("Paid" in status) return { label: t("wallet.status.paid"), tone: "success" };
+  if ("Declined" in status) return { label: t("wallet.status.returning"), tone: "warn" };
+  return { label: t("wallet.status.returned"), tone: "warn" };
 }
 
 /// Takes in whatever's owed to the caller from outside an order: funds an
