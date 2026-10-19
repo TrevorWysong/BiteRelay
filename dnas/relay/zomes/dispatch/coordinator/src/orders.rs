@@ -528,6 +528,10 @@ pub struct NetworkTerms {
     /// long after it -- none without arbiters.
     pub appeals: bool,
     pub appeal_window_secs: u64,
+    /// Whether drivers are verified by the network's verifiers before they
+    /// bid, and for how long a verification lasts.
+    pub drivers_verified: bool,
+    pub verification_days: u64,
     /// The age for age-restricted items, if the network sells any.
     pub restricted_min_age: Option<u8>,
     /// Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
@@ -574,6 +578,8 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         store_listing_stake: relay_governance::store_listing_stake(),
         appeals: !relay_governance::arbiters().is_empty(),
         appeal_window_secs: relay_governance::appeal_window().as_secs(),
+        drivers_verified: relay_governance::require_verified_drivers(),
+        verification_days: relay_governance::verification_lifetime().as_secs() / 86_400,
         restricted_min_age: relay_governance::restricted_min_age(),
         map_tiles_url: relay_governance::services().map_tiles_url,
         map_attribution: relay_governance::services().map_attribution,

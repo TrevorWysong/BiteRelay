@@ -1843,6 +1843,12 @@ export interface NetworkTerms {
   appeals: boolean;
   appeal_window_secs: number;
   /**
+   * Whether drivers are verified by the network's verifiers before they
+   * bid, and for how long a verification lasts.
+   */
+  drivers_verified: boolean;
+  verification_days: number;
+  /**
    * The age for age-restricted items, if the network sells any.
    */
   restricted_min_age: number | null;
