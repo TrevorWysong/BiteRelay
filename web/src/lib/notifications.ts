@@ -5,6 +5,7 @@
 import { bytesToHex } from "../holochain/decode";
 import type { DeliveryStatus, LocalSignal, OrderChange, OrderRole, PickupStatus } from "../holochain/types";
 import { cancellationText } from "./storeAnswers";
+import { t, type MessageKey } from "../i18n";
 
 export interface AppNotification {
   title: string;
@@ -18,38 +19,38 @@ export interface AppNotification {
   urgent: boolean;
 }
 
-const deliveryText: Record<OrderRole, Partial<Record<DeliveryStatus, string>>> = {
+const deliveryText: Record<OrderRole, Partial<Record<DeliveryStatus, MessageKey>>> = {
   Customer: {
-    Open: "The store accepted your order. Finding you a driver.",
-    DriverEnRouteToMerchant: "Your driver is on the way to the store, and the kitchen is starting on your order.",
-    DriverAtStore: "Your driver is at the store.",
-    PickedUp: "Your driver picked up your order and is on the way.",
-    Collecting: "Your order is waiting at the store for you to collect.",
-    Disputed: "You've told the store your order never arrived.",
+    Open: "notify.delivery.Customer.Open",
+    DriverEnRouteToMerchant: "notify.delivery.Customer.DriverEnRouteToMerchant",
+    DriverAtStore: "notify.delivery.Customer.DriverAtStore",
+    PickedUp: "notify.delivery.Customer.PickedUp",
+    Collecting: "notify.delivery.Customer.Collecting",
+    Disputed: "notify.delivery.Customer.Disputed",
   },
   Store: {
-    DriverEnRouteToMerchant: "A driver is on the way. Start cooking.",
-    PickedUp: "The driver picked up an order.",
-    Delivered: "An order was delivered.",
-    Disputed: "A customer says their order never arrived.",
+    DriverEnRouteToMerchant: "notify.delivery.Store.DriverEnRouteToMerchant",
+    PickedUp: "notify.delivery.Store.PickedUp",
+    Delivered: "notify.delivery.Store.Delivered",
+    Disputed: "notify.delivery.Store.Disputed",
   },
   Driver: {
-    MerchantConfirmed: "The store is preparing your delivery.",
-    DriverAtStore: "You're checked in. The store hands it over by scanning your code.",
-    Delivered: "Delivery complete. You're paid once the store's app records it.",
-    Disputed: "The customer says their order never arrived. Deliver it with their code, or the store refunds them.",
+    MerchantConfirmed: "notify.delivery.Driver.MerchantConfirmed",
+    DriverAtStore: "notify.delivery.Driver.DriverAtStore",
+    Delivered: "notify.delivery.Driver.Delivered",
+    Disputed: "notify.delivery.Driver.Disputed",
   },
 };
 
-const pickupText: Record<OrderRole, Partial<Record<PickupStatus, string>>> = {
+const pickupText: Record<OrderRole, Partial<Record<PickupStatus, MessageKey>>> = {
   Customer: {
-    MerchantConfirmed: "The store accepted your order and is preparing it.",
-    ReadyForPickup: "Your order is ready for pickup.",
-    Disputed: "You've told the store you can't get your order.",
+    MerchantConfirmed: "notify.pickup.Customer.MerchantConfirmed",
+    ReadyForPickup: "notify.pickup.Customer.ReadyForPickup",
+    Disputed: "notify.pickup.Customer.Disputed",
   },
   Store: {
-    PickedUp: "An order was collected.",
-    Disputed: "A customer says they can't get their order.",
+    PickedUp: "notify.pickup.Store.PickedUp",
+    Disputed: "notify.pickup.Store.Disputed",
   },
   Driver: {},
 };
@@ -57,53 +58,54 @@ const pickupText: Record<OrderRole, Partial<Record<PickupStatus, string>>> = {
 function cancelledText(role: OrderRole, change: OrderChange): string {
   const cancellation = "Delivery" in change ? change.Delivery.cancellation : change.Pickup.cancellation;
   if (role === "Customer") return cancellationText(cancellation);
-  if (cancellation === "ByCustomer") return "The customer cancelled an order.";
-  if (cancellation === "StoreDidNotRespond") return "An order wasn't accepted in time and was cancelled.";
-  if (cancellation === "StoreLate") return role === "Driver" ? "The customer cancelled after the store ran late." : "A customer cancelled an order you kept their driver waiting on. They're refunded in full.";
-  if (cancellation === "NoDriver") return role === "Driver" ? "No driver took on the order you left, so your collateral paid for the food." : "No driver came for an order. Its last driver's collateral pays for the food.";
-  return role === "Driver" ? "A delivery was cancelled." : "An order was cancelled.";
+  if (cancellation === "ByCustomer") return t("notify.cancel.byCustomer");
+  if (cancellation === "StoreDidNotRespond") return t("notify.cancel.noResponse");
+  if (cancellation === "StoreLate") return t(role === "Driver" ? "notify.cancel.lateDriver" : "notify.cancel.lateStore");
+  if (cancellation === "NoDriver") return t(role === "Driver" ? "notify.cancel.noDriverDriver" : "notify.cancel.noDriverStore");
+  return t(role === "Driver" ? "notify.cancel.delivery" : "notify.cancel.order");
 }
 
 /// The notification a signal calls for, if any.
 export function notificationFor(signal: LocalSignal): AppNotification | null {
   if ("OrderPlaced" in signal) {
-    return { title: "New order", body: "Accept it before the timer runs out.", tag: `order-${bytesToHex(signal.OrderPlaced)}`, route: "/merchant", urgent: true };
+    return { title: t("notify.newOrder.title"), body: t("notify.newOrder.body"), tag: `order-${bytesToHex(signal.OrderPlaced)}`, route: "/merchant", urgent: true };
   }
   if ("OrderUpdated" in signal) {
     const { order_hash, change, role } = signal.OrderUpdated;
     const hex = bytesToHex(order_hash);
     const delivery = "Delivery" in change;
     const status = delivery ? change.Delivery.status : change.Pickup.status;
-    const body = status === "Cancelled" ? cancelledText(role, change) : delivery ? deliveryText[role][change.Delivery.status] : pickupText[role][change.Pickup.status];
+    const key = delivery ? deliveryText[role][change.Delivery.status] : pickupText[role][change.Pickup.status];
+    const body = status === "Cancelled" ? cancelledText(role, change) : key && t(key);
     if (!body) return null;
     const route = role === "Customer" ? (delivery ? `/customer/orders/${hex}` : `/customer/pickup-orders/${hex}`) : role === "Store" ? "/merchant" : "/driver";
-    return { title: status === "Cancelled" ? "Order cancelled" : "Order update", body, tag: `order-${hex}`, route, urgent: false };
+    return { title: t(status === "Cancelled" ? "notify.cancelled" : "notify.update"), body, tag: `order-${hex}`, route, urgent: false };
   }
   if ("BidPlaced" in signal) {
-    return { title: "New driver bid", body: "A driver offered to deliver your order.", tag: `bid-${bytesToHex(signal.BidPlaced)}`, route: "/customer/orders", urgent: false };
+    return { title: t("notify.bid.title"), body: t("notify.bid.body"), tag: `bid-${bytesToHex(signal.BidPlaced)}`, route: "/customer/orders", urgent: false };
   }
   if ("BidAccepted" in signal) {
-    return { title: "Delivery assigned", body: "Your bid was accepted. Head to the store.", tag: `bid-${bytesToHex(signal.BidAccepted)}`, route: "/driver", urgent: true };
+    return { title: t("notify.assigned.title"), body: t("notify.assigned.body"), tag: `bid-${bytesToHex(signal.BidAccepted)}`, route: "/driver", urgent: true };
   }
   if ("HandedOver" in signal) {
-    return { title: "Order handed over", body: "The store handed you the order. Head to the customer.", tag: `order-${bytesToHex(signal.HandedOver)}`, route: "/driver", urgent: false };
+    return { title: t("notify.handed.title"), body: t("notify.handed.body"), tag: `order-${bytesToHex(signal.HandedOver)}`, route: "/driver", urgent: false };
   }
   if ("CollectRequested" in signal) {
-    return { title: "A customer is collecting", body: "A customer is coming to collect their delivery themselves.", tag: `order-${bytesToHex(signal.CollectRequested)}`, route: "/merchant", urgent: false };
+    return { title: t("notify.collecting.title"), body: t("notify.collecting.body"), tag: `order-${bytesToHex(signal.CollectRequested)}`, route: "/merchant", urgent: false };
   }
   if ("ChatMessage" in signal) {
-    return { title: "New message", body: signal.ChatMessage.text, tag: `chat-${bytesToHex(signal.ChatMessage.order_ref)}`, route: "/", urgent: false };
+    return { title: t("notify.message"), body: signal.ChatMessage.text, tag: `chat-${bytesToHex(signal.ChatMessage.order_ref)}`, route: "/", urgent: false };
   }
   if ("HandoffRecorded" in signal) {
     const hex = bytesToHex(signal.HandoffRecorded);
-    return { title: "Your order was delivered", body: "Confirm you have it, or report a problem.", tag: `order-${hex}`, route: `/customer/orders/${hex}`, urgent: true };
+    return { title: t("notify.delivered.title"), body: t("notify.delivered.body"), tag: `order-${hex}`, route: `/customer/orders/${hex}`, urgent: true };
   }
   if ("IssueReported" in signal) {
     const hex = bytesToHex(signal.IssueReported);
-    return { title: "A customer reported a problem", body: "Accept or contest it before their window closes, or it's refunded.", tag: `issue-${hex}`, route: "/merchant", urgent: true };
+    return { title: t("notify.issue.title"), body: t("notify.issue.body"), tag: `issue-${hex}`, route: "/merchant", urgent: true };
   }
   if ("ClaimConfirmed" in signal) {
-    return { title: "Goodie bag confirmed", body: "The store confirmed your goodie bag.", tag: `claim-${bytesToHex(signal.ClaimConfirmed)}`, route: "/customer/orders", urgent: false };
+    return { title: t("notify.claim.title"), body: t("notify.claim.body"), tag: `claim-${bytesToHex(signal.ClaimConfirmed)}`, route: "/customer/orders", urgent: false };
   }
   return null;
 }
