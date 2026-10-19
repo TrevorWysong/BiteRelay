@@ -3,6 +3,7 @@ import { Bell } from "lucide-react";
 import { Card, Switch } from "./ui";
 import { unlockChime } from "../lib/chime";
 import { usePreferences } from "../store/preferences";
+import { useT } from "../i18n";
 
 const supported = typeof Notification !== "undefined";
 
@@ -10,6 +11,7 @@ const supported = typeof Notification !== "undefined";
 /// notifications, and -- on a device running a store -- a chime for each
 /// new order.
 export function NotificationSettings({ runsStore }: { runsStore: boolean }) {
+  const t = useT();
   const { notifications, newOrderChime, setNotifications, setNewOrderChime } = usePreferences();
   const [permission, setPermission] = useState(() => (supported ? Notification.permission : "denied"));
 
@@ -23,26 +25,22 @@ export function NotificationSettings({ runsStore }: { runsStore: boolean }) {
   return (
     <Card className="mb-4 flex flex-col gap-3 p-4">
       <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <Bell size={12} /> Notifications on this device
+        <Bell size={12} /> {t("notifications.title")}
       </p>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">Order updates</p>
+          <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("notifications.orders")}</p>
           <p className="text-xs text-ink-400">
-            {!supported
-              ? "This device can't show notifications."
-              : permission === "denied"
-                ? "Blocked in this device's settings. Allow notifications for Relay there to turn them on."
-                : "When an order is accepted, picked up, delivered or cancelled. Arrives while Relay is running."}
+            {!supported ? t("notifications.unsupported") : permission === "denied" ? t("notifications.blocked") : t("notifications.ordersDetail")}
           </p>
         </div>
-        <Switch checked={notifications && permission === "granted"} onChange={toggleNotifications} disabled={!supported || permission === "denied"} label="Order update notifications" />
+        <Switch checked={notifications && permission === "granted"} onChange={toggleNotifications} disabled={!supported || permission === "denied"} label={t("notifications.ordersLabel")} />
       </div>
       {runsStore && (
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">New-order chime</p>
-            <p className="text-xs text-ink-400">Rings for each order waiting on your store, like an order tablet.</p>
+            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("notifications.chime")}</p>
+            <p className="text-xs text-ink-400">{t("notifications.chimeDetail")}</p>
           </div>
           <Switch
             checked={newOrderChime}
@@ -51,7 +49,7 @@ export function NotificationSettings({ runsStore }: { runsStore: boolean }) {
               if (on) unlockChime();
               setNewOrderChime(on);
             }}
-            label="New-order chime"
+            label={t("notifications.chime")}
           />
         </div>
       )}

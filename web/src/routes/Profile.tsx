@@ -23,12 +23,14 @@ import { LanguagePicker } from "../components/LanguagePicker";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
 import { DEV_ADMIN_URL } from "../lib/devNode";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
+import { useT } from "../i18n";
 
 /// One identity, several hats: ratings and stats are shown per role (your
 /// driving) and per store (each restaurant you run), never blended into
 /// one agent-wide number -- see `reputation_integrity`'s module doc.
 export function ProfilePage() {
   const navigate = useNavigate();
+  const t = useT();
   const { profile, profileActionHash, agentPubKey, hasDeviceLock, signOut, refreshProfile, setMode, adoptIdentity } = useSession();
   const setActiveStore = useMerchantStores((s) => s.setActive);
   const isDriver = !!profile?.roles.includes("Provider");
@@ -156,7 +158,7 @@ export function ProfilePage() {
         <div className="flex gap-1.5">
           {profile?.roles.map((r) => (
             <span key={r} className="rounded-full bg-ink-100 dark:bg-ink-800 px-2.5 py-1 text-xs font-semibold text-ink-500 dark:text-ink-300">
-              {r}
+              {t(`role.${r}`)}
             </span>
           ))}
         </div>
@@ -165,7 +167,7 @@ export function ProfilePage() {
       <motion.div variants={fadeSlideUp}>
       <Card className="mb-4 p-4">
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-xs font-bold uppercase tracking-wide text-ink-400">About</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{t("profile.about")}</p>
           <button onClick={toggleEditing} className="text-ink-400 hover:text-relay-600">
             <Pencil size={14} />
           </button>
@@ -173,20 +175,20 @@ export function ProfilePage() {
         <AnimatePresence mode="wait" initial={false}>
         {editing ? (
           <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex flex-col gap-2">
-            <Input maxLength={MAX_LABEL_CHARS} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Your name" aria-label="Your name" />
+            <Input maxLength={MAX_LABEL_CHARS} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder={t("onboarding.name")} aria-label={t("onboarding.name")} />
             <p className="-mt-1 text-[11px] text-ink-400">
-              {publicFacing ? "Shown publicly, as your store or driver name." : "Shared only with the store and driver of each of your orders -- nobody else can see it."}
+              {publicFacing ? t("onboarding.namePublic") : t("onboarding.namePrivate")}
             </p>
-            <Textarea maxLength={MAX_NOTE_CHARS} value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder="Bio" />
-            <Input maxLength={MAX_PHONE_CHARS} value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="Phone" />
+            <Textarea maxLength={MAX_NOTE_CHARS} value={draft.bio} onChange={(e) => setDraft((d) => ({ ...d, bio: e.target.value }))} rows={2} placeholder={t("profile.bio")} />
+            <Input maxLength={MAX_PHONE_CHARS} value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder={t("profile.phone")} type="tel" />
             {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}
             <Button loading={saving} onClick={saveProfile} className="py-2 text-xs">
-              Save
+              {t("common.save")}
             </Button>
           </motion.div>
         ) : (
           <motion.div key="view" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <p className="text-sm text-ink-600 dark:text-ink-300">{profile?.bio || "No bio yet."}</p>
+            <p className="text-sm text-ink-600 dark:text-ink-300">{profile?.bio || t("profile.noBio")}</p>
             {phone && <p className="mt-1 text-xs text-ink-400">{phone}</p>}
           </motion.div>
         )}
@@ -199,7 +201,7 @@ export function ProfilePage() {
         <Card className="mb-4 p-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-              <Truck size={13} /> Vehicle
+              <Truck size={13} /> {t("profile.vehicle")}
             </p>
             <button onClick={toggleEditingVehicle} className="text-ink-400 hover:text-relay-600">
               <Pencil size={14} />
@@ -213,18 +215,18 @@ export function ProfilePage() {
                 maxLength={MAX_VEHICLE_CHARS}
                 value={vehicleDraft.vehicle_description}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, vehicle_description: e.target.value }))}
-                placeholder="e.g. Blue Honda Civic"
+                placeholder={t("onboarding.makeModelPlaceholder")}
               />
               <Input
                 maxLength={MAX_LICENSE_PLATE_CHARS}
                 value={vehicleDraft.license_plate}
                 onChange={(e) => setVehicleDraft((d) => ({ ...d, license_plate: e.target.value }))}
-                placeholder="License plate"
+                placeholder={t("profile.plate")}
                 className="font-mono"
               />
               {saveError && <p className="rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">{saveError}</p>}
               <Button loading={saving} onClick={saveVehicle} className="py-2 text-xs">
-                Save
+                {t("common.save")}
               </Button>
             </motion.div>
           ) : credential ? (
@@ -236,7 +238,7 @@ export function ProfilePage() {
               </div>
             </motion.div>
           ) : (
-            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">No vehicle info yet. Tap the pencil to add it.</motion.p>
+            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-ink-400">{t("profile.noVehicle")}</motion.p>
           )}
           </AnimatePresence>
         </Card>
@@ -247,10 +249,10 @@ export function ProfilePage() {
       <LanguagePicker />
       <NotificationSettings runsStore={!!profile?.roles.includes("Merchant")} />
       <Card className="mb-4 p-4">
-        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">Your identity</p>
-        <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "N/A"}</p>
+        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-400">{t("profile.identity")}</p>
+        <p className="break-all font-mono text-xs text-ink-500">{agentPubKey ? encodeHashToBase64(agentPubKey) : "–"}</p>
         <p className="mt-2 text-xs text-ink-400">
-          This is your real cryptographic identity. There's no account behind it on any server, and nobody but you holds the private key.
+          {t("profile.identityDetail")}
         </p>
         {/* In the app, the identity is the app's own; these are the dev host's. */}
         {HOST === "dev" && (
@@ -270,8 +272,8 @@ export function ProfilePage() {
             <KeyRound size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-ink-900 dark:text-ink-50">Account &amp; recovery</p>
-            <p className="text-xs text-ink-400">Recovery phrase, guardians, moving to a new device</p>
+            <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{t("profile.account")}</p>
+            <p className="text-xs text-ink-400">{t("profile.accountDetail")}</p>
           </div>
           <ChevronRight size={18} className="shrink-0 text-ink-300" />
         </Link>
@@ -280,13 +282,13 @@ export function ProfilePage() {
       <motion.div variants={fadeSlideUp} className="mb-4 grid grid-cols-2 gap-3">
         <Link to="/wallet" className="block rounded-2xl border border-ink-100 bg-white p-4 shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 dark:border-ink-800 dark:bg-ink-900">
           <p className="flex items-center justify-between text-xs text-ink-400">
-            Wallet <ChevronRight size={14} className="text-ink-300" />
+            {t("wallet.title")} <ChevronRight size={14} className="text-ink-300" />
           </p>
           {balance === undefined ? <Skeleton className="h-6 w-16 mt-1" /> : <StatNumber className="text-lg">{formatCents(balance)}</StatNumber>}
         </Link>
         {isDriver && (
           <Card className="p-4">
-            <p className="text-xs text-ink-400">Deliveries</p>
+            <p className="text-xs text-ink-400">{t("profile.deliveries")}</p>
             {rep === undefined ? <Skeleton className="h-6 w-10 mt-1" /> : <StatNumber tone="success" className="text-lg">{rep.completed_count}</StatNumber>}
           </Card>
         )}
@@ -296,7 +298,7 @@ export function ProfilePage() {
         <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-            <Store size={13} /> {stores.length === 1 ? "Your store" : `Your stores (${stores.length})`}
+            <Store size={13} /> {t("profile.stores", { count: stores.length })}
           </p>
           <div className="flex flex-col divide-y divide-ink-100 dark:divide-ink-800">
             {stores.map((store) => {
@@ -307,7 +309,7 @@ export function ProfilePage() {
                   <span className={store.catalog.is_open ? "h-2 w-2 shrink-0 rounded-full bg-presence-500" : "h-2 w-2 shrink-0 rounded-full bg-ink-300 dark:bg-ink-600"} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{store.catalog.business_name}</p>
-                    {avg !== null && summary ? <StarRating value={avg} count={summary.count} size={11} /> : <p className="text-xs text-ink-400">No ratings yet</p>}
+                    {avg !== null && summary ? <StarRating value={avg} count={summary.count} size={11} /> : <p className="text-xs text-ink-400">{t("profile.noRatings")}</p>}
                   </div>
                   <ChevronRight size={16} className="shrink-0 text-ink-300" />
                 </button>
@@ -324,8 +326,8 @@ export function ProfilePage() {
           <ShieldCheck size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-ink-900 dark:text-ink-50">No-skim transparency</p>
-          <p className="text-xs text-ink-400">See every cent, verified from your own ledger. No platform fee, always.</p>
+          <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{t("profile.transparency")}</p>
+          <p className="text-xs text-ink-400">{t("profile.transparencyDetail")}</p>
         </div>
         <ChevronRight size={18} className="shrink-0 text-ink-300" />
       </Link>
@@ -334,7 +336,7 @@ export function ProfilePage() {
       {reviews.length > 0 && (
         <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-4">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">Driver reviews</p>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">{t("profile.driverReviews")}</p>
           <div className="flex flex-col gap-3">
             {reviews.map((r, i) => (
               <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-2 last:border-0 last:pb-0">
@@ -349,7 +351,7 @@ export function ProfilePage() {
 
       <motion.div variants={fadeSlideUp} className="mb-4 mt-2 text-center">
         <Link to="/policies" className="text-xs text-ink-400 underline-offset-4 hover:text-ink-600 hover:underline dark:hover:text-ink-200">
-          Policies, disputes and risks
+          {t("profile.policies")}
         </Link>
       </motion.div>
 

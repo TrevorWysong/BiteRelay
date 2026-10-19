@@ -4,6 +4,7 @@
 // and its cleanup stops every track.
 import { useCallback, useState } from "react";
 import { CameraOff } from "lucide-react";
+import { t as translate } from "../i18n";
 
 /// The slice of the Barcode Detection API this uses.
 interface BarcodeDetectorLike {
@@ -20,7 +21,7 @@ const SCAN_INTERVAL_MS = 120;
 
 /// `onScan` is called with each code read until the scanner unmounts; keep
 /// it stable (`useCallback`), as a new one restarts the camera.
-export function QrScanner({ onScan, prompt = "Point at the code on the customer's screen" }: { onScan: (text: string) => void; prompt?: string }) {
+export function QrScanner({ onScan, prompt }: { onScan: (text: string) => void; prompt?: string }) {
   const [problem, setProblem] = useState<string | null>(null);
 
   const viewfinder = useCallback(
@@ -71,7 +72,7 @@ export function QrScanner({ onScan, prompt = "Point at the code on the customer'
         } catch (err) {
           if (stopped) return;
           const denied = err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError");
-          setProblem(denied ? "Camera access is off for Relay. Allow it in your settings, or type the code instead." : "This device's camera isn't available. Type the code instead.");
+          setProblem(denied ? translate("scanner.denied") : translate("scanner.unavailable"));
         }
       }
       void start();
@@ -103,7 +104,7 @@ export function QrScanner({ onScan, prompt = "Point at the code on the customer'
         ))}
         <span className="absolute inset-x-3 top-1/2 h-0.5 animate-[scanline_2s_ease-in-out_infinite] rounded-full bg-relay-400 shadow-[0_0_12px_2px] shadow-relay-400/70" />
       </div>
-      <p className="absolute inset-x-0 bottom-4 text-center text-xs font-semibold text-white/90 drop-shadow">{prompt}</p>
+      <p className="absolute inset-x-0 bottom-4 text-center text-xs font-semibold text-white/90 drop-shadow">{prompt ?? translate("scanner.customerCode")}</p>
     </div>
   );
 }

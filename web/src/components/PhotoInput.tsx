@@ -3,6 +3,7 @@ import { Camera, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { fileToResizedDataUri } from "../lib/image";
 import { describeError } from "../lib/errors";
+import { useT } from "../i18n";
 
 interface Props {
   value: string;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function PhotoInput({ value, onChange, shape = "circle", className }: Props) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,8 +55,8 @@ export function PhotoInput({ value, onChange, shape = "circle", className }: Pro
         ) : isBanner ? (
           <span className="flex flex-col items-center gap-1.5 text-ink-400 dark:text-ink-500">
             <Camera size={26} />
-            <span className="text-xs font-semibold">Add a photo</span>
-            <span className="text-[11px]">Tap to upload from your device</span>
+            <span className="text-xs font-semibold">{t("photo.add")}</span>
+            <span className="text-[11px]">{t("photo.tap")}</span>
           </span>
         ) : (
           <Camera size={22} className="text-ink-400" />

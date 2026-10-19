@@ -10,8 +10,10 @@ import { accountCode, keyFingerprint, readAccountCode } from "../lib/accountMove
 import { QrSvg } from "./HandoverCode";
 import { QrScanner } from "./QrScanner";
 import { Button, Input } from "./ui";
+import { useT } from "../i18n";
 
 export function AccountCode({ agent, note }: { agent: AgentPubKey; note: string }) {
+  const t = useT();
   const code = accountCode(agent);
   const [copied, setCopied] = useState(false);
 
@@ -30,11 +32,11 @@ export function AccountCode({ agent, note }: { agent: AgentPubKey; note: string 
       <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-ink-100">
         <QrSvg text={code} size={188} />
       </div>
-      <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">Fingerprint</p>
+      <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("code.fingerprint")}</p>
       <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(agent)}</p>
       <p className="mt-2 max-w-xs text-xs leading-relaxed text-ink-500 dark:text-ink-400">{note}</p>
       <button type="button" onClick={copy} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-relay-600 hover:underline dark:text-relay-400">
-        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy the code instead"}
+        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? t("code.copied") : t("code.copy")}
       </button>
     </div>
   );
@@ -42,6 +44,7 @@ export function AccountCode({ agent, note }: { agent: AgentPubKey; note: string 
 
 /// Reads an account code -- scanned, or pasted -- and hands over its key.
 export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey) => void; prompt: string }) {
+  const t = useT();
   const [typing, setTyping] = useState(false);
   const [text, setText] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -50,7 +53,7 @@ export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey)
     (scanned: string) => {
       const key = readAccountCode(scanned);
       if (key) onKey(key);
-      else setProblem("That isn't a Relay account code.");
+      else setProblem(t("code.notAccount"));
     },
     [onKey],
   );
@@ -58,7 +61,7 @@ export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey)
   function submit() {
     const key = readAccountCode(text);
     if (key) onKey(key);
-    else setProblem("That isn't a Relay account code. Copy it again from the other screen.");
+    else setProblem(t("code.notAccountCopy"));
   }
 
   return (
@@ -67,7 +70,7 @@ export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey)
         <div className="flex flex-col gap-2">
           <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="relay-account:uhCAk…" className="font-mono text-xs" />
           <Button disabled={!text.trim()} onClick={submit}>
-            Continue
+            {t("common.continue")}
           </Button>
         </div>
       ) : (
@@ -77,12 +80,12 @@ export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey)
       <button
         type="button"
         onClick={() => {
-          setTyping((t) => !t);
+          setTyping((v) => !v);
           setProblem(null);
         }}
         className="mx-auto mt-3 flex items-center gap-1.5 text-xs font-semibold text-ink-500 hover:text-ink-700 dark:hover:text-ink-300"
       >
-        {typing ? <Camera size={13} /> : <Keyboard size={13} />} {typing ? "Scan it instead" : "Paste the code instead"}
+        {typing ? <Camera size={13} /> : <Keyboard size={13} />} {typing ? t("code.scanInstead") : t("code.pasteInstead")}
       </button>
     </div>
   );

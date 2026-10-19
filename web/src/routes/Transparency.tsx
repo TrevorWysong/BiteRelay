@@ -9,6 +9,7 @@ import { fadeSlideUp, staggerContainer } from "../lib/motion";
 import { useResource } from "../lib/useResource";
 import type { LedgerEntry } from "../holochain/types";
 import { describeLedgerEntry } from "../lib/ledger";
+import { useT } from "../i18n";
 
 interface Row {
   hash: Uint8Array;
@@ -23,6 +24,7 @@ interface Row {
 /// page is the whole account, not a report about it. There is no operator
 /// account anywhere in this system for a platform cut to go to.
 export function Transparency() {
+  const t = useT();
   const agentPubKey = useSession((s) => s.agentPubKey);
   const agentHex = agentPubKey ? bytesToHex(agentPubKey) : null;
   const { data: balance } = useResource(agentHex && `balance:${agentHex}`, () => getBalance(agentPubKey!).catch(() => 0));
@@ -69,25 +71,23 @@ export function Transparency() {
           <ShieldCheck size={30} />
         </motion.div>
         <p className="relative text-4xl font-black tracking-tight">{formatCents(0)}</p>
-        <p className="relative text-sm font-bold opacity-95">Platform fee taken from your orders: always, by design.</p>
+        <p className="relative text-sm font-bold opacity-95">{t("transparency.zero")}</p>
         <p className="relative mt-1 max-w-xs text-xs leading-relaxed opacity-80">
-          Every cent you've ever paid or been paid through Relay is listed below, straight from your own cryptographically
-          signed ledger entries. It's not a report we generated, it's the actual data. There's no operator account anywhere
-          in this system for a cut to go to, so there's nothing to hide here.
+          {t("transparency.detail")}
         </p>
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mb-2 grid grid-cols-3 gap-2">
         <Card className="p-3 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Received</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">{t("transparency.received")}</p>
           <StatNumber tone="success" className="text-lg">{formatCents(totalReceived)}</StatNumber>
         </Card>
         <Card className="p-3 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Set aside</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">{t("transparency.setAside")}</p>
           <StatNumber className="text-lg">{formatCents(totalPaid)}</StatNumber>
         </Card>
         <Card className="p-3 text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Net</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">{t("transparency.net")}</p>
           <StatNumber tone={(balance ?? 0) >= 0 ? "success" : "danger"} className="text-lg">{formatCents(balance ?? 0)}</StatNumber>
         </Card>
       </motion.div>
@@ -103,18 +103,18 @@ export function Transparency() {
             />
           </div>
           <div className="mt-1 flex justify-between text-[10px] font-semibold text-ink-400">
-            <span>{receivedShare.toFixed(0)}% received</span>
-            <span>{(100 - receivedShare).toFixed(0)}% paid</span>
+            <span>{t("transparency.receivedShare", { percent: receivedShare.toFixed(0) })}</span>
+            <span>{t("transparency.paidShare", { percent: (100 - receivedShare).toFixed(0) })}</span>
           </div>
         </motion.div>
       )}
 
       <motion.h2 variants={fadeSlideUp} className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
-        Every entry on your ledger
+        {t("transparency.entries")}
       </motion.h2>
       {rows.length === 0 && (
         <motion.p variants={fadeSlideUp} className="rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">
-          Nothing here yet. Place or complete an order to see it appear.
+          {t("transparency.empty")}
         </motion.p>
       )}
       <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="pb-6">

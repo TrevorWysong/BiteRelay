@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
+import { t as translate } from "../i18n";
 
 export function Sheet({ open, onClose, title, subtitle, children, footer }: { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }) {
   return (
@@ -37,7 +38,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer }: { op
                 <h2 className="text-lg font-black tracking-tight text-ink-900 dark:text-ink-50">{title}</h2>
                 {subtitle && <p className="mt-0.5 text-sm text-ink-500 dark:text-ink-400">{subtitle}</p>}
               </div>
-              <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-100 text-ink-500 transition hover:bg-ink-200 dark:bg-ink-800 dark:hover:bg-ink-700">
+              <button onClick={onClose} aria-label={translate("common.close")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-100 text-ink-500 transition hover:bg-ink-200 dark:bg-ink-800 dark:hover:bg-ink-700">
                 <X size={18} />
               </button>
             </div>

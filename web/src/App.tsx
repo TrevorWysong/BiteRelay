@@ -25,7 +25,7 @@ import { Policies } from "./routes/Policies";
 import { AccountPage } from "./routes/Account";
 import VerifyPage from "./routes/Verify";
 import ArbitratePage from "./routes/Arbitrate";
-import { useLocale } from "./i18n";
+import { useLocale, useT } from "./i18n";
 import { MovedAway } from "./components/MovedAway";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
@@ -52,6 +52,7 @@ const RECONNECT_RETRY_DELAY_MS = 1200;
 const FINAL_FAILURES = new Set(["PasskeyError", "IdentityGone"]);
 
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
+  const t = useT();
   const { status, hasStoredIdentity, needsUnlock, reconnect } = useSession();
   const [attempted, setAttempted] = useState(false);
   // A passkey-locked identity waits for a tap: a prompt on page load is
@@ -88,7 +89,7 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
             up to a minute waiting on a Touch ID/Windows Hello prompt (an
             OS-level UI this page can't show anything about directly) --
             an unlabeled spinner for that long reads as a frozen page. */}
-        <p className="text-xs text-white/70">Reconnecting -- check for a sign-in prompt if this takes a moment</p>
+        <p className="text-xs text-white/70">{t("app.reconnecting")}</p>
       </div>
     );
   }
@@ -99,6 +100,7 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
 /// the browser shows Touch ID or Windows Hello. "Another way" goes to
 /// sign-in, which can still continue as this identity.
 function UnlockScreen({ onDone }: { onDone: () => void }) {
+  const t = useT();
   const reconnect = useSession((s) => s.reconnect);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,13 +122,13 @@ function UnlockScreen({ onDone }: { onDone: () => void }) {
   return (
     <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-6 text-white">
       <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-3xl font-black text-relay-600 shadow-xl">R</div>
-      <p className="text-lg font-bold">Welcome back</p>
+      <p className="text-lg font-bold">{t("app.welcomeBack")}</p>
       <button onClick={unlock} disabled={busy} className="flex items-center gap-2 rounded-full bg-white px-6 py-3 font-semibold text-relay-600 shadow-lg disabled:opacity-60">
-        {busy ? <Spinner className="h-4 w-4" /> : <Fingerprint size={18} />} Unlock Relay
+        {busy ? <Spinner className="h-4 w-4" /> : <Fingerprint size={18} />} {t("app.unlock")}
       </button>
       {error && <p className="max-w-xs text-center text-xs text-white/80">{error}</p>}
       <button onClick={onDone} className="text-xs text-white/70 underline underline-offset-2">
-        Sign in another way
+        {t("app.anotherWay")}
       </button>
     </div>
   );
@@ -151,12 +153,13 @@ function HomeForMode() {
 /// A production build opened in a plain browser: there's no conductor here
 /// to talk to -- Relay runs inside its own app (see holochain/host.ts).
 function NoHost() {
+  const t = useT();
   return (
     <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-8 text-center text-white">
       <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
-      <h1 className="text-xl font-black">Open Relay in the Relay app</h1>
+      <h1 className="text-xl font-black">{t("app.openInApp")}</h1>
       <p className="max-w-sm text-sm text-white/80">
-        Relay has no servers: it runs on your own device, in the Relay app, which keeps your identity and data with you. This page can't reach it from a browser.
+        {t("app.openInAppDetail")}
       </p>
     </div>
   );
