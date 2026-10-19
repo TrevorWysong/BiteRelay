@@ -9,10 +9,10 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
-import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type Standing, type Succession } from "../src/ledger.ts";
+import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type RulingDue, type Standing, type Succession } from "../src/ledger.ts";
 import { migrationSweep } from "../src/migrations.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
-import { sweep, type PayoutDeps } from "../src/payouts.ts";
+import { decide, sweep, type PayoutDeps } from "../src/payouts.ts";
 import { reissueSweep } from "../src/recovery.ts";
 import type { PaymentRail, RailEvent, SavedCardCharge } from "../src/rail.ts";
 import { DEFAULT_TIERS, type AccountStanding, type RiskPolicy } from "../src/risk.ts";
@@ -48,6 +48,8 @@ interface Accounts {
   /// This network, and the accounts moving off it.
   network?: Uint8Array;
   migrations?: MigrationRequest[];
+  /// Arbiters' awards against each store owner.
+  rulings?: RulingDue[];
 }
 
 function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
@@ -88,6 +90,7 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
       const page = (accounts.migrations ?? []).filter((r) => after === null || r.requested_at >= after);
       return { requests: page, cursor: page.length ? Math.max(...page.map((r) => r.requested_at)) + 1 : after, more: false };
     },
+    rulingsAgainst: async (owner) => (accounts.rulings ?? []).filter((r) => agentId(r.order) === agentId(owner)),
   };
   return { ledger, grants, decisions, failGrant: () => (failNextGrant = true) };
 }
@@ -586,4 +589,35 @@ test("a balance moving to the next network is credited there once, only after th
   assert.equal(await migrationSweep(store, previous, current), 1);
   assert.deepEqual(grants, [{ to: agentId(moverNew), amount: 4500, reference: `migration:${agentId(mover)}` }], "what the closed ledger held, to the new key; a move to another network isn't this issuer's");
   assert.equal(await migrationSweep(store, previous, current), 0, "once");
+});
+
+test("an arbiter's award comes out of the store's cash-outs, oldest first, until it's paid -- once", async () => {
+  const store = new Store(":memory:");
+  const owner = identity().key;
+  const [alice, bob] = [identity().key, identity().key];
+  store.setPayoutAccount(agentId(owner), "acct_ready");
+  // `order` stands in for the store owner in the fake ledger's lookup.
+  const ruling = (n: number, customer: Uint8Array, award: number): RulingDue => ({ ruling: new Uint8Array(39).fill(n), appeal: new Uint8Array(39).fill(n + 50), order: owner, customer, award, ruled_at: n });
+  const accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map(), rulings: [ruling(1, alice, 3_000), ruling(2, bob, 4_000)] };
+  const first = payoutAfterFees(FEE, 5_000);
+  const { ledger, grants, decisions } = fakeLedger([request(1, 5_000, owner), request(2, 10_000, owner)], accounts);
+  const { rail, payments } = fakeRail({ ready: new Set(["acct_ready"]) });
+
+  // The first cash-out pays Alice's award in full and what's left to Bob's.
+  const deps = payoutDeps(store, ledger, rail);
+  assert.equal(await decide(request(1, 5_000, owner), deps).then((d) => "Paid" in d), true);
+  assert.deepEqual(grants.map((g) => [g.to, g.amount]), [[agentId(alice), 3_000], [agentId(bob), first - 3_000]]);
+  assert.equal(payments.length, 0, "nothing left for the store from it");
+  // Decided again (a retried sweep): nothing more is granted.
+  await decide(request(1, 5_000, owner), deps);
+  assert.equal(grants.length, 2);
+
+  // The next pays the rest of Bob's, and the store the remainder.
+  await decide(request(2, 10_000, owner), deps);
+  const second = payoutAfterFees(FEE, 10_000);
+  const rest = 4_000 - (first - 3_000);
+  assert.deepEqual(grants.slice(2).map((g) => [g.to, g.amount]), [[agentId(bob), rest]]);
+  assert.deepEqual(payments.map((p) => p.amount), [second - rest]);
+  assert.equal(store.awardPaid(Buffer.from(ruling(2, bob, 0).ruling).toString("hex")), 4_000, "paid in full, across two cash-outs");
+  void decisions;
 });

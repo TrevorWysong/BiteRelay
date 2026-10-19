@@ -49,6 +49,29 @@ export interface AddressDetails {
 }
 
 /**
+ * An appeal, as its customer, store and arbiter see it -- each side's
+ * evidence only to whoever can open it.
+ */
+export interface AppealView {
+  appeal: ActionHash;
+  order: ActionHash;
+  customer: AgentPubKey;
+  store_owner: AgentPubKey;
+  arbiter: AgentPubKey;
+  amount: number;
+  order_total: number;
+  /**
+   * What the store refunded.
+   */
+  refund: number;
+  filed_at: Timestamp;
+  answered: boolean;
+  customer_evidence: IssueEvidence | null;
+  store_evidence: IssueEvidence | null;
+  ruling: RulingView | null;
+}
+
+/**
  * The author arriving on this network from its previous version, as the
  * account `previous_account` there -- whose `Migration` (`migration`, on
  * that network) names the author. This network's validation can't read
@@ -1814,6 +1837,12 @@ export interface NetworkTerms {
    */
   store_listing_stake: number;
   /**
+   * Whether a customer can appeal their store's settlement, and for how
+   * long after it -- none without arbiters.
+   */
+  appeals: boolean;
+  appeal_window_secs: number;
+  /**
    * The age for age-restricted items, if the network sells any.
    */
   restricted_min_age: number | null;
@@ -2707,6 +2736,16 @@ export type ReviewTarget =
   | { Driver: AgentPubKey };
 
 export type RoleTag = "Requester" | "Provider" | "Merchant";
+
+/**
+ * An arbiter's ruling, as both sides see it.
+ */
+export interface RulingView {
+  ruling: ActionHash;
+  award: number;
+  reasons: string;
+  ruled_at: Timestamp;
+}
 
 /**
  * What a sealed field holding an image may add, beyond the image itself:

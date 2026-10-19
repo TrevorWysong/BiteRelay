@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, AppealView, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -503,4 +503,35 @@ export async function verifyDriver(driver: AgentPubKey, checks: VerificationChec
 /// A verifier withdrawing their verification.
 export async function revokeVerification(verification: ActionHash): Promise<void> {
   return callZome("dispatch", "revoke_verification", verification);
+}
+
+// --- appeals of a store's decision ---
+
+/// The customer appealing their store's settlement to the network's arbiter.
+export async function fileAppeal(input: { order: ActionHash; amount: number; note: string; photo_data_uri: string }): Promise<ActionHash> {
+  return callZome("dispatch", "file_appeal", input);
+}
+
+/// The store's side of an appeal, sealed to its arbiter.
+export async function answerAppeal(input: { appeal: ActionHash; note: string; photo_data_uri: string }): Promise<ActionHash> {
+  return callZome("dispatch", "answer_appeal", input);
+}
+
+/// The arbiter's ruling: `award` (zero dismisses it), and why.
+export async function ruleOnAppeal(input: { appeal: ActionHash; award: number; reasons: string }): Promise<ActionHash> {
+  return callZome("dispatch", "rule_on_appeal", input);
+}
+
+export async function getAppealForOrder(order: ActionHash): Promise<AppealView | null> {
+  return callZome("dispatch", "get_appeal_for_order", order);
+}
+
+/// The appeals before the caller, an arbiter.
+export async function getMyDocket(): Promise<AppealView[]> {
+  return callZome("dispatch", "get_my_docket", null);
+}
+
+/// Appeals of the caller's decisions as a store owner.
+export async function getAppealsAgainstMe(): Promise<AppealView[]> {
+  return callZome("dispatch", "get_appeals_against_me", null);
 }

@@ -250,7 +250,7 @@ pub(crate) fn decisions_of(order: &ActionHash) -> ExternResult<Decisions> {
 }
 
 /// An order's customer and store.
-fn parties_of(order: &ActionHash) -> ExternResult<(AgentPubKey, AgentPubKey)> {
+pub(crate) fn parties_of(order: &ActionHash) -> ExternResult<(AgentPubKey, AgentPubKey)> {
     let record = get(order.clone(), GetOptions::default())?.ok_or(guest("order not found"))?;
     match (decode_or::<DeliveryOrder>(&record), decode_or::<PickupOrder>(&record)) {
         (Some(o), _) => Ok((o.requester, o.merchant)),

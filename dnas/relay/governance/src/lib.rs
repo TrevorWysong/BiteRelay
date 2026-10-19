@@ -141,6 +141,15 @@ pub struct RelayDnaProperties {
     /// a revocation that validation can't see (`DriverVerification`).
     #[serde(default)]
     pub verification_days: Option<u32>,
+    /// Who rules on appeals of a store's decision (`dispatch_types::Appeal`)
+    /// -- people or organisations the network trusts to weigh both sides,
+    /// keys, like `issuers`. Unset, there's no appeal: the store's decision
+    /// stands.
+    #[serde(default)]
+    pub arbiters: Vec<String>,
+    /// How long after a store settles an order its customer may appeal.
+    #[serde(default)]
+    pub appeal_window_secs: Option<u64>,
 }
 
 /// Services an app uses beside the network itself.
@@ -213,6 +222,24 @@ pub fn verifiers() -> Vec<AgentPubKey> {
     properties()
         .map(|p| p.verifiers.iter().filter_map(|key| AgentPubKeyB64::from_b64_str(key).ok()).map(AgentPubKey::from).collect())
         .unwrap_or_default()
+}
+
+/// Whether `agent` may rule on appeals (see `RelayDnaProperties::arbiters`).
+pub fn is_arbiter(agent: &AgentPubKey) -> bool {
+    properties().is_some_and(|p| p.arbiters.contains(&agent.to_string()))
+}
+
+/// The network's arbiters -- those whose keys parse.
+pub fn arbiters() -> Vec<AgentPubKey> {
+    properties()
+        .map(|p| p.arbiters.iter().filter_map(|key| AgentPubKeyB64::from_b64_str(key).ok()).map(AgentPubKey::from).collect())
+        .unwrap_or_default()
+}
+
+/// How long after a store settles an order its customer may appeal: two
+/// weeks unless the network says.
+pub fn appeal_window() -> Duration {
+    Duration::from_secs(setting(|p| p.appeal_window_secs, 14 * 86_400))
 }
 
 /// Whether bidding needs a current driver verification.

@@ -51,6 +51,7 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
         LinkTypes::OpenOrderGeohashAnchor => validate_open_order_link(&link),
         LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => validate_issue_link(&link),
         LinkTypes::DriverToVerification => crate::verification::validate_verification_link(&link),
+        LinkTypes::OrderToAppeal | LinkTypes::ArbiterToAppeal | LinkTypes::AppealToAnswer | LinkTypes::AppealToRuling | LinkTypes::StoreOwnerToRuling | LinkTypes::StoreOwnerToAppeal => crate::appeals::validate_appeal_link(&link),
     }
 }
 
@@ -88,6 +89,7 @@ pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
             require(record.action().author() == link.author, "only its verifier unlinks a verification")
         }
         LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => invalid("an order's issues, requests and settlement are a permanent record"),
+        LinkTypes::OrderToAppeal | LinkTypes::ArbiterToAppeal | LinkTypes::AppealToAnswer | LinkTypes::AppealToRuling | LinkTypes::StoreOwnerToRuling | LinkTypes::StoreOwnerToAppeal => invalid("an appeal is a permanent record"),
         _ => validate_queue_link_delete(link),
     }
 }

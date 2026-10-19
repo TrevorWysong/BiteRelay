@@ -10,6 +10,7 @@ use relay_integrity_support::{classify, invalid, require, Checked};
 use relay_types::GeoPoint;
 
 mod verification;
+mod appeals;
 mod bids;
 mod holds;
 mod issues;
@@ -36,7 +37,7 @@ use links::{validate_create_link, validate_delete_link, OpLinkFields};
 // The entry structs live in dispatch_types so other integrity zomes can
 // decode them -- see that crate's doc comment. Re-exported here so the
 // coordinator crate imports everything via `dispatch_integrity::*`.
-pub use dispatch_types::{DriverVerification, VerificationCheck, lineage, DropoffShare, LinePricer, Chosen, ChosenInput, OrderItem, Selection, SelectionInput, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
+pub use dispatch_types::{Appeal, AppealAnswer, Ruling, DriverVerification, VerificationCheck, lineage, DropoffShare, LinePricer, Chosen, ChosenInput, OrderItem, Selection, SelectionInput, CollectRequest, claimed_value, CarryRefusal, InHand, PinSecret, DROPOFF_GEOHASH_PRECISION, IssueEvidence, IssueKind, IssueLine, IssueResponse, ItemIssue, ItemSettlement, OrderOutcome, Outcome, hold_terms, required_collateral, split_delivery_fee, Bid, BidStatus, Cancellation, DeclineReason, DeliveryOrder, DeliveryStatus, DropoffDetails, DropoffPreference, HoldPurpose, OrderLine, OrderTerms, PickupOrder, PickupStatus, Portion, RequiredAuthor};
 
 // Built once per write and dropped -- boxing the large order would only
 // add an allocation.
@@ -55,6 +56,9 @@ pub enum EntryTypes {
     CollectRequest(CollectRequest),
     DropoffShare(DropoffShare),
     DriverVerification(DriverVerification),
+    Appeal(Appeal),
+    AppealAnswer(AppealAnswer),
+    Ruling(Ruling),
 }
 
 #[hdk_link_types]
@@ -89,6 +93,15 @@ pub enum LinkTypes {
     OrderToDropoffShare,
     /// A driver's verifications, linked by their verifiers.
     DriverToVerification,
+    /// Appeals of a store's decision -- see `dispatch_types::Appeal`.
+    OrderToAppeal,
+    ArbiterToAppeal,
+    AppealToAnswer,
+    AppealToRuling,
+    /// The rulings a store's owner pays from their cash-outs.
+    StoreOwnerToRuling,
+    /// Appeals of a store owner's decisions, so they find them to answer.
+    StoreOwnerToAppeal,
 }
 
 /// An order (or recurring template) names both a `merchant` and the store
@@ -123,6 +136,9 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::CollectRequest(request) => delivery::validate_collect_request(&request, action.author(), action.prev_action()),
             EntryTypes::DropoffShare(share) => delivery::validate_dropoff_share(&share, action.author()),
             EntryTypes::DriverVerification(verification) => verification::validate_verification(&verification, action.author(), action.timestamp()),
+            EntryTypes::Appeal(appeal) => appeals::validate_appeal(&appeal, action.author(), action.timestamp(), action.prev_action()),
+            EntryTypes::AppealAnswer(answer) => appeals::validate_appeal_answer(&answer, action.author(), action.prev_action()),
+            EntryTypes::Ruling(ruling) => appeals::validate_ruling(&ruling, action.author(), action.prev_action()),
         },
         Checked::Update { entry, action } => match entry {
             EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
@@ -132,6 +148,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) | EntryTypes::CollectRequest(_) | EntryTypes::DropoffShare(_) => {
                 Ok(ValidateCallbackResult::Invalid("issues, requests and an order's settlement can't be changed".into()))
             }
+            EntryTypes::Appeal(_) | EntryTypes::AppealAnswer(_) | EntryTypes::Ruling(_) => Ok(ValidateCallbackResult::Invalid("an appeal, its answer and its ruling are a permanent record".into())),
             EntryTypes::DriverVerification(_) => {
                 Ok(ValidateCallbackResult::Invalid("a verification is renewed with a new one, not changed".into()))
             }

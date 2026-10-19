@@ -18,6 +18,7 @@ import { useResource } from "../lib/useResource";
 import { Button, Card, Textarea } from "./ui";
 import { PhotoInput } from "./PhotoInput";
 import { Sheet } from "./Sheet";
+import { OrderAppeal } from "./OrderAppeal";
 
 type Role = "customer" | "store";
 
@@ -58,6 +59,8 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
           ))}
         </ul>
       )}
+
+      {!open && <OrderAppeal orderRef={orderRef} role={role} kept={items.order_total - (decisions.refund ?? 0)} />}
 
       {role === "customer" && open && !settling && (
         <div className="border-t border-ink-100 p-4 dark:border-ink-800">

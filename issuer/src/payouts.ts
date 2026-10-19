@@ -40,12 +40,17 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
     return { Declined: { reason: "This account was recovered on a new device, so this key can't cash out. Its balance goes to the new device." } };
   }
   if (store.frozen(agent)) return { Defer: { until: now + FROZEN_RECHECK_MS, reason: "a card payment on this account is disputed" } };
-  const net = payoutAfterFees(fee, request.amount);
-  if (net === 0) return { Declined: { reason: "After the fee, there'd be nothing to send. Cash out a larger amount." } };
+  const afterFee = payoutAfterFees(fee, request.amount);
+  if (afterFee === 0) return { Declined: { reason: "After the fee, there'd be nothing to send. Cash out a larger amount." } };
 
   // The cash-out's own hash keys each refund and transfer: a retried sweep
   // never pays twice.
-  const key = `cash-out-${Buffer.from(request.redemption).toString("hex")}`;
+  const redemption = Buffer.from(request.redemption).toString("hex");
+  const key = `cash-out-${redemption}`;
+  // Arbiters' awards against this account's stores come out first, as a
+  // platform takes a refund from a payout (dispatch's appeals).
+  const awards = await awardsDue(request, afterFee, deps);
+  const net = afterFee - awards.reduce((sum, a) => sum + a.amount, 0);
   const customer = store.customer(agent);
   const toCards = customer ? Math.min(net, await rail.refundable(customer, key)) : 0;
   const toBank = net - toCards;
@@ -61,13 +66,39 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
     if (from > now) return { Defer: { until: from, reason: "a new account's first bank payouts wait" } };
   }
 
-  const references: string[] = [];
+  // Paid as credits to each customer, once per award and cash-out.
+  for (const award of awards) {
+    await ledger.issueGrant(award.customer, award.amount, `award:${award.ruling}:${redemption}`);
+    store.recordAwardPayment(award.ruling, redemption, award.amount);
+  }
+  const references: string[] = awards.length > 0 ? [`awards:${awards.length}`] : [];
   if (toCards > 0) {
     const refunded = await rail.refund(customer!, toCards, key);
     if (refunded) references.push(refunded.reference);
   }
   if (toBank > 0) references.push(await rail.pay(account!, toBank, key));
   return { Paid: { reference: references.join(",") } };
+}
+
+/// The awards this cash-out pays, oldest first, as far as `available`
+/// reaches -- what's left of an award waits for the next cash-out.
+async function awardsDue(request: CashOutRequest, available: number, deps: PayoutDeps): Promise<{ ruling: string; customer: Uint8Array; amount: number }[]> {
+  const { store, ledger } = deps;
+  const redemption = Buffer.from(request.redemption).toString("hex");
+  const due: { ruling: string; customer: Uint8Array; amount: number }[] = [];
+  let left = available;
+  for (const ruling of await ledger.rulingsAgainst(request.redeemer)) {
+    if (left === 0) break;
+    const id = Buffer.from(ruling.ruling).toString("hex");
+    // A retried sweep pays what this cash-out already paid, again: the
+    // grant's reference makes that a no-op.
+    const owed = ruling.award - store.awardPaid(id) + (store.awardsFromFor(id, redemption));
+    const amount = Math.min(owed, left);
+    if (amount <= 0) continue;
+    due.push({ ruling: id, customer: ruling.customer, amount });
+    left -= amount;
+  }
+  return due;
 }
 
 /// One sweep: every cash-out since the last, decided or set aside, and

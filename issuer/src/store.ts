@@ -39,6 +39,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS topup_attempts (agent TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS disputes (payment TEXT PRIMARY KEY, agent TEXT NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS deferred_cash_outs (redemption TEXT PRIMARY KEY, request TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS award_payments (ruling TEXT NOT NULL, redemption TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (ruling, redemption));
       CREATE TABLE IF NOT EXISTS migrations (account TEXT PRIMARY KEY, successor TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recoveries (succession TEXT PRIMARY KEY, predecessor TEXT NOT NULL, successor TEXT NOT NULL, head TEXT, quiet_since INTEGER NOT NULL, status TEXT NOT NULL, amount INTEGER);
     `);
@@ -152,6 +153,22 @@ export class Store {
   }
 
   /// Whether an account's move to this network has been credited.
+  /// How much of an arbiter's award has been paid, from any cash-out.
+  awardPaid(ruling: string): number {
+    return (this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS paid FROM award_payments WHERE ruling = ?").get(ruling) as { paid: number }).paid;
+  }
+
+  /// Records paying `amount` of an award from one cash-out -- once per
+  /// cash-out, so a retried sweep doesn't count it twice.
+  recordAwardPayment(ruling: string, redemption: string, amount: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO award_payments (ruling, redemption, amount, at) VALUES (?, ?, ?, ?)").run(ruling, redemption, amount, Date.now());
+  }
+
+  /// What one cash-out paid toward one award.
+  awardsFromFor(ruling: string, redemption: string): number {
+    return (this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS paid FROM award_payments WHERE ruling = ? AND redemption = ?").get(ruling, redemption) as { paid: number }).paid;
+  }
+
   migrated(account: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM migrations WHERE account = ?").get(account);
   }

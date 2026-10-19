@@ -113,6 +113,18 @@ export interface IssuerLedger {
   /// This network's DNA hash.
   network(): Promise<Uint8Array>;
   migrationRequests(after: number | null): Promise<MigrationRequestsPage>;
+  /// Arbiters' awards against `owner`'s stores, oldest first.
+  rulingsAgainst(owner: AgentPubKey): Promise<RulingDue[]>;
+}
+
+/// An arbiter's award a store's owner pays from their cash-outs.
+export interface RulingDue {
+  ruling: Uint8Array;
+  appeal: Uint8Array;
+  order: Uint8Array;
+  customer: AgentPubKey;
+  award: number;
+  ruled_at: number;
 }
 
 /// Agent keys as the service passes them around: base64, as the app shows them.
@@ -184,6 +196,7 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
     currency: () => call<{ currency: string }>("get_network_terms", null, "dispatch").then((t) => t.currency),
     network: () => call<Uint8Array>("network_hash", null, "account"),
     migrationRequests: (after) => call<MigrationRequestsPage>("get_migration_requests", { after }, "account"),
+    rulingsAgainst: (owner) => call<RulingDue[]>("get_rulings_against", owner, "dispatch"),
     // The app socket's transport is typed narrowly; it's a WsClient.
     close: async () => void (await (connection.appWs.client as unknown as { close(): Promise<unknown> }).close()),
   };

@@ -51,6 +51,7 @@ mod stores;
 mod tracking;
 mod upkeep;
 mod verification;
+mod appeals;
 
 pub use bids::*;
 pub use chat::*;
@@ -85,7 +86,13 @@ mod test_utils {
         OrderToIssue,
         IssueToResponse,
         OrderToDecision,
-        DriverToVerification
+        DriverToVerification,
+        OrderToAppeal,
+        ArbiterToAppeal,
+        AppealToAnswer,
+        AppealToRuling,
+        StoreOwnerToRuling,
+        StoreOwnerToAppeal
     );
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -220,6 +227,13 @@ mod test_utils {
 
     /// Writes a driver verification exactly as given -- what someone off
     /// the verifier roster could try.
+    /// Writes a ruling exactly as given -- what someone but the appeal's
+    /// arbiter could try.
+    #[hdk_extern]
+    pub fn create_raw_ruling_for_testing(ruling: dispatch_integrity::Ruling) -> ExternResult<ActionHash> {
+        create_entry(&EntryTypes::Ruling(ruling))
+    }
+
     #[hdk_extern]
     pub fn create_raw_verification_for_testing(verification: dispatch_integrity::DriverVerification) -> ExternResult<ActionHash> {
         create_entry(&EntryTypes::DriverVerification(verification))

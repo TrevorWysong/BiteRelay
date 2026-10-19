@@ -524,6 +524,10 @@ pub struct NetworkTerms {
     /// What listing a store sets aside, in minor units -- returned when it
     /// closes.
     pub store_listing_stake: u64,
+    /// Whether a customer can appeal their store's settlement, and for how
+    /// long after it -- none without arbiters.
+    pub appeals: bool,
+    pub appeal_window_secs: u64,
     /// The age for age-restricted items, if the network sells any.
     pub restricted_min_age: Option<u8>,
     /// Map tiles, as a `{z}/{x}/{y}` template -- the network's choice.
@@ -568,6 +572,8 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         goodie_bag_max_days: relay_governance::goodie_bag_max_lifetime().as_secs() / 86_400,
         default_bag_hold_minutes: relay_governance::default_bag_hold_minutes(),
         store_listing_stake: relay_governance::store_listing_stake(),
+        appeals: !relay_governance::arbiters().is_empty(),
+        appeal_window_secs: relay_governance::appeal_window().as_secs(),
         restricted_min_age: relay_governance::restricted_min_age(),
         map_tiles_url: relay_governance::services().map_tiles_url,
         map_attribution: relay_governance::services().map_attribution,

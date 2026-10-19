@@ -5,10 +5,10 @@
 // screen says plainly which are set up. See RECOVERY.md.
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getVerificationTerms } from "../holochain/zomes/dispatch";
+import { getMyDocket, getVerificationTerms } from "../holochain/zomes/dispatch";
 import { motion } from "framer-motion";
 import { encodeHashToBase64 } from "@holochain/client";
-import { ArrowLeft, ChevronRight, HeartHandshake, KeyRound, QrCode, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Trash2, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, ChevronRight, Gavel, HeartHandshake, KeyRound, QrCode, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Trash2, UserPlus, Users } from "lucide-react";
 import type { AgentPubKey, PlanView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { handOver, migrateOut, myRecoveryPlan, myWards, setRecoveryPlan, vouch } from "../holochain/zomes/account";
@@ -42,6 +42,8 @@ export function AccountPage() {
   const { data: next } = useResource("next-network", nextNetwork, { pollMs: POLL.slow });
   const { data: verification } = useResource("verification-terms", getVerificationTerms);
   const isVerifier = !!verification?.verifiers.some((v) => bytesToHex(v) === hex);
+  // An arbiter has a docket; nobody else's ever has anything on it.
+  const { data: docket } = useResource("docket", getMyDocket, { pollMs: POLL.slow });
 
   if (!agentPubKey) return null;
   const hasPhrase = !!plan?.phrase_key;
@@ -83,6 +85,14 @@ export function AccountPage() {
           )}
         </Card>
       </motion.div>
+
+      {docket && docket.length > 0 && (
+        <motion.div variants={fadeSlideUp}>
+          <Section title="Arbiter">
+            <Row icon={<Gavel size={18} />} title="Appeals" detail={`${docket.filter((a) => !a.ruling).length} waiting for your ruling`} onClick={() => navigate("/arbitrate")} />
+          </Section>
+        </motion.div>
+      )}
 
       {isVerifier && (
         <motion.div variants={fadeSlideUp}>

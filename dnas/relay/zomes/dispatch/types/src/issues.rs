@@ -119,6 +119,50 @@ pub struct ItemSettlement {
     pub refund: u64,
 }
 
+/// A customer appealing their store's settlement of an order to one of the
+/// network's arbiters (`relay_governance::arbiters`), asking for `amount`
+/// more than the store refunded. Once per order, within the network's
+/// appeal window.
+///
+/// An arbiter's award is paid out of the store's next cash-out by the
+/// network's issuer, which holds the money behind every balance -- the way
+/// platforms take a refund from a payout -- so a ruling has teeth without
+/// anyone reaching into a ledger.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Appeal {
+    /// The order's original action.
+    pub order: ActionHash,
+    /// The store's `ItemSettlement` being appealed.
+    pub settlement: ActionHash,
+    pub arbiter: AgentPubKey,
+    /// What the customer asks for, beyond the store's refund.
+    pub amount: u64,
+    /// The customer's `IssueEvidence`, sealed to the arbiter.
+    pub sealed_for_arbiter: SealedChunks,
+}
+
+/// The store's side of an appeal, sealed to its arbiter. Once.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AppealAnswer {
+    pub appeal: ActionHash,
+    pub sealed_for_arbiter: SealedChunks,
+}
+
+/// An arbiter's ruling on an appeal: `award` (at most what was asked, and
+/// zero to dismiss it), and why -- public to both sides. Once.
+#[hdk_entry_helper]
+#[derive(Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Ruling {
+    pub appeal: ActionHash,
+    pub award: u64,
+    pub reasons: String,
+}
+
 /// What `claimed` units of an order's lines are worth, of what the customer
 /// paid: each unit at its line's price, scaled by what the order actually
 /// cost against its undiscounted subtotal (a promo's discount is shared

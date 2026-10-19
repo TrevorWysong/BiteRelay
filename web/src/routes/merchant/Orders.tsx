@@ -42,6 +42,7 @@ import { acknowledgeLeg } from "../../holochain/zomes/attestation";
 import { OrderLines } from "../../components/OrderLines";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import { OrderIssues } from "../../components/OrderIssues";
+import { StoreAppeals } from "../../components/StoreAppeals";
 import { HandoverCode } from "../../components/HandoverCode";
 import { unconfirmedPickup } from "../../lib/handoffs";
 
@@ -98,6 +99,7 @@ export function MerchantOrders() {
         <h1 className="text-xl font-black tracking-tight text-ink-900 dark:text-ink-50">Orders</h1>
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
       </motion.div>
+      <StoreAppeals />
       {multiStore && (
         <ChipRow>
           <Chip active={effectiveFilter === ALL_STORES} onClick={() => setFilter(ALL_STORES)} tone="brand">
