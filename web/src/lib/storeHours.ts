@@ -2,6 +2,8 @@
 // (same rules, same test cases: see test/storeHours.test.ts), plus reading
 // an instant in the store's own time zone and wording the result.
 import type { MerchantCatalog, OpeningPeriod } from "../holochain/types";
+import { t } from "../i18n";
+import { formatTimeOfDay, weekdayName } from "./format";
 
 const MINUTES_PER_DAY = 24 * 60;
 
@@ -62,9 +64,7 @@ export function localWeekdayMinute(timeZone: string, at: Date): { weekday: numbe
 
 /// "8:00 AM" for 480.
 export function formatMinute(minute: number): string {
-  const h = Math.floor(minute / 60) % 24;
-  const m = minute % 60;
-  return `${h % 12 === 0 ? 12 : h % 12}:${m.toString().padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+  return formatTimeOfDay(minute);
 }
 
 /// "08:00" (an `<input type="time">` value) <-> minutes after midnight.
@@ -82,21 +82,22 @@ export interface StoreStatus {
 
 /// Whether `catalog` is taking orders at `at`, worded for a customer.
 export function storeStatus(catalog: Pick<MerchantCatalog, "is_open" | "weekly_hours" | "time_zone">, at: Date): StoreStatus {
-  if (!catalog.is_open) return { open: false, label: "Not taking orders right now" };
+  if (!catalog.is_open) return { open: false, label: t("hours.notTaking") };
   const { weekday, minute } = localWeekdayMinute(catalog.time_zone, at);
   if (openAt(catalog.weekly_hours, weekday, minute)) {
     const closes = closesAt(catalog.weekly_hours, weekday, minute);
-    return { open: true, label: closes === null ? "Open" : `Open until ${formatMinute(closes)}` };
+    return { open: true, label: closes === null ? t("hours.open") : t("hours.openUntil", { time: formatMinute(closes) }) };
   }
   const next = nextOpening(catalog.weekly_hours, weekday, minute);
-  if (!next) return { open: false, label: "Closed" };
-  const when = next.daysAhead === 0 ? "" : next.daysAhead === 1 ? " tomorrow" : ` ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][(weekday + next.daysAhead) % 7]}`;
-  return { open: false, label: `Closed · opens ${formatMinute(next.minute)}${when}` };
+  if (!next) return { open: false, label: t("hours.closed") };
+  const time = formatMinute(next.minute);
+  if (next.daysAhead === 0) return { open: false, label: t("hours.opensToday", { time }) };
+  if (next.daysAhead === 1) return { open: false, label: t("hours.opensTomorrow", { time }) };
+  return { open: false, label: t("hours.opensOn", { time, day: weekdayName((weekday + next.daysAhead) % 7) }) };
 }
 
 /// Monday first, as a week reads.
 export const WEEK = [1, 2, 3, 4, 5, 6, 0] as const;
-const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /// A schedule as lines a person reads -- consecutive days with the same
 /// hours run together: "Mon–Fri" / "8:00 AM – 10:00 PM".
@@ -106,7 +107,7 @@ export function describeWeek(schedule: OpeningPeriod[]): { days: string; hours: 
       .filter((p) => p.weekday === day)
       .sort((a, b) => a.opens - b.opens)
       .map((p) => `${formatMinute(p.opens)} – ${formatMinute(p.closes)}`)
-      .join(", ") || "Closed";
+      .join(", ") || t("hours.closed");
   const lines: { from: number; to: number; hours: string }[] = [];
   for (const day of WEEK) {
     const hours = hoursOf(day);
@@ -114,5 +115,5 @@ export function describeWeek(schedule: OpeningPeriod[]): { days: string; hours: 
     if (last && last.hours === hours) last.to = day;
     else lines.push({ from: day, to: day, hours });
   }
-  return lines.map(({ from, to, hours }) => ({ days: from === to ? SHORT_DAYS[from] : `${SHORT_DAYS[from]}–${SHORT_DAYS[to]}`, hours }));
+  return lines.map(({ from, to, hours }) => ({ days: from === to ? weekdayName(from, "short") : `${weekdayName(from, "short")}–${weekdayName(to, "short")}`, hours }));
 }

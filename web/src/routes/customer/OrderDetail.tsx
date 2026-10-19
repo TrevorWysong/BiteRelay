@@ -24,7 +24,7 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
 import { useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, InHand, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
-import { carryRefusal, CUSTOMER_REFUSAL, describeLoad } from "../../lib/driverLoad";
+import { carryRefusal, customerRefusal, describeLoad } from "../../lib/driverLoad";
 import { useTerms } from "../../store/network";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
@@ -478,7 +478,7 @@ export function OrderDetail() {
                         )}
                       </div>
                       {refusal ? (
-                        <span className="max-w-[7.5rem] text-right text-[11px] font-medium leading-tight text-ink-400">{CUSTOMER_REFUSAL[refusal]}</span>
+                        <span className="max-w-[7.5rem] text-right text-[11px] font-medium leading-tight text-ink-400">{customerRefusal(refusal)}</span>
                       ) : (
                         <Button
                           variant={complaints ? "danger" : "primary"}

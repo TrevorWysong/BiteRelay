@@ -11,7 +11,7 @@ test("every cancellation reason reads as a sentence for the customer", () => {
   for (const reason of ["ByCustomer", "StoreDidNotRespond"] as const) {
     assert.match(cancellationText(reason), /\.$/);
   }
-  for (const { reason } of DECLINE_REASONS) {
+  for (const reason of DECLINE_REASONS) {
     assert.match(cancellationText({ ByStore: reason }), /^The store/);
   }
   assert.equal(cancellationText(null), "This order was cancelled.");

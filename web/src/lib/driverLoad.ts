@@ -2,6 +2,7 @@
 // the rule validation holds every pickup to (`dispatch_types::InHand`),
 // applied here to the orders they're assigned too, as accepting a bid is.
 import type { InHand } from "../holochain/types";
+import { t } from "../i18n";
 
 export type CarryRefusal = "CarryingPriority" | "PriorityGoesAlone" | "AtLimit";
 
@@ -16,13 +17,9 @@ export function carryRefusal(load: InHand, priority: boolean, max: number): Carr
 
 /// A driver's other orders, for a customer weighing their bid.
 export function describeLoad(load: InHand): string {
-  if (load.orders === 0) return "No other orders";
-  return `Delivering ${load.orders} other order${load.orders === 1 ? "" : "s"}`;
+  return load.orders === 0 ? t("load.none") : t("load.others", { count: load.orders });
 }
 
 /// Why a customer can't choose this driver, in their words.
-export const CUSTOMER_REFUSAL: Record<CarryRefusal, string> = {
-  CarryingPriority: "On a priority delivery",
-  PriorityGoesAlone: "Has other orders",
-  AtLimit: "Has as many orders as they can carry",
-};
+/// Why a driver can't take this order, as its customer is told.
+export const customerRefusal = (refusal: CarryRefusal): string => t(`load.refusal.${refusal}`);

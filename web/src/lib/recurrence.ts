@@ -2,13 +2,12 @@
 // business (`dispatch::recurring::next_occurrence`, in the template's own
 // time zone); `weekday` counts from Sunday = 0 on both sides.
 import type { RecurrenceRule } from "../holochain/types";
+import { t } from "../i18n";
+import { formatTimeOfDay, weekdayName } from "./format";
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function describeRecurrence(rule: RecurrenceRule): string {
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  if ("Daily" in rule) return `Every day at ${pad(rule.Daily.hour)}:${pad(rule.Daily.minute)}`;
-  return `Every ${WEEKDAYS[rule.Weekly.weekday]} at ${pad(rule.Weekly.hour)}:${pad(rule.Weekly.minute)}`;
+  if ("Daily" in rule) return t("recurrence.daily", { time: formatTimeOfDay(rule.Daily.hour * 60 + rule.Daily.minute) });
+  return t("recurrence.weekly", { day: weekdayName(rule.Weekly.weekday), time: formatTimeOfDay(rule.Weekly.hour * 60 + rule.Weekly.minute) });
 }
 
-export { WEEKDAYS };

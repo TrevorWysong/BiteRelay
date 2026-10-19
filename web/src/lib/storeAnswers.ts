@@ -3,18 +3,14 @@
 // (`Cancellation`). Validation checks every cancellation reason against who
 // gave it, so these messages can say plainly what happened.
 import type { Cancellation, DeclineReason } from "../holochain/types";
+import { t } from "../i18n";
 
 /// The reasons a store can give for turning an order down, in the order
 /// its Decline menu lists them.
-export const DECLINE_REASONS: readonly { reason: DeclineReason; label: string }[] = [
-  { reason: "TooBusy", label: "Too busy" },
-  { reason: "ItemsUnavailable", label: "Items unavailable" },
-  { reason: "Closed", label: "Closed" },
-  { reason: "OutdatedPrices", label: "Prices changed" },
-  { reason: "BagHoldLapsed", label: "Goodie bag hold ran out" },
-  { reason: "TermsChanged", label: "Store terms changed" },
-  { reason: "Other", label: "Other" },
-];
+export const DECLINE_REASONS: readonly DeclineReason[] = ["TooBusy", "ItemsUnavailable", "Closed", "OutdatedPrices", "BagHoldLapsed", "TermsChanged", "Other"];
+
+/// A decline reason's short name, as the store picks it.
+export const declineLabel = (reason: DeclineReason): string => t(`decline.label.${reason}`);
 
 /// When the store's window to accept an order closes, in milliseconds since
 /// the epoch: `windowSecs` after the order reached it -- `writtenAt`, its
@@ -23,30 +19,8 @@ export function responseDeadlineMs(writtenAt: number, windowSecs: number): numbe
   return writtenAt / 1000 + windowSecs * 1000;
 }
 
-const STORE_REASONS: Record<DeclineReason, string> = {
-  TooBusy: "The store is too busy to take this order right now.",
-  ItemsUnavailable: "The store is out of something you ordered.",
-  Closed: "The store is closed.",
-  OutdatedPrices: "The store's prices changed since you ordered. Your cart has the new prices if you'd like to order again.",
-  BagHoldLapsed: "The store's hold on your goodie bag ran out before your order arrived, so it went back on sale.",
-  TermsChanged: "The store changed its minimum order, delivery area or fee share since you ordered. Your cart has its current terms if you'd like to order again.",
-  Other: "The store couldn't take this order.",
-};
-
-/// Why an order was cancelled, told to its customer.
 export function cancellationText(cancellation: Cancellation | null): string {
-  if (cancellation === null) return "This order was cancelled.";
-  if (typeof cancellation === "object") return STORE_REASONS[cancellation.ByStore];
-  switch (cancellation) {
-    case "ByCustomer":
-      return "You cancelled this order.";
-    case "StoreDidNotRespond":
-      return "The store didn't respond in time, so this order was cancelled. You weren't charged.";
-    case "NotCollected":
-      return "You chose to collect this order and didn't, so the store kept its price for the food it made.";
-    case "StoreLate":
-      return "You cancelled after the store kept your driver waiting too long. You're refunded in full.";
-    case "NoDriver":
-      return "Your driver left your order and no other driver came, so it was cancelled. You're refunded in full.";
-  }
+  if (cancellation === null) return t("cancel.unknown");
+  if (typeof cancellation === "object") return t(`decline.reason.${cancellation.ByStore}`);
+  return t(`cancel.${cancellation}`);
 }

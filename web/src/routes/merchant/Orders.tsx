@@ -27,7 +27,7 @@ import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/m
 import { useResource } from "../../lib/useResource";
 import { describeError } from "../../lib/errors";
 import { useClock } from "../../lib/useClock";
-import { DECLINE_REASONS, responseDeadlineMs } from "../../lib/storeAnswers";
+import { DECLINE_REASONS, declineLabel, responseDeadlineMs } from "../../lib/storeAnswers";
 import { useTerms } from "../../store/network";
 import { useStoreSteps } from "../../lib/storeSteps";
 import { currentBeacon } from "../../lib/timeSource";
@@ -36,7 +36,7 @@ import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatN
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
 import { formatCents, formatClockTime, formatDeadline, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import type { Timestamp } from "../../holochain/types";
+import type { DeclineReason, Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
 import { acknowledgeLeg } from "../../holochain/zomes/attestation";
 import { OrderLines } from "../../components/OrderLines";
@@ -225,7 +225,7 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
     return <p className="mt-2 text-xs text-ink-400">Not accepted in time, so the customer's order is being cancelled.</p>;
   }
   const accept: OrderAction = row.kind === "Delivery" ? (ref) => acceptDeliveryOrder(ref, prep) : (ref) => acceptPickupOrder(ref, prep);
-  const decline = (reason: (typeof DECLINE_REASONS)[number]["reason"]): OrderAction =>
+  const decline = (reason: DeclineReason): OrderAction =>
     row.kind === "Delivery" ? (ref) => declineOrder(ref, reason) : (ref) => declinePickupOrder(ref, reason);
   return (
     <>
@@ -234,9 +234,9 @@ function AnswerOrder({ row, windowSecs, now, defaultPrep, busy, onAdvance }: { r
         <div className="mt-3">
           <p className="mb-1.5 text-xs font-semibold text-ink-500">Why are you declining? The customer will see this.</p>
           <div className="flex flex-wrap gap-1.5">
-            {DECLINE_REASONS.map(({ reason, label }) => (
+            {DECLINE_REASONS.map((reason) => (
               <Button key={reason} variant="ghost" className="px-3 py-1.5 text-xs" disabled={busy} onClick={() => onAdvance(decline(reason))}>
-                {label}
+                {declineLabel(reason)}
               </Button>
             ))}
             <Button variant="ghost" className="px-3 py-1.5 text-xs text-ink-400" disabled={busy} onClick={() => setChoosingReason(false)}>

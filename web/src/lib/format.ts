@@ -82,6 +82,17 @@ export function formatDeadline(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleString(appLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
+/// A weekday's name in the app's language -- `day` from 0 (Sunday).
+export function weekdayName(day: number, width: "long" | "short" = "long"): string {
+  // 2 January 2000 was a Sunday.
+  return new Date(2000, 0, 2 + day).toLocaleDateString(appLocale(), { weekday: width });
+}
+
+/// A time of day, minutes after midnight, as the app's language writes it.
+export function formatTimeOfDay(minute: number): string {
+  return new Date(2000, 0, 1, Math.floor(minute / 60) % 24, minute % 60).toLocaleTimeString(appLocale(), { hour: "numeric", minute: "2-digit" });
+}
+
 /// A day, in the viewer's locale: "12 Mar 2027".
 export function formatDate(microseconds: number): string {
   return new Date(microseconds / 1000).toLocaleDateString(appLocale(), { day: "numeric", month: "short", year: "numeric" });

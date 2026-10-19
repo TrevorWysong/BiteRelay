@@ -52,17 +52,20 @@ test("an instant is read in the store's own time zone", () => {
   assert.deepEqual(localWeekdayMinute("Not/AZone", SAT_NOON_UTC), { weekday: 6, minute: 12 * H }, "an unknown zone reads as UTC");
 });
 
+/// Intl writes "10:00 PM" with a narrow no-break space before the period.
+const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value).replace(/\u202f|\u00a0/g, " "));
+
 test("a store's status is worded for the customer", () => {
   const saturday = [period(6, 8 * H, 22 * H)];
-  assert.deepEqual(storeStatus({ is_open: true, weekly_hours: saturday, time_zone: "UTC" }, SAT_NOON_UTC), { open: true, label: "Open until 10:00 PM" });
-  assert.deepEqual(storeStatus({ is_open: true, weekly_hours: saturday, time_zone: "America/New_York" }, SAT_NOON_UTC), { open: false, label: "Closed · opens 8:00 AM" });
-  assert.deepEqual(storeStatus({ is_open: false, weekly_hours: [], time_zone: "UTC" }, SAT_NOON_UTC), { open: false, label: "Not taking orders right now" });
-  assert.deepEqual(storeStatus({ is_open: true, weekly_hours: [], time_zone: "UTC" }, SAT_NOON_UTC), { open: true, label: "Open" });
+  assert.deepEqual(plain(storeStatus({ is_open: true, weekly_hours: saturday, time_zone: "UTC" }, SAT_NOON_UTC)), { open: true, label: "Open until 10:00 PM" });
+  assert.deepEqual(plain(storeStatus({ is_open: true, weekly_hours: saturday, time_zone: "America/New_York" }, SAT_NOON_UTC)), { open: false, label: "Closed · opens 8:00 AM" });
+  assert.deepEqual(plain(storeStatus({ is_open: false, weekly_hours: [], time_zone: "UTC" }, SAT_NOON_UTC)), { open: false, label: "Not taking orders right now" });
+  assert.deepEqual(plain(storeStatus({ is_open: true, weekly_hours: [], time_zone: "UTC" }, SAT_NOON_UTC)), { open: true, label: "Open" });
 });
 
 test("a week reads with matching days run together", () => {
   const weekdays = [1, 2, 3, 4, 5].map((day) => period(day, 8 * H, 22 * H));
-  assert.deepEqual(describeWeek([...weekdays, period(6, 18 * H, 2 * H)]), [
+  assert.deepEqual(plain(describeWeek([...weekdays, period(6, 18 * H, 2 * H)])), [
     { days: "Mon–Fri", hours: "8:00 AM – 10:00 PM" },
     { days: "Sat", hours: "6:00 PM – 2:00 AM" },
     { days: "Sun", hours: "Closed" },
