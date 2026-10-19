@@ -17,20 +17,22 @@ import { DevIdentityPicker } from "../components/DevIdentityPicker";
 import { RestoreAccount } from "../components/RestoreAccount";
 import { isRestoring } from "../lib/restoring";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
+import { useT, type MessageKey } from "../i18n";
 
-const ROLE_CARDS: { role: RoleTag; label: string; blurb: string; icon: typeof Bike }[] = [
-  { role: "Requester", label: "Order food", icon: ShoppingBag, blurb: "Browse nearby restaurants and get food delivered." },
-  { role: "Provider", label: "Deliver", icon: Bike, blurb: "Go online, pick up nearby orders, earn on your own schedule." },
-  { role: "Merchant", label: "Sell food", icon: ChefHat, blurb: "Publish a menu and take orders from nearby customers." },
+const ROLE_CARDS: { role: RoleTag; label: MessageKey; blurb: MessageKey; icon: typeof Bike }[] = [
+  { role: "Requester", label: "onboarding.role.order", icon: ShoppingBag, blurb: "onboarding.role.orderBlurb" },
+  { role: "Provider", label: "onboarding.role.deliver", icon: Bike, blurb: "onboarding.role.deliverBlurb" },
+  { role: "Merchant", label: "onboarding.role.sell", icon: ChefHat, blurb: "onboarding.role.sellBlurb" },
 ];
 
-const VEHICLE_TYPES = ["Car", "Bike", "Scooter", "On foot"];
+const VEHICLE_TYPES: MessageKey[] = ["onboarding.vehicle.car", "onboarding.vehicle.bike", "onboarding.vehicle.scooter", "onboarding.vehicle.foot"];
 
 type Step = "roles" | "details" | "vehicle" | "restore";
 const STEP_ORDER: Step[] = ["roles", "details", "vehicle"];
 
 export function Onboarding() {
   const navigate = useNavigate();
+  const t = useT();
   const { createIdentity, reconnect, adoptIdentity, hasStoredIdentity, status, error, signOut } = useSession();
   // Only the dev host asks which node to provision on; the persistent dev
   // conductor always listens on the same address.
@@ -105,7 +107,7 @@ export function Onboarding() {
       if (roles.includes("Provider")) {
         await registerProviderCredential({
           profile_action: useSession.getState().profileActionHash!,
-          vehicle_description: `${vehicleType}${vehicleDetail ? " · " + vehicleDetail : ""}`,
+          vehicle_description: `${t(vehicleType)}${vehicleDetail ? " · " + vehicleDetail : ""}`,
           capabilities: ["Food"],
           verified: false,
           license_plate: licensePlate,
@@ -135,7 +137,7 @@ export function Onboarding() {
         <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
         <h1 className="text-3xl font-black tracking-tight">Relay</h1>
         <p className="text-white/80 text-sm text-center max-w-xs">
-          A peer-to-peer delivery marketplace with no corporate middleman and no central server. Orders run directly between you and the people fulfilling them.
+          {t("onboarding.tagline")}
         </p>
       </motion.div>
 
@@ -164,8 +166,8 @@ export function Onboarding() {
           <AnimatePresence mode="wait" initial={false}>
             {step === "roles" && (
               <motion.div key="roles" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-                <h2 className="text-lg font-bold mb-1">What do you want to do?</h2>
-                <p className="text-sm text-ink-500 mb-4">Pick one or more. You can switch anytime.</p>
+                <h2 className="text-lg font-bold mb-1">{t("onboarding.what")}</h2>
+                <p className="text-sm text-ink-500 mb-4">{t("onboarding.pick")}</p>
                 <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="flex flex-col gap-2 mb-5">
                   {ROLE_CARDS.map(({ role, label, blurb, icon: Icon }) => {
                     const active = roles.includes(role);
@@ -188,46 +190,42 @@ export function Onboarding() {
                           <Icon size={18} />
                         </motion.div>
                         <div>
-                          <p className="font-semibold text-sm">{label}</p>
-                          <p className="text-xs text-ink-500">{blurb}</p>
+                          <p className="font-semibold text-sm">{t(label)}</p>
+                          <p className="text-xs text-ink-500">{t(blurb)}</p>
                         </div>
                       </motion.button>
                     );
                   })}
                 </motion.div>
                 <Button className="w-full" disabled={roles.length === 0} onClick={() => setStep("details")}>
-                  Continue
+                  {t("common.continue")}
                 </Button>
                 <button type="button" onClick={() => setStep("restore")} className="mt-3 w-full text-center text-sm font-semibold text-relay-600 hover:underline">
-                  I already have an account
+                  {t("onboarding.haveAccount")}
                 </button>
               </motion.div>
             )}
 
             {step === "details" && (
               <motion.div key="details" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-                <h2 className="text-lg font-bold mb-1">Create your identity</h2>
-                <p className="text-sm text-ink-500 mb-4">
-                  This creates your own private identity, secured by a cryptographic key that only you hold. It's not an account on a shared server.
-                </p>
+                <h2 className="text-lg font-bold mb-1">{t("onboarding.create")}</h2>
+                <p className="text-sm text-ink-500 mb-4">{t("onboarding.createDetail")}</p>
 
                 <div className="mb-4 flex justify-center">
                   <PhotoInput value={avatarDataUri} onChange={setAvatarDataUri} shape="circle" />
                 </div>
 
-                <Field label="Your name" className="mb-4">
-                  <Input maxLength={MAX_LABEL_CHARS} autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Alex Rivera" />
+                <Field label={t("onboarding.name")} className="mb-4">
+                  <Input maxLength={MAX_LABEL_CHARS} autoFocus value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t("onboarding.namePlaceholder")} />
                   <p className="mt-1 text-[11px] text-ink-400">
-                    {roles.some((r) => r !== "Requester")
-                      ? "Shown publicly, as your store or driver name."
-                      : "Shared only with the store and driver of each of your orders -- nobody else can see it."}
+                    {roles.some((r) => r !== "Requester") ? t("onboarding.namePublic") : t("onboarding.namePrivate")}
                   </p>
                 </Field>
-                <Field label="Bio (optional)" className="mb-4">
-                  <Textarea maxLength={MAX_NOTE_CHARS} value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder="A little about you" />
+                <Field label={t("onboarding.bio")} className="mb-4">
+                  <Textarea maxLength={MAX_NOTE_CHARS} value={bio} onChange={(e) => setBio(e.target.value)} rows={2} placeholder={t("onboarding.bioPlaceholder")} />
                 </Field>
-                <Field label="Phone (optional)" className="mb-4">
-                  <Input maxLength={MAX_PHONE_CHARS} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
+                <Field label={t("onboarding.phone")} className="mb-4">
+                  <Input maxLength={MAX_PHONE_CHARS} value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" />
                 </Field>
                 {/* Same shared SplitAddressFields every other "enter an
                     address" moment in the app uses (merchant storefront
@@ -240,7 +238,7 @@ export function Onboarding() {
                     onPointChange={setLocation}
                     address={addressDraft}
                     onAddressChange={setAddressDraft}
-                    streetLabel="Your location"
+                    streetLabel={t("onboarding.location")}
                   />
                 </div>
                 {devHost && (
@@ -264,10 +262,10 @@ export function Onboarding() {
 
                 <div className="flex gap-2">
                   <Button variant="ghost" onClick={() => setStep("roles")} disabled={connecting}>
-                    Back
+                    {t("common.back")}
                   </Button>
                   <Button className="flex-1" onClick={goToDetailsNext} disabled={connecting || !displayName.trim() || (devHost && !adminUrl.trim())}>
-                    {connecting ? <Spinner className="h-4 w-4" /> : roles.includes("Provider") ? "Next: vehicle info" : "Enter Relay"}
+                    {connecting ? <Spinner className="h-4 w-4" /> : roles.includes("Provider") ? t("onboarding.nextVehicle") : t("onboarding.enter")}
                   </Button>
                 </div>
               </motion.div>
@@ -275,35 +273,35 @@ export function Onboarding() {
 
             {step === "vehicle" && (
               <motion.div key="vehicle" variants={fadeSlideUp} initial="hidden" animate="visible" exit={{ opacity: 0 }}>
-                <h2 className="text-lg font-bold mb-1">Your vehicle</h2>
-                <p className="text-sm text-ink-500 mb-4">Shown to customers once you're assigned their delivery.</p>
+                <h2 className="text-lg font-bold mb-1">{t("onboarding.vehicle")}</h2>
+                <p className="text-sm text-ink-500 mb-4">{t("onboarding.vehicleDetail")}</p>
 
                 <div className="mb-4">
                   <PhotoInput value={vehiclePhoto} onChange={setVehiclePhoto} shape="banner" />
                 </div>
 
-                <label className="block text-xs font-semibold text-ink-500 mb-1">Vehicle type</label>
+                <label className="block text-xs font-semibold text-ink-500 mb-1">{t("onboarding.vehicleType")}</label>
                 <div className="mb-4 flex flex-wrap gap-2">
-                  {VEHICLE_TYPES.map((t) => (
+                  {VEHICLE_TYPES.map((type) => (
                     <button
-                      key={t}
-                      onClick={() => setVehicleType(t)}
+                      key={type}
+                      onClick={() => setVehicleType(type)}
                       className={clsx(
                         "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-                        vehicleType === t ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-500 hover:bg-ink-200"
+                        vehicleType === type ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-500 hover:bg-ink-200"
                       )}
                     >
-                      {t}
+                      {t(type)}
                     </button>
                   ))}
                 </div>
                 <div className="mb-4">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">Make / model / color (optional)</label>
-                  <Input maxLength={MAX_VEHICLE_CHARS} value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder="Blue Honda Civic" />
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">{t("onboarding.makeModel")}</label>
+                  <Input maxLength={MAX_VEHICLE_CHARS} value={vehicleDetail} onChange={(e) => setVehicleDetail(e.target.value)} placeholder={t("onboarding.makeModelPlaceholder")} />
                 </div>
                 <div className="mb-4">
-                  <label className="block text-xs font-semibold text-ink-500 mb-1">License plate (optional)</label>
-                  <Input maxLength={MAX_LICENSE_PLATE_CHARS} value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} placeholder="ABC-1234" className="font-mono" />
+                  <label className="block text-xs font-semibold text-ink-500 mb-1">{t("onboarding.plate")}</label>
+                  <Input maxLength={MAX_LICENSE_PLATE_CHARS} value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} className="font-mono" />
                 </div>
 
                 {showError && (
@@ -314,10 +312,10 @@ export function Onboarding() {
 
                 <div className="flex gap-2">
                   <Button variant="ghost" onClick={() => setStep("details")} disabled={connecting}>
-                    Back
+                    {t("common.back")}
                   </Button>
                   <Button className="flex-1" onClick={finish} disabled={connecting}>
-                    {connecting ? <Spinner className="h-4 w-4" /> : "Enter Relay"}
+                    {connecting ? <Spinner className="h-4 w-4" /> : t("onboarding.enter")}
                   </Button>
                 </div>
               </motion.div>
