@@ -11,6 +11,7 @@ import { Skeleton } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";
 import { NewStoreForm } from "./NewStore";
+import { InsightsCard } from "./catalog/InsightsCard";
 import { TaxCard, TaxReportCard } from "./catalog/TaxCard";
 import { AutoAcceptCard, BusyCard, DeliverySubsidyCard, LeaveAtDoorCard, ListingCard, MinimumOrderCard, StoreDetailsCard, StoreWaitCard } from "./catalog/StoreDetailsCard";
 import { HoursCard } from "./catalog/HoursCard";
@@ -117,6 +118,7 @@ function StoreCatalog({ storeHex, openDetailsOnArrival }: { storeHex: string; op
           <MinimumOrderCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
           <StoreWaitCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
           <ListingCard catalogRef={catalogRef} />
+          <InsightsCard catalogRef={catalogRef} items={items} />
           <TaxCard key={JSON.stringify(catalog.tax_rates ?? [])} catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
           {(catalog.tax_rates ?? []).length > 0 && <TaxReportCard catalogRef={catalogRef} />}
           <LeaveAtDoorCard catalog={catalog} catalogRef={catalogRef} onSaved={reload} />
