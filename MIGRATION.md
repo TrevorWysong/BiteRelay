@@ -18,6 +18,8 @@ Holochain 0.7 provides the primitives:
 
 Relay builds account migration on top of them.
 
+Holochain 0.7.1 adds a fourth: installing an app with `restore_from_dht`, which rebuilds an existing key's chain on a new device. Relay doesn't use it. It needs the key's private half on the new device, it can't bring back private entries, and if the old device writes again the account is unrecoverable for good. Moving to a fresh key ([RECOVERY.md](RECOVERY.md)) is safer when a phone is lost or stolen. It may suit a planned switch to a new phone later, if account keys come to be derived from a phrase the person keeps.
+
 ### 1. Announcing the new network
 
 The issuer runs on both networks (the same key, on both rosters). On the old network, it publishes its profile with `next_network`, the new DNA's hash. The service does this itself when `PREVIOUS_ISSUER_APP_ID` names its app there. Old apps then show "A new version of Relay is out" (a banner, plus Account & recovery → New version).

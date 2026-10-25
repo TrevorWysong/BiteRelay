@@ -30,14 +30,14 @@ members = [
 edition = "2021"
 version = "0.1.0"
 
-# Pinned to what's actually installed/verified working (hc CLI 0.6.3) as of
-# implementation start (Sept 2026) -- re-verify against the current `hc
-# --version` before ever bumping. NOTE: hdk and hdi are NOT version-locked to
-# each other despite matching numbers elsewhere -- hdk 0.6.3 itself depends
-# on hdi =0.7.3, confirmed by `cargo check`, not assumed.
+# Holochain 0.7.1's HDK and HDI, pinned exactly: the integrity zomes' build
+# decides the DNA hash, so a patch bump is a new network. Bump them together
+# with the conductor (.github/actions/holochain-bins, `holochain --version`)
+# and the JS client -- hdk and hdi don't share version numbers (hdk 0.7.1
+# depends on hdi =0.8.1).
 [workspace.dependencies]
-hdi = "0.8.0"
-hdk = "0.7.0"
+hdi = "=0.8.1"
+hdk = "=0.7.1"
 serde = { version = "1", features = ["derive"] }
 holochain_serialized_bytes = "0.0.57"
 relay_types = { path = "dnas/relay/types" }

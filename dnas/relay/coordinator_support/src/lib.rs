@@ -270,3 +270,14 @@ pub fn agent_activity(agent: AgentPubKey, filter: ChainQueryFilter) -> ExternRes
     }
     Ok(get_agent_activity(agent, filter, ActivityRequest::Full, GetOptions::local())?.valid_activity)
 }
+
+/// Lets any agent call `functions` of the calling zome on this agent's
+/// conductor -- a zome-call grant with no constraint, written to the chain
+/// (privately) at init. What `send_remote_signal` needs to reach
+/// `recv_remote_signal`, which Holochain refuses without a grant; and what a
+/// giver's conductor needs to answer a typed handoff code.
+pub fn grant_open_calls(tag: &str, functions: &[&str]) -> ExternResult<ActionHash> {
+    let zome = zome_info()?.name;
+    let functions = functions.iter().map(|f| (zome.clone(), FunctionName::from(*f))).collect();
+    create_cap_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, GrantedFunctions::Listed(functions)))
+}

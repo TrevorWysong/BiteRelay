@@ -7,9 +7,9 @@
     "test": "node run.mjs"
   },
   "devDependencies": {
-    "@holochain/client": "^0.21.0",
+    "@holochain/client": "^0.21.1",
     "@msgpack/msgpack": "^3.0.0",
-    "@holochain-open-dev/tryorama": "^0.20.0",
+    "@holochain-open-dev/tryorama": "^0.21.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"

@@ -21,7 +21,6 @@ use crate::upkeep;
 use dispatch_integrity::*;
 use relay_coordinator_support::{decode_or, original_action_of, resolve_latest, resolve_latest_decoded};
 use hdk::prelude::*;
-use std::collections::HashSet;
 
 /// `send_remote_signal` reaches `recv_remote_signal` via an actual network
 /// zome call to the receiving agent, which Holochain rejects by default
@@ -30,11 +29,7 @@ use std::collections::HashSet;
 /// rejection as an error on the sending side.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    create_cap_grant(CapGrantEntry::new(
-        "recv_remote_signal".into(),
-        CapAccess::Unrestricted,
-        GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "recv_remote_signal".into())])),
-    ))?;
+    relay_coordinator_support::grant_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
     // Each party collects what it's owed from its own conductor, and a store
     // makes its decisions -- see `settlement::settle_periodically`.
     schedule("settle_periodically")?;

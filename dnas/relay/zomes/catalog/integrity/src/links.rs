@@ -133,12 +133,10 @@ fn validate_listing(link: &TypedAction<CreateLinkData>, record: &Record) -> Exte
     // other link with this tag.
     let staked_at = stake_record.action().timestamp();
     let Some(chain_top) = link.prev_action() else { return invalid("a listing can't open a chain") };
-    if must_get_action(chain_top.clone())?.hashed.content.header.timestamp >= staked_at {
-        let earlier = must_get_agent_activity(link.author().clone(), ChainFilter::until_timestamp(chain_top.clone(), staked_at))?;
-        let reused = earlier.iter().any(|item| matches!(&item.action.hashed.content.data, ActionData::CreateLink(other) if other.tag == link.tag));
-        if reused {
-            return invalid("a stake backs one listing");
-        }
+    let earlier = relay_integrity_support::chain::activity_since(link.author(), chain_top, staked_at, false)?;
+    let reused = earlier.iter().any(|item| matches!(&item.action.hashed.content.data, ActionData::CreateLink(other) if other.tag == link.tag));
+    if reused {
+        return invalid("a stake backs one listing");
     }
     valid()
 }

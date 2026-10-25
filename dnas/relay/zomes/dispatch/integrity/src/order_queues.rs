@@ -191,6 +191,25 @@ pub fn validate_queue_link_delete(link: OpLinkFields<'_>) -> ExternResult<Valida
     }
 }
 
+/// A history index link: under the owner's history root, to the day an
+/// order of theirs was placed, by its customer, naming the order in its tag
+/// (`history_index_tag`).
+fn validate_history_index(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
+    let Some((day, order_ref)) = parse_history_index_tag(link.tag) else { return invalid("a history index link's tag must name its day and order") };
+    let order = match queued_order(&order_ref.into())? {
+        Ok(order) => order,
+        Err(reason) => return invalid(&reason),
+    };
+    if link.author != &order.requester || day != history_day(order.requested_at) {
+        return invalid("a history day is indexed by its order's customer, for the day it was placed");
+    }
+    let owner = match link.link_type {
+        LinkTypes::StoreHistoryPath => QueueOwner::Store(&order.catalog_ref),
+        _ => QueueOwner::Customer(&order.requester),
+    };
+    require(link.base == &owner.history_root()? && link.target == &owner.history_day(day)?, "a history index link must sit under its own owner's history, pointing at its day")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,23 +230,4 @@ mod tests {
         assert_eq!(history_day(Timestamp::from_micros(-DAY)), -1);
         assert_eq!(history_day(Timestamp::from_micros(-DAY - 1)), -2);
     }
-}
-
-/// A history index link: under the owner's history root, to the day an
-/// order of theirs was placed, by its customer, naming the order in its tag
-/// (`history_index_tag`).
-fn validate_history_index(link: &OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
-    let Some((day, order_ref)) = parse_history_index_tag(link.tag) else { return invalid("a history index link's tag must name its day and order") };
-    let order = match queued_order(&order_ref.into())? {
-        Ok(order) => order,
-        Err(reason) => return invalid(&reason),
-    };
-    if link.author != &order.requester || day != history_day(order.requested_at) {
-        return invalid("a history day is indexed by its order's customer, for the day it was placed");
-    }
-    let owner = match link.link_type {
-        LinkTypes::StoreHistoryPath => QueueOwner::Store(&order.catalog_ref),
-        _ => QueueOwner::Customer(&order.requester),
-    };
-    require(link.base == &owner.history_root()? && link.target == &owner.history_day(day)?, "a history index link must sit under its own owner's history, pointing at its day")
 }

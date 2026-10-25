@@ -4,7 +4,7 @@ All commands run from `web/`.
 
 This is the development setup: the UI in a browser, provisioning identities on a shared dev conductor. Production runs the UI inside a Holochain runtime instead; see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-Needs Holochain 0.7.0 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-srv`) on your `PATH`. The official release binaries work; the app uses no unstable Holochain features.
+Needs Holochain 0.7.1 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-srv`) on your `PATH`. The official release binaries work; the app uses no unstable Holochain features. The conductor, the HDK and HDI (`Cargo.toml`) and `@holochain/client` move together: a different Holochain patch release builds a different DNA, so mixing versions puts you on a different network.
 
 Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account may go $10,000 into debt and orders work without funding anyone. A production network sets the limit (0 recommended) and names issuers who fund accounts; see DEPLOYMENT.md and SECURITY.md.
 

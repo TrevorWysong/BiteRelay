@@ -6,17 +6,12 @@
 //! rather than through a link-anchor read.
 
 use hdk::prelude::*;
-use std::collections::HashSet;
 
 /// See `dispatch_coordinator::signals::init`'s own doc comment -- same
 /// reasoning, same easy-to-miss failure mode if omitted.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    create_cap_grant(CapGrantEntry::new(
-        "recv_remote_signal".into(),
-        CapAccess::Unrestricted,
-        GrantedFunctions::Listed(HashSet::from([(zome_info()?.name, "recv_remote_signal".into())])),
-    ))?;
+    relay_coordinator_support::grant_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
     Ok(InitCallbackResult::Pass)
 }
 

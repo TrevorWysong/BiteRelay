@@ -24,6 +24,9 @@ pub use catalog_types::{listing_stake, listing_tag, BagClaim, BagClaimFulfillmen
 /// compose over the same geohash grid.
 pub const CATALOG_GEOHASH_PRECISION: usize = 6;
 
+// A store's profile is much bigger than the other entries. The enum only
+// lives for one validation or one create, so boxing it would buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[hdk_entry_types]
 #[unit_enum(UnitEntryTypes)]
 pub enum EntryTypes {

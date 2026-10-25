@@ -19,12 +19,7 @@ pub use legs::*;
 /// order's own driver, and only the right code, within a few tries, counts.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    let zome = zome_info()?.name;
-    create_cap_grant(CapGrantEntry::new(
-        "codes".into(),
-        CapAccess::Unrestricted,
-        GrantedFunctions::Listed(HashSet::from([(zome.clone(), "confirm_by_code".into()), (zome, "confirm_check_in".into())])),
-    ))?;
+    relay_coordinator_support::grant_open_calls("codes", &["confirm_by_code", "confirm_check_in"])?;
     Ok(InitCallbackResult::Pass)
 }
 

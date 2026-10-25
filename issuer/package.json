@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@holochain/client": "^0.21.0",
+    "@holochain/client": "^0.21.1",
     "stripe": "^19.0.0"
   },
   "devDependencies": {

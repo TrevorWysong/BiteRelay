@@ -12,6 +12,7 @@
 
 use super::{Beacon, Bid, CollectRequest, DeliveryOrder, DeliveryStatus};
 use hdi::prelude::*;
+use relay_integrity_support::chain::{activity_since, entry_of};
 
 /// Decodes a record's entry as `T`.
 fn decode<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(record: &Record) -> Option<T> {
@@ -120,15 +121,12 @@ pub fn original_of(hash: &ActionHash) -> ExternResult<ActionHash> {
 /// from `chain_top` back to the order's placement -- newest first.
 pub fn updates_by(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash) -> ExternResult<Vec<Version>> {
     let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
-    if must_get_action(chain_top.clone())?.hashed.content.header.timestamp < placed {
-        return Ok(Vec::new());
-    }
     // Which order each version belongs to, as found: a busy store's chain
     // holds many orders' updates, and each is walked back only once.
     let mut belongs: std::collections::HashMap<ActionHash, bool> = std::collections::HashMap::new();
     belongs.insert(order.clone(), true);
     let mut versions = Vec::new();
-    for item in must_get_agent_activity(author.clone(), ChainFilter::until_timestamp(chain_top.clone(), placed))? {
+    for item in activity_since(author, chain_top, placed, false)? {
         let ActionData::Update(update) = &item.action.hashed.content.data else { continue };
         if !of_order(&update.original_action_address, &mut belongs)? {
             continue;
@@ -186,16 +184,9 @@ pub fn descends_from(version: &Version, ancestor: &ActionHash) -> ExternResult<b
 /// between `chain_top` and the order's placement.
 pub fn asked_to_collect(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash) -> ExternResult<bool> {
     let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
-    if must_get_action(chain_top.clone())?.hashed.content.header.timestamp < placed {
-        return Ok(false);
-    }
-    for item in must_get_agent_activity(author.clone(), ChainFilter::until_timestamp(chain_top.clone(), placed).include_cached_entries())? {
+    for item in activity_since(author, chain_top, placed, true)? {
         let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
-        let entry = match item.cached_entry {
-            Some(entry) => entry,
-            None => must_get_entry(create.entry_hash.clone())?.content,
-        };
-        let Entry::App(bytes) = entry else { continue };
+        let Entry::App(bytes) = entry_of(&item, &create.entry_hash)? else { continue };
         if CollectRequest::try_from(SerializedBytes::from(bytes)).is_ok_and(|request| &request.order == order) {
             return Ok(true);
         }

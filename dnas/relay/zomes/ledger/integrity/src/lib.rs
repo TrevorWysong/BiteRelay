@@ -170,9 +170,11 @@ fn is_ledger_entry(action: &Action) -> ExternResult<bool> {
     Ok(create.entry_type == EntryType::try_from(UnitEntryTypes::LedgerEntry)?)
 }
 
-/// Every ledger entry on `agent`'s chain within `filter`, newest first.
-fn ledger_entries(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<Vec<ChainEntry>> {
-    Ok(ledger_walk(agent, filter)?.0)
+/// Every ledger entry on `agent`'s chain from `chain_top` back to the first
+/// action at or after `since`, newest first -- none if the chain hadn't
+/// reached `since` yet.
+fn ledger_since(agent: &AgentPubKey, chain_top: &ActionHash, since: Timestamp) -> ExternResult<Vec<ChainEntry>> {
+    Ok(ledger_of(relay_integrity_support::chain::activity_since(agent, chain_top, since, true)?)?.0)
 }
 
 /// The same, and whether the walk passed the chain's close (`close_chain`,
@@ -181,9 +183,14 @@ fn ledger_entries(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<Vec<
 /// activity is held, not where a record is: a counterparty must_get-ing a
 /// hold wouldn't see it. So the ledger checks for itself.
 fn ledger_walk(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<(Vec<ChainEntry>, bool)> {
+    ledger_of(must_get_agent_activity(agent.clone(), filter.include_cached_entries())?)
+}
+
+/// The ledger entries among `activity`, and whether it holds the chain's close.
+fn ledger_of(activity: Vec<AgentActivity>) -> ExternResult<(Vec<ChainEntry>, bool)> {
     let mut entries = Vec::new();
     let mut closed = false;
-    for item in must_get_agent_activity(agent.clone(), filter.include_cached_entries())? {
+    for item in activity {
         let action = &item.action.hashed.content;
         if matches!(action.data, ActionData::CloseChain(_)) {
             closed = true;
@@ -193,22 +200,11 @@ fn ledger_walk(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<(Vec<Ch
             continue;
         }
         let ActionData::Create(create) = &action.data else { continue };
-        let entry = match item.cached_entry {
-            Some(entry) => entry,
-            None => must_get_entry(create.entry_hash.clone())?.content,
-        };
-        let Entry::App(bytes) = entry else { continue };
+        let Entry::App(bytes) = relay_integrity_support::chain::entry_of(&item, &create.entry_hash)? else { continue };
         let Ok(entry) = LedgerEntry::try_from(SerializedBytes::from(bytes)) else { continue };
         entries.push(ChainEntry { hash: item.action.hashed.hash.clone(), entry });
     }
     Ok((entries, closed))
-}
-
-/// The walk of an agent's chain from `chain_top` (an action on it) back to the first action
-/// at or after `since` -- empty if the chain hadn't reached `since` yet.
-fn activity_since(chain_top: &ActionHash, since: Timestamp) -> ExternResult<Option<ChainFilter>> {
-    let top = must_get_action(chain_top.clone())?;
-    Ok((top.hashed.content.header.timestamp >= since).then(|| ChainFilter::until_timestamp(chain_top.clone(), since)))
 }
 
 fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
@@ -334,11 +330,9 @@ fn validate_deposit(entry: &LedgerEntry, grant_ref: &ActionHash, author: &AgentP
     if at < granted_at {
         return invalid("a grant is collected after it's made");
     }
-    if let Some(filter) = activity_since(prev_action, granted_at)? {
-        let again = ledger_entries(author, filter)?.into_iter().any(|e| matches!(&e.entry.kind, LedgerKind::Deposit { grant } if grant == grant_ref));
-        if again {
-            return invalid("that grant has already been collected");
-        }
+    let again = ledger_since(author, prev_action, granted_at)?.into_iter().any(|e| matches!(&e.entry.kind, LedgerKind::Deposit { grant } if grant == grant_ref));
+    if again {
+        return invalid("that grant has already been collected");
     }
     valid()
 }
@@ -418,8 +412,7 @@ fn hold_of(hold_ref: &ActionHash) -> ExternResult<Result<HoldContext, &'static s
 /// Whether `author` has already collected or waived this part of the hold
 /// -- every such entry is on their own chain, after the hold was made.
 fn already_decided(author: &AgentPubKey, prev_action: &ActionHash, hold_ref: &ActionHash, portion: Portion, held_at: Timestamp) -> ExternResult<bool> {
-    let Some(filter) = activity_since(prev_action, held_at)? else { return Ok(false) };
-    Ok(ledger_entries(author, filter)?.into_iter().any(|e| match &e.entry.kind {
+    Ok(ledger_since(author, prev_action, held_at)?.into_iter().any(|e| match &e.entry.kind {
         LedgerKind::Collect { hold, portion: p, .. } | LedgerKind::Waive { hold, portion: p } => hold == hold_ref && *p == portion,
         LedgerKind::Forfeit { hold, .. } => hold == hold_ref && portion == Portion::Collateral,
         _ => false,
@@ -494,10 +487,7 @@ fn validate_unstake(entry: &LedgerEntry, stake_ref: &ActionHash, delisting: &Act
         return invalid("a stake comes back only once its listing is deleted, cited by that deletion");
     }
     let staked_at = stake_record.action().timestamp();
-    let again = activity_since(prev_action, staked_at)?
-        .map(|filter| ledger_entries(author, filter))
-        .transpose()?
-        .is_some_and(|entries| entries.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Unstake { stake, .. } if stake == stake_ref)));
+    let again = ledger_since(author, prev_action, staked_at)?.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Unstake { stake, .. } if stake == stake_ref));
     require(!again, "a stake comes back once")
 }
 
@@ -879,10 +869,7 @@ fn validate_reclaim(entry: &LedgerEntry, redemption: &ActionHash, outcome_ref: &
     if !declined {
         return invalid("a cash-out comes back only on its issuer's refusal");
     }
-    let again = activity_since(prev_action, redeemed_at)?
-        .map(|filter| ledger_entries(author, filter))
-        .transpose()?
-        .is_some_and(|entries| entries.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Reclaim { redemption: r, .. } if r == redemption)));
+    let again = ledger_since(author, prev_action, redeemed_at)?.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Reclaim { redemption: r, .. } if r == redemption));
     require(!again, "a cash-out comes back once")
 }
 
@@ -910,10 +897,7 @@ fn validate_inherit(entry: &LedgerEntry, bequest_ref: &ActionHash, author: &Agen
     if at < handed_at {
         return invalid("a hand-over is taken in after it's made");
     }
-    let again = activity_since(prev_action, handed_at)?
-        .map(|filter| ledger_entries(author, filter))
-        .transpose()?
-        .is_some_and(|entries| entries.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Inherit { bequest } if bequest == bequest_ref)));
+    let again = ledger_since(author, prev_action, handed_at)?.iter().any(|e| matches!(&e.entry.kind, LedgerKind::Inherit { bequest } if bequest == bequest_ref));
     require(!again, "a hand-over is taken in once")
 }
 

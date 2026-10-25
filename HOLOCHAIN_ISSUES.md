@@ -1,11 +1,15 @@
 # Holochain Issues Found During Development
 
-Versions in use: `holochain 0.7.0`, `hdk 0.7.0`, `hdi 0.8.0`, `kitsune2 0.5.0`,
-`kitsune2_transport_iroh 0.5.0`, `holochain_p2p 0.7.0` (upgraded 2026-09-28
-from `0.6.3`/`0.6.3`/`0.7.3`/`0.4.1`/`0.4.1`/`0.6.3` — see the architecture
-plan's §0 for the full upgrade writeup, including what did and didn't need
-to change). Sections below were written against the older versions; each
+Versions in use: `holochain 0.7.1`, `hdk 0.7.1`, `hdi 0.8.1`, `kitsune2 0.5.1`,
+`kitsune2_transport_iroh 0.5.1`, `holochain_p2p 0.7.1` (upgraded 2026-10-25
+from 0.7.0; before that, 2026-09-28 from `0.6.3`/`0.6.3`/`0.7.3`/`0.4.1`/
+`0.4.1`/`0.6.3` — see the architecture plan's §0 for that upgrade's
+writeup). Sections below were written against the older versions; each
 has been re-checked against 0.7.0 and annotated where anything changed.
+The 0.7.1 changelog was read in full for the 0.7.1 bump: nothing in it
+touches #1–#8 (its fixes are to publishing with no peers, entry/hash
+checking on receipt, validation receipts, capability grants, direct
+signals and DHT indexes), so they stand as written until re-run. #9 is new.
 
 These are things found in Holochain itself (or its immediate dependencies)
 while building this project — not bugs in this project's own zome code.
@@ -551,3 +555,15 @@ replaced with a first-party mechanism.
 **In this project:** the integration tests swap in the `test-utils` builds of coordinators (`useTestCoordinators` in `tests/tryorama/src/helpers.ts`), then call into them. `link-validation`, which swaps every coordinator for every player, failed this way on CI.
 
 **Workaround:** after a swap, warm the zome up with a harmless read. Retry it with a pause while it times out or reports `Missing WASM source`, and fail on any other error. Production cells never swap coordinators at runtime, so this only affects tests.
+
+## 9. A chain walk bounded by a timestamp reads the author's whole chain (0.7.1)
+
+**Classification:** Intended design, easy to misread.
+
+**Component:** `holochain_state 0.7.1`, `src/dht_store/reads.rs`, `must_get_agent_activity`.
+
+**Description:** 0.7.1 indexes actions by author and sequence number. A `ChainFilter` bounded by a hash (`until_hash`) or a count (`take`) now reads only that range, straight from the index. A filter bounded by a time (`until_timestamp`) doesn't: the time can't be turned into a sequence number without reading, so the reader takes everything from the chain top down to genesis and drops what's older after. Confirmed from the source, not measured. The changelog's "agent activity walks no longer scan every op held" is about scanning other agents' ops, not about the length of this agent's chain.
+
+**In this project:** every "once" rule bounded by time ("since the order was placed", "since the grant was made") used `until_timestamp`. So each check cost the whole chain, and a busy store's chain grows by thousands of actions a day.
+
+**Workaround:** `relay_integrity_support::chain::activity_since` walks back in counted steps: 32 actions, then doubling to at most 4,096, stopping at the first action older than the cutoff. It's sound because Holochain's own validation never lets an action be older than the one before it (`check_prev_timestamp`), and each step depends only on where it starts, so every validator reads the same actions. A walk costs what happened since the cutoff, in a handful of reads. Every time-bounded rule goes through it; nothing else in the zomes uses `until_timestamp`.
