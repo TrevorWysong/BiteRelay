@@ -88,7 +88,9 @@ await runScenario(async (scenario) => {
   const latest = await latestLedgerEntry(alice);
   await assert.rejects(
     on(alice.cells[0], "ledger")("create_raw_ledger_entry_for_testing", { kind: { Redeem: { issuer: issuerKey, instructions: null } }, amount: 1000, balance: 2000, in_hand: EMPTY_HANDS, previous: latest.hash }),
-    /chain is closed/,
+    // Since 0.7.1 the author's own conductor refuses any action after the
+    // close before the ledger's own check runs; either refusal will do.
+    /chain is closed|after a chain close/,
     "nor can a modified app: its ledger is closed with its chain",
   );
   assert.equal(await on(alice.cells[0], "ledger")<number>("get_balance", aliceKey), 3000, "and what it held stays exactly as it was");

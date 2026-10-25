@@ -35,7 +35,7 @@ The person installs the new version, chooses "I already have an account" → "Fr
 - It writes a validated **`Migration`** entry naming the new network and the new key, with links for the issuer and for the new key.
 - It **closes the chain** (`close_chain`).
 
-Holochain's network authorities reject anything after the close. Validation of a *record* doesn't check that, though, so a counterparty fetching a hold written after the close wouldn't notice. So the ledger checks for itself: its validation walks the author's chain since their previous ledger entry, and refuses any entry after a `CloseChain`. The old key can never move money again, even from a modified app.
+Holochain rejects anything after the close: since 0.7.1 the author's own conductor refuses to write it, and the network's authorities reject it. Validation of a *record* doesn't check that, though, so a counterparty fetching a hold written after the close wouldn't notice. So the ledger checks for itself: its validation walks the author's chain since their previous ledger entry, and refuses any entry after a `CloseChain`. The old key can never move money again, even from a modified app.
 
 ### 3. Carrying the balance
 
