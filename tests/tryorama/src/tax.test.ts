@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { ST_PETE, actionHash, decodeEntry, retryUntil, retryUntilOk, testApp, useTestCoordinators } from "./helpers.js";
+import { ST_PETE, actionHash, decodeEntry, retryUntil, retryUntilOk, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
@@ -14,7 +14,7 @@ await runScenario(async (scenario) => {
   await scenario.shareAllAgents();
   for (const player of all) await useTestCoordinators(player, ["dispatch"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
 
   const store = actionHash(await call(merchant, "catalog")<HcRecord>("publish_catalog", { business_name: "Taxed Tavern", location: ST_PETE }));
   const item = (name: string, price_cents: number, tax_category = "") => ({ catalog_ref: store, name, price_cents, available: true, description: "", photo_data_uri: "", category: "", dietary_tags: [], modifier_groups: [], tax_category });

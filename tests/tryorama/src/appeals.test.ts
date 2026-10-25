@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 interface Evidence {
   note: string;
@@ -26,7 +26,7 @@ await runScenario(async (scenario) => {
   const all = [customer, merchant, arbiter];
   await useTestCoordinators(merchant, ["dispatch"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
 
   const store = actionHash(await call(merchant, "catalog")<HcRecord>("publish_catalog", { business_name: "Mo's", location: ST_PETE }));
   const stew = actionHash(await call(merchant, "catalog")<HcRecord>("add_menu_item", { catalog_ref: store, name: "Stew", price_cents: 2000, available: true }));

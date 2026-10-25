@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import { dhtLocationFrom32, type Record as HcRecord } from "@holochain/client";
-import { actionHash, installManyAgents, retryUntil, shareAgentsOn, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, installManyAgents, retryUntil, shareAgentsOn, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 /// account coordinator `REAFFIRM_AFTER_ACTIONS`.
 const REAFFIRM_AFTER = 2000;
@@ -26,7 +26,7 @@ await runScenario(async (scenario) => {
   const all = [owner, account, early, late];
   await shareAgentsOn([a, b], owner.cells[0].cell_id[0]);
   await useTestCoordinators(account, ["profiles"]);
-  const call = (p: typeof owner, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof owner, zome: string) => retryingCaller(p.cells[0], zome);
   // A couple of thousand actions take minutes to spread on a busy runner.
   const sync = () => dhtSync(all, owner.cells[0].cell_id[0], 1000, 15 * 60_000);
 

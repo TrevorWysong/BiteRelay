@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 // The most a customer may place within one store response window
 // (`max_pending_orders`).
@@ -25,7 +25,7 @@ await runScenario(async (scenario) => {
   const both = [customer, merchant];
   await scenario.shareAllAgents();
   const sync = () => dhtSync(both, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
 
   const now = Date.now() * 1000;
   await call(customer, "profiles")("create_profile", { display_name: "", roles: ["Requester"], created_at: now });

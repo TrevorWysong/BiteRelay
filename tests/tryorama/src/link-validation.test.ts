@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp } from "./helpers.js";
+import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 const ALL_ZOMES = ["attestation", "catalog", "dispatch", "ledger", "profiles", "reputation"];
 
@@ -17,7 +17,7 @@ await runScenario(async (scenario) => {
   await scenario.shareAllAgents();
   for (const player of all) await useTestCoordinators(player, ALL_ZOMES);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const rawLink = (p: typeof customer, zome: string, link_type: string, base: Uint8Array, target: Uint8Array, tag: Uint8Array = new Uint8Array()) =>
     call(p, zome)("test_create_link", { link_type, base, target, tag: Array.from(tag) });
   const rawDelete = async (p: typeof customer, zome: string, link_type: string, base: Uint8Array) => {

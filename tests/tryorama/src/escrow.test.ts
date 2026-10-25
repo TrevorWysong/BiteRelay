@@ -9,14 +9,14 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, handOff, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, handOff, retryUntil, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
   const all = [customer, merchant, driver];
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const balance = (p: typeof customer) => call(p, "ledger")<number>("get_balance", p.agentPubKey);
   const settled = (p: typeof customer, expected: number) => retryUntil(() => balance(p), (b) => b === expected, 120, 1000);
 

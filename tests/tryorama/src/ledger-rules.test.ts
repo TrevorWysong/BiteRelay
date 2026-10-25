@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 interface HoldView {
   hold: Uint8Array;
@@ -19,7 +19,7 @@ await runScenario(async (scenario) => {
   const all = [issuer, customer, merchant, stranger];
   for (const p of [customer, merchant, stranger]) await useTestCoordinators(p, ["ledger"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const balance = (p: typeof customer) => call(p, "ledger")<number>("get_balance", p.agentPubKey);
   const forge = (p: typeof customer, kind: unknown, amount: number, balanceAfter: number, previous: Uint8Array | null) =>
     call(p, "ledger")("create_raw_ledger_entry_for_testing", { kind, amount, balance: balanceAfter, in_hand: EMPTY_HANDS, previous });

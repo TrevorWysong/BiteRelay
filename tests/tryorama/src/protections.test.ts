@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, commitAndCook, currentBeacon, decodeEntry, deliveryStatus, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, commitAndCook, currentBeacon, decodeEntry, deliveryStatus, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 const FOOD = 1000;
 const FEE = 400;
@@ -28,7 +28,7 @@ await runScenario(async (scenario) => {
   const all = [issuer, customer, merchant, driver, other];
   for (const p of all) await useTestCoordinators(p, ["dispatch"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const balance = (p: typeof customer) => call(p, "ledger")<number>("get_balance", p.agentPubKey);
   let references = 0;
   async function fund(p: typeof customer, amount: number) {

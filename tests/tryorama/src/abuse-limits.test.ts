@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, decodeEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, decodeEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 const PRICE = 1000;
 
@@ -20,7 +20,7 @@ await runScenario(async (scenario) => {
   const all = [customer, merchant, driver, neighbour];
   for (const p of all) await useTestCoordinators(p, ["dispatch", "catalog", "reputation"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
 
   const now = Date.now() * 1000;
   await call(customer, "profiles")("create_profile", { display_name: "", roles: ["Requester"], created_at: now });

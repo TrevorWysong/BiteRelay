@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, FULL_SIZE_PHOTO, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, FULL_SIZE_PHOTO, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 /// Long enough to report in, short enough to wait out.
 // Long enough that a slow CI runner files both reports before it closes.
@@ -29,7 +29,7 @@ await runScenario(async (scenario) => {
   const all = [customer, merchant, stranger];
   for (const p of all) await useTestCoordinators(p, ["dispatch", "catalog", "reputation"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const balance = (p: typeof customer) => call(p, "ledger")<number>("get_balance", p.agentPubKey);
   const settlesTo = (p: typeof customer, order: Uint8Array, expected: number) =>
     retryUntil(

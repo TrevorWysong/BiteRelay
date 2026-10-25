@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, agentAsLinkBase, bytesEqual, decodeEntry, latestLedgerEntry, retryUntil, setupPlayersWithProperties, ST_PETE, useTestCoordinators } from "./helpers.js";
+import { actionHash, agentAsLinkBase, bytesEqual, decodeEntry, latestLedgerEntry, retryUntil, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 const STAKE = 500;
 
@@ -19,7 +19,7 @@ await runScenario(async (scenario) => {
   const all = [merchant, customer];
   for (const p of all) await useTestCoordinators(p, ["catalog", "ledger"]);
   const sync = () => dhtSync(all, merchant.cells[0].cell_id[0]);
-  const call = (p: typeof merchant, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof merchant, zome: string) => retryingCaller(p.cells[0], zome);
   const balance = () => call(merchant, "ledger")<number>("get_balance", merchant.agentPubKey);
   /// The stores a customer browsing `geohash` sees.
   const nearby = async (geohash: string) =>

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { actionHash, appSource, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 /// The entry's serialized bytes, as any peer holding the record sees them.
 function publishedBytes(record: HcRecord): Buffer {
@@ -32,7 +32,7 @@ await runScenario(async (scenario) => {
   const all = [customer, merchant, driver, stranger];
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
 
   const now = Date.now() * 1000;
   for (const [p, name, roles] of [[customer, "Cara", ["Requester"]], [merchant, "Mo", ["Merchant"]], [driver, "Dana", ["Provider"]], [stranger, "Sly", ["Requester"]]] as const) {

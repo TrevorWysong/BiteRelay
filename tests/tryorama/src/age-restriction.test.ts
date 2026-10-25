@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { ST_PETE, actionHash, appWithProperties, decodeEntry, retryUntilOk, shareAgentsOn, useTestCoordinators } from "./helpers.js";
+import { ST_PETE, actionHash, appWithProperties, decodeEntry, retryUntilOk, shareAgentsOn, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const app = appWithProperties({ restricted_min_age: 21 });
@@ -15,7 +15,7 @@ await runScenario(async (scenario) => {
   await shareAgentsOn([customer.conductor, merchant.conductor], customer.cells[0].cell_id[0]);
   await shareAgentsOn([elsewhereCustomer.conductor, elsewhereMerchant.conductor], elsewhereCustomer.cells[0].cell_id[0]);
   for (const p of [customer, elsewhereCustomer]) await useTestCoordinators(p, ["dispatch"]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const item = (catalog_ref: Uint8Array, name: string, price_cents: number, age_restricted: boolean) => ({ catalog_ref, name, price_cents, available: true, description: "", photo_data_uri: "", category: "", dietary_tags: [], modifier_groups: [], tax_category: "", age_restricted });
 
   const store = actionHash(await call(merchant, "catalog")<HcRecord>("publish_catalog", { business_name: "Corner Bar", location: ST_PETE }));

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, ST_PETE, testApp, useTestCoordinators, waitForSignal } from "./helpers.js";
+import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, ST_PETE, testApp, useTestCoordinators, waitForSignal, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
@@ -15,7 +15,7 @@ await runScenario(async (scenario) => {
   // The customer can write what a modified client could.
   await useTestCoordinators(customer, ["dispatch"]);
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
-  const call = (p: typeof customer, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof customer, zome: string) => retryingCaller(p.cells[0], zome);
   const status = async (p: typeof customer, fn: string, ref: Uint8Array) => decodeEntry<{ status: string }>(await call(p, "dispatch")<HcRecord>(fn, ref)).status;
 
   const now = Date.now() * 1000;

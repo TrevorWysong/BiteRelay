@@ -5,7 +5,7 @@
 // Forgeries are written raw (test-utils), as a modified client would.
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
-import { EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators, retryingCaller } from "./helpers.js";
 import { verifyLink } from "../../../issuer/src/link.js";
 
 const MIN = 500;
@@ -30,7 +30,7 @@ await runScenario(async (scenario) => {
   const all = [issuer, earner, stranger];
   for (const p of all) await useTestCoordinators(p, ["ledger"]);
   const sync = () => dhtSync(all, earner.cells[0].cell_id[0]);
-  const call = (p: typeof earner, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof earner, zome: string) => retryingCaller(p.cells[0], zome);
   const ledger = (p: typeof earner) => call(p, "ledger");
   const balance = (p: typeof earner) => ledger(p)<number>("get_balance", p.agentPubKey);
   const forge = async (p: typeof earner, kind: unknown, amount: number, balanceAfter: number) =>

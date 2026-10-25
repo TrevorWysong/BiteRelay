@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp, decodeEntry } from "./helpers.js";
+import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp, decodeEntry, retryingCaller } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -17,7 +17,7 @@ await runScenario(async (scenario) => {
   // The customer can write what a modified client could.
   await useTestCoordinators(customer, ["dispatch"]);
   const sync = () => dhtSync(all, merchant.cells[0].cell_id[0]);
-  const call = (p: typeof merchant, zome: string) => getZomeCaller(p.cells[0], zome);
+  const call = (p: typeof merchant, zome: string) => retryingCaller(p.cells[0], zome);
 
   const now = Date.now() * 1000;
   await call(merchant, "profiles")("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });
