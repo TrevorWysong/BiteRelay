@@ -15,6 +15,7 @@ import { nextNetwork } from "../lib/migration";
 import { POLL } from "../lib/poll";
 import { collectIncoming } from "../lib/wallet";
 import { topUpIfLow } from "../lib/autoTopUp";
+import { reaffirmRecoveryPlan } from "../holochain/zomes/account";
 import { bytesToHex } from "../holochain/decode";
 import { useCustomerSettings } from "../store/roleSettings";
 import { useT } from "../i18n";
@@ -48,6 +49,9 @@ export function AppShell() {
   // And a balance that's run low is paid back up, for those who asked.
   const autoTopUp = useCustomerSettings((s) => (agentPubKey ? !!s.autoTopUps[bytesToHex(agentPubKey)] : false));
   usePolling(() => topUpIfLow(agentPubKey!).catch(() => false), { pollMs: POLL.slow }, autoTopUp);
+  // Keeps the account's recovery plan close to where its chain stands, so a
+  // recovery stays cheap to validate.
+  usePolling(() => reaffirmRecoveryPlan().catch(() => false), { pollMs: POLL.upkeep, background: true }, !!agentPubKey);
 
   const availableModes = [
     roles.includes("Requester") && ("customer" as const),

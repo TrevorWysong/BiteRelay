@@ -12,7 +12,7 @@ import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryoram
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, installManyAgents, retryUntil, shareAgentsOn, ST_PETE, useTestCoordinators } from "../src/helpers.js";
 
-const SIZES = (process.argv.slice(2).length ? process.argv.slice(2) : ["0", "1000", "4000"]).map(Number);
+const SIZES = (process.argv.slice(2).length ? process.argv.slice(2) : ["0", "1000", "2000", "4000"]).map(Number);
 const PAD_BATCH = 100;
 
 function phraseKey() {
@@ -31,7 +31,9 @@ await runScenario(async (scenario) => {
   await shareAgentsOn([a, b], owner.cells[0].cell_id[0]);
   await useTestCoordinators(predecessor, ["profiles"]);
   const call = (p: typeof owner, zome: string) => getZomeCaller(p.cells[0], zome);
-  const sync = () => dhtSync(all, owner.cells[0].cell_id[0]);
+  // Long enough for a few thousand actions to spread: a runner integrates
+  // them at tens of ops a second.
+  const sync = () => dhtSync(all, owner.cells[0].cell_id[0], 1000, 15 * 60_000);
 
   const store = actionHash(await call(owner, "catalog")<HcRecord>("publish_catalog", { business_name: "Pad target", location: ST_PETE }));
   await sync();

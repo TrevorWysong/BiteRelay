@@ -43,6 +43,33 @@ pub fn set_recovery_plan(plan: RecoveryPlan) -> ExternResult<PlanView> {
     view_of(&record).ok_or(guest("couldn't read the plan back"))
 }
 
+/// How far an account's chain may run past its recovery plan before its app
+/// re-affirms the plan. Recovering the account walks its chain from where
+/// it stands back to the plan (`account_integrity::plan_as_of`), so this
+/// bounds what any recovery costs to validate, however long the account
+/// has been in use.
+pub const REAFFIRM_AFTER_ACTIONS: u32 = 2_000;
+
+/// Publishes the caller's plan again, unchanged, once their chain has run
+/// `REAFFIRM_AFTER_ACTIONS` past it -- never once the account has been
+/// taken over, since a recovery stands on the plan it was made under.
+/// Whether it did. The app calls it from time to time.
+#[hdk_extern]
+pub fn reaffirm_recovery_plan(_: ()) -> ExternResult<bool> {
+    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::RecoveryPlan)?).include_entries(true))?;
+    let Some(latest) = mine.last() else { return Ok(false) };
+    let (_, head_seq, _) = agent_info()?.chain_head;
+    if head_seq.saturating_sub(latest.action().action_seq()) < REAFFIRM_AFTER_ACTIONS {
+        return Ok(false);
+    }
+    if !crate::succession::successions_of(me()?)?.is_empty() {
+        return Ok(false);
+    }
+    let Some(plan) = decoded::<RecoveryPlan>(latest) else { return Ok(false) };
+    set_recovery_plan(plan)?;
+    Ok(true)
+}
+
 /// The caller's current plan, if they've published one.
 #[hdk_extern]
 pub fn my_recovery_plan(_: ()) -> ExternResult<Option<PlanView>> {

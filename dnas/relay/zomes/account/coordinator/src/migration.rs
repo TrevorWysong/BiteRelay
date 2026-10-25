@@ -131,6 +131,15 @@ pub struct MigrationRequestsPage {
 
 const REQUESTS_PAGE_SIZE: usize = 50;
 
+/// `account`'s first migration -- the only one that counts. An account
+/// moves once: its chain closes behind the move, and a modified app that
+/// wrote a second before closing gets nothing for it (validation leaves
+/// this to readers, so it never walks a long chain to check).
+pub(crate) fn first_migration_of(account: &AgentPubKey) -> ExternResult<Option<ActionHash>> {
+    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Migration)?);
+    Ok(relay_coordinator_support::agent_activity(account.clone(), filter)?.into_iter().min_by_key(|(seq, _)| *seq).map(|(_, hash)| hash))
+}
+
 /// The accounts moving to the next network that asked the caller, an
 /// issuer, to carry their balance, oldest first, a page at a time.
 #[hdk_extern]
@@ -148,6 +157,9 @@ pub fn get_migration_requests(input: MigrationRequestsInput) -> ExternResult<Mig
         let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
         let Some(migration) = decoded::<Migration>(&record) else { continue };
         let account = record.action().author().clone();
+        if first_migration_of(&account)?.as_ref() != Some(&hash) {
+            continue;
+        }
         let close = chain_closed(account.clone())?.filter(|c| c.network.as_ref() == Some(&migration.network)).map(|c| c.close);
         requests.push(MigrationRequest { migration: hash, account, successor: migration.successor, network: migration.network, requested_at: link.timestamp, close });
     }
@@ -167,6 +179,9 @@ pub fn migrations_to_me(_: ()) -> ExternResult<Vec<MigrationRequest>> {
             continue;
         }
         let account = record.action().author().clone();
+        if first_migration_of(&account)?.as_ref() != Some(record.action_address()) {
+            continue;
+        }
         let close = chain_closed(account.clone())?.map(|c| c.close);
         found.push(MigrationRequest { migration: record.action_address().clone(), account, successor: migration.successor, network: migration.network, requested_at: record.action().timestamp(), close });
     }
@@ -200,6 +215,9 @@ pub fn get_migration(migration: ActionHash) -> ExternResult<Option<MigrationRequ
     let Some(record) = get(migration.clone(), GetOptions::default())? else { return Ok(None) };
     let Some(m) = decoded::<Migration>(&record) else { return Ok(None) };
     let account = record.action().author().clone();
+    if first_migration_of(&account)?.as_ref() != Some(&migration) {
+        return Ok(None);
+    }
     let close = chain_closed(account.clone())?.map(|c| c.close);
     Ok(Some(MigrationRequest { migration, account, successor: m.successor, network: m.network, requested_at: record.action().timestamp(), close }))
 }

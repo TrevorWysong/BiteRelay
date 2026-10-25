@@ -191,25 +191,35 @@ fn validate_succession(succession: &Succession, author: &AgentPubKey, prev_actio
 /// on their chain) -- or why not. A plan they replaced no longer counts, so
 /// a guardian they dropped, or a phrase they changed, can't recover them
 /// from where they stand now.
+///
+/// Walks only from `head` back to the plan, never the whole chain: the cost
+/// is the account's activity since its plan, which its app keeps short by
+/// re-affirming the plan from time to time (account coordinator,
+/// `reaffirm_recovery_plan`).
 fn plan_as_of(predecessor: &AgentPubKey, plan_ref: &ActionHash, head: &ActionHash) -> ExternResult<Result<RecoveryPlan, &'static str>> {
-    if &must_get_action(head.clone())?.hashed.content.header.author != predecessor {
+    let head_action = must_get_action(head.clone())?;
+    if &head_action.hashed.content.header.author != predecessor {
         return Ok(Err("where the account stood must be on its own chain"));
     }
+    let plan_action = must_get_action(plan_ref.clone())?;
+    // On the same chain, at or before where the account stood -- so the
+    // walk between them ends at the plan.
+    if &plan_action.hashed.content.header.author != predecessor || plan_action.hashed.content.header.action_seq > head_action.hashed.content.header.action_seq {
+        return Ok(Err("that account has no such recovery plan"));
+    }
     let plan_type = EntryType::try_from(UnitEntryTypes::RecoveryPlan)?;
-    // Newest first: the first plan reached is the latest.
-    for item in must_get_agent_activity(predecessor.clone(), ChainFilter::new(head.clone()))? {
-        let action = &item.action.hashed.content;
-        let ActionData::Create(create) = &action.data else { continue };
-        if create.entry_type != plan_type {
+    for item in must_get_agent_activity(predecessor.clone(), ChainFilter::until_hash(head.clone(), plan_ref.clone()))? {
+        if &item.action.hashed.hash == plan_ref {
             continue;
         }
-        if &item.action.hashed.hash != plan_ref {
-            return Ok(Err("that isn't the account's latest recovery plan"));
+        if let ActionData::Create(create) = &item.action.hashed.content.data {
+            if create.entry_type == plan_type {
+                return Ok(Err("that isn't the account's latest recovery plan"));
+            }
         }
-        let record = must_get_valid_record(plan_ref.clone())?;
-        return Ok(decode::<RecoveryPlan>(&record).ok_or("that isn't a recovery plan"));
     }
-    Ok(Err("that account has no recovery plan"))
+    let record = must_get_valid_record(plan_ref.clone())?;
+    Ok(decode::<RecoveryPlan>(&record).ok_or("that isn't a recovery plan"))
 }
 
 fn validate_parcel(parcel: &Parcel, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
@@ -222,17 +232,15 @@ fn validate_parcel(parcel: &Parcel, author: &AgentPubKey) -> ExternResult<Valida
     }
 }
 
-/// An account moves on once, to another network: this one can't be its own
-/// next version.
-fn validate_migration(migration: &Migration, author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
-    let Some(prev_action) = prev_action else { return invalid("a migration can't open a chain") };
-    if migration.network == dna_info()?.hash {
-        return invalid("an account migrates to another network");
+/// An account moves on to another network: this one can't be its own next
+/// version. Its first migration is the one that counts, which readers take
+/// (account coordinator, `first_migration_of`): checking here that it's the
+/// only one would mean walking the account's whole chain, however long.
+fn validate_migration(migration: &Migration, _author: &AgentPubKey, prev_action: Option<&ActionHash>) -> ExternResult<ValidateCallbackResult> {
+    if prev_action.is_none() {
+        return invalid("a migration can't open a chain");
     }
-    require(
-        entries_created(author, ChainFilter::new(prev_action.clone()), &[entry_type(UnitEntryTypes::Migration)?])?.is_empty(),
-        "an account migrates once",
-    )
+    require(migration.network != dna_info()?.hash, "an account migrates to another network")
 }
 
 /// An account arrives once, from another network.

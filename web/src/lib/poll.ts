@@ -16,6 +16,9 @@ export const POLL = {
   driverFeed: 5_000,
   /// Slow-moving reads: stores nearby, a menu.
   slow: 60_000,
+  /// Upkeep that matters over days, not minutes: re-affirming a recovery
+  /// plan (account coordinator, `reaffirm_recovery_plan`).
+  upkeep: 30 * 60_000,
   /// A card payment that's gone through, until its funds land: the issuer
   /// grants them within seconds of hearing from the processor.
   payment: 2_000,

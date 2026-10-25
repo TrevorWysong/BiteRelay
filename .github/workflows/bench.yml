@@ -8,13 +8,13 @@ on:
     inputs:
       sizes:
         description: Chain lengths to measure at (actions since the recovery plan)
-        default: "0 2000 8000 16000"
+        default: "0 1000 2000 4000"
 
 jobs:
   chain-cost:
     name: Chain cost
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

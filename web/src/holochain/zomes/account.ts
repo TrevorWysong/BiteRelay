@@ -12,6 +12,13 @@ export async function myRecoveryPlan(): Promise<PlanView | null> {
   return callZome("account", "my_recovery_plan", null);
 }
 
+/// Publishes the caller's recovery plan again, unchanged, once their chain
+/// has run far past it -- so recovering the account stays cheap to validate
+/// however long it's in use. Whether it did.
+export async function reaffirmRecoveryPlan(): Promise<boolean> {
+  return callZome("account", "reaffirm_recovery_plan", null);
+}
+
 export async function recoveryPlanOf(account: AgentPubKey): Promise<PlanView | null> {
   return callZome("account", "recovery_plan_of", account);
 }
