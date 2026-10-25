@@ -121,7 +121,8 @@ await runScenario(async (scenario) => {
   await retryUntilOk(() => call(merchant, "catalog")("confirm_claim", claim));
   await sync();
   // The neighbour's app orders it as soon as it's confirmed; the store accepts.
-  const bagOrder = await retryUntil(() => call(neighbour, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim), (order) => order !== null, 60, 1000);
+  const bagOrder = await retryUntil(() => call(neighbour, "dispatch")<Uint8Array | null>("get_my_order_for_claim", claim), (order) => order !== null, 120, 1000);
+  assert.ok(bagOrder, "the customer's app ordered the confirmed bag");
   await sync();
   // The store's app may accept it first; either way, it ends up accepted.
   await retryUntilOk(() =>

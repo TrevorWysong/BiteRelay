@@ -273,4 +273,23 @@ mod test_utils {
     use hdk::prelude::*;
     use profiles_integrity::LinkTypes;
     relay_coordinator_support::raw_link_test_externs!(AgentToProfile, ProfileToProviderCredential, AgentToFavorite, OwnerToSavedAddress);
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct PadInput {
+        /// A store to favorite -- any valid catalog.
+        pub catalog: ActionHash,
+        pub count: u32,
+    }
+
+    /// Lengthens the caller's chain by `count` cheap actions (favorite
+    /// links), for benchmarks of how validation scales with a chain's
+    /// length (tests/tryorama/bench).
+    #[hdk_extern]
+    pub fn pad_chain_for_testing(input: PadInput) -> ExternResult<()> {
+        let me = agent_info()?.agent_initial_pubkey;
+        for _ in 0..input.count {
+            create_link(me.clone(), input.catalog.clone(), LinkTypes::AgentToFavorite, ())?;
+        }
+        Ok(())
+    }
 }

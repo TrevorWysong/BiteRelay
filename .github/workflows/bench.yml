@@ -1,0 +1,41 @@
+name: Bench
+
+# How validation's cost grows with a chain's length (tests/tryorama/bench).
+# Run by hand -- Actions → Bench → Run workflow -- on a clean runner, where
+# timings mean something.
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: Chain lengths to measure at (actions since the recovery plan)
+        default: "0 2000 8000 16000"
+
+jobs:
+  chain-cost:
+    name: Chain cost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/holochain-bins
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/tryorama/package-lock.json
+      - name: Build and pack the hApp
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          hc dna pack dnas/relay/workdir
+          hc app pack workdir
+      - name: Measure
+        working-directory: tests/tryorama
+        run: |
+          npm ci
+          npm run build:test-coordinators
+          npx tsx bench/chain-cost.ts ${{ inputs.sizes }} 2>&1 | grep -vE "Tryorama\] \[3[123]m" | tee bench.log
+          grep -E "^\s+[0-9]+ +\||chain actions" bench.log >> "$GITHUB_STEP_SUMMARY"
