@@ -9,7 +9,7 @@ use chrono::{Datelike, Duration as Days, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open_chunked, resolve_latest, resolve_latest_decoded, seal_chunked};
+use relay_coordinator_support::{decode_or, guest, open_chunked, resolve_latest, resolve_latest_decoded, seal_chunked};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,7 +48,7 @@ pub struct CreateRecurringTemplateInput {
 pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternResult<Record> {
     let requester = agent_info()?.agent_initial_pubkey;
     if input.dropoff_preference == DropoffPreference::LeaveAtDoor && !input.door_risk_accepted {
-        return Err(wasm_error!(WasmErrorInner::Guest("To have these orders left at your door, accept that each is delivered once it's left there.".into())));
+        return Err(guest("To have these orders left at your door, accept that each is delivered once it's left there."));
     }
     let next_run_at = next_occurrence(&input.recurrence, &input.time_zone, sys_time()?.as_micros());
     crate::orders::check_note(&input.dropoff_notes)?;
@@ -73,7 +73,7 @@ pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternR
     // The conductor fires it when it's due -- see `upkeep`.
     crate::upkeep::tend_my_orders_soon()?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back recurring order template".into())))
+        .ok_or(guest("could not read back recurring order template"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -88,7 +88,7 @@ pub fn set_recurring_template_active(input: SetRecurringTemplateActiveInput) -> 
     template.active = input.active;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::RecurringOrderTemplate(template))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated recurring order template".into())))
+        .ok_or(guest("could not read back updated recurring order template"))
 }
 
 /// A template's stable identity (what `set_recurring_template_active`
@@ -124,34 +124,59 @@ pub fn list_my_recurring_templates(_: ()) -> ExternResult<Vec<RecurringTemplateV
 /// Fires each of the caller's active templates that's due -- placing its
 /// order and moving it to its next occurrence -- and returns when the
 /// next one is due, in microseconds since the epoch.
+///
+/// Firing and moving on are each a call of their own
+/// (`relay_coordinator_support::isolated`): best-effort, like a person
+/// reordering, a store that's closed or out of everything misses this
+/// occurrence, and an order that doesn't validate never undoes the template
+/// moving on -- so one bad day can't wedge every later one.
 pub(crate) fn tend_templates(now: i64) -> ExternResult<Option<i64>> {
     let mut next: Option<i64> = None;
     for view in list_my_recurring_templates(())? {
-        let Some(mut template) = decode_or::<RecurringOrderTemplate>(&view.record) else { continue };
+        let Some(template) = decode_or::<RecurringOrderTemplate>(&view.record) else { continue };
         if !template.active {
             continue;
         }
         let mut due = template.next_run_at.as_micros();
         if due <= now {
-            // Best-effort, like a person reordering: a store that's closed
-            // or out of everything misses this occurrence, but the template
-            // still moves on, so one bad day can't wedge every later one.
-            if let Some(details) = &view.details {
-                let _ = fire(&template, details);
-            }
+            let version = view.record.action_address().clone();
+            relay_coordinator_support::isolated::<_, ()>("fire_template", version.clone());
             due = next_occurrence(&template.recurrence, &template.time_zone, now);
-            template.next_run_at = Timestamp::from_micros(due);
-            update_entry(view.record.action_address().clone(), &EntryTypes::RecurringOrderTemplate(template))?;
+            relay_coordinator_support::isolated::<_, ActionHash>("advance_template", AdvanceInput { version, next_run_at: Timestamp::from_micros(due) });
         }
         next = Some(next.map_or(due, |earliest| earliest.min(due)));
     }
     Ok(next)
 }
 
-/// Places a template's order as the store's menu stands now: items no
-/// longer on it, sold out, or whose choices are no longer on offer are
-/// dropped, and its promo applies only while it's still live and the order
-/// still earns it.
+/// Places the order a template (`version`, the one a sweep read) stands
+/// for, in a call of its own.
+#[hdk_extern]
+pub fn fire_template(version: ActionHash) -> ExternResult<()> {
+    let record = get(version, GetOptions::default())?.ok_or(guest("couldn't read that standing order"))?;
+    let template = decode_or::<RecurringOrderTemplate>(&record).ok_or(guest("that isn't a standing order"))?;
+    match open_chunked::<TemplateDetails>(&agent_info()?.agent_initial_pubkey, &template.sealed_details)? {
+        Some(details) => fire(&template, &details),
+        None => Ok(()),
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AdvanceInput {
+    pub version: ActionHash,
+    pub next_run_at: Timestamp,
+}
+
+/// Moves a template (`version`) on to its next occurrence, in a call of its
+/// own.
+#[hdk_extern]
+pub fn advance_template(input: AdvanceInput) -> ExternResult<ActionHash> {
+    let record = get(input.version.clone(), GetOptions::default())?.ok_or(guest("couldn't read that standing order"))?;
+    let mut template = decode_or::<RecurringOrderTemplate>(&record).ok_or(guest("that isn't a standing order"))?;
+    template.next_run_at = input.next_run_at;
+    update_entry(input.version, &EntryTypes::RecurringOrderTemplate(template))
+}
+
 fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternResult<()> {
     let (_, store) = crate::stores::current_catalog_version(&template.catalog_ref)?;
     let mut items = template.items.clone();
@@ -195,8 +220,8 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
 /// spring-forward skips fires at the first moment after the gap; one that
 /// a fall-back repeats fires the first time round.
 pub(crate) fn next_occurrence(rule: &RecurrenceRule, time_zone: &str, after: i64) -> i64 {
-    let tz: Tz = time_zone.parse().unwrap_or(Tz::UTC);
-    let after_local = tz.timestamp_micros(after).single().unwrap_or_else(|| Tz::UTC.timestamp_micros(after).unwrap());
+    let after_local = crate::stores::local_time(time_zone, after);
+    let tz = after_local.timezone();
     let (weekday, hour, minute) = match *rule {
         RecurrenceRule::Daily { hour, minute } => (None, hour, minute),
         RecurrenceRule::Weekly { weekday, hour, minute } => (Some(weekday), hour, minute),

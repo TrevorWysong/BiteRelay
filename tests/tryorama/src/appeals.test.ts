@@ -4,7 +4,7 @@
 // ruling is what the network's issuer pays from the store's cash-outs.
 // Each side's evidence reaches only the arbiter.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 
@@ -63,11 +63,11 @@ await runScenario(async (scenario) => {
 
   // ===== The store answers; only the arbiter sees both sides =====
   await sync();
-  const [against] = await retryUntil(() => call(merchant, "dispatch")<AppealView[]>("get_appeals_against_me", null), (a) => a.length === 1);
+  const [against] = await retryUntil(() => call(merchant, "dispatch")<{ appeals: AppealView[] }>("get_appeals_against_me", { before: null }).then((p) => p.appeals), (a) => a.length === 1);
   assert.deepEqual([against.answered, against.customer_evidence], [false, null], "the store finds it to answer, without the customer's evidence");
   await call(merchant, "dispatch")("answer_appeal", { appeal, note: "It was stew", photo_data_uri: "" });
   await sync();
-  const [docket] = await retryUntil(() => call(arbiter, "dispatch")<AppealView[]>("get_my_docket", null), (d) => d.length === 1 && d[0].answered);
+  const [docket] = await retryUntil(() => call(arbiter, "dispatch")<{ appeals: AppealView[] }>("get_my_docket", { before: null }).then((p) => p.appeals), (d) => d.length === 1 && d[0].answered);
   assert.deepEqual([docket.customer_evidence?.note, docket.store_evidence?.note, docket.amount, docket.refund], ["Soup, not stew", "It was stew", 2000, 0]);
   const asCustomer = await call(customer, "dispatch")<AppealView>("get_appeal_for_order", order);
   assert.deepEqual([asCustomer.customer_evidence?.note, asCustomer.store_evidence], ["Soup, not stew", null], "the customer sees their side, not the store's");

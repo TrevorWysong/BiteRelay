@@ -9,7 +9,7 @@
 // - only the store settles, once, citing that the customer has the order,
 //   for no more than the reports it cites are worth.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, FULL_SIZE_PHOTO, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 

@@ -5,9 +5,9 @@
 // straight to MerchantConfirmed -- neither of which they should be able to
 // do. This test asserts those specific things are now rejected.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, commitAndCook, deliveryStatus, ST_PETE, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, commitAndCook, deliveryStatus, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -16,9 +16,9 @@ await runScenario(async (scenario) => {
   ]);
   const both = [customer, driver];
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester", "Merchant"], created_at: now });

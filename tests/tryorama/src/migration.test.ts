@@ -13,9 +13,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dhtSync, enableAndGetAgentApp, getZomeCaller, runScenario, type CallableCell, type Conductor, type PlayerApp } from "@holochain-open-dev/tryorama";
+import { dhtSync, enableAndGetAgentApp, runScenario, type CallableCell, type Conductor, type PlayerApp } from "@holochain-open-dev/tryorama";
 import { encodeHashToBase64, type AgentPubKey, type Record as HcRecord } from "@holochain/client";
-import { EMPTY_HANDS, HAPP_PATH, shareAgentsOn, ST_PETE, TEST_PROPERTIES, actionHash, decodeEntry, latestLedgerEntry, retryUntil, retryUntilOk, useTestCoordinators } from "./helpers.js";
+import { EMPTY_HANDS, HAPP_PATH, shareAgentsOn, ST_PETE, TEST_PROPERTIES, actionHash, decodeEntry, latestLedgerEntry, retryUntil, retryUntilOk, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 const DNA_PATH = fileURLToPath(new URL("../../../dnas/relay/workdir/relay.dna", import.meta.url));
 const OLD = "relay-v1";
@@ -67,7 +67,7 @@ await runScenario(async (scenario) => {
   await shareAgentsOn([issuerHost, bobHost], newNetwork);
   const syncOld = () => dhtSync([issuerOld, alice, { ...bob, cells: [bobPrevious] }], oldNetwork);
   const syncNew = () => dhtSync([issuerNew, { ...bob, cells: [bobHere] }], newNetwork);
-  const on = (cell: CallableCell, zome: string) => getZomeCaller(cell, zome);
+  const on = (cell: CallableCell, zome: string) => retryingCaller(cell, zome);
   for (const [player, cell] of [[alice, alice.cells[0]], [bob, bobHere]] as const) await useTestCoordinators(player, ["account", "catalog", "ledger"], cell);
 
   // ===== On the old network: funds and a store =====

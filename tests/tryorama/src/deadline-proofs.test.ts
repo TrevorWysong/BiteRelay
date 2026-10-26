@@ -10,7 +10,7 @@
 // - a customer who cancelled an order on one branch of its history can't
 //   take back their driver's pay on another.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, commitAndCook, currentBeacon, deliveryStatus, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 

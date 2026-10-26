@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { AlertTriangle, Bike, CheckCircle2, DoorOpen, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,7 +10,7 @@ import { getHandoffEvidence, getLegsForOrder } from "../../holochain/zomes/attes
 import { averageRating, getMyReviewsForOrder, getRatingSummary, getReputationSummary, submitItemReview, submitReview } from "../../holochain/zomes/reputation";
 import { getProfileForAgent } from "../../holochain/zomes/profiles";
 import { decodeEntry, actionHash, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
-import { myAgentPubKey, onLocalSignal } from "../../holochain/client";
+import { myAgentPubKey } from "../../holochain/client";
 import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
@@ -22,7 +22,7 @@ import { received } from "../../lib/orderEntries";
 import { LateOrder } from "../../components/LateOrder";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import { useResource } from "../../lib/useResource";
+import { useLocalSignal, useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, InHand, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 import { carryRefusal, customerRefusal, describeLoad } from "../../lib/driverLoad";
 import { useTerms } from "../../store/network";
@@ -240,15 +240,11 @@ export function OrderDetail() {
 
   // The driver's live position is pushed (signal-only, never stored), not
   // read -- a genuine subscription, so it stays an effect.
-  useEffect(() => {
-    if (!hash) return;
-    const ref = hexToBytes(hash);
-    return onLocalSignal((signal) => {
-      if ("LocationUpdate" in signal && bytesEqual(signal.LocationUpdate.order_ref, ref)) {
-        setDriverLocation({ lat: signal.LocationUpdate.lat, lon: signal.LocationUpdate.lon });
-      }
-    });
-  }, [hash]);
+  useLocalSignal((signal) => {
+    if (hash && "LocationUpdate" in signal && bytesEqual(signal.LocationUpdate.order_ref, hexToBytes(hash))) {
+      setDriverLocation({ lat: signal.LocationUpdate.lat, lon: signal.LocationUpdate.lon });
+    }
+  });
 
   if (!order) {
     return (

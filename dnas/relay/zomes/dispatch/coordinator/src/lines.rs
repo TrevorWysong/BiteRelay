@@ -7,7 +7,7 @@
 use catalog_types::{GoodieBag, MenuItem, ModifierGroup};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 
 /// One line of an order, described.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -79,10 +79,7 @@ fn labels(selection: &Selection) -> ExternResult<Vec<String>> {
 fn fetch(version: &ActionHash) -> ExternResult<Record> {
     match get(version.clone(), GetOptions::local())? {
         Some(record) => Ok(record),
-        None => get(version.clone(), GetOptions::network())?.ok_or(guest("something on this order couldn't be found")),
+        None => get(version.clone(), GetOptions::network())?.ok_or(guest("Something on this order couldn't be found. Try again in a moment.")),
     }
 }
 
-fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}

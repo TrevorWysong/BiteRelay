@@ -3,9 +3,9 @@
 // ledger entry that paid it -- and only the customer gets one, only
 // once the order is complete.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 interface Receipt {
   store_name: string;

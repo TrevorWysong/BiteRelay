@@ -7,7 +7,7 @@
 use crate::stores::current_catalog;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReceiptLine {
@@ -85,7 +85,7 @@ pub fn get_order_receipt(order_original_action: ActionHash) -> ExternResult<Rece
         return Err(guest("that isn't an order"));
     };
     if requester != me {
-        return Err(guest("only the customer has a receipt for an order"));
+        return Err(guest("Only the order's customer has a receipt for it."));
     }
 
     let receipt_lines: Vec<ReceiptLine> = crate::lines::describe(&lines)?
@@ -137,6 +137,3 @@ fn my_payments(order_ref: &ActionHash) -> ExternResult<Vec<ReceiptPayment>> {
         .collect())
 }
 
-fn guest(message: &str) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}

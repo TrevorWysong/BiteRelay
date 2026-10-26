@@ -18,12 +18,12 @@ use crate::pricing::OrderItem;
 use crate::stores::current_catalog;
 use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag};
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest_fresh};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest_fresh};
 use relay_types::GeoPoint;
 
 /// Mirrors `catalog::MyClaim` over the zome-call boundary.
-#[derive(Deserialize, Debug)]
-struct MyClaimWire {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MyClaimWire {
     record: Record,
     /// The claim's drop-off, opened (it's stored sealed); `None` for pickup.
     dropoff: Option<GeoPoint>,
@@ -34,13 +34,21 @@ struct MyClaimWire {
 /// hold up the rest; the next run tries it again.
 pub(crate) fn redeem_confirmed_claims() -> ExternResult<()> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_bag_claims".into(), None, ())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("reading your goodie-bag claims failed".into())));
+        return Err(guest("reading your goodie-bag claims failed"));
     };
     let claims: Vec<MyClaimWire> = io.decode().map_err(|e| wasm_error!(e))?;
     for claim in claims {
-        let _ = redeem(&claim);
+        relay_coordinator_support::isolated::<_, ()>("redeem_one_claim", claim);
     }
     Ok(())
+}
+
+/// Places the order for one confirmed claim -- in a call of its own
+/// (`redeem_confirmed_claims`), so one claim that can't be redeemed yet
+/// never undoes another's order.
+#[hdk_extern]
+pub fn redeem_one_claim(mine: MyClaimWire) -> ExternResult<()> {
+    redeem(&mine)
 }
 
 fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
@@ -63,10 +71,10 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
         return Ok(());
     }
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_goodie_bag".into(), None, claim.bag_ref.clone())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("reading the goodie bag failed".into())));
+        return Err(guest("reading the goodie bag failed"));
     };
     let bag_record: Record = io.decode().map_err(|e| wasm_error!(e))?;
-    let bag = decode_or::<GoodieBag>(&bag_record).ok_or(wasm_error!(WasmErrorInner::Guest("that isn't a goodie bag".into())))?;
+    let bag = decode_or::<GoodieBag>(&bag_record).ok_or(guest("that isn't a goodie bag"))?;
     let store = current_catalog(&bag.catalog_ref)?;
     let merchant = store.owner.clone();
     // The bag's price, and the store's tax on it.
@@ -88,7 +96,7 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
         }
         BagClaimFulfillment::Delivery { max_delivery_fee, .. } => {
             let Some(dropoff) = mine.dropoff else {
-                return Err(wasm_error!(WasmErrorInner::Guest("a delivery claim's drop-off couldn't be opened".into())));
+                return Err(guest("a delivery claim's drop-off couldn't be opened"));
             };
             request_delivery(RequestDeliveryInput {
                 merchant,
@@ -135,10 +143,7 @@ pub(crate) fn redeem_bag_claim(claim_ref: &ActionHash) -> ExternResult<()> {
     }
     match call(CallTargetCell::Local, "catalog", "redeem_claim".into(), None, claim_ref.clone())? {
         ZomeCallResponse::Ok(_) => Ok(()),
-        other => Err(guest(&format!("couldn't record the goodie bag as sold: {other:?}"))),
+        other => Err(guest(format!("couldn't record the goodie bag as sold: {other:?}"))),
     }
 }
 
-fn guest(message: &str) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}

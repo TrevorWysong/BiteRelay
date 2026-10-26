@@ -1,5 +1,6 @@
 import { callZome } from "../client";
 import type { ActionHash, AgentPubKey, GeoPoint, TaxRate, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
+import { nowMicros } from "../../lib/format";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on
@@ -195,11 +196,6 @@ export async function createPromoCode(input: {
   return callZome("catalog", "create_promo_code", { expires_at: null, auto_apply: false, ...input });
 }
 
-/// A promo code at its latest state (is it still active?).
-export async function getPromoCode(promoRef: ActionHash): Promise<HcRecord> {
-  return callZome("catalog", "get_promo_code", promoRef);
-}
-
 export async function setPromoCodeActive(originalAction: ActionHash, active: boolean): Promise<HcRecord> {
   return callZome("catalog", "set_promo_code_active", { original_action: originalAction, active });
 }
@@ -244,7 +240,7 @@ export async function createGoodieBag(input: CreateGoodieBagInput): Promise<HcRe
     description: "",
     photo_data_uri: "",
     ...input,
-    created_at: Date.now() * 1000,
+    created_at: nowMicros(),
   });
 }
 
@@ -280,10 +276,6 @@ export async function claimGoodieBag(bagRef: ActionHash, fulfillment: Fulfillmen
 
 export async function getBagClaim(claimRef: ActionHash): Promise<HcRecord> {
   return callZome("catalog", "get_bag_claim", claimRef);
-}
-
-export async function listClaimsForBag(bagRef: ActionHash): Promise<HcRecord[]> {
-  return callZome("catalog", "list_claims_for_bag", bagRef);
 }
 
 /// One of the caller's claims, with a delivery claim's drop-off opened.

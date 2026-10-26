@@ -4,8 +4,8 @@
 // key: device-move.test.ts.) Forgeries are written raw (test-utils), as a
 // modified client would.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
-import { agentAsLinkBase, phraseKey, phraseMessage, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
+import { agentAsLinkBase, phraseKey, phraseMessage, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 interface PlanView {
   plan: Uint8Array;
@@ -28,8 +28,8 @@ await runScenario(async (scenario) => {
   const all = [issuer, alice, bob, carol, dana, erin, hank];
   for (const p of all) await useTestCoordinators(p, ["account", "ledger"]);
   const sync = () => dhtSync(all, alice.cells[0].cell_id[0]);
-  const account = (p: typeof alice) => getZomeCaller(p.cells[0], "account");
-  const ledger = (p: typeof alice) => getZomeCaller(p.cells[0], "ledger");
+  const account = (p: typeof alice) => retryingCaller(p.cells[0], "account");
+  const ledger = (p: typeof alice) => retryingCaller(p.cells[0], "ledger");
   const balance = (p: typeof alice) => ledger(p)<number>("get_balance", p.agentPubKey);
   const fund = async (p: typeof alice, amount: number, reference: string) => {
     await ledger(issuer)("issue_grant", { to: p.agentPubKey, amount, reference });

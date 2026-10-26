@@ -4,9 +4,9 @@
 // unchanged for delivery. See `dispatch_integrity::validate_new_order`/
 // `validate_new_pickup_order`'s own symmetric bag_claim_ref checks.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, retryUntil, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer, otherCustomer] = await scenario.addPlayersWithApps([
@@ -17,9 +17,9 @@ await runScenario(async (scenario) => {
   const all = [merchant, customer, otherCustomer];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof merchant) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof merchant) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof merchant) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(merchant)("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });

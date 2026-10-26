@@ -3,9 +3,9 @@
 // once the requested time has passed succeeds and makes it discoverable --
 // exactly like a normal order from that point on.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder, retryUntil, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, ST_PETE, acceptOrder, retryUntil, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -15,9 +15,9 @@ await runScenario(async (scenario) => {
   const both = [customer, driver];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester", "Merchant"], created_at: now });
@@ -51,7 +51,7 @@ await runScenario(async (scenario) => {
 
   await assert.rejects(
     dispatchOf(customer)("open_scheduled_order", orderRef),
-    /requested_delivery_time has not arrived yet/,
+    /It isn't time to send this order yet/,
     "opening a scheduled order before its time must be rejected",
   );
   console.log("[PASS] open_scheduled_order rejects opening before the requested time");

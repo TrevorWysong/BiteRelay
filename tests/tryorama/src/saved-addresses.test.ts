@@ -6,9 +6,9 @@
 // content shape, never authorship. See profiles_integrity's own
 // validate_profile_update doc comment.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, bytesEqual, testApp, retryingCaller } from "./helpers.js";
 
 const HOME = { lat: 41.9035, lon: -71.0898 };
 const WORK = { lat: 42.3601, lon: -71.0589 };
@@ -18,7 +18,7 @@ await runScenario(async (scenario) => {
   const both = [customer, other];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
 
   const now = Date.now() * 1000;
   const customerProfile = await profilesOf(customer)<HcRecord>("create_profile", { display_name: "Cara Customer", roles: ["Requester"], created_at: now });

@@ -49,7 +49,7 @@ export function AccountPage() {
   const { data: verification } = useResource("verification-terms", getVerificationTerms);
   const isVerifier = !!verification?.verifiers.some((v) => bytesToHex(v) === hex);
   // An arbiter has a docket; nobody else's ever has anything on it.
-  const { data: docket } = useResource("docket", getMyDocket, { pollMs: POLL.slow });
+  const { data: docket } = useResource("docket", () => getMyDocket().then((page) => page.appeals), { pollMs: POLL.slow });
 
   if (!agentPubKey) return null;
   const hasPhrase = !!plan?.phrase_key;

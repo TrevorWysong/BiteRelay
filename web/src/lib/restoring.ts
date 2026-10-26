@@ -1,6 +1,8 @@
 // Whether this device is part-way through bringing an existing account
 // onto it (RestoreAccount) -- remembered, so a reload while guardians vouch
-// comes back to it rather than to sign-up.
+// comes back to it rather than to sign-up. Without storage, a reload starts
+// the restore over; the key it made is still remembered by the session.
+import { forget, readStored, store } from "./storage";
 
 export type Method = "device" | "phrase" | "guardians" | "previous";
 
@@ -8,29 +10,15 @@ export type Method = "device" | "phrase" | "guardians" | "previous";
 const RESTORING_KEY = "relay.restoring.v1";
 
 export function isRestoring(): boolean {
-  try {
-    return localStorage.getItem(RESTORING_KEY) !== null;
-  } catch {
-    return false;
-  }
+  return readStored(RESTORING_KEY) !== null;
 }
 
 export function remember(method: Method | null) {
-  try {
-    if (method) localStorage.setItem(RESTORING_KEY, method);
-    else localStorage.removeItem(RESTORING_KEY);
-  } catch {
-    // Without storage, a reload starts the restore over; the key it made is
-    // still remembered by the session.
-  }
+  if (method) store(RESTORING_KEY, method);
+  else forget(RESTORING_KEY);
 }
 
 export function rememberedMethod(): Method | null {
-  try {
-    const method = localStorage.getItem(RESTORING_KEY);
-    return method === "device" || method === "phrase" || method === "guardians" || method === "previous" ? method : null;
-  } catch {
-    return null;
-  }
+  const method = readStored(RESTORING_KEY);
+  return method === "device" || method === "phrase" || method === "guardians" || method === "previous" ? method : null;
 }
-

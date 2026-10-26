@@ -61,6 +61,12 @@ export function formatEta(seconds: number): string {
   return new Intl.NumberFormat(appLocale(), { style: "unit", unit: "minute", unitDisplay: "short" }).format(Math.round(seconds / 60));
 }
 
+/// Now, in Holochain's microseconds since the epoch -- how every timestamp
+/// the network writes is kept.
+export function nowMicros(): number {
+  return Date.now() * 1000;
+}
+
 export function timeAgo(microseconds: number): string {
   const ms = microseconds / 1000;
   const deltaS = Math.max(0, Math.round((Date.now() - ms) / 1000));

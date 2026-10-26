@@ -7,14 +7,16 @@
 //! Every summary is summed from link tags that validation checks against
 //! the entry each link points at (`review_tag`/`event_tag`), counting one
 //! vote per author per order -- never from a summary someone else wrote,
-//! which nobody can check is complete.
+//! which nobody can check is complete. Each reaches back over the network's
+//! `reputation_window` only (`recent`): the authorities filter by time, so a
+//! summary costs what happened lately, not a busy store's whole history.
 //!
 //! Every read and write is keyed by a scoped target (`ReputationTarget`/
 //! `ReviewTarget`), never a bare agent -- see the integrity crate's module
 //! doc comment for why.
 
 use hdk::prelude::*;
-use relay_coordinator_support::{original_action_of, resolve_latest};
+use relay_coordinator_support::{guest, original_action_of, resolve_latest};
 use std::collections::BTreeMap;
 use reputation_integrity::*;
 
@@ -60,6 +62,19 @@ fn subject_of(target: &ReputationTarget) -> Subject<'_> {
     }
 }
 
+/// The links of `link_type` under each of `bases` made within the network's
+/// `reputation_window`.
+fn recent(bases: Vec<AnyLinkableHash>, link_type: LinkTypes) -> ExternResult<Vec<Link>> {
+    let since = (sys_time()? - relay_governance::reputation_window()).unwrap_or(Timestamp::from_micros(0));
+    let mut links = Vec::new();
+    for base in bases {
+        let mut query = LinkQuery::try_new(base, link_type)?;
+        query.after = Some(since);
+        links.extend(get_links(query, GetStrategy::default())?);
+    }
+    Ok(links)
+}
+
 /// Where a `ReviewTarget`'s reviews live.
 fn review_links(target: &ReviewTarget) -> (AnyLinkableHash, LinkTypes) {
     match target {
@@ -74,11 +89,7 @@ fn review_links(target: &ReviewTarget) -> (AnyLinkableHash, LinkTypes) {
 /// however many reviews there are.
 fn ratings(bases: Vec<AnyLinkableHash>, link_type: LinkTypes) -> ExternResult<Vec<u8>> {
     let mut votes: BTreeMap<(AgentPubKey, Vec<u8>), u8> = BTreeMap::new();
-    let mut links = Vec::new();
-    for base in bases {
-        links.extend(get_links(LinkQuery::try_new(base, link_type)?, GetStrategy::default())?);
-    }
-    for link in links {
+    for link in recent(bases, link_type)? {
         let tag = link.tag.into_inner();
         let (Some(&rating), Some(order)) = (tag.first(), tag.get(1..)) else { continue };
         if (1..=5).contains(&rating) {
@@ -111,7 +122,7 @@ pub fn record_event(input: RecordEventInput) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::ReputationEvent(event))?;
     create_link(base, action_hash.clone(), event_link, tag)?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back reputation event".into())))
+        .ok_or(guest("could not read back reputation event"))
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -147,7 +158,7 @@ const COMPLETED: u8 = 0;
 fn stores_delivered_for(driver: &AgentPubKey) -> ExternResult<u32> {
     let (base, event_link) = event_links(&ReputationTarget::Driver(driver.clone()));
     let mut stores: Vec<AgentPubKey> = Vec::new();
-    for link in get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())? {
+    for link in recent(vec![base], event_link)? {
         if link.tag.0.first() == Some(&COMPLETED) && !stores.contains(&link.author) {
             stores.push(link.author);
         }
@@ -158,10 +169,7 @@ fn stores_delivered_for(driver: &AgentPubKey) -> ExternResult<u32> {
 #[hdk_extern]
 pub fn get_reputation_summary(target: ReputationTarget) -> ExternResult<ReputationSummary> {
     let (base, event_link) = event_links(&target);
-    let mut links = Vec::new();
-    for base in bases_of(base, subject_of(&target))? {
-        links.extend(get_links(LinkQuery::try_new(base, event_link)?, GetStrategy::default())?);
-    }
+    let links = recent(bases_of(base, subject_of(&target))?, event_link)?;
     // Each order counts once per kind of event, whoever recorded it: two of
     // an order's parties can each record the same fact (a cancellation), and
     // it's still one fact.
@@ -311,10 +319,10 @@ fn my_reviews_for_order(order_original_action: &ActionHash) -> ExternResult<Vec<
 #[hdk_extern]
 pub fn submit_review(input: SubmitReviewInput) -> ExternResult<Record> {
     if input.rating < 1 || input.rating > 5 {
-        return Err(wasm_error!(WasmErrorInner::Guest("rating must be between 1 and 5".into())));
+        return Err(guest("Choose between 1 and 5 stars."));
     }
     if my_reviews_for_order(&input.order_original_action)?.iter().any(|(_, r)| r.target == input.target) {
-        return Err(wasm_error!(WasmErrorInner::Guest("You've already rated this order.".into())));
+        return Err(guest("You've already rated this order."));
     }
     let order_record = resolve_latest(input.order_original_action.clone())?;
     let author = agent_info()?.agent_initial_pubkey;
@@ -332,7 +340,7 @@ pub fn submit_review(input: SubmitReviewInput) -> ExternResult<Record> {
     create_link(base, action_hash.clone(), review_link, review_tag(input.rating, &input.order_original_action))?;
     create_link(input.order_original_action, action_hash.clone(), LinkTypes::OrderToReview, ())?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back review".into())))
+        .ok_or(guest("could not read back review"))
 }
 
 /// What the caller has already rated on this order -- lets an order screen
@@ -446,7 +454,7 @@ pub struct SubmitItemReviewInput {
 #[hdk_extern]
 pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> {
     if input.rating < 1 || input.rating > 5 {
-        return Err(wasm_error!(WasmErrorInner::Guest("rating must be between 1 and 5".into())));
+        return Err(guest("Choose between 1 and 5 stars."));
     }
     // Once per item per order -- validation's rule, told first.
     let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ItemReview)?).include_entries(true))?;
@@ -454,7 +462,7 @@ pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> 
         earlier.item_ref == input.item_ref && original_action_of(earlier.order_ref).is_ok_and(|order| order == input.order_original_action)
     });
     if reviewed {
-        return Err(wasm_error!(WasmErrorInner::Guest("You've already rated this item from this order.".into())));
+        return Err(guest("You've already rated this item from this order."));
     }
     let order_record = resolve_latest(input.order_original_action.clone())?;
     let author = agent_info()?.agent_initial_pubkey;
@@ -470,7 +478,7 @@ pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> 
     let action_hash = create_entry(&EntryTypes::ItemReview(review))?;
     create_link(input.item_ref, action_hash.clone(), LinkTypes::ItemToReview, review_tag(input.rating, &input.order_original_action))?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back item review".into())))
+        .ok_or(guest("could not read back item review"))
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

@@ -7,9 +7,9 @@
 // nothing earlier stopped the self-deal from being attempted at all.
 // Fixed by rejecting it at the earliest point it's knowable: bid creation.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { actionHash, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -19,9 +19,9 @@ await runScenario(async (scenario) => {
   const both = [customer, driver];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   // Customer doubles as the merchant, same convention as authorization.test.ts

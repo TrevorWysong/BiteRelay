@@ -4,9 +4,9 @@
 // scheduled order, which drivers bid on through the update that opened it
 // rather than its original action.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 interface OrderEntry {
   kind: "Delivery" | "Pickup";

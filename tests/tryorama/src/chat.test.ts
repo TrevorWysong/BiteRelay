@@ -3,9 +3,9 @@
 // to messaging): both directions actually deliver, and an unrelated third
 // party can't send on an order they're not a party to.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, waitForSignal, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { actionHash, waitForSignal, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver, stranger] = await scenario.addPlayersWithApps([
@@ -16,9 +16,9 @@ await runScenario(async (scenario) => {
   const all = [customer, driver, stranger];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester", "Merchant"], created_at: now });
@@ -76,7 +76,7 @@ await runScenario(async (scenario) => {
 
   await assert.rejects(
     dispatchOf(stranger)("send_chat_message", { order_ref: orderRef, text: "can I butt in?" }),
-    /only this order's requester or its accepted driver can send chat messages/,
+    /Only this order's customer and its driver can chat about it/,
     "an unrelated agent must not be able to send chat messages on this order",
   );
   console.log("[PASS] an unrelated third party cannot send chat messages on this order");

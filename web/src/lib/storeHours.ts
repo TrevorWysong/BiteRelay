@@ -63,7 +63,7 @@ export function localWeekdayMinute(timeZone: string, at: Date): { weekday: numbe
 }
 
 /// "8:00 AM" for 480.
-export function formatMinute(minute: number): string {
+function formatMinute(minute: number): string {
   return formatTimeOfDay(minute);
 }
 

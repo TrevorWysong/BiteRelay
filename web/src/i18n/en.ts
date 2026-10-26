@@ -5,6 +5,8 @@
 // something -- plural forms keyed by `Intl.PluralRules` category (`one`,
 // `other`, and `zero`/`two`/`few`/`many` where a language has them), with
 // the number as `{count}`.
+import { REFUSALS } from "./refusals";
+
 export const en = {
   "mode.customer": "Order",
   "mode.driver": "Drive",
@@ -593,6 +595,7 @@ export const en = {
   "onboarding.what": "What do you want to do?",
   "onboarding.pick": "Pick one or more. You can switch anytime.",
   "common.continue": "Continue",
+  "error.unexpected": "Something went wrong ({detail}). Try again.",
   "onboarding.haveAccount": "I already have an account",
   "onboarding.create": "Create your identity",
   "onboarding.createDetail": "This creates your own private identity, secured by a cryptographic key that only you hold. It's not an account on a shared server.",
@@ -767,6 +770,8 @@ export const en = {
   "drive.eta": "ETA (min)",
   "drive.yourFee": "Your fee",
   "drive.bid": "Bid",
+  "drive.offerSent": "Your offer: {fee}, {eta}",
+  "drive.withdraw": "Withdraw",
   "scan.notRelay": "That isn't a Relay code.",
   "scan.otherOrder": "That code is for a different order.",
   "store.checkIn.scan": "At the store? Scan its code to check in",
@@ -845,6 +850,7 @@ export const en = {
   "earnings.csv": "Download as CSV",
   "earnings.note": "Your fees and tips land in your balance as each delivery settles. Cash out through the network's issuer whenever you like; it pays you outside the network, and every cent is on your own ledger.",
   "earnings.reputation": "Reputation",
+  "reputation.window": { one: "Over the last day", other: "Over the last {count} days" },
   "earnings.completed": "Completed",
   "earnings.cancelled": "Cancelled by them",
   "earnings.disputes": "Disputes raised",
@@ -1286,6 +1292,7 @@ export const en = {
   "merchantNav.review": "Review",
 
   "photo.change": "Change",
+  ...REFUSALS,
 } as const satisfies Record<string, Message>;
 
 export type Message = string | { readonly one?: string; readonly other: string; readonly zero?: string; readonly two?: string; readonly few?: string; readonly many?: string };

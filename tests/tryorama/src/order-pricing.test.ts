@@ -3,9 +3,9 @@
 // what a modified client could do), so every rejection below comes from
 // dispatch_integrity::checks::check_pricing.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);

@@ -21,6 +21,8 @@ import type { CartLine } from "../store/cart";
 import { Button, Skeleton } from "./ui";
 import { Sheet } from "./Sheet";
 import { useT } from "../i18n";
+import { ReviewList } from "./ReviewList";
+import { getItemReviews } from "../holochain/zomes/reputation";
 
 /// An item's groups and every group they open, at their latest.
 async function fetchItemGroups(catalogRef: ActionHash, row: ItemRow): Promise<Groups> {
@@ -74,6 +76,7 @@ export function ItemSheet({ catalogRef, row, editing, onClose, onDone }: { catal
       {item.photo_data_uri && <img src={item.photo_data_uri} alt="" className="-mx-5 -mt-3 mb-4 aspect-[16/9] w-[calc(100%+2.5rem)] max-w-none object-cover" />}
       <p className="text-base font-semibold tabular-nums text-ink-900 dark:text-ink-50">{formatCents(item.price_cents)}</p>
       {item.description && <p className="mt-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">{item.description}</p>}
+      <ReviewList className="mt-4" feedKey={`item:${bytesToHex(row.hash)}`} fetchPage={(before) => getItemReviews(row.hash, before)} />
       {error ? <p className="mt-4 text-sm text-red-600 dark:text-red-400">{t("item.loadFailed")}</p> : null}
       {!groups && !error && (
         <div className="mt-6 flex flex-col gap-3">

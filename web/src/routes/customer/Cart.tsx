@@ -13,7 +13,7 @@ import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
-import { formatCents, formatDistance, toMinorUnits, fromMinorUnits, currencySymbol } from "../../lib/format";
+import { currencySymbol, formatCents, formatDistance, fromMinorUnits, nowMicros, toMinorUnits } from "../../lib/format";
 import { useCustomerSettings } from "../../store/roleSettings";
 import { useTerms } from "../../store/network";
 import { appLocale, t as translate, useT, type MessageKey } from "../../i18n";
@@ -175,7 +175,7 @@ async function fetchCartStoreInfo(catalogRef: ActionHash): Promise<CartStoreInfo
 
 /// The best currently-eligible auto-apply promo for this cart, or `null`.
 function bestAutoApplyPromo(promoCodes: PromoRow[], lines: CartLine[], total: number, completedOrderCount: number): PromoRow | null {
-  const now = Date.now() * 1000;
+  const now = nowMicros();
   const eligible = promoCodes.filter(
     (p) =>
       p.promo.auto_apply &&
@@ -270,11 +270,10 @@ export function Cart() {
   const [manualPromo, setManualPromo] = useState<PromoRow | null>(null);
   const [autoPromoDismissed, setAutoPromoDismissed] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
+  const cartTotal = cart.total();
   const autoPromo = useMemo(
-    () => (autoPromoDismissed ? null : bestAutoApplyPromo(promoCodes, cart.lines, cart.total(), completedOrderCount)),
-    // cart.lines is the cart's whole content; total() is derived from it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [autoPromoDismissed, promoCodes, cart.lines, completedOrderCount],
+    () => (autoPromoDismissed ? null : bestAutoApplyPromo(promoCodes, cart.lines, cartTotal, completedOrderCount)),
+    [autoPromoDismissed, promoCodes, cart.lines, cartTotal, completedOrderCount],
   );
   const appliedPromo = manualPromo ?? autoPromo;
 
@@ -283,7 +282,7 @@ export function Cart() {
   function applyPromo() {
     setPromoError(null);
     const typed = promoInput.trim().toUpperCase();
-    const now = Date.now() * 1000;
+    const now = nowMicros();
     const match = promoCodes.find((p) => p.promo.code.toUpperCase() === typed && p.promo.active && (p.promo.expires_at === null || p.promo.expires_at > now));
     if (!match) {
       setPromoError(t("cart.promo.invalid"));

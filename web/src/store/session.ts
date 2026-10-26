@@ -13,6 +13,8 @@ import { actionHash, decodeEntry } from "../holochain/decode";
 import { describeError } from "../lib/errors";
 import { useNetwork } from "./network";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
+import { readStoredJson, store } from "../lib/storage";
+import { nowMicros } from "../lib/format";
 
 /// The development host's identity code (Admin API, passkeys), loaded only
 /// where it exists -- see `holochain/host.ts`.
@@ -26,7 +28,7 @@ const LOCATION_STORAGE_KEY = "relay.location.v1";
 /// Where the app starts when nothing has been chosen yet (St. Petersburg,
 /// FL -- also where the backend tests place their stores). Onboarding shows
 /// it and asks for the real address.
-export const DEFAULT_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
+const DEFAULT_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
 
 /// `location` drives every geohash-anchored discovery read in the app
 /// (Browse's "restaurants near me", goodie bags, driver/order matching).
@@ -34,17 +36,11 @@ export const DEFAULT_LOCATION: GeoPoint = { lat: 27.7676, lon: -82.6403 };
 /// picked instead of resetting to the default below -- which, far from them,
 /// would show no restaurants nearby.
 function loadStoredLocation(): GeoPoint | null {
-  const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as GeoPoint;
-  } catch {
-    return null;
-  }
+  return readStoredJson<GeoPoint>(LOCATION_STORAGE_KEY);
 }
 
 function saveStoredLocation(location: GeoPoint) {
-  localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(location));
+  store(LOCATION_STORAGE_KEY, JSON.stringify(location));
 }
 
 export type Mode = "customer" | "driver" | "merchant";
@@ -192,7 +188,7 @@ export const useSession = create<SessionState>((set, get) => ({
       const profileRecord = await createProfile({
         display_name: displayName,
         roles,
-        created_at: Date.now() * 1000,
+        created_at: nowMicros(),
         bio: extras?.bio,
         avatar_data_uri: extras?.avatarDataUri,
         phone: extras?.phone,

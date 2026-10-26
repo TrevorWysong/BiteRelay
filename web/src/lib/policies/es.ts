@@ -235,6 +235,7 @@ function sections(t: NetworkTerms): PolicySection[] {
         "Las valoraciones son un voto por cliente y pedido, y solo del cliente de ese pedido.",
         "Los pedidos completados se registran para la tienda y el repartidor. La decisión de una tienda de que un pedido no llegó se registra contra el repartidor; la de que un pedido reclamado sí llegó, contra el cliente.",
         "Nadie puede editar ni borrar reseñas, valoraciones ni historial, tampoco los suyos.",
+        `Las valoraciones y el historial cuentan los últimos ${t.reputation_window_days} días, para que digan cómo le va a alguien ahora. El historial anterior sigue en la red.`,
         "Los repartidores ven el historial de un cliente antes de pujar.",
       ],
       effects: [

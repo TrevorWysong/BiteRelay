@@ -5,7 +5,7 @@
 use crate::{item_versions, ItemVersion, ItemVersions};
 use catalog_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, resolve_latest, resolve_links_to_records_with_original};
+use relay_coordinator_support::{decode_or, guest, resolve_latest, resolve_links_to_records_with_original};
 
 /// A choice group's stable identity (its original action -- what items and
 /// orders name) alongside its latest content.
@@ -20,7 +20,7 @@ pub fn create_modifier_group(group: ModifierGroup) -> ExternResult<Record> {
     let catalog_ref = group.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::ModifierGroup(group))?;
     create_link(catalog_ref, action_hash.clone(), LinkTypes::CatalogToModifierGroup, ())?;
-    get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the choice group".into())))
+    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back the choice group"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -41,7 +41,7 @@ pub fn update_modifier_group(input: UpdateModifierGroupInput) -> ExternResult<Re
         None => resolve_latest(input.original_action)?,
     };
     let updated = update_entry(record.action_address().clone(), &EntryTypes::ModifierGroup(input.group))?;
-    get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the choice group".into())))
+    get(updated, GetOptions::local())?.ok_or(guest("could not read back the choice group"))
 }
 
 /// Every choice group a store has -- what its owner manages.
@@ -64,7 +64,7 @@ pub struct GetModifierGroupsInput {
 #[hdk_extern]
 pub fn get_modifier_groups(input: GetModifierGroupsInput) -> ExternResult<Vec<ModifierGroupView>> {
     if input.groups.len() > MAX_GROUPS_PER_READ {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("read at most {MAX_GROUPS_PER_READ} choice groups at once"))));
+        return Err(guest(format!("read at most {MAX_GROUPS_PER_READ} choice groups at once")));
     }
     let mut found = Vec::with_capacity(input.groups.len());
     for group in input.groups {

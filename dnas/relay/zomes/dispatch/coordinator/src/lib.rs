@@ -153,9 +153,9 @@ mod test_utils {
         let (catalog_ref, requester) = (order.catalog_ref.clone(), order.requester.clone());
         let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
         crate::order_queues::enqueue(&action_hash, &catalog_ref, &requester, sys_time()?)?;
-        get(action_hash, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back raw order".into())))
+        get(action_hash, GetOptions::local())?.ok_or(guest("could not read back raw order"))
     }
-    use relay_coordinator_support::resolve_latest_decoded;
+    use relay_coordinator_support::{guest, resolve_latest_decoded};
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct RawDeliveryInput {
@@ -179,8 +179,8 @@ mod test_utils {
     /// terms validation holds an order to.
     #[hdk_extern]
     pub fn create_raw_delivery_order_for_testing(input: RawDeliveryInput) -> ExternResult<ActionHash> {
-        let record = get(input.template, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("no such order of yours".into())))?;
-        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(wasm_error!(WasmErrorInner::Guest("not a delivery order".into())))?;
+        let record = get(input.template, GetOptions::local())?.ok_or(guest("no such order of yours"))?;
+        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("not a delivery order"))?;
         if let Some(version) = input.catalog_version {
             order.catalog_version = version;
         }
@@ -263,7 +263,7 @@ mod test_utils {
         }
         order.cancellation = input.cancellation;
         let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-        get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced order update".into())))
+        get(updated, GetOptions::local())?.ok_or(guest("could not read back forced order update"))
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -285,8 +285,8 @@ mod test_utils {
     /// coordinator makes, so a test can prove each branch's payments bind.
     #[hdk_extern]
     pub fn branch_order_for_testing(input: BranchInput) -> ExternResult<ActionHash> {
-        let record = get(input.version.clone(), GetOptions::default())?.ok_or(wasm_error!(WasmErrorInner::Guest("no such version".into())))?;
-        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(wasm_error!(WasmErrorInner::Guest("not a delivery".into())))?;
+        let record = get(input.version.clone(), GetOptions::default())?.ok_or(guest("no such version"))?;
+        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("not a delivery"))?;
         order.status = input.next_status;
         order.cancellation = input.cancellation;
         if input.release {
@@ -348,6 +348,6 @@ mod test_utils {
         order.cancellation = input.cancellation;
         order.ready_by = input.ready_by;
         let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
-        get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back forced pickup update".into())))
+        get(updated, GetOptions::local())?.ok_or(guest("could not read back forced pickup update"))
     }
 }

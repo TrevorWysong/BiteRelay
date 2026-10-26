@@ -12,6 +12,7 @@ import { agentId, type CashOutRequest, type IssuerLedger, type PayoutOutcome } f
 import type { PaymentRail } from "./rail.ts";
 import { bankPayoutFrom, type RiskPolicy } from "./risk.ts";
 import type { Store } from "./store.ts";
+import { refusal } from "./refusal.ts";
 
 const CURSOR = "cash_out_cursor";
 /// How soon a frozen account's cash-out is looked at again.
@@ -36,11 +37,11 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
   // lost phone found): it pays nothing out. Its owner's balance is reissued
   // to their new key instead (recovery.ts).
   if ((await ledger.successionsOf(request.redeemer)).length > 0) {
-    return { Declined: { reason: "This account was recovered on a new device, so this key can't cash out. Its balance goes to the new device." } };
+    return { Declined: { reason: refusal("This account was recovered on a new device, so this key can't cash out. Its balance goes to the new device.") } };
   }
   if (store.frozen(agent)) return { Defer: { until: now + FROZEN_RECHECK_MS, reason: "a card payment on this account is disputed" } };
   const afterFee = payoutAfterFees(fee, request.amount);
-  if (afterFee === 0) return { Declined: { reason: "After the fee, there'd be nothing to send. Cash out a larger amount." } };
+  if (afterFee === 0) return { Declined: { reason: refusal("After the fee, there'd be nothing to send. Cash out a larger amount.") } };
 
   // The cash-out's own hash keys each refund and transfer: a retried sweep
   // never pays twice.
@@ -58,8 +59,12 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
   const account = toBank > 0 ? store.payoutAccount(agent) : null;
   if (toBank > 0) {
     if (!account || !(await rail.canPay(account))) {
-      const cardOnly = toCards > 0 ? ` You can cash out up to ${format(toCards)} back to your card now.` : "";
-      return { Declined: { reason: `There's nowhere to send this yet: set up your payout account (Wallet → Payout account), then cash out again.${cardOnly}` } };
+      // Whole sentences, each its own message: the app translates them whole.
+      const reason =
+        toCards > 0
+          ? refusal(`There's nowhere to send this yet: set up your payout account (Wallet → Payout account), then cash out again. You can cash out up to ${format(toCards)} back to your card now.`)
+          : refusal("There's nowhere to send this yet: set up your payout account (Wallet → Payout account), then cash out again.");
+      return { Declined: { reason } };
     }
     const from = bankPayoutFrom(await ledger.standingOf(request.redeemer), policy, now);
     if (from > now) return { Defer: { until: from, reason: "a new account's first bank payouts wait" } };

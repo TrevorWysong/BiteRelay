@@ -95,7 +95,7 @@ export async function searchAddress(query: string, signal: AbortSignal): Promise
 // display with "Taunton, MA 02780" as subtext (the DoorDash-style address
 // pill/switcher) needs the pieces separately, not just the one flattened
 // string.
-export async function reverseGeocode(point: GeoPoint, signal: AbortSignal): Promise<{ label: string; components: AddressComponents } | null> {
+export async function reverseGeocode(point: GeoPoint, signal?: AbortSignal): Promise<{ label: string; components: AddressComponents } | null> {
   const url = `${baseUrl()}/reverse?format=jsonv2&addressdetails=1&lat=${point.lat}&lon=${point.lon}`;
   const res = await fetch(url, { signal });
   if (!res.ok) return null;

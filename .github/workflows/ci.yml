@@ -37,6 +37,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Every refusal people can meet is in the catalogs
+        run: node web/scripts/refusals.mjs --check
       - name: Web typecheck, lint and build
         working-directory: web
         run: |
@@ -52,6 +54,11 @@ jobs:
             echo "A production build must not contain the dev host's identity code -- see src/holochain/host.ts"
             exit 1
           fi
+      - name: Integration tests typecheck
+        working-directory: tests/tryorama
+        run: |
+          npm ci
+          npx tsc --noEmit -p .
       - name: Issuer service typecheck and tests
         working-directory: issuer
         run: |

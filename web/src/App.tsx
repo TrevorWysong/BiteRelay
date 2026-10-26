@@ -55,14 +55,19 @@ const FINAL_FAILURES = new Set(["PasskeyError", "IdentityGone"]);
 
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
   const t = useT();
-  const { status, hasStoredIdentity, needsUnlock, reconnect } = useSession();
-  const [attempted, setAttempted] = useState(false);
+  const { status, hasStoredIdentity, needsUnlock } = useSession();
+  // Whether there's nothing to reconnect as now (or it's waiting on a tap):
+  // decided once, so the reconnect below is all the effect does.
+  const [attempted, setAttempted] = useState(() => !(hasStoredIdentity() && status === "disconnected" && !needsUnlock()));
   // A passkey-locked identity waits for a tap: a prompt on page load is
   // one Safari refuses or stalls on.
   const [locked, setLocked] = useState(() => status === "disconnected" && hasStoredIdentity() && needsUnlock());
 
+  // Once, on load -- reading the session as it stands then.
   useEffect(() => {
-    async function attemptReconnect() {
+    const { status, hasStoredIdentity, needsUnlock, reconnect } = useSession.getState();
+    if (!(hasStoredIdentity() && status === "disconnected" && !needsUnlock())) return;
+    void (async () => {
       for (let i = 0; i < RECONNECT_RETRIES; i++) {
         try {
           await reconnect();
@@ -72,13 +77,7 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
           if (i < RECONNECT_RETRIES - 1) await new Promise((r) => setTimeout(r, RECONNECT_RETRY_DELAY_MS));
         }
       }
-    }
-    if (hasStoredIdentity() && status === "disconnected" && !needsUnlock()) {
-      attemptReconnect().finally(() => setAttempted(true));
-    } else {
-      setAttempted(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    })().finally(() => setAttempted(true));
   }, []);
 
   if (locked) return <UnlockScreen onDone={() => setLocked(false)} />;

@@ -10,9 +10,9 @@
 // "would need a bypass-coordinator extern, not built for this zome" gap
 // named for warrants in the architecture plan's §11.2.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, bytesEqual, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, otherMerchant] = await scenario.addPlayersWithApps([
@@ -23,8 +23,8 @@ await runScenario(async (scenario) => {
   const all = [customer, merchant, otherMerchant];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
 
   const now = Date.now() * 1000;
   const customerProfile = await profilesOf(customer)<HcRecord>("create_profile", { display_name: "Cara Customer", roles: ["Requester"], created_at: now });

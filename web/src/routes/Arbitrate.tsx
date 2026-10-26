@@ -4,7 +4,7 @@
 // cash-out.
 import { useState } from "react";
 import { Gavel } from "lucide-react";
-import type { AppealView } from "../holochain/types";
+import type { AppealsPage, AppealView } from "../holochain/types";
 import { getMyDocket, ruleOnAppeal } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
 import { Button, Card, Input, Textarea } from "../components/ui";
@@ -17,7 +17,24 @@ import { useT } from "../i18n";
 
 export default function ArbitratePage() {
   const t = useT();
-  const { data: docket, reload } = useResource("docket", getMyDocket, { pollMs: POLL.slow });
+  const { data: first, reload } = useResource("docket", () => getMyDocket(), { pollMs: POLL.slow });
+  // Pages past the first, loaded on request; the first keeps refreshing.
+  const [older, setOlder] = useState<AppealsPage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const cursor = older ? older.next_before : (first?.next_before ?? null);
+  const seen = new Set((first?.appeals ?? []).map((a) => bytesToHex(a.appeal)));
+  const docket = first && [...first.appeals, ...(older?.appeals ?? []).filter((a) => !seen.has(bytesToHex(a.appeal)))];
+
+  async function loadOlder() {
+    if (cursor === null) return;
+    setLoading(true);
+    try {
+      const page = await getMyDocket(cursor);
+      setOlder((prev) => ({ appeals: [...(prev?.appeals ?? []), ...page.appeals], next_before: page.next_before }));
+    } finally {
+      setLoading(false);
+    }
+  }
   return (
     <div className="mx-auto max-w-md px-4 py-6">
       <h1 className="mb-1 flex items-center gap-2 text-xl font-black text-ink-900 dark:text-ink-50">
@@ -28,6 +45,11 @@ export default function ArbitratePage() {
       <div className="flex flex-col gap-4">
         {docket?.map((appeal) => <Case key={bytesToHex(appeal.appeal)} appeal={appeal} onRuled={reload} />)}
       </div>
+      {cursor !== null && (
+        <Button variant="ghost" loading={loading} onClick={loadOlder} className="mt-4 w-full py-2 text-xs">
+          {t("common.loadMore")}
+        </Button>
+      )}
     </div>
   );
 }

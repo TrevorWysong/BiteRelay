@@ -7,9 +7,9 @@
 // follow it. Forgeries are written raw (test-utils), as a modified client
 // would.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { ST_PETE, actionHash, decodeEntry, phraseKey, phraseMessage, retryUntil, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { ST_PETE, actionHash, decodeEntry, phraseKey, phraseMessage, retryUntil, setupPlayersWithProperties, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 interface View {
   original_action: Uint8Array;
@@ -34,8 +34,8 @@ await runScenario(async (scenario) => {
   const all = [alice, bob, carol];
   for (const p of all) await useTestCoordinators(p, ["catalog"]);
   const sync = () => dhtSync(all, alice.cells[0].cell_id[0]);
-  const catalog = (p: typeof alice) => getZomeCaller(p.cells[0], "catalog");
-  const account = (p: typeof alice) => getZomeCaller(p.cells[0], "account");
+  const catalog = (p: typeof alice) => retryingCaller(p.cells[0], "catalog");
+  const account = (p: typeof alice) => retryingCaller(p.cells[0], "account");
 
   // Alice's store: a combo whose side opens a fries-size choice, and a promo
   // giving the combo free.

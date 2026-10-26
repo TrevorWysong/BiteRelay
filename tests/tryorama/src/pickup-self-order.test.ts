@@ -6,16 +6,16 @@
 // reputation_integrity::validate_event rejects, so it has to be skipped
 // rather than allowed to fail the completion.
 import assert from "node:assert/strict";
-import { runScenario, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [owner] = await scenario.addPlayersWithApps([testApp]);
 
-  const profiles = getZomeCaller(owner.cells[0], "profiles");
-  const catalog = getZomeCaller(owner.cells[0], "catalog");
-  const dispatch = getZomeCaller(owner.cells[0], "dispatch");
+  const profiles = retryingCaller(owner.cells[0], "profiles");
+  const catalog = retryingCaller(owner.cells[0], "catalog");
+  const dispatch = retryingCaller(owner.cells[0], "dispatch");
 
   await profiles("create_profile", { display_name: "Solo Owner", roles: ["Requester", "Merchant"], created_at: Date.now() * 1000 });
   const catalogRef = actionHash(await catalog<HcRecord>("publish_catalog", { business_name: "Solo's Diner", location: ST_PETE }));

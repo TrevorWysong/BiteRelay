@@ -5,9 +5,9 @@
 // history keeps every order, newest first, and pages through them with a
 // cursor that ends cleanly on the last page.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 type StoreOrder = { kind: "Delivery" | "Pickup"; original_action: Uint8Array; record: HcRecord };
 type HistoryPage = { orders: StoreOrder[]; next_before: number | null };

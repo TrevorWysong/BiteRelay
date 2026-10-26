@@ -2,6 +2,7 @@
 //! the caller runs, and a store's current settings.
 
 use hdk::prelude::*;
+use relay_coordinator_support::guest;
 
 /// The store's catalog at its latest state.
 pub(crate) fn current_catalog(catalog_ref: &ActionHash) -> ExternResult<catalog_types::MerchantCatalog> {
@@ -11,14 +12,14 @@ pub(crate) fn current_catalog(catalog_ref: &ActionHash) -> ExternResult<catalog_
 /// The store's latest version -- its action, and its catalog.
 pub(crate) fn current_catalog_version(catalog_ref: &ActionHash) -> ExternResult<(ActionHash, catalog_types::MerchantCatalog)> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_catalog".into(), None, catalog_ref.clone())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("couldn't read the store's details".into())));
+        return Err(guest("couldn't read the store's details"));
     };
     let record: Record = io.decode().map_err(|e| wasm_error!(e))?;
     let catalog = record
         .entry()
         .to_app_option::<catalog_types::MerchantCatalog>()
         .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("catalog_ref is not a store".into())))?;
+        .ok_or(guest("catalog_ref is not a store"))?;
     Ok((record.action_address().clone(), catalog))
 }
 
@@ -31,7 +32,7 @@ struct StoreView {
 /// Every store the caller runs, by identity.
 pub(crate) fn my_stores() -> ExternResult<Vec<ActionHash>> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "list_my_catalogs".into(), None, ())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("listing your stores failed".into())));
+        return Err(guest("listing your stores failed"));
     };
     let stores: Vec<StoreView> = io.decode().map_err(|e| wasm_error!(e))?;
     Ok(stores.into_iter().map(|store| store.original_action).collect())
@@ -57,7 +58,7 @@ pub(crate) fn prep_time(catalog_ref: &ActionHash, prep_minutes: Option<u16>) -> 
     };
     let max = relay_governance::max_prep_minutes();
     if prep == 0 || prep > max {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("prep time must be between 1 and {max} minutes"))));
+        return Err(guest(format!("prep time must be between 1 and {max} minutes")));
     }
     Ok(prep)
 }
@@ -82,12 +83,20 @@ pub(crate) fn closed_reason(catalog: &catalog_types::MerchantCatalog, at: i64) -
     Some(format!("{} is closed then{opens}", catalog.business_name))
 }
 
-/// The local weekday (0 = Sunday) and minute after midnight of `at` in
-/// `time_zone`; an unknown zone reads as UTC.
-fn local_weekday_minute(time_zone: &str, at: i64) -> (u8, u16) {
-    use chrono::{Datelike, TimeZone, Timelike};
+/// `at` (microseconds since the epoch) as wall-clock time in `time_zone`
+/// (an IANA name); an unknown zone reads as UTC, and a time out of range as
+/// the epoch. An instant always has exactly one local time -- only the
+/// reverse can be ambiguous.
+pub(crate) fn local_time(time_zone: &str, at: i64) -> chrono::DateTime<chrono_tz::Tz> {
     let tz: chrono_tz::Tz = time_zone.parse().unwrap_or(chrono_tz::Tz::UTC);
-    let local = tz.timestamp_micros(at).single().unwrap_or_else(|| chrono_tz::Tz::UTC.timestamp_micros(at).unwrap());
+    chrono::DateTime::from_timestamp_micros(at).unwrap_or_default().with_timezone(&tz)
+}
+
+/// The local weekday (0 = Sunday) and minute after midnight of `at` in
+/// `time_zone`.
+fn local_weekday_minute(time_zone: &str, at: i64) -> (u8, u16) {
+    use chrono::{Datelike, Timelike};
+    let local = local_time(time_zone, at);
     (local.weekday().num_days_from_sunday() as u8, (local.hour() * 60 + local.minute()) as u16)
 }
 

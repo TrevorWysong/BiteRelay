@@ -135,7 +135,7 @@ pub fn cash_out(input: CashOutInput) -> ExternResult<CashOutView> {
     }
     let min = relay_governance::min_redemption_cents().max(profile_of(&input.issuer)?.map_or(0, |(_, p)| p.min_payout_cents));
     if input.amount < min {
-        return Err(guest(format!("You can cash out {min} or more at once.")));
+        return Err(guest(format!("You can cash out {min_cents} or more at once.", min_cents = min)));
     }
     if input.instructions.chars().count() > relay_integrity_support::limits::MAX_NOTE_CHARS {
         return Err(guest("Those payout instructions are too long."));

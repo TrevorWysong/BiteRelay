@@ -34,7 +34,7 @@ import { currentBeacon } from "../../lib/timeSource";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, formatClockTime, formatDeadline, formatEta, timeAgo } from "../../lib/format";
+import { formatCents, formatClockTime, formatDeadline, formatEta, nowMicros, timeAgo } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import type { DeclineReason, Timestamp } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
@@ -403,7 +403,7 @@ async function fetchHistoryPages(stores: StoreRow[], cursors: Record<string, Tim
 function mayHaveOpenIssues(row: QueueRow, terms: { report_window_secs: number; answer_grace_secs: number }): boolean {
   const completed = row.kind === "Delivery" ? received(row.order.status) : row.order.status === "PickedUp";
   const openForMicros = (terms.report_window_secs + terms.answer_grace_secs) * 1_000_000;
-  return completed && Date.now() * 1000 - row.writtenAt < openForMicros;
+  return completed && nowMicros() - row.writtenAt < openForMicros;
 }
 
 function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; storeLabel: string | null; showTime?: boolean; children?: React.ReactNode }) {

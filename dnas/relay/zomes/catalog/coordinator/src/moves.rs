@@ -25,10 +25,6 @@ struct SuccessionView {
     successor: AgentPubKey,
 }
 
-pub(crate) fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
-
 /// The stores `owner` has published, oldest first -- for a new key to see
 /// what its predecessor ran.
 #[hdk_extern]

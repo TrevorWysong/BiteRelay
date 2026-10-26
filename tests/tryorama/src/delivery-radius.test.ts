@@ -5,9 +5,9 @@
 // and its public drop-off area must lie within that version's radius, its
 // fee split be that version's, and its sealed notes stay small.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, decodeEntry, limits, ST_PETE, NYC, testApp, useTestCoordinators } from "./helpers.js";
+import { actionHash, decodeEntry, limits, ST_PETE, NYC, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer, otherMerchant] = await scenario.addPlayersWithApps([
@@ -18,9 +18,9 @@ await runScenario(async (scenario) => {
   const all = [merchant, customer, otherMerchant];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof merchant) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof merchant) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof merchant) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(merchant)("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });

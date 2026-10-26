@@ -11,9 +11,11 @@ import { formatCents } from "../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { EarningsReport } from "./EarningsReport";
 import { useT } from "../../i18n";
+import { useTerms } from "../../store/network";
 
 export function Earnings() {
   const t = useT();
+  const terms = useTerms();
   const me = myAgentPubKey();
   const meHex = bytesToHex(me);
   const { data: balance } = useResource(`balance:${meHex}`, () => getBalance(me));
@@ -55,6 +57,7 @@ export function Earnings() {
           <p className="mb-3 flex items-center gap-2 text-sm font-bold text-ink-900 dark:text-ink-50">
             <ShieldCheck size={16} className="text-presence-600" /> {t("earnings.reputation")}
           </p>
+          <p className="-mt-2 mb-3 text-xs text-ink-400">{t("reputation.window", { count: terms.reputation_window_days })}</p>
           {rep === undefined ? (
             <div className="grid grid-cols-2 gap-3">
               <Skeleton className="h-16" />

@@ -6,9 +6,9 @@
 // source. The client-side MAX_CONCURRENT_DELIVERIES cap is a deliberate UX
 // choice, not something the protocol itself enforces or needs.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, bytesEqual, decodeEntry, retryUntil, ST_PETE, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, bytesEqual, decodeEntry, retryUntil, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customerA, customerB, driver] = await scenario.addPlayersWithApps([
@@ -19,9 +19,9 @@ await runScenario(async (scenario) => {
   const all = [customerA, customerB, driver];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof driver) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof driver) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof driver) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof driver) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof driver) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof driver) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(customerA)("create_profile", { display_name: "Cara A", roles: ["Requester", "Merchant"], created_at: now });

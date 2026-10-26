@@ -7,9 +7,10 @@ import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import clsx from "clsx";
 import { sendChatMessage } from "../holochain/zomes/dispatch";
-import { onLocalSignal, myAgentPubKey } from "../holochain/client";
-import { bytesEqual, bytesToHex } from "../holochain/decode";
-import { shortAgentId } from "../lib/format";
+import { myAgentPubKey } from "../holochain/client";
+import { useLocalSignal } from "../lib/useResource";
+import { bytesEqual } from "../holochain/decode";
+import { nowMicros, shortAgentId } from "../lib/format";
 import type { ActionHash } from "../holochain/types";
 import { Button, Input } from "./ui";
 import { MAX_NOTE_CHARS } from "../holochain/types";
@@ -29,16 +30,12 @@ export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: s
   const me = myAgentPubKey();
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const unsub = onLocalSignal((signal) => {
-      if (!("ChatMessage" in signal)) return;
-      const msg = signal.ChatMessage;
-      if (!bytesEqual(msg.order_ref, orderRef)) return;
-      setLines((prev) => [...prev, { from: msg.from, text: msg.text, sentAt: msg.sent_at }]);
-    });
-    return unsub;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bytesToHex(orderRef)]);
+  useLocalSignal((signal) => {
+    if (!("ChatMessage" in signal)) return;
+    const msg = signal.ChatMessage;
+    if (!bytesEqual(msg.order_ref, orderRef)) return;
+    setLines((prev) => [...prev, { from: msg.from, text: msg.text, sentAt: msg.sent_at }]);
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -52,7 +49,7 @@ export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: s
       await sendChatMessage(orderRef, text);
       // send_remote_signal only reaches the *other* party -- append our own
       // message locally so it shows up immediately for the sender too.
-      setLines((prev) => [...prev, { from: me, text, sentAt: Date.now() * 1000 }]);
+      setLines((prev) => [...prev, { from: me, text, sentAt: nowMicros() }]);
       setDraft("");
     } catch {
       // Best-effort, same posture as every other fire-and-forget signal in

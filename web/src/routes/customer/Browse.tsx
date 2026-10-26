@@ -10,7 +10,7 @@ import { encodeGeohash } from "../../lib/geohash";
 import { useSession } from "../../store/session";
 import { useFavorites } from "../../lib/useFavorites";
 import { useResource } from "../../lib/useResource";
-import { formatCents } from "../../lib/format";
+import { formatCents, nowMicros } from "../../lib/format";
 import type { MerchantCatalog, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
@@ -98,7 +98,7 @@ export function Browse() {
     `browse-bags:${geohash}`,
     async () => {
       const views = await getNearbyGoodieBags(geohash);
-      const now = Date.now() * 1000;
+      const now = nowMicros();
       return views.map((v) => ({ hash: v.original_action, bag: decodeEntry<GoodieBag>(v.record) })).filter((r) => r.bag.pickup_window_end > now);
     },
     { pollMs: POLL.slow },

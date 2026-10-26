@@ -3,7 +3,7 @@
 // ID -- never delivered; and the customer confirms their age. Each rule is
 // validation's, so a modified app can't skip it.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { ST_PETE, actionHash, appWithProperties, decodeEntry, retryUntilOk, shareAgentsOn, useTestCoordinators, retryingCaller } from "./helpers.js";
 

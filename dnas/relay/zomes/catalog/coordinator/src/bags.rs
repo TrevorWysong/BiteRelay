@@ -19,7 +19,7 @@
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original, seal};
+use relay_coordinator_support::{decode_or, guest, open, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original, seal};
 use relay_types::GeoPoint;
 
 use crate::NearbyMerchantsInput;
@@ -78,7 +78,7 @@ pub fn create_goodie_bag(input: CreateGoodieBagInput) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::GoodieBag(bag))?;
     create_link(bag_anchor_path(&catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back goodie bag".into())))
+        .ok_or(guest("could not read back goodie bag"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -92,7 +92,7 @@ pub fn update_goodie_bag(input: UpdateGoodieBagInput) -> ExternResult<Record> {
     let record = resolve_latest(input.original_action)?;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::GoodieBag(input.bag))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated goodie bag".into())))
+        .ok_or(guest("could not read back updated goodie bag"))
 }
 
 #[hdk_extern]
@@ -165,7 +165,7 @@ pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
     // One claim per customer per bag -- validation's rule, told first.
     let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::BagClaim)?).include_entries(true).action_type(ActionType::Create))?;
     if mine.iter().filter_map(decode_or::<BagClaim>).any(|claim| claim.bag_ref == input.bag_ref) {
-        return Err(wasm_error!(WasmErrorInner::Guest("You've already claimed this goodie bag.".into())));
+        return Err(guest("You've already claimed this goodie bag."));
     }
     let fulfillment = match input.fulfillment {
         FulfillmentInput::Pickup => BagClaimFulfillment::Pickup,
@@ -182,7 +182,7 @@ pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
     create_link(claim_anchor_path(&input.bag_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::BagToClaim, ())?;
     create_link(claim.customer, action_hash.clone(), LinkTypes::CustomerToClaim, ())?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back bag claim".into())))
+        .ok_or(guest("could not read back bag claim"))
 }
 
 #[hdk_extern]
@@ -278,7 +278,7 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     let now = sys_time()?;
     let taken = list_claims_for_bag(claim.bag_ref.clone())?.iter().filter(|r| holds_a_bag(r, &bag, now)).count() as u32;
     if taken >= bag.quantity_total {
-        return Err(wasm_error!(WasmErrorInner::Guest("This bag is sold out.".into())));
+        return Err(guest("This bag is sold out."));
     }
 
     claim.status = BagClaimStatus::Confirmed;
@@ -286,7 +286,7 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     let updated = update_entry(record.action_address().clone(), &EntryTypes::BagClaim(claim))?;
     let _ = send_remote_signal(crate::signals::RemoteSignal::ClaimConfirmed { claim_hash: updated.clone() }, vec![customer]);
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back confirmed claim".into())))
+        .ok_or(guest("could not read back confirmed claim"))
 }
 
 /// The store recording that a confirmed claim was ordered -- called by its
@@ -300,7 +300,7 @@ pub fn redeem_claim(claim_ref: ActionHash) -> ExternResult<Record> {
     }
     claim.status = BagClaimStatus::Redeemed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::BagClaim(claim))?;
-    get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back redeemed claim".into())))
+    get(updated, GetOptions::local())?.ok_or(guest("could not read back redeemed claim"))
 }
 
 /// The longest a goodie bag may stay listed, in microseconds.

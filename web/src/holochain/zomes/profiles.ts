@@ -76,11 +76,6 @@ export async function listFavorites(): Promise<ActionHash[]> {
   return callZome("profiles", "list_favorites", null);
 }
 
-export async function fetchProviderCredential(profileAction: ActionHash): Promise<ProviderCredential | null> {
-  const record = await getProviderCredentialForProfile(profileAction);
-  return record ? decodeEntry<ProviderCredential>(record) : null;
-}
-
 // --- saved addresses -- a customer's own named address book ("Home",
 // "Work", ...), the DoorDash/UberEats-style "deliver to" switcher. ---
 

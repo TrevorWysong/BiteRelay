@@ -6,6 +6,11 @@ use hdk::prelude::*;
 use relay_integrity_support::limits::SEAL_CHUNK_BYTES;
 pub use relay_integrity_support::SealedChunks;
 
+/// A refusal the person sees: a zome call's error, as a sentence.
+pub fn guest(message: impl Into<String>) -> WasmError {
+    wasm_error!(WasmErrorInner::Guest(message.into()))
+}
+
 /// The original creation action behind `action_hash` -- itself, unless
 /// it's an update, in which case its chain of updates is walked back. The
 /// coordinator-side twin of `relay_integrity_support::original_creation`.
@@ -298,4 +303,22 @@ pub fn ensure_open_calls(tag: &str, functions: &[&str]) -> ExternResult<bool> {
     }
     create_cap_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, functions))?;
     Ok(true)
+}
+
+/// Calls `function`, one of the calling zome's own externs, in a call of its
+/// own, and decodes its answer -- `None` if it failed. For a background
+/// sweep over many orders: a zome call commits all its writes or none, so
+/// one item's write that doesn't validate (yet) would otherwise undo every
+/// other item's, every run, until that one resolves. Each item is its own
+/// call; one failing only skips it until the next run.
+pub fn isolated<I, O>(function: &str, input: I) -> Option<O>
+where
+    I: Serialize + std::fmt::Debug,
+    O: for<'de> Deserialize<'de> + std::fmt::Debug,
+{
+    let zome = zome_info().ok()?.name;
+    match call(CallTargetCell::Local, zome, function.into(), None, input) {
+        Ok(ZomeCallResponse::Ok(io)) => io.decode().ok(),
+        _ => None,
+    }
 }

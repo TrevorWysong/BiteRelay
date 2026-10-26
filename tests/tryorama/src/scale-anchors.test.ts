@@ -10,9 +10,9 @@
 // tested in relay_types::tests::time_bucket_* -- also not something a live
 // Tryorama test should try to prove via clock manipulation.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, acceptOrder, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -21,8 +21,8 @@ await runScenario(async (scenario) => {
   ]);
   const both = [customer, driver];
 
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   const catalogRecord = await catalogOf(customer)<HcRecord>("publish_catalog", { business_name: "Cara's Kitchen", location: ST_PETE });
   const catalogRef = actionHash(catalogRecord);

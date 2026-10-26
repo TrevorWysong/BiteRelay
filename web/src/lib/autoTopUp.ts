@@ -8,6 +8,7 @@ import { bytesToHex } from "../holochain/decode";
 import { getBalance, listIssuers } from "../holochain/zomes/ledger";
 import { useCustomerSettings } from "../store/roleSettings";
 import { isPayable, payWithSavedCard } from "./issuerService";
+import { readStored, store } from "./storage";
 
 /// The least time between tries, charged or not.
 const RETRY_AFTER_MS = 30 * 60_000;
@@ -21,29 +22,14 @@ export async function topUpIfLow(agent: AgentPubKey): Promise<boolean> {
   if (!setting) return false;
   // Kept per tab, and in storage across tabs and reloads.
   const storeKey = `relay.auto-top-up.last.${encodeHashToBase64(agent)}`;
-  const last = Math.max(lastTry.get(hex) ?? 0, Number(safeGet(storeKey)) || 0);
+  const last = Math.max(lastTry.get(hex) ?? 0, Number(readStored(storeKey)) || 0);
   if (Date.now() - last < RETRY_AFTER_MS) return false;
   if ((await getBalance(agent)) >= setting.belowCents) return false;
   const issuer = (await listIssuers()).find((i) => bytesToHex(i.issuer) === setting.issuer);
   if (!issuer || !isPayable(issuer)) return false;
   lastTry.set(hex, Date.now());
-  safeSet(storeKey, String(Date.now()));
+  store(storeKey, String(Date.now()));
   // A card that needs its owner to confirm it waits for them to pay by hand.
   return payWithSavedCard(issuer.profile.service_url, issuer.issuer, agent, setting.amountCents);
 }
 
-function safeGet(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function safeSet(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // The in-memory record still spaces out this tab's tries.
-  }
-}

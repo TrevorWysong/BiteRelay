@@ -5,12 +5,14 @@
 // and every per-store screen (menu, promos, goodie bags, reviews) scoped to
 // the selected store. The incoming-orders screen can additionally show all
 // stores at once (see merchant/Orders.tsx).
-import { useEffect } from "react";
+
 import { create } from "zustand";
 import { listMyCatalogs } from "../holochain/zomes/catalog";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
 import { myAgentPubKey } from "../holochain/client";
 import type { ActionHash, MerchantCatalog } from "../holochain/types";
+import { readStored, store } from "../lib/storage";
+import { useResource } from "../lib/useResource";
 
 export interface StoreRow {
   /// The store's catalog `original_action` -- its stable identity, used as
@@ -27,19 +29,11 @@ function activeKey(): string {
 }
 
 function loadActive(): string | null {
-  try {
-    return localStorage.getItem(activeKey());
-  } catch {
-    return null;
-  }
+  return readStored(activeKey());
 }
 
 function saveActive(hex: string) {
-  try {
-    localStorage.setItem(activeKey(), hex);
-  } catch {
-    // Remembering the selection is a convenience, never required.
-  }
+  store(activeKey(), hex);
 }
 
 interface MerchantStoresState {
@@ -99,9 +93,8 @@ async function loadStores(selectHex: string | undefined): Promise<StoreRow[]> {
 export function useMyStores(enabled = true): StoreRow[] | null {
   const stores = useMerchantStores((s) => s.stores);
   const load = useMerchantStores((s) => s.load);
-  useEffect(() => {
-    if (enabled && stores === null) void load();
-  }, [enabled, stores, load]);
+  // Read only while the list is unknown: once loaded it lives in the store.
+  useResource(enabled && stores === null ? "merchant-stores" : null, () => load());
   return stores;
 }
 

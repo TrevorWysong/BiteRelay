@@ -3,7 +3,7 @@
 // zome. Money for an order is set aside as the order goes and collected by
 // whoever it's owed to, from their own conductor.
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, CashOutView, HcRecord, HoldView, IssuerProfile, IssuerRequest, IssuerView } from "../types";
+import type { AgentPubKey, CashOutView, HcRecord, IssuerRequest, IssuerView } from "../types";
 
 /// An agent's balance: what their latest ledger entry says, which
 /// validation ties to every entry before it.
@@ -21,11 +21,6 @@ export interface LedgerPage {
 /// `next_before` to continue.
 export async function listMyLedger(before: number | null = null): Promise<LedgerPage> {
   return callZome("ledger", "list_my_ledger", { before });
-}
-
-/// Every hold on an order.
-export async function holdsForOrder(order: ActionHash): Promise<HoldView[]> {
-  return callZome("ledger", "holds_for_order", order);
 }
 
 /// Collects any funds issued to the caller; returns how many grants.
@@ -62,10 +57,5 @@ export async function reclaimDeclinedCashOuts(): Promise<number> {
 /// service's nonce only.
 export async function signIssuerLink(issuer: AgentPubKey, purpose: IssuerRequest, nonce: string): Promise<Uint8Array> {
   return callZome("ledger", "sign_issuer_link", { issuer, purpose, nonce });
-}
-
-/// The caller, an issuer, publishing or changing its terms.
-export async function setIssuerProfile(profile: IssuerProfile): Promise<ActionHash> {
-  return callZome("ledger", "set_issuer_profile", profile);
 }
 

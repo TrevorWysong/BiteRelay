@@ -104,6 +104,8 @@ pub struct RelayDnaProperties {
     #[serde(default)]
     pub min_reporter_stores: Option<u32>,
     #[serde(default)]
+    pub reputation_window_days: Option<u32>,
+    #[serde(default)]
     pub max_store_wait_secs: Option<u64>,
     #[serde(default)]
     pub replacement_window_secs: Option<u64>,
@@ -439,6 +441,13 @@ pub fn max_offers_per_order() -> u32 {
 /// themselves, can't bury a competitor in reports.
 pub fn min_reporter_stores() -> u32 {
     setting(|p| p.min_reporter_stores, 3)
+}
+
+/// How far back a reputation reaches: ratings and records count what
+/// happened within it. A busy store's whole history would cost every
+/// reader more with each order; a recent one says more about it now.
+pub fn reputation_window() -> Duration {
+    Duration::from_secs(u64::from(setting(|p| p.reputation_window_days, 365)) * 86_400)
 }
 
 /// How many of an order's bids its customer's app weighs, earliest first --

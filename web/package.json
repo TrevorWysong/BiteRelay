@@ -12,6 +12,7 @@
     "package": "node scripts/package.mjs",
     "typegen": "cargo run --quiet --manifest-path ../tools/typegen/Cargo.toml",
     "typegen:check": "cargo run --quiet --manifest-path ../tools/typegen/Cargo.toml -- --check",
+    "refusals": "node scripts/refusals.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "node --import tsx --test test/*.test.ts",

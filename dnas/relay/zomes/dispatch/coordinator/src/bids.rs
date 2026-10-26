@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{guest, next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitBidInput {
@@ -26,21 +26,21 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     // store's acceptance, the version drivers discover).
     let (current, order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_ref.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Open {
-        return Err(wasm_error!(WasmErrorInner::Guest("this order isn't open for bids".into())));
+        return Err(guest("This order isn't taking offers any more."));
     }
     // One bid per driver per order -- validation's rule, told first.
     let order_original = original_action_of(input.order_ref.clone())?;
     if my_bids()?.iter().any(|earlier| original_action_of(earlier.order_ref.clone()).ok().as_ref() == Some(&order_original)) {
-        return Err(wasm_error!(WasmErrorInner::Guest("You've already bid on this order.".into())));
+        return Err(guest("You've already bid on this order."));
     }
     if let Err(refusal) = crate::order_queues::get_driver_load(bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
-        return Err(wasm_error!(WasmErrorInner::Guest(driver_refusal(refusal))));
+        return Err(guest(driver_refusal(refusal)));
     }
 
     // The driver's verification, where the network requires one.
     let verification = crate::verification::driver_verification(bidder.clone())?.map(|v| v.action);
     if verification.is_none() && relay_governance::require_verified_drivers() {
-        return Err(wasm_error!(WasmErrorInner::Guest("Drivers on this network are verified before they deliver. Ask one of its verifiers to check you.".into())));
+        return Err(guest("Drivers on this network are verified before they deliver. Ask one of its verifiers to check you."));
     }
 
     let bid = Bid {
@@ -67,7 +67,7 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     );
 
     get(bid_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back bid".into())))
+        .ok_or(guest("could not read back bid"))
 }
 
 /// The caller's bids, from their own chain.
@@ -87,7 +87,7 @@ pub fn withdraw_bid(input: WithdrawBidInput) -> ExternResult<Record> {
     bid.status = BidStatus::Withdrawn;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::Bid(bid))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back withdrawn bid".into())))
+        .ok_or(guest("could not read back withdrawn bid"))
 }
 
 /// Contested warrants (architecture plan §11.2). Warrant-checking cannot be
@@ -144,34 +144,34 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     let (_, winning_bid): (_, Bid) = resolve_latest_decoded(input.bid_action.clone(), "Bid")?;
     if winning_bid.status != BidStatus::Open {
-        return Err(wasm_error!(WasmErrorInner::Guest("that driver has withdrawn their bid".into())));
+        return Err(guest("That driver has withdrawn their offer."));
     }
     crate::accounts::ensure_not_moved(&winning_bid.bidder, "That driver")?;
     if !crate::verification::bid_verification_stands(&winning_bid)? {
-        return Err(wasm_error!(WasmErrorInner::Guest("That driver's verification has been withdrawn.".into())));
+        return Err(guest("That driver's verification has been withdrawn."));
     }
 
     if !input.override_warrants {
         let warrants = check_warrants(winning_bid.bidder.clone())?;
         if warrants.count > 0 {
-            return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            return Err(guest(format!(
                 "the winning bidder has {} outstanding warrant(s) -- pass override_warrants: true to accept anyway",
                 warrants.count
-            ))));
+            )));
         }
     }
 
     // An order changes drivers a bounded number of times.
     if let Some(version) = dispatch_integrity::lineage::Version::of(order_record.clone()) {
         if !dispatch_integrity::lineage::driver_changes(&version)?.allow_another() {
-            return Err(wasm_error!(WasmErrorInner::Guest("This order has changed drivers too many times. You can collect it yourself, or cancel it.".into())));
+            return Err(guest("This order has changed drivers too many times. You can collect it yourself, or cancel it."));
         }
     }
 
     // Never more orders than a driver may carry, nor a priority order with
     // anything else.
     if let Err(refusal) = crate::order_queues::get_driver_load(winning_bid.bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
-        return Err(wasm_error!(WasmErrorInner::Guest(customer_refusal(refusal).into())));
+        return Err(guest(customer_refusal(refusal)));
     }
 
     // The driver learns the exact drop-off only once they've committed (see
@@ -179,7 +179,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     // copy, which only the customer can open.
     let me = agent_info()?.agent_initial_pubkey;
     if order.requester != me {
-        return Err(wasm_error!(WasmErrorInner::Guest("only the customer can accept a bid on their order".into())));
+        return Err(guest("Only the order's customer can accept an offer on it."));
     }
     order.status = DeliveryStatus::BidAccepted;
     order.accepted_bid = Some(input.bid_action.clone());
@@ -212,7 +212,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     }
 
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted order".into())))
+        .ok_or(guest("could not read back accepted order"))
 }
 
 /// Why a driver can't take an order on, told to them.

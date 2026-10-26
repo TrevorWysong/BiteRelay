@@ -6,11 +6,7 @@
 use crate::issues::{decisions_of, parties_of};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open_chunked, original_action_of, seal_chunked};
-
-fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
+use relay_coordinator_support::{decode_or, guest, open_chunked, original_action_of, seal_chunked};
 
 /// The arbiter an order's appeal goes to: one of the network's, chosen by
 /// the order itself -- so nobody picks the one they'd like.
@@ -56,7 +52,7 @@ pub fn file_appeal(input: FileAppealInput) -> ExternResult<ActionHash> {
     };
     let kept = order_total(&order)?.saturating_sub(refund);
     if input.amount == 0 || input.amount > kept {
-        return Err(guest(format!("You can ask for up to what the store kept ({kept} in minor units).")));
+        return Err(guest(format!("You can ask for up to what the store kept: {kept_cents}.", kept_cents = kept)));
     }
     if appeal_of(&order)?.is_some() {
         return Err(guest("You've already appealed this order."));
@@ -243,35 +239,58 @@ pub fn get_appeal_for_order(order: ActionHash) -> ExternResult<Option<AppealView
     }
 }
 
-/// The appeals before the caller, an arbiter -- open ones first, oldest
-/// first.
-#[hdk_extern]
-pub fn get_my_docket(_: ()) -> ExternResult<Vec<AppealView>> {
-    let me = agent_info()?.agent_initial_pubkey;
-    let mut views = Vec::new();
-    for link in get_links(LinkQuery::try_new(me, LinkTypes::ArbiterToAppeal)?, GetStrategy::default())? {
-        let Some(hash) = link.target.into_action_hash() else { continue };
-        if let Some(v) = view(hash)? {
-            views.push(v);
-        }
-    }
-    views.sort_by_key(|v| (v.ruling.is_some(), v.filed_at));
-    Ok(views)
+/// How many appeals a page reads in full.
+const APPEALS_PAGE_SIZE: usize = 20;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AppealsInput {
+    /// Appeals filed before this, for the next page; `None` for the first.
+    pub before: Option<Timestamp>,
 }
 
-/// Appeals of the caller's decisions as a store owner -- unanswered first.
-#[hdk_extern]
-pub fn get_appeals_against_me(_: ()) -> ExternResult<Vec<AppealView>> {
-    let me = agent_info()?.agent_initial_pubkey;
-    let mut views = Vec::new();
-    for link in get_links(LinkQuery::try_new(me.clone(), LinkTypes::StoreOwnerToAppeal)?, GetStrategy::default())? {
+/// One newest-first page of appeals, open ones first within it.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AppealsPage {
+    pub appeals: Vec<AppealView>,
+    /// Where the next page starts, if there's one.
+    pub next_before: Option<Timestamp>,
+}
+
+/// The appeals linked from `base` filed before `before`, newest first, a
+/// page at a time: the links come together (cheap), but only a page's
+/// appeals are read in full -- an arbiter's or a busy store's list grows
+/// for good. Keeps those `keep` accepts; `open` sorts first.
+fn appeal_page(base: AgentPubKey, link_type: LinkTypes, before: Option<Timestamp>, keep: impl Fn(&AppealView) -> bool, open: impl Fn(&AppealView) -> bool) -> ExternResult<AppealsPage> {
+    let mut query = LinkQuery::try_new(base, link_type)?;
+    query.before = before;
+    let mut links = get_links(query, GetStrategy::default())?;
+    links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
+    let next_before = (links.len() > APPEALS_PAGE_SIZE).then(|| Timestamp::from_micros(links[APPEALS_PAGE_SIZE - 1].timestamp.as_micros() - 1));
+    links.truncate(APPEALS_PAGE_SIZE);
+    let mut appeals = Vec::with_capacity(links.len());
+    for link in links {
         let Some(hash) = link.target.into_action_hash() else { continue };
-        if let Some(v) = view(hash)?.filter(|v| v.store_owner == me) {
-            views.push(v);
+        if let Some(v) = view(hash)?.filter(&keep) {
+            appeals.push(v);
         }
     }
-    views.sort_by_key(|v| (v.answered || v.ruling.is_some(), v.filed_at));
-    Ok(views)
+    appeals.sort_by_key(|v| (!open(v), std::cmp::Reverse(v.filed_at)));
+    Ok(AppealsPage { appeals, next_before })
+}
+
+/// The appeals before the caller, an arbiter -- newest first, a page at a
+/// time, open ones first in each.
+#[hdk_extern]
+pub fn get_my_docket(input: AppealsInput) -> ExternResult<AppealsPage> {
+    appeal_page(agent_info()?.agent_initial_pubkey, LinkTypes::ArbiterToAppeal, input.before, |_| true, |v| v.ruling.is_none())
+}
+
+/// Appeals of the caller's decisions as a store owner -- newest first, a
+/// page at a time, unanswered first in each.
+#[hdk_extern]
+pub fn get_appeals_against_me(input: AppealsInput) -> ExternResult<AppealsPage> {
+    let me = agent_info()?.agent_initial_pubkey;
+    appeal_page(me.clone(), LinkTypes::StoreOwnerToAppeal, input.before, |v| v.store_owner == me, |v| !v.answered && v.ruling.is_none())
 }
 
 /// A ruling a store's owner pays from their cash-outs.

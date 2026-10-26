@@ -10,6 +10,7 @@ import { callPrevious, callZome } from "../holochain/client";
 import { openParcelsOnPrevious } from "../holochain/zomes/account";
 import { addFavorite, createProfile, getMyName, getMyPhone, listFavorites, listMyAddresses, registerProviderCredential, saveAddress } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
+import { nowMicros } from "./format";
 
 const CODE_PREFIX = "relay-account:";
 /// Holochain's prefix for an agent key.
@@ -99,7 +100,7 @@ export async function adoptPredecessor(known: Predecessor, name: string, phone: 
   const record = await createProfile({
     display_name: name.trim(),
     roles,
-    created_at: Date.now() * 1000,
+    created_at: nowMicros(),
     bio: known.profile?.bio ?? "",
     avatar_data_uri: known.profile?.avatar_data_uri ?? "",
     phone: phone.trim(),

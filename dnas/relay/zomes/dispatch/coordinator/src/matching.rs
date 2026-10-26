@@ -12,7 +12,7 @@
 use dispatch_integrity::{open_order_anchor, LinkTypes, OPEN_ORDER_BUCKET_MILLIS};
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 
 pub(crate) fn open_order_anchor_path(geohash: &str, bucket: i64) -> ExternResult<hdi::hash_path::path::TypedPath> {
     Path::from(open_order_anchor(geohash, bucket)).typed(LinkTypes::OpenOrderGeohashAnchor)
@@ -85,7 +85,7 @@ pub struct RankedBid {
 pub fn rank_bids(order_ref: ActionHash) -> ExternResult<Vec<RankedBid>> {
     let order_ref = original_action_of(order_ref)?;
     let latest = resolve_latest(order_ref.clone())?;
-    let order = decode_or::<dispatch_integrity::DeliveryOrder>(&latest).ok_or(wasm_error!(WasmErrorInner::Guest("not a delivery".into())))?;
+    let order = decode_or::<dispatch_integrity::DeliveryOrder>(&latest).ok_or(guest("not a delivery"))?;
     Ok(ranked(&order_ref, &latest, &order)?.into_iter().map(|(ranked, _)| ranked).collect())
 }
 

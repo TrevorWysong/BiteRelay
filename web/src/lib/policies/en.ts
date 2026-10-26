@@ -232,6 +232,7 @@ function sections(t: NetworkTerms): PolicySection[] {
         "Ratings are one vote per customer per order, and only from that order's customer.",
         "Completed orders are recorded for the store and driver. A store's decision that an order never arrived is recorded against the driver; that a claimed order had arrived, against the customer.",
         "Nobody can edit or delete reviews, ratings or history, including their own.",
+        `Ratings and records count the last ${t.reputation_window_days} days, so they say how someone is doing now. Older history stays on the network.`,
         "Drivers see a customer's history before they bid.",
       ],
       effects: [

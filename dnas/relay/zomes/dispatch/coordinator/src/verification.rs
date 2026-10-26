@@ -5,6 +5,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
+use relay_coordinator_support::guest;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VerifyDriverInput {
@@ -25,7 +26,7 @@ pub fn verify_driver(input: VerifyDriverInput) -> ExternResult<ActionHash> {
     }
     let longest = relay_governance::verification_lifetime();
     let lifetime = input.days.map_or(longest, |days| core::time::Duration::from_secs(u64::from(days) * 86_400).min(longest));
-    let expires_at = (sys_time()? + lifetime).map_err(|e| guest(&e.to_string()))?;
+    let expires_at = (sys_time()? + lifetime).map_err(|e| guest(e.to_string()))?;
     let verification = DriverVerification { driver: input.driver.clone(), checks: input.checks, expires_at };
     let hash = create_entry(&EntryTypes::DriverVerification(verification))?;
     create_link(input.driver, hash.clone(), LinkTypes::DriverToVerification, ())?;
@@ -107,6 +108,3 @@ pub fn get_verification_terms(_: ()) -> ExternResult<VerificationTerms> {
     Ok(VerificationTerms { required: relay_governance::require_verified_drivers(), verifiers: relay_governance::verifiers() })
 }
 
-fn guest(message: &str) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}

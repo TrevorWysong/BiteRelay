@@ -5,7 +5,7 @@
 // the earlier one no longer does.
 import assert from "node:assert/strict";
 import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import { dhtLocationFrom32, type Record as HcRecord } from "@holochain/client";
 import { actionHash, installManyAgents, retryUntil, shareAgentsOn, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 

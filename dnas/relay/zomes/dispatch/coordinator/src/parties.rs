@@ -6,7 +6,7 @@
 
 use dispatch_integrity::{Bid, DeliveryOrder};
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest_decoded;
+use relay_coordinator_support::{guest, resolve_latest_decoded};
 
 /// Resolves the order and its accepted bid. `unavailable_reason` becomes
 /// the error message if no bid has been accepted yet -- callers each pass
@@ -18,7 +18,7 @@ pub fn resolve_order_and_bid(order_ref: ActionHash, unavailable_reason: &str) ->
     let accepted_bid_ref = order
         .accepted_bid
         .clone()
-        .ok_or(wasm_error!(WasmErrorInner::Guest(unavailable_reason.into())))?;
+        .ok_or(guest(unavailable_reason))?;
     let (_, bid): (_, Bid) = resolve_latest_decoded(accepted_bid_ref, "Bid")?;
     Ok((order, bid))
 }

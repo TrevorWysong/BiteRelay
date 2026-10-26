@@ -34,6 +34,7 @@ export interface Config {
   risk: RiskPolicy;
   /// Card forms one address may open an hour -- against card testing.
   topUpsPerIpPerHour: number;
+  noncesPerIpPerHour: number;
   /// Whether the service is behind a proxy that sets X-Forwarded-For.
   trustProxy: boolean;
 }
@@ -85,6 +86,7 @@ export function loadConfig(): Config {
     recoveryReviewAboveCents: number("RECOVERY_REVIEW_ABOVE_CENTS", 50_000),
     risk: { tiers: parseTiers(process.env.TOPUP_TIERS), payoutHoldMs: number("PAYOUT_HOLD_DAYS", 7) * 24 * 60 * 60 * 1000 },
     topUpsPerIpPerHour: number("TOPUPS_PER_IP_PER_HOUR", 20),
+    noncesPerIpPerHour: number("NONCES_PER_IP_PER_HOUR", 120),
     trustProxy: process.env.TRUST_PROXY === "1",
   };
 }

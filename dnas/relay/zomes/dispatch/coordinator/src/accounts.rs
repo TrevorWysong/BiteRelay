@@ -5,6 +5,7 @@
 //! from their new key. Asked of the account zome.
 
 use hdk::prelude::*;
+use relay_coordinator_support::guest;
 
 /// Refuses to deal with `agent` if their account has moved on; `who` names
 /// them in the refusal ("This customer", "That driver").
@@ -19,6 +20,6 @@ pub(crate) fn ensure_not_moved(agent: &AgentPubKey, who: &str) -> ExternResult<(
     if successions.is_empty() {
         Ok(())
     } else {
-        Err(wasm_error!(WasmErrorInner::Guest(format!("{who}'s account has moved to a new device, so this key can't be used any more."))))
+        Err(guest(format!("{who}'s account has moved to a new device, so this key can't be used any more.")))
     }
 }

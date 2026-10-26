@@ -15,7 +15,7 @@ use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest_decoded;
+use relay_coordinator_support::{guest, resolve_latest_decoded};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestPickupOrderInput {
@@ -63,7 +63,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     // Open now -- a goodie bag runs on its own pickup window instead.
     if input.bag_claim_ref.is_none() {
         if let Some(reason) = closed_reason(&catalog, requested_at.as_micros()) {
-            return Err(wasm_error!(WasmErrorInner::Guest(reason)));
+            return Err(guest(reason));
         }
     }
 
@@ -96,7 +96,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     upkeep::tend_my_orders_soon()?;
 
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back pickup order".into())))
+        .ok_or(guest("could not read back pickup order"))
 }
 
 #[hdk_extern]
@@ -113,10 +113,10 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let order_original_action = input.order_original_action;
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::Placed {
-        return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
+        return Err(guest("This order has already been accepted or cancelled."));
     }
     if order.merchant != agent_info()?.agent_initial_pubkey {
-        return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
+        return Err(guest("Only the order's store can accept it."));
     }
     crate::accounts::ensure_not_moved(&order.requester, "This customer")?;
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
@@ -130,7 +130,7 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     order.status = PickupStatus::MerchantConfirmed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted pickup order".into())))
+        .ok_or(guest("could not read back accepted pickup order"))
 }
 
 /// `MerchantConfirmed -> ReadyForPickup` -- signals the requester directly
@@ -145,7 +145,7 @@ pub fn mark_ready_for_pickup(order_original_action: ActionHash) -> ExternResult<
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
     let _ = send_remote_signal(RemoteSignal::PickupReady { order_hash: updated.clone() }, vec![requester]);
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back ready pickup order".into())))
+        .ok_or(guest("could not read back ready pickup order"))
 }
 
 /// The customer withdrawing their pickup order -- see `orders::cancel_order`.
@@ -169,7 +169,7 @@ pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellat
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order.clone()))?;
     order_queues::retire(&OrderParties::pickup(&order_original_action, &order))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back cancelled pickup order".into())))
+        .ok_or(guest("could not read back cancelled pickup order"))
 }
 
 /// The gated completion path -- `ReadyForPickup -> PickedUp`, called by the
@@ -182,7 +182,7 @@ pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellat
 pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     if !matches!(order.status, PickupStatus::ReadyForPickup | PickupStatus::Disputed) {
-        return Err(wasm_error!(WasmErrorInner::Guest("a pickup order can only be collected once it's ready".into())));
+        return Err(guest("A pickup order can be collected only once it's ready."));
     }
     let merchant = order.merchant.clone();
     let catalog_ref = order.catalog_ref.clone();
@@ -198,7 +198,7 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_original_action, ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed pickup order".into())))
+        .ok_or(guest("could not read back completed pickup order"))
 }
 
 /// The customer telling the store they can't get their order (it isn't
@@ -209,9 +209,9 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
 pub fn report_pickup_problem(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::ReadyForPickup {
-        return Err(wasm_error!(WasmErrorInner::Guest("you can report a problem once the store says it's ready".into())));
+        return Err(guest("You can report a problem once the store says it's ready."));
     }
     order.status = PickupStatus::Disputed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
-    get(updated, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the order".into())))
+    get(updated, GetOptions::local())?.ok_or(guest("could not read back the order"))
 }

@@ -67,7 +67,7 @@ export async function fetchOrderItemNames(order: { catalog_ref: ActionHash; line
 
 /// Choices as an order holds them, without the versions they were priced
 /// at -- what a new order of the same thing sends.
-export function selectionInputs(selections: Selection[]): SelectionInput[] {
+function selectionInputs(selections: Selection[]): SelectionInput[] {
   return selections.map((s) => ({ group: s.group, options: s.options.map((c) => ({ option: c.option, quantity: c.quantity, nested: selectionInputs(c.nested) })) }));
 }
 

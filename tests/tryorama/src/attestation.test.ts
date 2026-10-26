@@ -5,9 +5,9 @@
 // acknowledgment only by the handoff's other party. Forgeries are written
 // raw (test-utils), the way a modified client could.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, pickUp, retryUntilOk, ST_PETE, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
+import { acceptOrder, actionHash, commitAndCook, decodeEntry, pickUp, ST_PETE, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver, stranger] = await scenario.addPlayersWithApps([
@@ -66,7 +66,7 @@ await runScenario(async (scenario) => {
   const pickupRef = actionHash(pickup);
   assert.ok(Buffer.from(decodeEntry<{ order_ref: Uint8Array }>(pickup).order_ref).equals(Buffer.from(current)), "it cites the version of the order naming the driver");
   await sync();
-  await assert.rejects(call(customer, "attestation")("acknowledge_leg", pickupRef), /only the other party to a handoff can confirm it/);
+  await assert.rejects(call(customer, "attestation")("acknowledge_leg", pickupRef), /Only the other party to a handoff can confirm it/);
   await assert.rejects(call(stranger, "attestation")("create_raw_receipt_for_testing", { leg: pickupRef, attested_at: Date.now() * 1000 }), /acknowledged by the other party to it/, "even written directly");
   const receipt = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));
   const again = actionHash(await call(merchant, "attestation")<HcRecord>("acknowledge_leg", pickupRef));

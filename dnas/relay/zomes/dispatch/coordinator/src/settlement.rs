@@ -15,11 +15,7 @@ use dispatch_integrity::*;
 use crate::stores::my_stores;
 use hdk::prelude::*;
 use dispatch_integrity::lineage;
-use relay_coordinator_support::{decode_or, original_action_of};
-
-fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
+use relay_coordinator_support::{decode_or, guest, original_action_of};
 
 fn ledger<I: Serialize + std::fmt::Debug, O: serde::de::DeserializeOwned + std::fmt::Debug>(function: &str, input: I) -> ExternResult<O> {
     match call(CallTargetCell::Local, "ledger", function.into(), None, input)? {
@@ -93,7 +89,7 @@ pub(crate) fn required_hold(order: &ActionHash, purpose: HoldPurpose, payer: &Ag
     if !owed {
         return Ok(None);
     }
-    find_hold(order, &purpose, payer)?.map(Some).ok_or(guest("this order's payment hasn't been set aside yet -- try again in a moment"))
+    find_hold(order, &purpose, payer)?.map(Some).ok_or(guest("This order's payment hasn't been set aside yet. Try again in a moment."))
 }
 
 // --- what's known about an order, for settling it ---
@@ -469,15 +465,7 @@ fn candidates(days: i64) -> ExternResult<Vec<ActionHash>> {
 /// validate yet (its basis still gossiping here) fails only that order's
 /// call, never the rest of the sweep.
 fn sweep(days: i64) -> u32 {
-    let Ok(zome) = zome_info().map(|z| z.name) else { return 0 };
-    candidates(days)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|order| match call(CallTargetCell::Local, zome.clone(), "settle_order".into(), None, order) {
-            Ok(ZomeCallResponse::Ok(io)) => io.decode::<u32>().unwrap_or(0),
-            _ => 0,
-        })
-        .sum()
+    candidates(days).unwrap_or_default().into_iter().map(|order| relay_coordinator_support::isolated::<_, u32>("settle_order", order).unwrap_or(0)).sum()
 }
 
 use crate::order_queues::QueueOwnerExt;

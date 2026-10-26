@@ -3,20 +3,20 @@
 // `PickupOrder`'s own doc comment (`dispatch_integrity`) for why this is a
 // separate entry type from `DeliveryOrder` rather than a flag on it.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, ST_PETE, retryUntil, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, ST_PETE, retryUntil, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
   const all = [customer, merchant];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
-  const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
-  const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
+  const ledgerOf = (p: typeof customer) => retryingCaller(p.cells[0], "ledger");
+  const reputationOf = (p: typeof customer) => retryingCaller(p.cells[0], "reputation");
 
   const now = Date.now() * 1000;
   await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester"], created_at: now });

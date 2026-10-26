@@ -4,7 +4,7 @@
 // its category's rate, and validation refuses any other tax or total; and
 // the receipt says what was charged. Forgeries are written raw (test-utils).
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { ST_PETE, actionHash, decodeEntry, retryUntil, retryUntilOk, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
 

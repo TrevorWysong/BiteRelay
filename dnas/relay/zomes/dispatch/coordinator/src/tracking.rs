@@ -19,6 +19,7 @@
 use crate::parties::resolve_order_and_bid;
 use crate::signals::RemoteSignal;
 use hdk::prelude::*;
+use relay_coordinator_support::guest;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendLocationUpdateInput {
@@ -35,9 +36,7 @@ pub fn send_location_update(input: SendLocationUpdateInput) -> ExternResult<()> 
         "live location sharing is only available once a driver has been assigned",
     )?;
     if me != bid.bidder {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "only this order's assigned driver can share a live location".into()
-        )));
+        return Err(guest("Only this order's driver can share a live location."));
     }
     send_remote_signal(
         RemoteSignal::LocationUpdate { order_hash: input.order_ref, lat: input.lat, lon: input.lon },

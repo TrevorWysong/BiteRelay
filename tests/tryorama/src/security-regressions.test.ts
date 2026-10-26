@@ -3,9 +3,9 @@
 // validation now refuses it. Writes a modified client could make are done
 // raw (test-utils).
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
+import { acceptOrder, actionHash, decodeEntry, retryUntilOk, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer, attacker, driver] = await scenario.addPlayersWithApps([

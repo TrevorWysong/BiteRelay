@@ -4,9 +4,9 @@
 // at all), a driver far away doesn't, and the customer's bid choice is the
 // one on-DHT commit that matters.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, decodeEntry, retryUntil, waitForSignal, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, bytesEqual, decodeEntry, retryUntil, waitForSignal, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [requester, providerA, providerB, providerC] = await scenario.addPlayersWithApps([
@@ -21,9 +21,9 @@ await runScenario(async (scenario) => {
   // lag behind. shareAllAgents() short-circuits peer discovery for the test.
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof requester) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof requester) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof requester) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof requester) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof requester) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof requester) => retryingCaller(p.cells[0], "dispatch");
 
   const now = Date.now() * 1000;
   await profilesOf(requester)("create_profile", { display_name: "Rita Requester", roles: ["Requester", "Merchant"], created_at: now });
@@ -66,7 +66,7 @@ await runScenario(async (scenario) => {
     assert.ok(isThisOrder(nearby), "a driver nearby finds the order by looking");
   }
   assert.ok(!isThisOrder(await feed(providerC, NYC_CELL)), "a driver far away doesn't see it");
-  await assert.rejects(getZomeCaller(providerA.cells[0], "geo_presence")("announce_online", { location: ST_PETE, capabilities: ["Food"] }), /doesn't exist|not exist|ZomeNotFound|zome/i, "there's no way for a driver to publish where they are");
+  await assert.rejects(retryingCaller(providerA.cells[0], "geo_presence")("announce_online", { location: ST_PETE, capabilities: ["Food"] }), /doesn't exist|not exist|ZomeNotFound|zome/i, "there's no way for a driver to publish where they are");
   console.log("[PASS] drivers nearby find a new order by looking; drivers far away don't; nobody publishes their location");
 
   // Layer 3: off-DHT bidding, then the one on-DHT commit that matters.

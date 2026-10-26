@@ -7,7 +7,7 @@
 // same account carries on: its store, the order it had in hand, calls from
 // others, and one unbroken chain everyone agrees on.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { CallableCell } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { ST_PETE, actionHash, retryUntil, retryUntilOk, restoreInPlace, retryingCaller, setupPlayersWithProperties } from "./helpers.js";
@@ -55,12 +55,12 @@ await runScenario(async (scenario) => {
   assert.deepEqual(await grantTags(), ["codes", "recv_remote_signal", "recv_remote_signal"], "a device set up at init holds its grants");
 
   // ===== The old phone: ready only once the network holds all it wrote =====
-  const before = await getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
+  const before = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   await sync();
-  const ready = await retryUntil(() => getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null), (r) => r.ready, 60, 1000);
+  const ready = await retryUntil(() => retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null), (r) => r.ready, 60, 1000);
   assert.ok(ready.seq >= before.seq && ready.seen === ready.seq, "the network's authorities hold this device's latest action");
-  for (const zome of ["dispatch", "catalog", "attestation"]) await getZomeCaller(merchant.cells[0], zome)("prepare_device", null);
-  const after = await getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
+  for (const zome of ["dispatch", "catalog", "attestation"]) await retryingCaller(merchant.cells[0], zome)("prepare_device", null);
+  const after = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   assert.ok(same(after.head, ready.head), "a device that's set up writes nothing to set up again");
   console.log("[PASS] the old phone sends its key only once the network holds everything it wrote");
 
@@ -69,22 +69,22 @@ await runScenario(async (scenario) => {
   // background work may have written once more since the check.
   await merchant.conductor.adminWs().disableApp({ installed_app_id: merchant.appId });
   merchant = await restoreInPlace(merchant);
-  const restored = await getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
+  const restored = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   assert.ok(restored.seq >= ready.seq, "the whole chain comes back");
   assert.deepEqual(await grantTags(), [], "but not the grants: they were private to the old device");
   await assert.rejects(checkIn(), /isn't reachable/, "so nobody else can reach it yet");
   const prepare = async () => {
-    for (const zome of ["dispatch", "catalog", "attestation"]) await getZomeCaller(merchant.cells[0], zome)("prepare_device", null);
+    for (const zome of ["dispatch", "catalog", "attestation"]) await retryingCaller(merchant.cells[0], zome)("prepare_device", null);
   };
   await prepare();
   // Written again, each grant is the same entry as the old one, so the old
   // grant's action counts again too.
   assert.deepEqual([...new Set(await grantTags())], ["codes", "recv_remote_signal"], "the new device writes its own");
-  const prepared = await getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
+  const prepared = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   await prepare();
-  const again = await getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
+  const again = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   assert.ok(same(again.head, prepared.head), "once");
-  const stores = await getZomeCaller(merchant.cells[0], "catalog")<unknown[]>("list_my_catalogs", null);
+  const stores = await retryingCaller(merchant.cells[0], "catalog")<unknown[]>("list_my_catalogs", null);
   assert.equal(stores.length, 1, "the store is still this account's: nothing to move or relist");
   console.log("[PASS] the new phone restores the account and sets itself up");
 
@@ -99,7 +99,7 @@ await runScenario(async (scenario) => {
   await retryUntilOk(() => call(merchant.cells[0], "dispatch")("mark_ready_for_pickup", first), 60, 1000);
   await retryUntilOk(() => call(customer.cells[0], "dispatch")("complete_pickup", first), 120, 1000);
   console.log("[PASS] the order the old phone had in hand finishes on the new one");
-  const carriedOn = await retryUntil(() => getZomeCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null), (r) => r.ready, 120, 1000);
+  const carriedOn = await retryUntil(() => retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null), (r) => r.ready, 120, 1000);
   // `ready` is the network's authorities -- what everyone else reads --
   // reporting one valid chain, unwarranted, ending where this device's does.
   assert.ok(carriedOn.seq > restored.seq, "its chain carries on from where the old phone left it, one chain the network agrees on: no fork");

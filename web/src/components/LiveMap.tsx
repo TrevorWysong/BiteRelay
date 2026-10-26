@@ -71,9 +71,9 @@ export function LiveMap({ pickup, dropoff, driver, className }: Props) {
       driverMarkerRef.current = null;
     };
     // Pickup/dropoff are fixed for a given order -- the map is created
-    // once, not torn down and rebuilt as the driver's position streams in.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // once for them, not torn down and rebuilt as the driver's position
+    // streams in.
+  }, [pickup.lat, pickup.lon, dropoff.lat, dropoff.lon]);
 
   useEffect(() => {
     const map = mapRef.current;

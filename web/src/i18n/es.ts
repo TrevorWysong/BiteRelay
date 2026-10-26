@@ -1,5 +1,6 @@
 // Spanish.
 import type { Catalog } from "./en";
+import { refusalsEs } from "./refusals.es";
 
 export const es: Catalog = {
   "mode.customer": "Pedir",
@@ -589,6 +590,7 @@ export const es: Catalog = {
   "onboarding.what": "¿Qué quieres hacer?",
   "onboarding.pick": "Elige una o varias. Puedes cambiar cuando quieras.",
   "common.continue": "Continuar",
+  "error.unexpected": "Algo salió mal ({detail}). Inténtalo de nuevo.",
   "onboarding.haveAccount": "Ya tengo una cuenta",
   "onboarding.create": "Crea tu identidad",
   "onboarding.createDetail": "Esto crea tu propia identidad privada, protegida por una clave criptográfica que solo tú tienes. No es una cuenta en un servidor compartido.",
@@ -763,6 +765,8 @@ export const es: Catalog = {
   "drive.eta": "Llegada (min)",
   "drive.yourFee": "Tu tarifa",
   "drive.bid": "Pujar",
+  "drive.offerSent": "Tu oferta: {fee}, {eta}",
+  "drive.withdraw": "Retirar",
   "scan.notRelay": "Eso no es un código de Relay.",
   "scan.otherOrder": "Ese código es de otro pedido.",
   "store.checkIn.scan": "¿En la tienda? Escanea su código para hacer el check-in",
@@ -841,6 +845,7 @@ export const es: Catalog = {
   "earnings.csv": "Descargar CSV",
   "earnings.note": "Tus tarifas y propinas llegan a tu saldo a medida que se liquida cada entrega. Retira a través del emisor de la red cuando quieras; te paga fuera de la red, y cada céntimo está en tu propio registro.",
   "earnings.reputation": "Reputación",
+  "reputation.window": { one: "En el último día", other: "En los últimos {count} días" },
   "earnings.completed": "Completadas",
   "earnings.cancelled": "Canceladas por ellos",
   "earnings.disputes": "Disputas abiertas",
@@ -1282,4 +1287,5 @@ export const es: Catalog = {
   "merchantNav.review": "Revisar",
 
   "photo.change": "Cambiar",
+  ...refusalsEs,
 };

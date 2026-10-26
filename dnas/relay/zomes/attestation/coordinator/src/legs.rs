@@ -20,7 +20,7 @@
 use attestation_integrity::*;
 use dispatch_types::DeliveryOrder;
 use hdk::prelude::*;
-use relay_coordinator_support::{open, open_chunked, original_action_of, resolve_latest, resolve_latest_decoded, seal_chunked};
+use relay_coordinator_support::{guest, open, open_chunked, original_action_of, resolve_latest, resolve_latest_decoded, seal_chunked};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -98,7 +98,7 @@ pub fn acknowledge_leg(leg_action: ActionHash) -> ExternResult<Record> {
     let leg_record = resolve_latest(leg_action.clone())?;
     let leg: Leg = leg_record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
     if leg.to != me {
-        return Err(guest("only the other party to a handoff can confirm it"));
+        return Err(guest("Only the other party to a handoff can confirm it."));
     }
     if let Some(existing) = my_receipt_for(&leg_action)? {
         return Ok(existing);
@@ -133,7 +133,7 @@ fn dispatch<O: serde::de::DeserializeOwned + std::fmt::Debug>(function: &str, in
     match call(CallTargetCell::Local, "dispatch", function.into(), None, input)? {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
         ZomeCallResponse::NetworkError(message) => Err(guest(&message)),
-        other => Err(guest(&format!("{other:?}"))),
+        other => Err(guest(format!("{other:?}"))),
     }
 }
 
@@ -168,7 +168,7 @@ pub fn check_in_at_store(input: CheckInInput) -> ExternResult<()> {
             _ => Ok(()),
         },
         CodeCheck::Wrong { tries_left: 1 } => Err(guest("That code isn't right. One try left.")),
-        CodeCheck::Wrong { tries_left } => Err(guest(&format!("That code isn't right. {tries_left} tries left."))),
+        CodeCheck::Wrong { tries_left } => Err(guest(format!("That code isn't right. {tries_left} tries left."))),
         CodeCheck::Locked => Err(guest("Too many wrong codes. Ask the store to hand the order over by scanning your code.")),
         CodeCheck::Refused(reason) => Err(guest(&reason)),
     }
@@ -198,8 +198,8 @@ pub fn confirm_check_in(input: CheckInInput) -> ExternResult<CodeCheck> {
     if wrong >= max_attempts {
         return Ok(CodeCheck::Locked);
     }
-    let sealed = current.sealed_pickup_code.ok_or(guest("this order has no check-in code yet"))?;
-    let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("couldn't open your code"))?;
+    let sealed = current.sealed_pickup_code.ok_or(guest("This order has no check-in code yet."))?;
+    let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("Couldn't open your code on this device."))?;
     if input.code.trim() != secret.pin {
         create_entry(&EntryTypes::CodeAttempt(CodeAttempt { order }))?;
         let tries_left = max_attempts - wrong - 1;
@@ -244,7 +244,7 @@ pub enum CodeCheck {
 pub fn handoff_by_code(input: HandoffCodeInput) -> ExternResult<ActionHash> {
     let leg: Leg = resolve_latest(input.leg.clone())?.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
     if leg.from != agent_info()?.agent_initial_pubkey {
-        return Err(guest("only the driver who made a handoff proves it"));
+        return Err(guest("Only the driver who made a handoff can prove it."));
     }
     if leg.kind == LegKind::MerchantHandoff {
         return Err(guest("The store hands the order over by scanning your code, or confirming in its app."));
@@ -256,7 +256,7 @@ pub fn handoff_by_code(input: HandoffCodeInput) -> ExternResult<ActionHash> {
     match check {
         CodeCheck::Confirmed(receipt) => Ok(receipt),
         CodeCheck::Wrong { tries_left: 1 } => Err(guest("That code isn't right. One try left.")),
-        CodeCheck::Wrong { tries_left } => Err(guest(&format!("That code isn't right. {tries_left} tries left."))),
+        CodeCheck::Wrong { tries_left } => Err(guest(format!("That code isn't right. {tries_left} tries left."))),
         CodeCheck::Locked => Err(guest("Too many wrong codes. Scan their code, or ask them to confirm in their app.")),
         CodeCheck::Refused(reason) => Err(guest(&reason)),
     }
@@ -273,10 +273,10 @@ pub fn confirm_by_code(input: HandoffCodeInput) -> ExternResult<CodeCheck> {
     let me = agent_info()?.agent_initial_pubkey;
     let leg: Leg = resolve_latest(input.leg.clone())?.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a handoff"))?;
     if leg.to != me {
-        return Err(guest("that handoff isn't to you"));
+        return Err(guest("That handoff isn't to you."));
     }
     if call_info()?.provenance != leg.from {
-        return Err(guest("only the driver making a handoff can check its code"));
+        return Err(guest("Only the driver making a handoff can check its code."));
     }
     let order = original_action_of(leg.order_ref.clone())?;
     // A handful of tries can't find six digits; a million could.
@@ -289,10 +289,10 @@ pub fn confirm_by_code(input: HandoffCodeInput) -> ExternResult<CodeCheck> {
     // At the store, the code checks a driver in (`confirm_check_in`); it
     // never proves a pickup.
     if leg.kind == LegKind::MerchantHandoff {
-        return Err(guest("a pickup is confirmed by the store, not a code"));
+        return Err(guest("A pickup is confirmed by the store, not with a code."));
     }
     let sealed = current.sealed_pin;
-    let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("couldn't open your code"))?;
+    let secret: PinSecret = open(&me, &sealed)?.ok_or(guest("Couldn't open your code on this device."))?;
     if input.code.trim() != secret.pin {
         create_entry(&EntryTypes::CodeAttempt(CodeAttempt { order }))?;
         let tries_left = max_attempts - wrong - 1;
@@ -418,6 +418,3 @@ pub fn delivery_proof_for_order(order_ref: ActionHash) -> ExternResult<Option<Ac
     handoff_proof(order_ref, LegKind::CustomerHandoff)
 }
 
-fn guest(message: &str) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}

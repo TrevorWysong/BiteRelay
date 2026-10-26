@@ -4,7 +4,7 @@
 
 use hdk::prelude::*;
 use profiles_integrity::*;
-use relay_coordinator_support::{open, resolve_latest, resolve_links_to_records_with_original, seal};
+use relay_coordinator_support::{guest, open, resolve_latest, resolve_links_to_records_with_original, seal};
 
 /// A profile as the person's own client sends it: the phone in the clear,
 /// sealed before it's stored (`Profile::sealed_phone`).
@@ -51,7 +51,7 @@ pub fn create_profile(input: ProfileInput) -> ExternResult<Record> {
     let agent = agent_info()?.agent_initial_pubkey;
     create_link(agent, action_hash.clone(), LinkTypes::AgentToProfile, ())?;
     let record = get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back created profile".into())))?;
+        .ok_or(guest("could not read back created profile"))?;
     Ok(record)
 }
 
@@ -67,7 +67,7 @@ pub fn get_profile_for_agent(agent: AgentPubKey) -> ExternResult<Option<Record>>
     let action_hash = link
         .target
         .into_action_hash()
-        .ok_or(wasm_error!(WasmErrorInner::Guest("malformed profile link target".into())))?;
+        .ok_or(guest("malformed profile link target"))?;
     resolve_latest(action_hash).map(Some)
 }
 
@@ -76,7 +76,7 @@ pub fn update_profile(input: UpdateProfileInput) -> ExternResult<Record> {
     let current = resolve_latest(input.original_action)?;
     let updated_hash = update_entry(current.action_address().clone(), &EntryTypes::Profile(input.updated_profile.into_profile()?))?;
     let record = get(updated_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated profile".into())))?;
+        .ok_or(guest("could not read back updated profile"))?;
     Ok(record)
 }
 
@@ -116,7 +116,7 @@ pub fn register_provider_credential(credential: ProviderCredential) -> ExternRes
     let action_hash = create_entry(&EntryTypes::ProviderCredential(credential))?;
     create_link(profile_action, action_hash.clone(), LinkTypes::ProfileToProviderCredential, ())?;
     let record = get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back provider credential".into())))?;
+        .ok_or(guest("could not read back provider credential"))?;
     Ok(record)
 }
 
@@ -140,7 +140,7 @@ pub fn get_provider_credential_for_profile(profile_action: ActionHash) -> Extern
     let action_hash = link
         .target
         .into_action_hash()
-        .ok_or(wasm_error!(WasmErrorInner::Guest("malformed provider credential link target".into())))?;
+        .ok_or(guest("malformed provider credential link target"))?;
     get(action_hash, GetOptions::default())
 }
 
@@ -194,7 +194,7 @@ pub fn list_favorites(_: ()) -> ExternResult<Vec<ActionHash>> {
 /// (the content is sealed by the time it gets there).
 fn sealed_address(details: &AddressDetails) -> ExternResult<SavedAddress> {
     if details.label.trim().is_empty() {
-        return Err(wasm_error!(WasmErrorInner::Guest("a saved address needs a label (e.g. \"Home\")".into())));
+        return Err(guest("Give the address a name, like “Home”."));
     }
     let me = agent_info()?.agent_initial_pubkey;
     Ok(SavedAddress { sealed: seal(&me, details)?, created_at: sys_time()? })
@@ -206,7 +206,7 @@ pub fn save_address(address: AddressDetails) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::SavedAddress(sealed_address(&address)?))?;
     create_link(me, action_hash.clone(), LinkTypes::OwnerToSavedAddress, ())?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back saved address".into())))
+        .ok_or(guest("could not read back saved address"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -220,7 +220,7 @@ pub fn update_saved_address(input: UpdateSavedAddressInput) -> ExternResult<Reco
     let record = resolve_latest(input.original_action)?;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::SavedAddress(sealed_address(&input.address)?))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated saved address".into())))
+        .ok_or(guest("could not read back updated saved address"))
 }
 
 /// Finds and deletes the specific link for this `original_action` among

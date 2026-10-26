@@ -24,6 +24,10 @@ export interface Recovery {
   amount: number | null;
 }
 
+/// Unused nonces one agent may hold at once: an app asks for one just
+/// before it signs, so more than a few is never needed.
+const MAX_NONCES_PER_AGENT = 5;
+
 export class Store {
   private db: DatabaseSync;
 
@@ -141,8 +145,14 @@ export class Store {
     this.db.prepare("DELETE FROM deferred_cash_outs WHERE redemption = ?").run(redemption);
   }
 
-  issueNonce(nonce: string, agent: string): void {
-    this.db.prepare("INSERT INTO link_nonces (nonce, agent, issued_at) VALUES (?, ?, ?)").run(nonce, agent, Date.now());
+  /// Records a nonce issued to `agent`, good for `maxAgeMs`. Expired ones go
+  /// as new ones come, and an agent holds a few unused at most -- so asking
+  /// over and over never grows the table.
+  issueNonce(nonce: string, agent: string, maxAgeMs: number): void {
+    const now = Date.now();
+    this.db.prepare("DELETE FROM link_nonces WHERE issued_at < ?").run(now - maxAgeMs);
+    this.db.prepare("DELETE FROM link_nonces WHERE agent = ? AND nonce NOT IN (SELECT nonce FROM link_nonces WHERE agent = ? ORDER BY issued_at DESC, rowid DESC LIMIT ?)").run(agent, agent, MAX_NONCES_PER_AGENT - 1);
+    this.db.prepare("INSERT INTO link_nonces (nonce, agent, issued_at) VALUES (?, ?, ?)").run(nonce, agent, now);
   }
 
   /// Takes a nonce issued to `agent` within `maxAgeMs` -- once.

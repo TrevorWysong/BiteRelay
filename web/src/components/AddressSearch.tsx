@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { MapPin, Search } from "lucide-react";
 import clsx from "clsx";
 import { Input, Spinner } from "./ui";
@@ -6,6 +6,7 @@ import { searchAddress, reverseGeocode } from "../lib/geocoding";
 import type { GeoPoint } from "../holochain/types";
 import type { AddressComponents, GeocodeResult } from "../lib/geocoding";
 import { useT } from "../i18n";
+import { useResource } from "../lib/useResource";
 
 const DEBOUNCE_MS = 500;
 
@@ -61,7 +62,9 @@ export function AddressSearch({
   const t = useT();
   const label = labelProp ?? t("store.deliveryLocation");
   const placeholder = placeholderProp ?? t("address.search");
-  const [query, setQuery] = useState(initialQuery ?? "");
+  /// What the person typed (or picked), once they have: until then the box
+  /// shows `initialQuery`, or the address looked up for `value`.
+  const [typed, setTyped] = useState<string | null>(initialQuery || null);
   const [results, setResults] = useState<GeocodeResult[]>([]);
   const [open, setOpen] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -75,33 +78,21 @@ export function AddressSearch({
   const [confirmed, setConfirmed] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resolvedForRef = useRef<string | null>(null);
 
   // If we already have coordinates (editing an existing address) but no
-  // label yet, look one up once so the field doesn't just show blank next
-  // to a real location. Skipped for a component-scoped box
-  // (`displayAfterSelect="street"`): `value` there is just whatever
-  // GeoPoint the caller had lying around (often the whole storefront's own
-  // immutable pickup point), not something this particular box
-  // represents, so reverse-geocoding it into a full address label would
-  // show the wrong thing before anyone's even touched the box.
-  useEffect(() => {
-    if (displayAfterSelect !== "label") return;
-    const key = `${value.lat},${value.lon}`;
-    if (query || resolvedForRef.current === key) return;
-    resolvedForRef.current = key;
-    const controller = new AbortController();
-    reverseGeocode(value, controller.signal)
-      .then((result) => {
-        if (result) setQuery(result.label);
-      })
-      .catch(() => {});
-    return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // label yet, look one up so the field doesn't just show blank next to a
+  // real location -- until the person types. Skipped for a
+  // component-scoped box (`displayAfterSelect="street"`): `value` there is
+  // just whatever GeoPoint the caller had lying around (often the whole
+  // storefront's own immutable pickup point), not something this
+  // particular box represents, so reverse-geocoding it into a full address
+  // label would show the wrong thing before anyone's even touched the box.
+  const lookUp = displayAfterSelect === "label" && !initialQuery && typed === null;
+  const { data: lookedUp } = useResource(lookUp ? `reverse:${value.lat},${value.lon}` : null, () => reverseGeocode(value));
+  const query = typed ?? lookedUp?.label ?? "";
 
   function handleInput(text: string) {
-    setQuery(text);
+    setTyped(text);
     setConfirmed(false);
     setSearchError(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -130,7 +121,7 @@ export function AddressSearch({
   function selectResult(result: GeocodeResult) {
     onChange(result.point);
     onSelectComponents?.(result.components);
-    setQuery(displayAfterSelect === "street" ? result.components.street || result.label : result.label);
+    setTyped(displayAfterSelect === "street" ? result.components.street || result.label : result.label);
     setConfirmed(true);
     setOpen(false);
     setResults([]);

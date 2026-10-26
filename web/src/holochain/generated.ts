@@ -72,6 +72,17 @@ export interface AppealView {
 }
 
 /**
+ * One newest-first page of appeals, open ones first within it.
+ */
+export interface AppealsPage {
+  appeals: AppealView[];
+  /**
+   * Where the next page starts, if there's one.
+   */
+  next_before: Timestamp | null;
+}
+
+/**
  * The author arriving on this network from its previous version, as the
  * account `previous_account` there -- whose `Migration` (`migration`, on
  * that network) names the author. This network's validation can't read
@@ -1776,6 +1787,10 @@ export interface NetworkTerms {
    * check-in reports count.
    */
   min_reporter_stores: number;
+  /**
+   * How far back ratings and records reach, in days.
+   */
+  reputation_window_days: number;
   /**
    * What a minute of a driver's arrival time counts for when matching.
    */

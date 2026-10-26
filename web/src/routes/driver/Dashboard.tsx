@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOpenOrdersNear, submitBid, getMyActiveDeliveries, getOrderPrivateDetails, dropOrder, commitToOrder, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, withdrawBid, getMyActiveDeliveries, getOrderPrivateDetails, dropOrder, commitToOrder, sendLocationUpdate } from "../../holochain/zomes/dispatch";
 import { Sheet } from "../../components/Sheet";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
@@ -21,7 +21,7 @@ import { formatCents, formatDistance, formatEta, formatClockTime, toMinorUnits, 
 import { useT, type MessageKey } from "../../i18n";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import { useResource } from "../../lib/useResource";
+import { useLocalSignal, useResource } from "../../lib/useResource";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import type { Bid, DeliveryOrder, DeliveryStatus, DropoffDetails, GeoPoint, MerchantCatalog } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/poll";
@@ -34,6 +34,7 @@ import { useDriverSettings } from "../../store/roleSettings";
 import { DriverSettingsCard } from "./DriverSettingsCard";
 import { VerificationCard } from "./VerificationCard";
 import { useTerms } from "../../store/network";
+import { useSentBids, type SentBid } from "../../store/sentBids";
 
 const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], MessageKey> = {
   LeaveAtDoor: "cart.drop.leaveAtDoor",
@@ -103,6 +104,10 @@ export function DriverDashboard() {
   const me = useSession((s) => s.agentPubKey);
   const driverKey = myAgentPubKey();
   const driverHex = bytesToHex(driverKey);
+  const sentBids = useSentBids((s) => s.sent);
+  useLocalSignal((signal) => {
+    if ("BidReleased" in signal) useSentBids.getState().forgetBid(bytesToHex(signal.BidReleased));
+  });
   const [online, setOnline] = useState(false);
   const [bidding, setBidding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -149,7 +154,7 @@ export function DriverDashboard() {
         const price = autoBidPrice(distanceKm(location, storeAt) + distanceKm(storeAt, dropoffAt), order.max_delivery_fee, { rule: autoBid, minFeeCents: limits.minFeeCents });
         if (price === null) continue;
         const trip = estimateTrip({ from: location, store: storeAt, dropoff: dropoffAt, speedKmh: travelSpeedKmh, readyBy: order.ready_by, prepMinutes: order.prep_minutes, nowMs: Date.now() });
-        await submitBid({ order_ref: orderRef, eta_seconds: trip.etaMinutes * 60, to_store_seconds: trip.toStoreMinutes * 60, price_offer: price });
+        await sendBid(driverHex, orderRef, trip, price);
       } catch {
         // Already bid, or the order moved on: nothing to do.
       }
@@ -182,12 +187,24 @@ export function DriverDashboard() {
     setBidding(bytesToHex(orderRef));
     setError(null);
     try {
-      await submitBid({
-        order_ref: orderRef,
-        eta_seconds: trip.etaMinutes * 60,
-        to_store_seconds: Math.min(trip.toStoreMinutes, trip.etaMinutes) * 60,
-        price_offer: feeCents,
-      });
+      await sendBid(driverHex, orderRef, trip, feeCents);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBidding(null);
+    }
+  }
+
+  /// Takes back the offer this device sent on an order.
+  async function withdraw(orderRef: Uint8Array) {
+    const orderHex = bytesToHex(orderRef);
+    const offer = sentBids[`${driverHex}:${orderHex}`];
+    if (!offer) return;
+    setBidding(orderHex);
+    setError(null);
+    try {
+      await withdrawBid(hexToBytes(offer.bid));
+      useSentBids.getState().forget(driverHex, orderHex);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -302,7 +319,9 @@ export function DriverDashboard() {
                 <BidCard
                   order={order}
                   loading={bidding === bytesToHex(hash)}
+                  sent={sentBids[`${driverHex}:${bytesToHex(hash)}`]}
                   onBid={(trip, fee) => placeBid(hash, trip, fee)}
+                  onWithdraw={() => withdraw(hash)}
                   sameMerchant={sameMerchantHexes.has(bytesToHex(order.catalog_ref))}
                   nearbyDropoffKm={nearestActiveDropoffKm(order)}
                   detourKm={rules.detourKm}
@@ -476,10 +495,23 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   );
 }
 
+/// Sends an offer on an order, and remembers it on this device.
+async function sendBid(driverHex: string, orderRef: Uint8Array, trip: { etaMinutes: number; toStoreMinutes: number }, feeCents: number) {
+  const record = await submitBid({
+    order_ref: orderRef,
+    eta_seconds: trip.etaMinutes * 60,
+    to_store_seconds: Math.min(trip.toStoreMinutes, trip.etaMinutes) * 60,
+    price_offer: feeCents,
+  });
+  useSentBids.getState().record(driverHex, bytesToHex(orderRef), { bid: bytesToHex(actionHash(record)), feeCents, etaMinutes: trip.etaMinutes, sentAt: Date.now() });
+}
+
 function BidCard({
   order,
   loading,
+  sent,
   onBid,
+  onWithdraw,
   sameMerchant,
   nearbyDropoffKm,
   detourKm,
@@ -487,7 +519,10 @@ function BidCard({
 }: {
   order: DeliveryOrder;
   loading: boolean;
+  /// The offer this device already sent on it, if any.
+  sent?: SentBid;
   onBid: (trip: { etaMinutes: number; toStoreMinutes: number }, feeCents: number) => void;
+  onWithdraw: () => void;
   sameMerchant?: boolean;
   nearbyDropoffKm?: number | null;
   /// How near another drop-off counts as on the way (the network's add-on detour).
@@ -552,6 +587,14 @@ function BidCard({
       <p className="mt-1 flex items-center gap-1 text-xs text-ink-400">
         <ShieldCheck size={12} /> {t("drive.collateral", { amount: formatCents(order.order_total) })}
       </p>
+      {sent ? (
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl bg-relay-50 px-3 py-2 dark:bg-relay-900/30">
+          <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">{t("drive.offerSent", { fee: formatCents(sent.feeCents), eta: formatEta(sent.etaMinutes * 60) })}</p>
+          <Button variant="ghost" className="px-3 py-1.5 text-xs" loading={loading} onClick={onWithdraw}>
+            {t("drive.withdraw")}
+          </Button>
+        </div>
+      ) : (
       <div className="mt-3 flex items-center gap-2">
         <label className="flex-1 text-xs text-ink-400">
           {t("drive.eta")}
@@ -573,6 +616,7 @@ function BidCard({
           {t("drive.bid")}
         </Button>
       </div>
+      )}
     </Card>
   );
 }

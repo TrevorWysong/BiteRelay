@@ -8,9 +8,9 @@
 // merchant rating their own store -- each enforced by validate() itself
 // except the one-per-order rule (coordinator-level, see `submit_review`).
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([
@@ -22,11 +22,10 @@ await runScenario(async (scenario) => {
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
-  const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
-  const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
+  const reputationOf = (p: typeof customer) => retryingCaller(p.cells[0], "reputation");
   type Summary = { count: number; rating_sum: number };
   type Page = { reviews: HcRecord[]; next_before: number | null };
 

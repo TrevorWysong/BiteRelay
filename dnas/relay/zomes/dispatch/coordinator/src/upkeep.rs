@@ -25,6 +25,11 @@
 //! the store's `OrderPlaced` signal), and from a once-a-minute sweep
 //! scheduled at `init`, which catches whatever a missed signal or a
 //! restart left.
+//!
+//! A sweep only decides; each order's write happens in a call of its own
+//! (`relay_coordinator_support::isolated`). A zome call commits all its
+//! writes or none, so otherwise one order whose write doesn't validate yet
+//! would undo every other order's, every minute, until it resolved.
 
 use crate::order_queues::{get_active_orders_for_store, get_my_active_orders, OrderEntry, OrderKind};
 use crate::orders::{accept_delivery_order, cancel_delivery, open_scheduled_order, AcceptOrderInput};
@@ -33,7 +38,7 @@ use crate::pricing::outdated_item;
 use crate::stores::{closed_reason, current_catalog, my_stores};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::decode_or;
+use relay_coordinator_support::{decode_or, guest, isolated};
 use relay_governance::store_response_window;
 use std::time::Duration;
 
@@ -144,12 +149,11 @@ type DueAt = i64;
 /// long until the next one needs tending, if any does.
 fn tend_customer_orders() -> ExternResult<Option<Duration>> {
     let now = sys_time()?.as_micros();
-    let window = store_response_window().as_micros() as i64;
     let mut next: Option<DueAt> = None;
     for entry in get_my_active_orders(())? {
         // One order failing (still gossiping, say) mustn't hold up the rest;
         // the next run tries it again.
-        if let Ok(Some(due)) = tend_order(&entry, now, window) {
+        if let Some(Some(due)) = isolated::<_, Option<DueAt>>("tend_one_order", SeenOrder::of(&entry)) {
             next = Some(next.map_or(due, |earliest| earliest.min(due)));
         }
     }
@@ -160,6 +164,41 @@ fn tend_customer_orders() -> ExternResult<Option<Duration>> {
         next = Some(next.map_or(due, |earliest| earliest.min(due)));
     }
     Ok(next.map(|due| Duration::from_micros(due.saturating_sub(now).max(0) as u64)))
+}
+
+/// One version of an order, as a sweep read it: what a call of its own
+/// acts on -- that version, not whatever copy it might find.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SeenOrder {
+    pub order: ActionHash,
+    pub version: ActionHash,
+}
+
+impl SeenOrder {
+    fn of(entry: &OrderEntry) -> Self {
+        Self { order: entry.original_action.clone(), version: entry.record.action_address().clone() }
+    }
+
+    /// The queue entry it names, if that version can be read.
+    fn entry(self) -> ExternResult<Option<OrderEntry>> {
+        let Some(record) = get(self.version, GetOptions::default())? else { return Ok(None) };
+        let kind = if decode_or::<DeliveryOrder>(&record).is_some() {
+            OrderKind::Delivery
+        } else if decode_or::<PickupOrder>(&record).is_some() {
+            OrderKind::Pickup
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(OrderEntry { kind, original_action: self.order, record }))
+    }
+}
+
+/// Tends one of the caller's orders, in a call of its own (see the module
+/// doc); returns when it next needs tending, if it will.
+#[hdk_extern]
+pub fn tend_one_order(seen: SeenOrder) -> ExternResult<Option<DueAt>> {
+    let Some(entry) = seen.entry()? else { return Ok(None) };
+    tend_order(&entry, sys_time()?.as_micros(), store_response_window().as_micros() as i64)
 }
 
 /// Tends one order; returns when it next needs tending, if it will.
@@ -261,12 +300,28 @@ fn answer_store_orders() -> ExternResult<Answers> {
             if expired || !(catalog.auto_accept_orders || waiting.bag_order) {
                 continue;
             }
-            if waiting.answer(&entry.original_action, open_now).is_err() {
+            if isolated::<_, ()>("answer_one_order", AnswerInput { seen: SeenOrder::of(&entry), open_now }).is_none() {
                 answers.failed += 1;
             }
         }
     }
     Ok(answers)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AnswerInput {
+    pub seen: SeenOrder,
+    /// Whether its store is taking orders right now.
+    pub open_now: bool,
+}
+
+/// Answers one order waiting on one of the caller's stores, in a call of
+/// its own (see the module doc).
+#[hdk_extern]
+pub fn answer_one_order(input: AnswerInput) -> ExternResult<()> {
+    let order = input.seen.order.clone();
+    let waiting = input.seen.entry()?.as_ref().and_then(WaitingOrder::from_entry).ok_or(guest("that order isn't waiting on its store"))?;
+    waiting.answer(&order, input.open_now)
 }
 
 /// An order waiting on its store to accept it.

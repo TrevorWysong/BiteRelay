@@ -5,9 +5,9 @@
 // UI); and completion reputation lands on the store the order came from,
 // never the owner's other stores.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, bytesEqual, decodeEntry, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant] = await scenario.addPlayersWithApps([testApp, testApp]);
@@ -15,10 +15,10 @@ await runScenario(async (scenario) => {
   await scenario.shareAllAgents();
   const sync = () => dhtSync(all, customer.cells[0].cell_id[0]);
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
-  const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
+  const reputationOf = (p: typeof customer) => retryingCaller(p.cells[0], "reputation");
   type CatalogView = { original_action: Uint8Array; record: HcRecord };
 
   const now = Date.now() * 1000;

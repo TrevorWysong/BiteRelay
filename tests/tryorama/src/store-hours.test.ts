@@ -4,9 +4,9 @@
 // when it'll be ready -- the store's usual prep time or the one it picks,
 // which validation requires and bounds.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, retryUntil, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, decodeEntry, retryUntil, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
 
 const MINUTE = 60 * 1_000_000;
 

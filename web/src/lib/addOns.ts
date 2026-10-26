@@ -21,7 +21,7 @@ export interface Commitment {
 const NOT_YET_COLLECTED: DeliveryOrder["status"][] = ["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"];
 
 /// What a driver has taken on.
-export function loadOf(commitments: Commitment[]): InHand {
+function loadOf(commitments: Commitment[]): InHand {
   return { orders: commitments.length, priority: commitments.some((c) => c.order.priority) };
 }
 

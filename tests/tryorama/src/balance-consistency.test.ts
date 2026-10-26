@@ -4,9 +4,9 @@
 // amount imply, and `get_balance` -- for the agent themselves and for
 // anyone else reading it -- is the last of them.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, decodeEntry, retryUntil, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, decodeEntry, retryUntil, retryUntilOk, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 // The most a customer may place within one store response window
 // (`max_pending_orders`).

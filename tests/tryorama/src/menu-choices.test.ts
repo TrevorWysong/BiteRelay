@@ -13,7 +13,7 @@
 // Orders written raw (create_raw_pickup_order_for_testing) are what a
 // modified client could do: every refusal of one comes from validation.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, retryUntil, retryUntilOk, ST_PETE, useTestCoordinators, testApp, retryingCaller } from "./helpers.js";
 

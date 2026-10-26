@@ -38,7 +38,7 @@ await ledger.setProfile(profile);
 log(`published ${config.profile.name}'s terms; service at ${config.publicUrl}`);
 
 serve(
-  { store, ledger, rail, appOrigins: config.appOrigins, publishableKey: config.stripePublishableKey, policy: config.risk, topUpsPerIpPerHour: config.topUpsPerIpPerHour, trustProxy: config.trustProxy, format, log },
+  { store, ledger, rail, appOrigins: config.appOrigins, publishableKey: config.stripePublishableKey, policy: config.risk, topUpsPerIpPerHour: config.topUpsPerIpPerHour, noncesPerIpPerHour: config.noncesPerIpPerHour, trustProxy: config.trustProxy, format, log },
   config.port,
 );
 log(`listening on :${config.port}`);

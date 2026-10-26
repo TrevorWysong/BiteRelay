@@ -9,7 +9,7 @@
 // - a goodie bag that's been ordered stays sold -- and one held but never
 //   ordered goes back on sale (its hold lapses).
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { acceptOrder, actionHash, decodeEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 

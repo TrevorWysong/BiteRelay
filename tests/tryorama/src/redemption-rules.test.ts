@@ -4,9 +4,9 @@
 // be claimed once its window has closed, and a listed bag's terms can't be
 // changed out from under the people claiming it.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp, decodeEntry, retryingCaller } from "./helpers.js";
+import { actionHash, retryUntil, ST_PETE, useTestCoordinators, testApp, decodeEntry, retryingCaller } from "./helpers.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

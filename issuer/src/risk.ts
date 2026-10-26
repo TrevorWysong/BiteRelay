@@ -16,6 +16,7 @@
 //     money can't be turned into a bank transfer; and a young account's
 //     first bank payouts wait until it's `payoutHoldMs` old.
 import type { Store } from "./store.ts";
+import { refusal } from "./refusal.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,14 +59,17 @@ export function tierFor(standing: AccountStanding, tiers: Tier[], now = Date.now
 
 /// Why `agent` can't add `amount` now -- or `null` if they can.
 export function topUpRefusal(store: Store, agent: string, amount: number, standing: AccountStanding, policy: RiskPolicy, format: (cents: number) => string, now = Date.now()): string | null {
-  if (store.frozen(agent)) return "A card payment on this account is disputed, so it can't add funds until that's settled.";
+  if (store.frozen(agent)) return refusal("A card payment on this account is disputed, so it can't add funds until that's settled.");
   const tier = tierFor(standing, policy.tiers, now);
   const today = store.topUpsSince(agent, now - DAY_MS);
   const week = store.topUpsSince(agent, now - 7 * DAY_MS);
   const room = Math.min(tier.dailyCents - today, tier.weeklyCents - week);
   if (amount <= room) return null;
-  const higher = policy.tiers.some((t) => t.dailyCents > tier.dailyCents);
-  return `You can add ${format(Math.max(0, room))} more right now (up to ${format(tier.dailyCents)} a day and ${format(tier.weeklyCents)} a week)${higher ? ": it grows as you order" : ""}.`;
+  const [available, daily, weekly] = [format(Math.max(0, room)), format(tier.dailyCents), format(tier.weeklyCents)];
+  // Whole sentences, each its own message: the app translates them whole.
+  return policy.tiers.some((t) => t.dailyCents > tier.dailyCents)
+    ? refusal(`You can add ${available} more right now (up to ${daily} a day and ${weekly} a week): it grows as you order.`)
+    : refusal(`You can add ${available} more right now (up to ${daily} a day and ${weekly} a week).`);
 }
 
 /// When an account may first be paid out to a bank (ms) -- now, if it's old

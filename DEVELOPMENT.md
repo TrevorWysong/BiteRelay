@@ -50,6 +50,12 @@ Each job runs right after the event that triggers it (placing an order, or the s
 
 Accepting is also the store's price check (`ensure_priced_from_current_menu`). Validation recomputes every total but sees records as they were, so it can't tell an item's old price from its current one. The store's conductor can: it reads its menu's history from its own source chain, which holds every version it wrote and so can't lag behind (a DHT read can). It refuses a line priced from an outdated version, except an order placed in the 15 minutes before that item's price changed, which an honest customer could have raced. Since nothing completes or gets paid without the store's acceptance, an underpriced order can exist but never goes anywhere.
 
+## Writing zome code
+
+- **A zome call commits all its writes, or none.** One write that doesn't validate (yet) undoes every other write in the same call. Work that writes for many items, such as the scheduled sweeps over a person's orders, decides in the sweep and writes each item in a call of its own: `relay_coordinator_support::isolated`. Settlement, upkeep, recurring orders and goodie-bag claims all work this way.
+- **A refusal is a sentence for people.** Refuse with `guest("…")` (`relay_coordinator_support::guest`), a whole capitalised sentence; a lowercase one is a diagnostic the app shows as something having gone wrong. A value in it is a named format argument, and an amount is named `..._cents`, so the app can show it in the network's currency. Every refusal is translated: run `npm run refusals` in web/, then add the translation to `src/i18n/refusals.es.ts` (I18N.md).
+- **What's private to a device doesn't move with an account.** An account restored onto a new phone arrives without its capability grants or scheduled work, so anything a device needs to take part is set up in a zome's `prepare_device`, which init and every app start call (RECOVERY.md).
+
 ## Personal data
 
 Every entry on the DHT is readable by every peer, forever. So anything personal is stored **sealed**: encrypted with `relay_coordinator_support::seal` (libsodium box between two agents' own keys; no key exchange needed) and opened with `open`. Box is symmetric, so whoever seals can always re-open, and sealing to yourself keeps a value private to you.

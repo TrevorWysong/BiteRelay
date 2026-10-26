@@ -6,7 +6,7 @@
 
 use crate::order_queues::my_completions_at;
 use catalog_types::{order_tax, order_total, total_with_tax, BagClaim, GoodieBag, MerchantCatalog, MenuItem, PricedLine, PromoCode, TaxableLine};
-use relay_coordinator_support::{decode_or, original_action_of};
+use relay_coordinator_support::{decode_or, guest, original_action_of};
 use dispatch_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::resolve_latest_fresh;
@@ -34,10 +34,10 @@ pub(crate) fn ensure_age_rules(priced: &PricedOrder, delivery: bool, age_confirm
         return Ok(());
     }
     let Some(age) = relay_governance::restricted_min_age() else {
-        return Err(guest("This network doesn't sell age-restricted items.".into()));
+        return Err(guest("This network doesn't sell age-restricted items."));
     };
     if delivery {
-        return Err(guest("Age-restricted items, like alcohol, are collected in person: the store checks your ID. Choose pickup.".into()));
+        return Err(guest("Age-restricted items, like alcohol, are collected in person: the store checks your ID. Choose pickup."));
     }
     if !age_confirmed {
         return Err(guest(format!("Confirm you're {age} or older, and bring ID to collect it.")));
@@ -49,7 +49,7 @@ pub(crate) fn ensure_age_rules(priced: &PricedOrder, delivery: bool, age_confirm
 /// validation's rule (`dispatch_integrity::checks`), told first.
 pub(crate) fn ensure_store_minimum(store: &catalog_types::MerchantCatalog, priced: &PricedOrder) -> ExternResult<()> {
     match (store.min_order_cents, priced.menu_subtotal) {
-        (Some(min), Some(subtotal)) if subtotal < min => Err(guest("This order is below the store's minimum. Add a little more to place it.".into())),
+        (Some(min), Some(subtotal)) if subtotal < min => Err(guest("This order is below the store's minimum. Add a little more to place it.")),
         _ => Ok(()),
     }
 }
@@ -88,12 +88,12 @@ pub(crate) fn price_order(catalog_ref: &ActionHash, store: &MerchantCatalog, ite
 
 fn price_bag_order(catalog_ref: &ActionHash, store: &MerchantCatalog, claim_ref: &ActionHash, promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
     if promo_ref.is_some() {
-        return Err(guest("a goodie bag can't be combined with a promo code".into()));
+        return Err(guest("A goodie bag can't be combined with a promo code."));
     }
     let claim: BagClaim = decode_latest(claim_ref, "BagClaim")?;
     let bag: GoodieBag = decode_latest(&claim.bag_ref, "GoodieBag")?;
     if &bag.catalog_ref != catalog_ref {
-        return Err(guest("that goodie bag isn't from this store".into()));
+        return Err(guest("That goodie bag isn't from this store."));
     }
     // A bag is food at the store's default rate.
     let (order_total, tax_cents) = taxed(store, bag.price_cents, &[TaxableLine { category: "", total: bag.price_cents }]);
@@ -133,7 +133,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     let mut pricer = LinePricer::default();
     for OrderItem { item_ref, quantity, selections } in merged {
         let record = resolve_latest_fresh(item_ref.clone())?;
-        let item: MenuItem = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a menu item".into()))?;
+        let item: MenuItem = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a menu item"))?;
         if &item.catalog_ref != catalog_ref {
             return Err(guest(format!("{} isn't on this store's menu", item.name)));
         }
@@ -155,7 +155,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     let needed = promo.as_ref().map_or(0, |p| p.requirement.completed_orders_needed()) as usize;
     let loyalty_proof: Vec<ActionHash> = if needed > 0 { my_completions_at(catalog_ref)?.into_iter().take(needed).collect() } else { Vec::new() };
     let food = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
-        .ok_or(guest("this order doesn't meet the promo code's requirement".into()))?;
+        .ok_or(guest("This order doesn't meet the promo code's requirement."))?;
     let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
     let (order_total, tax_cents) = taxed(store, food, &taxable);
     let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
@@ -213,9 +213,9 @@ fn price_change_grace_secs() -> i64 {
 pub(crate) fn ensure_priced_from_current_menu(order_ref: &ActionHash, lines: &[OrderLine], bag_claim_ref: Option<&ActionHash>, promo_ref: Option<&ActionHash>) -> ExternResult<()> {
     // An order dated in the future would hold back the store's decisions
     // until then: none can be dated before the order.
-    let placed = get(order_ref.clone(), GetOptions::default())?.ok_or(guest("order not found".into()))?.action().timestamp();
+    let placed = get(order_ref.clone(), GetOptions::default())?.ok_or(guest("order not found"))?.action().timestamp();
     if placed.as_micros() > sys_time()?.as_micros() + relay_governance::clock_tolerance().as_micros() as i64 {
-        return Err(guest("this order is dated in the future, so it can't be accepted -- decline it".into()));
+        return Err(guest("This order is dated in the future, so it can't be accepted. Decline it."));
     }
     match outdated_item(order_ref, lines, bag_claim_ref, promo_ref)? {
         Some(name) => Err(guest(format!("{name} was priced from an outdated menu, so this order can't be accepted -- decline it"))),
@@ -289,7 +289,7 @@ fn honoured(versions: &[ItemVersionWire], cited: &ActionHash, placed_at: Timesta
 /// it to, and a customer's view of it can lag a little.
 pub(crate) fn terms_outdated(order_ref: &ActionHash, catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<bool> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_store_versions".into(), None, catalog_ref.clone())? else {
-        return Err(guest("reading your store's history failed".into()));
+        return Err(guest("reading your store's history failed"));
     };
     let versions: Vec<ItemVersionWire> = io.decode().map_err(|e| wasm_error!(e))?;
     let (Some(cited), Some(current)) = (store_at(catalog_version)?, versions.last().map(|v| store_at(&v.action)).transpose()?.flatten()) else {
@@ -311,7 +311,7 @@ fn store_at(version: &ActionHash) -> ExternResult<Option<catalog_types::Merchant
 /// see `terms_outdated`.
 pub(crate) fn ensure_current_terms(order_ref: &ActionHash, catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<()> {
     if terms_outdated(order_ref, catalog_ref, catalog_version)? {
-        return Err(guest("This order was placed under your store's earlier terms (its minimum, delivery area or fee share), so it can't be accepted -- decline it.".into()));
+        return Err(guest("This order was placed under your store's earlier terms (its minimum, delivery area or fee share), so it can't be accepted -- decline it."));
     }
     Ok(())
 }
@@ -330,7 +330,7 @@ struct PromoVersionWire {
 fn promo_lapsed(order_ref: &ActionHash, promo_ref: &ActionHash) -> ExternResult<bool> {
     let promo = original_action_of(promo_ref.clone())?;
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "get_my_promo_versions".into(), None, promo)? else {
-        return Err(guest("reading your promo codes failed".into()));
+        return Err(guest("reading your promo codes failed"));
     };
     let versions: Vec<PromoVersionWire> = io.decode().map_err(|e| wasm_error!(e))?;
     // Not one of this store's codes at all.
@@ -370,7 +370,7 @@ fn my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersions
 /// Each item's or choice group's history from the store's own chain.
 fn my_versions(function: &str, refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersionsWire>> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", function.into(), None, refs)? else {
-        return Err(guest("reading your menu's history failed".into()));
+        return Err(guest("reading your menu's history failed"));
     };
     io.decode().map_err(|e| wasm_error!(e))
 }
@@ -380,7 +380,7 @@ fn placement_time(order_ref: &ActionHash) -> ExternResult<Timestamp> {
     let original = original_action_of(order_ref.clone())?;
     let record = match get(original.clone(), GetOptions::local())? {
         Some(record) => record,
-        None => get(original, GetOptions::network())?.ok_or(guest("order not found".into()))?,
+        None => get(original, GetOptions::network())?.ok_or(guest("order not found"))?,
     };
     Ok(record.action().timestamp())
 }
@@ -394,6 +394,3 @@ fn decode_latest<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(acti
         .ok_or(guest(format!("that isn't a {type_name}")))
 }
 
-fn guest(message: String) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message))
-}

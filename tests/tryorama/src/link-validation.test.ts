@@ -5,9 +5,9 @@
 // order lists, balances, a store's decisions, presence and profiles. Run
 // `npm run build:test-coordinators` first.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { agentAsLinkBase, appSource, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp, retryingCaller } from "./helpers.js";
+import { agentAsLinkBase, actionHash, ST_PETE, useTestCoordinators, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 const ALL_ZOMES = ["attestation", "catalog", "dispatch", "ledger", "profiles", "reputation"];
 

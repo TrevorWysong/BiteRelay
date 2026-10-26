@@ -152,8 +152,8 @@ const request = (n: number, amount: number, redeemer: Uint8Array): CashOutReques
 const payoutDeps = (store: Store, ledger: IssuerLedger, rail: PaymentRail): PayoutDeps => ({ store, ledger, rail, fee: FEE, policy: POLICY, format });
 
 /// The HTTP service on a free port, with a way to call it.
-function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100) {
-  const server = serve({ store, ledger, rail, appOrigins: ["http://app.test"], publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, trustProxy: false, format }, 0);
+function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100, noncesPerIpPerHour = 1000) {
+  const server = serve({ store, ledger, rail, appOrigins: ["http://app.test"], publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, noncesPerIpPerHour, trustProxy: false, format }, 0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -165,6 +165,27 @@ function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPe
   };
   return { post, signed, close: () => server.close() };
 }
+
+test("asking for nonces is limited, and never grows the table", async () => {
+  const store = new Store(":memory:");
+  const { ledger } = fakeLedger([], noAccounts());
+  const { rail } = fakeRail({});
+  const service = running(store, ledger, rail, 100, 8);
+  try {
+    const agent = agentId(identity().key);
+    const asks = [];
+    for (let i = 0; i < 9; i++) asks.push((await service.post("/nonce", { agent })).status);
+    assert.deepEqual(asks, [...new Array(8).fill(200), 429], "an address asks so often an hour, then waits");
+  } finally {
+    service.close();
+  }
+  const agent = agentId(identity().key);
+  for (let i = 0; i < 20; i++) store.issueNonce(`n${i}`, agent, 60_000);
+  assert.equal(store.takeNonce("n0", agent, 60_000), false, "only the newest few are kept");
+  assert.equal(store.takeNonce("n19", agent, 60_000), true);
+  store.issueNonce("old", agent, 60_000);
+  assert.equal(store.takeNonce("old", agent, -1), false, "and an expired one never counts");
+});
 
 // The same cases as ledger_types and web/test/wallet.test.ts.
 test("a payout is the amount less its fees", () => {

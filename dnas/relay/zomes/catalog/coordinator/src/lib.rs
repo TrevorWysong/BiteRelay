@@ -15,7 +15,7 @@ pub use signals::*;
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records_with_original};
+use relay_coordinator_support::{decode_or, guest, next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records_with_original};
 use relay_types::GeoPoint;
 
 fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::TypedPath> {
@@ -151,7 +151,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
     list(&action_hash, &geohash)?;
 
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back published catalog".into())))
+        .ok_or(guest("could not read back published catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -166,7 +166,7 @@ pub fn set_catalog_open(input: SetCatalogOpenInput) -> ExternResult<Record> {
     catalog.is_open = input.is_open;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -183,7 +183,7 @@ pub fn set_auto_accept_orders(input: SetAutoAcceptOrdersInput) -> ExternResult<R
     catalog.auto_accept_orders = input.auto_accept_orders;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -201,7 +201,7 @@ pub fn set_leave_at_door_limit(input: SetLeaveAtDoorLimitInput) -> ExternResult<
     catalog.leave_at_door_max_cents = input.max_cents;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -219,7 +219,7 @@ pub fn set_minimum_order(input: SetMinimumOrderInput) -> ExternResult<Record> {
     catalog.min_order_cents = input.min_cents;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -241,7 +241,7 @@ pub fn set_tax_settings(input: SetTaxSettingsInput) -> ExternResult<Record> {
     catalog.tax_registration = input.tax_registration.trim().to_string();
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -260,7 +260,7 @@ pub fn set_store_wait(input: SetStoreWaitInput) -> ExternResult<Record> {
     catalog.store_wait_minutes = input.minutes;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -278,7 +278,7 @@ pub fn set_busy(input: SetBusyInput) -> ExternResult<Record> {
     catalog.busy_extra_minutes = input.extra_minutes;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 /// A merchant fills in storefront depth (description, cuisine, hours,
@@ -322,7 +322,7 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
     catalog.max_delivery_radius_km = input.max_delivery_radius_km;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 /// Cross-zome read for `dispatch::complete_delivery` (and the equivalent
@@ -362,7 +362,7 @@ pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> Ex
     catalog.delivery_subsidy_percent = input.delivery_subsidy_percent;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated catalog".into())))
+        .ok_or(guest("could not read back updated catalog"))
 }
 
 /// Recomputes `MerchantCatalog.dietary_tags` as the sorted, deduplicated
@@ -407,7 +407,7 @@ pub fn add_menu_item(item: MenuItem) -> ExternResult<Record> {
     create_link(catalog_ref.clone(), action_hash.clone(), LinkTypes::CatalogToMenuItem, ())?;
     recompute_dietary_tags(&catalog_ref)?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back menu item".into())))
+        .ok_or(guest("could not read back menu item"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -428,7 +428,7 @@ pub fn update_menu_item(input: UpdateMenuItemInput) -> ExternResult<Record> {
     let updated = update_entry(record.action_address().clone(), &EntryTypes::MenuItem(input.item))?;
     recompute_dietary_tags(&catalog_ref)?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated menu item".into())))
+        .ok_or(guest("could not read back updated menu item"))
 }
 
 /// One version of a menu item (or a choice group): the action that wrote
@@ -663,7 +663,7 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
     create_link(promo_anchor_path(&input.catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
     create_link(input.catalog_ref, action_hash.clone(), LinkTypes::CatalogToLivePromo, ())?;
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back promo code".into())))
+        .ok_or(guest("could not read back promo code"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -691,7 +691,7 @@ pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Rec
         }
     }
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back updated promo code".into())))
+        .ok_or(guest("could not read back updated promo code"))
 }
 
 /// A promo code's stable identity (what orders and `set_promo_code_active`
@@ -802,9 +802,7 @@ mod test_utils {
 /// so the two commit together.
 fn list(catalog_ref: &ActionHash, geohash: &str) -> ExternResult<ActionHash> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "ledger", "stake_listing".into(), None, catalog_ref.clone())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "Listing a store sets aside a deposit from your balance, returned when you close it. Add funds to list it.".into()
-        )));
+        return Err(guest("Listing a store sets aside a deposit from your balance, returned when you close it. Add funds to list it."));
     };
     let stake: ActionHash = io.decode().map_err(|e| wasm_error!(e))?;
     create_link(geohash_anchor_path(geohash)?.path_entry_hash()?, catalog_ref.clone(), LinkTypes::GeohashToCatalog, LinkTag::new(listing_tag(&stake)))
@@ -833,7 +831,7 @@ pub fn is_store_listed(catalog_ref: ActionHash) -> ExternResult<bool> {
 /// stake, in one commit. The store keeps answering the orders it has.
 #[hdk_extern]
 pub fn close_listing(catalog_ref: ActionHash) -> ExternResult<()> {
-    let Some((link, stake)) = my_listing(&catalog_ref)? else { return Err(wasm_error!(WasmErrorInner::Guest("This store isn't listed.".into()))) };
+    let Some((link, stake)) = my_listing(&catalog_ref)? else { return Err(guest("This store isn't listed.")) };
     let delisting = delete_link(link.create_link_hash, GetOptions::default())?;
     #[derive(Serialize, Debug)]
     struct UnstakeWire {
@@ -842,7 +840,7 @@ pub fn close_listing(catalog_ref: ActionHash) -> ExternResult<()> {
     }
     match call(CallTargetCell::Local, "ledger", "unstake_listing".into(), None, UnstakeWire { stake, delisting })? {
         ZomeCallResponse::Ok(_) => Ok(()),
-        other => Err(wasm_error!(WasmErrorInner::Guest(format!("couldn't return the listing deposit: {other:?}")))),
+        other => Err(guest(format!("couldn't return the listing deposit: {other:?}"))),
     }
 }
 

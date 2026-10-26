@@ -13,6 +13,7 @@
 use crate::parties::resolve_order_and_bid;
 use crate::signals::RemoteSignal;
 use hdk::prelude::*;
+use relay_coordinator_support::guest;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendChatMessageInput {
@@ -29,10 +30,10 @@ pub struct SendChatMessageInput {
 #[hdk_extern]
 pub fn send_chat_message(input: SendChatMessageInput) -> ExternResult<()> {
     if input.text.trim().is_empty() {
-        return Err(wasm_error!(WasmErrorInner::Guest("chat message must not be empty".into())));
+        return Err(guest("Write a message first."));
     }
     if input.text.chars().count() > relay_integrity_support::limits::MAX_NOTE_CHARS {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("a chat message is at most {} characters", relay_integrity_support::limits::MAX_NOTE_CHARS))));
+        return Err(guest(format!("a chat message is at most {} characters", relay_integrity_support::limits::MAX_NOTE_CHARS)));
     }
     let me = agent_info()?.agent_initial_pubkey;
     let (order, bid) = resolve_order_and_bid(input.order_ref.clone(), "chat is only available once a driver has been assigned")?;
@@ -42,9 +43,7 @@ pub fn send_chat_message(input: SendChatMessageInput) -> ExternResult<()> {
     } else if me == bid.bidder {
         order.requester
     } else {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "only this order's requester or its accepted driver can send chat messages".into()
-        )));
+        return Err(guest("Only this order's customer and its driver can chat about it."));
     };
 
     send_remote_signal(

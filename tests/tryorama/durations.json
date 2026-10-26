@@ -24,7 +24,7 @@
   "handoffs": 415,
   "item-issues": 400,
   "item-ratings": 407,
-  "late-orders": 1160,
+  "late-orders": 300,
   "ledger-rules": 399,
   "ledger-transactions-list": 467,
   "link-validation": 345,
@@ -57,6 +57,7 @@
   "store-acceptance": 318,
   "store-fee-share": 338,
   "store-hours": 225,
+  "store-late": 860,
   "store-order-queues": 201,
   "storefront-details": 203,
   "warrants": 170

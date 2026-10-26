@@ -4,7 +4,7 @@
 // names decides it, once; and only a declined one comes back, once.
 // Forgeries are written raw (test-utils), as a modified client would.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import { EMPTY_HANDS, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators, retryingCaller } from "./helpers.js";
 import { verifyLink } from "../../../issuer/src/link.js";
 

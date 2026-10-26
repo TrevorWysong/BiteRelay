@@ -6,9 +6,9 @@
 // Every check that something is hidden looks at the raw published bytes,
 // not just at what the honest UI reads.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, appSource, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 /// The entry's serialized bytes, as any peer holding the record sees them.
 function publishedBytes(record: HcRecord): Buffer {

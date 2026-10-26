@@ -66,7 +66,7 @@ export async function connectLauncher(): Promise<AppWebsocket> {
   return install(await AppWebsocket.connect());
 }
 
-export function getAppWs(): AppWebsocket {
+function getAppWs(): AppWebsocket {
   if (!appWs) throw new Error("not connected to a conductor yet");
   return appWs;
 }
@@ -163,7 +163,7 @@ export async function callZome<T>(zomeName: string, fnName: string, payload?: un
 
 /// The app role that carries the previous version of the network, in a
 /// release made while people move from it (MIGRATION.md).
-export const PREVIOUS_ROLE = "previous";
+const PREVIOUS_ROLE = "previous";
 
 /// A zome call on the previous version of the network -- only in a release
 /// that carries it (`hasPreviousNetwork`).

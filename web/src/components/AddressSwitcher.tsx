@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown, MapPin, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, MapPin, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useSession } from "../store/session";
-import { saveAddress, deleteSavedAddress, listMyAddresses } from "../holochain/zomes/profiles";
+import { saveAddress, deleteSavedAddress, listMyAddresses, updateSavedAddress } from "../holochain/zomes/profiles";
 import { bytesToHex } from "../holochain/decode";
 import { reverseGeocode } from "../lib/geocoding";
 import { AddressSearch } from "./AddressSearch";
@@ -12,6 +12,7 @@ import type { AddressComponents } from "../lib/geocoding";
 import type { GeoPoint, AddressDetails } from "../holochain/types";
 import { MAX_LABEL_CHARS } from "../holochain/types";
 import { useT } from "../i18n";
+import { useResource } from "../lib/useResource";
 
 interface AddressRow {
   hash: Uint8Array;
@@ -66,24 +67,18 @@ export function AddressSwitcher({
   const location = value ?? sessionLocation;
   const setLocation = onChange ?? setSessionLocation;
   const [open, setOpen] = useState(false);
-  const [current, setCurrent] = useState<{ label: string; components: AddressComponents } | null>(null);
   const [addresses, setAddresses] = useState<AddressRow[] | null>(null);
   const [picked, setPicked] = useState<{ point: GeoPoint; components: AddressComponents } | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingHex, setDeletingHex] = useState<string | null>(null);
+  /// The saved address being renamed, and its new name.
+  const [renaming, setRenaming] = useState<{ hex: string; label: string } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Reverse-geocode the pill's own display text whenever `location`
-  // changes -- a plain lat/lon means nothing to a human glancing at the
-  // header.
-  useEffect(() => {
-    const controller = new AbortController();
-    reverseGeocode(location, controller.signal)
-      .then((result) => result && setCurrent(result))
-      .catch(() => {});
-    return () => controller.abort();
-  }, [location]);
+  // The pill's own display text, for wherever `location` is -- a plain
+  // lat/lon means nothing to a human glancing at the header.
+  const { data: current } = useResource(`reverse:${location.lat},${location.lon}`, () => reverseGeocode(location));
 
   function loadAddresses() {
     listMyAddresses()
@@ -130,6 +125,19 @@ export function AddressSwitcher({
       });
       loadAddresses();
       pickAddress(picked.point);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function renameAddress(row: AddressRow) {
+    const label = renaming?.label.trim();
+    if (!label) return;
+    setSaving(true);
+    try {
+      await updateSavedAddress(row.hash, { ...row.address, label });
+      setRenaming(null);
+      loadAddresses();
     } finally {
       setSaving(false);
     }
@@ -228,6 +236,19 @@ export function AddressSwitcher({
                       {addresses?.map((row) => {
                         const hex = bytesToHex(row.hash);
                         const isCurrent = location.lat === row.address.location.lat && location.lon === row.address.location.lon;
+                        if (renaming?.hex === hex) {
+                          return (
+                            <div key={hex} className="flex items-center gap-2 py-3">
+                              <Input autoFocus maxLength={MAX_LABEL_CHARS} value={renaming.label} onChange={(e) => setRenaming({ hex, label: e.target.value })} className="flex-1" />
+                              <Button loading={saving} disabled={!renaming.label.trim()} onClick={() => renameAddress(row)} className="px-3 py-2.5 text-xs" aria-label={t("common.save")}>
+                                <Check size={14} />
+                              </Button>
+                              <button onClick={() => setRenaming(null)} aria-label={t("common.cancel")} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-ink-100 dark:hover:bg-ink-800">
+                                <X size={15} />
+                              </button>
+                            </div>
+                          );
+                        }
                         return (
                           <div key={hex} className="flex items-center gap-2 py-3">
                             <button onClick={() => pickAddress(row.address.location)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
@@ -242,6 +263,13 @@ export function AddressSwitcher({
                                   {cityStateZip(row.address)}
                                 </p>
                               </div>
+                            </button>
+                            <button
+                              onClick={() => setRenaming({ hex, label: row.address.label })}
+                              aria-label={t("common.edit")}
+                              className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-300 hover:bg-ink-100 hover:text-ink-600 dark:hover:bg-ink-800"
+                            >
+                              <Pencil size={14} />
                             </button>
                             <button
                               onClick={() => removeAddress(row)}

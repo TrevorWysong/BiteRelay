@@ -10,9 +10,9 @@
 // rejects a forged completion even when the honest coordinator checks are
 // skipped entirely.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, commitAndCook, pickUp, ST_PETE, testApp, useTestCoordinators } from "./helpers.js";
+import { acceptOrder, actionHash, commitAndCook, pickUp, ST_PETE, testApp, useTestCoordinators, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -23,10 +23,10 @@ await runScenario(async (scenario) => {
   // force_order_update_for_testing only exists in the test-utils build.
   for (const player of both) await useTestCoordinators(player, ["dispatch"]);
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
-  const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
+  const attestationOf = (p: typeof customer) => retryingCaller(p.cells[0], "attestation");
 
   const now = Date.now() * 1000;
   await profilesOf(customer)("create_profile", { display_name: "Cara Customer", roles: ["Requester", "Merchant"], created_at: now });

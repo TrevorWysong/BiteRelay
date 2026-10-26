@@ -7,7 +7,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 use std::cmp::Reverse;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,10 +285,7 @@ pub(crate) fn ensure_order_rate() -> ExternResult<()> {
         recent.sort_unstable();
         let minutes = ((recent[recent.len() - most] + window - sys_time()?.as_micros()) / 60_000_000).max(0) + 1;
         let window_minutes = window / 60_000_000;
-        return Err(wasm_error!(WasmErrorInner::Guest(format!(
-            "You've placed {most} orders in the last {window_minutes} minutes, the most the network allows. You can place another in about {minutes} minute{}.",
-            if minutes == 1 { "" } else { "s" }
-        ))));
+        return Err(guest(format!("You've placed {most} orders in the last {window_minutes} minutes, the most the network allows. Try again in about {minutes} min.")));
     }
     Ok(())
 }

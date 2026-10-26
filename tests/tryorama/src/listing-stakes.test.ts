@@ -8,7 +8,7 @@
 // - a stake comes back only by citing the deletion of its listing, once;
 // - no other link can pose as a listing.
 import assert from "node:assert/strict";
-import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
+import { dhtSync, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
 import { actionHash, agentAsLinkBase, bytesEqual, decodeEntry, latestLedgerEntry, retryUntil, setupPlayersWithProperties, ST_PETE, useTestCoordinators, retryingCaller } from "./helpers.js";
 

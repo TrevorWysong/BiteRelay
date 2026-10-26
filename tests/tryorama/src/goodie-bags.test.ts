@@ -5,9 +5,9 @@
 // the single authoritative party that decides who gets one of the limited
 // `quantity_total`, same shape `accept_bid` already uses.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, bytesEqual, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customerA, customerB] = await scenario.addPlayersWithApps([
@@ -18,8 +18,8 @@ await runScenario(async (scenario) => {
   const all = [merchant, customerA, customerB];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "catalog");
+  const profilesOf = (p: typeof merchant) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof merchant) => retryingCaller(p.cells[0], "catalog");
 
   const now = Date.now() * 1000;
   await profilesOf(merchant)("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });

@@ -2,6 +2,8 @@
 // host.ts) -- kept apart from `devHost.ts` so checking for one doesn't load
 // the Admin API code.
 
+import { forget, readStoredJson, store } from "../lib/storage";
+
 const STORAGE_KEY = "relay.identity.v1";
 
 export interface StoredIdentity {
@@ -14,21 +16,15 @@ export interface StoredIdentity {
 }
 
 export function loadStoredIdentity(): StoredIdentity | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as StoredIdentity;
-  } catch {
-    return null;
-  }
+  return readStoredJson<StoredIdentity>(STORAGE_KEY);
 }
 
 export function saveStoredIdentity(identity: StoredIdentity) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+  store(STORAGE_KEY, JSON.stringify(identity));
 }
 
 export function forgetStoredIdentity() {
-  localStorage.removeItem(STORAGE_KEY);
+  forget(STORAGE_KEY);
 }
 
 /// Whether the identity this browser remembers is behind a passkey -- so

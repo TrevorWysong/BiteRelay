@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { PackageOpen } from "lucide-react";
+import { PackageOpen, Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { confirmClaim, createGoodieBag, listGoodieBagsForCatalog, listPendingClaimsForMerchant } from "../../../holochain/zomes/catalog";
-import { actionHash, bytesToHex, decodeEntry } from "../../../holochain/decode";
+import { confirmClaim, createGoodieBag, listGoodieBagsForCatalog, listPendingClaimsForMerchant, updateGoodieBag } from "../../../holochain/zomes/catalog";
+import { actionHash, bytesToHex, decodeEntry, hexToBytes } from "../../../holochain/decode";
 import { useResource } from "../../../lib/useResource";
+import { describeError } from "../../../lib/errors";
 import { formatCents, formatClockTime, toMinorUnits, currencySymbol } from "../../../lib/format";
 import { fadeSlideUp, staggerContainer } from "../../../lib/motion";
 import { Button, Card, Checkbox, Field, Input, StatNumber, Textarea } from "../../../components/ui";
@@ -35,6 +36,7 @@ export function GoodieBagsSection({ storeHex, catalogRef }: { storeHex: string; 
   const t = useT();
   const [showForm, setShowForm] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const { data, reload } = useResource(`store-bags:${storeHex}`, () => fetchBags(catalogRef), { pollMs: POLL.signalled, refreshOn: () => true });
   const bags = data?.bags ?? [];
   const claims = data?.claims ?? [];
@@ -77,7 +79,18 @@ export function GoodieBagsSection({ storeHex, catalogRef }: { storeHex: string; 
         <p className="mb-4 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">{t("bags.none")}</p>
       ) : (
         <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="mb-4 flex flex-col divide-y divide-ink-100 dark:divide-ink-800 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900">
-          {bags.map(({ hex, bag }) => (
+          {bags.map(({ hex, bag }) =>
+            editing === hex ? (
+              <EditBagForm
+                key={hex}
+                original={hexToBytes(hex)}
+                bag={bag}
+                onDone={async (saved) => {
+                  setEditing(null);
+                  if (saved) await reload();
+                }}
+              />
+            ) : (
             <motion.div key={hex} variants={fadeSlideUp} className="flex items-center gap-3 p-4">
               {bag.photo_data_uri && <img src={bag.photo_data_uri} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />}
               <div className="min-w-0 flex-1">
@@ -91,8 +104,12 @@ export function GoodieBagsSection({ storeHex, catalogRef }: { storeHex: string; 
                   <span className="text-xs text-ink-400 line-through">{formatCents(bag.original_value_cents)}</span>
                 </div>
               </div>
+              <Button variant="ghost" className="px-2 py-1.5 text-xs" aria-label={t("common.edit")} onClick={() => setEditing(hex)}>
+                <Pencil size={14} />
+              </Button>
             </motion.div>
-          ))}
+            ),
+          )}
         </motion.div>
       )}
 
@@ -115,6 +132,52 @@ export function GoodieBagsSection({ storeHex, catalogRef }: { storeHex: string; 
         </motion.div>
       )}
     </>
+  );
+}
+
+/// A listed bag's words and photo, edited in place -- all of it a bag may
+/// change once listed; its price, quantity and window stay as customers
+/// first saw them.
+function EditBagForm({ original, bag, onDone }: { original: Uint8Array; bag: GoodieBag; onDone: (saved: boolean) => Promise<void> }) {
+  const t = useT();
+  const [form, setForm] = useState({ title: bag.title, description: bag.description, photo_data_uri: bag.photo_data_uri });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateGoodieBag(original, { ...bag, title: form.title.trim(), description: form.description, photo_data_uri: form.photo_data_uri });
+      await onDone(true);
+    } catch (err) {
+      setError(describeError(err));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 p-4">
+      <div className="flex gap-3">
+        <PhotoInput value={form.photo_data_uri} onChange={(v) => setForm((f) => ({ ...f, photo_data_uri: v }))} shape="circle" className="shrink-0" />
+        <Field label={t("bags.name")} className="flex-1">
+          <Input maxLength={MAX_NAME_CHARS} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+        </Field>
+      </div>
+      <Field label={t("storeSettings.description")}>
+        <Textarea maxLength={MAX_DESCRIPTION_CHARS} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} rows={2} />
+      </Field>
+      <p className="text-[11px] text-ink-400">{t("bags.fixed")}</p>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <div className="flex gap-2">
+        <Button variant="ghost" className="flex-1 py-2 text-xs" disabled={saving} onClick={() => onDone(false)}>
+          {t("common.cancel")}
+        </Button>
+        <Button className="flex-1 py-2 text-xs" loading={saving} disabled={!form.title.trim()} onClick={save}>
+          {t("common.save")}
+        </Button>
+      </div>
+    </div>
   );
 }
 

@@ -4,9 +4,9 @@
 // (validation, not just the honest coordinator), and the store's
 // acceptance refuses a line priced from an outdated menu.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, commitAndCook, decodeEntry, ST_PETE, testApp, useTestCoordinators, waitForSignal, retryingCaller } from "./helpers.js";
+import { acceptOrder, actionHash, commitAndCook, decodeEntry, ST_PETE, testApp, useTestCoordinators, waitForSignal, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, merchant, driver] = await scenario.addPlayersWithApps([testApp, testApp, testApp]);
@@ -42,11 +42,11 @@ await runScenario(async (scenario) => {
   await sync();
   assert.equal((await call(driver, "dispatch")<HcRecord[]>("get_open_orders_near", dropoff_geohash)).length, 0, "drivers can't discover it");
   const bid = () => call(driver, "dispatch")<HcRecord>("submit_bid", { order_ref: order, eta_seconds: 600, price_offer: 400 });
-  await assert.rejects(bid(), /isn't open for bids/, "or bid on it");
+  await assert.rejects(bid(), /isn't taking offers any more/, "or bid on it");
   console.log("[PASS] a placed delivery waits for its store, unseen by drivers");
 
   // --- Only the store can accept it. ---
-  await assert.rejects(call(customer, "dispatch")("accept_delivery_order", { order_original_action: order }), /only the order's store can accept it/);
+  await assert.rejects(call(customer, "dispatch")("accept_delivery_order", { order_original_action: order }), /Only the order's store can accept it/);
   await assert.rejects(
     call(customer, "dispatch")("force_order_update_for_testing", { order_original_action: order, next_status: "Open", delivery_receipts: [] }),
     /Placed -> Open requires author role Merchant/,
@@ -84,7 +84,7 @@ await runScenario(async (scenario) => {
     await call(customer, "dispatch")<HcRecord>("request_pickup_order", { merchant: merchant.agentPubKey, catalog_ref: store, items: [{ item_ref: burgerV1, quantity: 1 }], order_total: 1200 }),
   );
   await sync();
-  await assert.rejects(call(customer, "dispatch")("accept_pickup_order", { order_original_action: pickup }), /only the order's store can accept it/, "a customer can't accept their own pickup");
+  await assert.rejects(call(customer, "dispatch")("accept_pickup_order", { order_original_action: pickup }), /Only the order's store can accept it/, "a customer can't accept their own pickup");
   await assert.rejects(
     call(customer, "dispatch")("force_pickup_update_for_testing", { order_original_action: pickup, next_status: "MerchantConfirmed", cancellation: null }),
     /Placed -> MerchantConfirmed requires author role Merchant/,

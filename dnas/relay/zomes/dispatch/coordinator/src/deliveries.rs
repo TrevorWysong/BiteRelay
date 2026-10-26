@@ -48,12 +48,8 @@ use crate::signals::RemoteSignal;
 use dispatch_integrity::lineage::{self, Version};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest, resolve_latest_decoded};
 use relay_types::Beacon;
-
-fn guest(message: &str) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
 
 /// The order as it stands.
 fn current(order_ref: &ActionHash) -> ExternResult<(Record, DeliveryOrder)> {
@@ -93,7 +89,7 @@ fn without_driver(order: &mut DeliveryOrder) {
 pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
     let order_ref = original_action_of(order_ref)?;
     let (record, mut order) = current(&order_ref)?;
-    let Some((bid_ref, bid)) = driver_of(&order)? else { return Err(guest("this order has no driver")) };
+    let Some((bid_ref, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver yet.")) };
     if bid.bidder != me()? {
         return Err(guest("Only the order's driver commits to it."));
     }
@@ -120,7 +116,7 @@ pub fn share_address(order_ref: ActionHash) -> ExternResult<ActionHash> {
         return Err(guest("Only the order's customer shares its address."));
     }
     let Some(driver) = owed_driver(&order_ref, &order)? else { return Err(guest("There's no committed driver waiting for the address.")) };
-    let dropoff: DropoffDetails = relay_coordinator_support::open(&me, &order.sealed_dropoff)?.ok_or(guest("couldn't open your address"))?;
+    let dropoff: DropoffDetails = relay_coordinator_support::open(&me, &order.sealed_dropoff)?.ok_or(guest("Couldn't open your address on this device."))?;
     let share = DropoffShare { order: order_ref.clone(), committed: record.action_address().clone(), sealed: relay_coordinator_support::seal(&driver, &dropoff)?, driver: driver.clone() };
     let action = create_entry(&EntryTypes::DropoffShare(share))?;
     create_link(order_ref, action.clone(), LinkTypes::OrderToDropoffShare, driver.get_raw_39().to_vec())?;
@@ -204,7 +200,7 @@ pub fn ensure_checked_in(order_ref: ActionHash) -> ExternResult<ActionHash> {
         DeliveryStatus::MerchantConfirmed => (record, order),
         _ => return Err(guest("This order has no driver on their way to collect it.")),
     };
-    let bid = order.accepted_bid.clone().ok_or(guest("this order has no driver"))?;
+    let bid = order.accepted_bid.clone().ok_or(guest("This order has no driver yet."))?;
     order.subsidy_hold = place_hold(&order_ref, HoldPurpose::Subsidy { bid })?;
     order.status = DeliveryStatus::DriverAtStore;
     Ok(write(&record, order)?.action_address().clone())
@@ -744,8 +740,7 @@ pub(crate) fn tend_driver_deliveries() -> ExternResult<u32> {
 /// Calls one of this zome's externs in a call of its own, so one that
 /// doesn't validate yet never undoes another. Whether it succeeded.
 fn call_own<I: Serialize + std::fmt::Debug>(function: &str, input: &I) -> bool {
-    let Ok(zome) = zome_info().map(|z| z.name) else { return false };
-    matches!(call(CallTargetCell::Local, zome, function.into(), None, input), Ok(ZomeCallResponse::Ok(_)))
+    relay_coordinator_support::isolated::<_, Record>(function, input).is_some()
 }
 
 // --- what a customer's app records ---

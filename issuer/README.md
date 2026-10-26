@@ -24,6 +24,7 @@ A chargeback after the credits are spent is the issuer's loss, so the service li
 - **Top-up limits that grow with trust.** A new account can add a little a day and a week, more after a few orders and a week, and much more after a month of ordering (`TOPUP_TIERS`). The account's age and orders are read from the network, across every key it's had. Every card form opened and saved-card charge counts against the limit, paid or not.
 - **Verified first payments.** A card's first payment asks its bank to confirm the cardholder (3-D Secure), which moves a fraud chargeback's loss to the bank.
 - **Card testing.** One address can open only so many card forms an hour (`TOPUPS_PER_IP_PER_HOUR`).
+- **Flooding.** The one thing anyone can ask for unsigned, a nonce, is limited per address (`NONCES_PER_IP_PER_HOUR`); expired nonces are cleared as new ones are issued, and an account holds only a few unused at once.
 - **Disputes freeze.** A chargeback (`charge.dispute.created`) freezes the account: no top-ups, and its cash-outs are held. It's unfrozen if the issuer wins. A lost dispute stays frozen for a person to look at.
 - **Card money goes back to cards.** A cash-out refunds the person's recent card payments first; only what's left, their earnings, goes to their bank. So a stolen card's money can't come out as a bank transfer.
 - **New accounts' bank payouts wait** until the account is `PAYOUT_HOLD_DAYS` old.

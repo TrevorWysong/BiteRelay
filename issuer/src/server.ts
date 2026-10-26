@@ -22,6 +22,7 @@ import type { PaymentRail } from "./rail.ts";
 import { topUpRefusal, type RiskPolicy } from "./risk.ts";
 import type { Store } from "./store.ts";
 import { grantPayment } from "./topups.ts";
+import { refusal } from "./refusal.ts";
 
 /// Card payments, each: at least enough to be worth the card fee, at most
 /// well under the closed-loop prepaid limit of $2,000 a day.
@@ -45,6 +46,9 @@ export interface Deps {
   policy: RiskPolicy;
   /// Card forms one address may open an hour.
   topUpsPerIpPerHour: number;
+  /// Nonces one address may ask for an hour -- the only thing anyone can
+  /// ask for unsigned.
+  noncesPerIpPerHour: number;
   /// Whether to read the caller's address from X-Forwarded-For (behind a proxy).
   trustProxy: boolean;
   format: (cents: number) => string;
@@ -65,7 +69,7 @@ async function body(req: IncomingMessage): Promise<Buffer> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, "Request too large.");
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, refusal("Request too large."));
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
@@ -78,25 +82,25 @@ async function json(req: IncomingMessage): Promise<Record<string, unknown>> {
   } catch {
     // Falls through.
   }
-  throw new HttpError(400, "Send a JSON object.");
+  throw new HttpError(400, refusal("Send a JSON object."));
 }
 
 /// An agent id from a request, checked to be a real agent key.
 function agentFrom(value: unknown): string {
-  if (typeof value !== "string") throw new HttpError(400, "Which agent?");
+  if (typeof value !== "string") throw new HttpError(400, refusal("Which agent?"));
   try {
     const key = agentKey(value);
     if (key.length !== 39) throw new Error();
     return agentId(key);
   } catch {
-    throw new HttpError(400, "That isn't an agent key.");
+    throw new HttpError(400, refusal("That isn't an agent key."));
   }
 }
 
 /// An amount in cents a card may pay.
-function amountFrom(value: unknown): number {
+function amountFrom(value: unknown, format: (cents: number) => string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < MIN_TOPUP_CENTS || value > MAX_TOPUP_CENTS) {
-    throw new HttpError(400, `Pay between ${MIN_TOPUP_CENTS / 100} and ${MAX_TOPUP_CENTS / 100} dollars at a time.`);
+    throw new HttpError(400, refusal(`Pay between ${format(MIN_TOPUP_CENTS)} and ${format(MAX_TOPUP_CENTS)} at a time.`));
   }
   return value;
 }
@@ -105,18 +109,32 @@ const HOUR_MS = 60 * 60 * 1000;
 
 export function handler(deps: Deps) {
   const { store, ledger, rail, appOrigins, publishableKey, policy, format, log = () => {} } = deps;
-  /// When each address opened its recent card forms -- kept in memory: a
-  /// restart forgets them, which only ever loosens this, never the limits.
-  const formsByAddress = new Map<string, number[]>();
-
   /// Refuses an address that's opened too many card forms this hour --
   /// someone testing stolen cards opens many.
-  function throttle(req: IncomingMessage) {
-    const forwarded = deps.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
-    const address = forwarded || req.socket.remoteAddress || "unknown";
-    const recent = (formsByAddress.get(address) ?? []).filter((at) => at > Date.now() - HOUR_MS);
-    if (recent.length >= deps.topUpsPerIpPerHour) throw new HttpError(429, "Too many card payments from here. Try again later.");
-    formsByAddress.set(address, [...recent, Date.now()]);
+  const throttleCardForms = perAddressLimit(deps.topUpsPerIpPerHour, refusal("Too many card payments from here. Try again later."));
+  /// Refuses an address asking for more nonces than an app ever would --
+  /// each is a row kept until it expires.
+  const throttleNonces = perAddressLimit(deps.noncesPerIpPerHour, refusal("Too many requests from here. Try again later."));
+
+  /// A limit of `perHour` requests from each address. When each address
+  /// last asked is kept in memory: a restart forgets it, which only ever
+  /// loosens the limit, never anything else. An address that's gone quiet
+  /// is dropped, so the map holds only the last hour's.
+  function perAddressLimit(perHour: number, refusal: string) {
+    const recentByAddress = new Map<string, number[]>();
+    let swept = Date.now();
+    return (req: IncomingMessage) => {
+      const now = Date.now();
+      if (now - swept > HOUR_MS) {
+        for (const [address, times] of recentByAddress) if (times.every((at) => at <= now - HOUR_MS)) recentByAddress.delete(address);
+        swept = now;
+      }
+      const forwarded = deps.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
+      const address = forwarded || req.socket.remoteAddress || "unknown";
+      const recent = (recentByAddress.get(address) ?? []).filter((at) => at > now - HOUR_MS);
+      if (recent.length >= perHour) throw new HttpError(429, refusal);
+      recentByAddress.set(address, [...recent, now]);
+    };
   }
 
   /// Refuses `amount` if it's more than `agent` may add now.
@@ -129,9 +147,9 @@ export function handler(deps: Deps) {
   function signedBy(input: Record<string, unknown>, purpose: Purpose): string {
     const agent = agentFrom(input.agent);
     const { nonce, signature } = input;
-    if (typeof nonce !== "string" || typeof signature !== "string") throw new HttpError(400, "Send the nonce and your signature.");
-    if (!store.takeNonce(nonce, agent, NONCE_MAX_AGE_MS)) throw new HttpError(401, "That request has expired. Try again.");
-    if (!verifyLink(agentKey(agent), purpose, ledger.issuer, nonce, Buffer.from(signature, "base64"))) throw new HttpError(401, "That signature isn't yours.");
+    if (typeof nonce !== "string" || typeof signature !== "string") throw new HttpError(400, refusal("Send the nonce and your signature."));
+    if (!store.takeNonce(nonce, agent, NONCE_MAX_AGE_MS)) throw new HttpError(401, refusal("That request has expired. Try again."));
+    if (!verifyLink(agentKey(agent), purpose, ledger.issuer, nonce, Buffer.from(signature, "base64"))) throw new HttpError(401, refusal("That signature isn't yours."));
     return agent;
   }
 
@@ -149,17 +167,18 @@ export function handler(deps: Deps) {
     "GET /config": async () => ({ publishableKey }),
 
     "POST /nonce": async (req) => {
+      throttleNonces(req);
       const agent = agentFrom((await json(req)).agent);
       const nonce = newNonce();
-      store.issueNonce(nonce, agent);
+      store.issueNonce(nonce, agent, NONCE_MAX_AGE_MS);
       return { nonce, issuer: agentId(ledger.issuer) };
     },
 
     "POST /topups": async (req) => {
       const input = await json(req);
       const agent = signedBy(input, "TopUp");
-      const amount = amountFrom(input.amount);
-      throttle(req);
+      const amount = amountFrom(input.amount, format);
+      throttleCardForms(req);
       await checkRoom(agent, amount);
       const clientSecret = await rail.embeddedTopUp(agent, await customerOf(agent), amount, { verify: !store.hasPaidBefore(agent) });
       store.recordTopUpAttempt(agent, amount);
@@ -175,11 +194,11 @@ export function handler(deps: Deps) {
     "POST /saved-card/charge": async (req) => {
       const input = await json(req);
       const agent = signedBy(input, "SavedCard");
-      const amount = amountFrom(input.amount);
+      const amount = amountFrom(input.amount, format);
       const customer = store.customer(agent);
-      if (!customer) throw new HttpError(409, "There's no saved card yet. Pay with the card form once.");
+      if (!customer) throw new HttpError(409, refusal("There's no saved card yet. Pay with the card form once."));
       await checkRoom(agent, amount);
-      if (!store.takeSavedCardCharge(agent, SAVED_CARD_CHARGES_PER_DAY, DAY_MS)) throw new HttpError(429, "That's as many saved-card payments as one day allows. Use the card form.");
+      if (!store.takeSavedCardCharge(agent, SAVED_CARD_CHARGES_PER_DAY, DAY_MS)) throw new HttpError(429, refusal("That's as many saved-card payments as one day allows. Use the card form."));
       store.recordTopUpAttempt(agent, amount);
       // The nonce is single-use, so it keys the charge: retrying this request
       // can't charge twice.
@@ -200,12 +219,12 @@ export function handler(deps: Deps) {
 
     "POST /webhooks/stripe": async (req) => {
       const signature = req.headers["stripe-signature"];
-      if (typeof signature !== "string") throw new HttpError(400, "Unsigned.");
+      if (typeof signature !== "string") throw new HttpError(400, refusal("Unsigned."));
       let event;
       try {
         event = await rail.event(await body(req), signature);
       } catch {
-        throw new HttpError(400, "That isn't a genuine event.");
+        throw new HttpError(400, refusal("That isn't a genuine event."));
       }
       if (!event) return { ignored: true };
       if (event.kind === "paid") {
@@ -256,7 +275,7 @@ export function handler(deps: Deps) {
     }
     const route = routes[`${req.method} ${(req.url ?? "").split("?")[0]}`];
     try {
-      if (!route) throw new HttpError(404, "Not found.");
+      if (!route) throw new HttpError(404, refusal("Not found."));
       const result = await route(req);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(result));
     } catch (err) {

@@ -12,7 +12,7 @@ use crate::stores::{closed_reason, current_catalog, current_catalog_version};
 use crate::upkeep;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open, original_action_of, resolve_latest, resolve_latest_decoded, seal};
+use relay_coordinator_support::{decode_or, guest, open, original_action_of, resolve_latest, resolve_latest_decoded, seal};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -86,7 +86,7 @@ pub(crate) fn publish_to_open_anchor(opened: &ActionHash, dropoff_geohash: &str,
 /// empty if they haven't given one.
 pub(crate) fn my_name() -> ExternResult<String> {
     let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "profiles", "get_my_name".into(), None, ())? else {
-        return Err(wasm_error!(WasmErrorInner::Guest("reading your name failed".into())));
+        return Err(guest("reading your name failed"));
     };
     Ok(io.decode::<Option<String>>().map_err(|e| wasm_error!(e))?.unwrap_or_default())
 }
@@ -107,7 +107,7 @@ pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Opt
 pub(crate) fn check_note(note: &str) -> ExternResult<()> {
     let max = relay_integrity_support::limits::MAX_NOTE_CHARS;
     if note.chars().count() > max {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!("a note may be at most {max} characters"))));
+        return Err(guest(format!("a note may be at most {max} characters")));
     }
     Ok(())
 }
@@ -187,7 +187,7 @@ fn open_for_parties(me: &AgentPubKey, requester: &AgentPubKey, merchant: &AgentP
 pub(crate) fn ensure_promo_usable(promo_ref: &ActionHash, catalog_ref: &ActionHash) -> ExternResult<()> {
     if let Ok(ZomeCallResponse::Ok(io)) = call(CallTargetCell::Local, "catalog", "get_promo_code".into(), None, promo_ref.clone()) {
         if let Ok(Some(promo)) = io.decode::<Record>().map(|r| r.entry().to_app_option::<catalog_types::PromoCode>().ok().flatten()) {
-            let refuse = |reason: &str| Err(wasm_error!(WasmErrorInner::Guest(reason.into())));
+            let refuse = |reason: &str| Err(guest(reason));
             if &promo.catalog_ref != catalog_ref {
                 return refuse("promo_code_ref does not belong to this order's store");
             }
@@ -206,7 +206,7 @@ pub(crate) fn ensure_claim_confirmed(claim_ref: &ActionHash) -> ExternResult<()>
     if let Ok(ZomeCallResponse::Ok(io)) = call(CallTargetCell::Local, "catalog", "get_bag_claim".into(), None, claim_ref.clone()) {
         if let Ok(Some(claim)) = io.decode::<Record>().map(|r| r.entry().to_app_option::<catalog_types::BagClaim>().ok().flatten()) {
             if claim.status != catalog_types::BagClaimStatus::Confirmed {
-                return Err(wasm_error!(WasmErrorInner::Guest("goodie bag claim is not yet confirmed".into())));
+                return Err(guest("The store hasn't confirmed this goodie bag yet."));
             }
         }
     }
@@ -219,10 +219,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     let catalog_ref = input.catalog_ref.clone();
     let now = sys_time()?;
     if input.order_total == 0 {
-        return Err(wasm_error!(WasmErrorInner::Guest("A free order can't be delivered: your driver answers for what they carry. Choose pickup instead.".into())));
+        return Err(guest("A free order can't be delivered: your driver answers for what they carry. Choose pickup instead."));
     }
     if !input.dropoff.is_valid() {
-        return Err(wasm_error!(WasmErrorInner::Guest("that drop-off isn't a real place".into())));
+        return Err(guest("That drop-off isn't a real place."));
     }
     check_note(&input.dropoff_notes)?;
     let dropoff_geohash = relay_types::encode(input.dropoff, DROPOFF_GEOHASH_PRECISION);
@@ -248,17 +248,17 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     crate::pricing::ensure_age_rules(&priced, true, false)?;
     let distance = relay_types::distance_km(catalog.location, input.dropoff);
     if distance > catalog.max_delivery_radius_km {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!(
+        return Err(guest(format!(
             "dropoff is {:.1}km away, past this store's {:.1}km delivery radius",
             distance, catalog.max_delivery_radius_km
-        ))));
+        )));
     }
     // Open when it's for -- now, or a scheduled order's time. A goodie bag
     // runs on its own pickup window, which the store set.
     if input.bag_claim_ref.is_none() {
         let wanted_at = input.requested_delivery_time.unwrap_or(now).as_micros();
         if let Some(reason) = closed_reason(&catalog, wanted_at) {
-            return Err(wasm_error!(WasmErrorInner::Guest(reason)));
+            return Err(guest(reason));
         }
     }
 
@@ -266,7 +266,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // Every delivery gets a PIN; whether the driver must collect it is the
     // store's call, when it accepts (see `pin`).
     if input.dropoff_preference == DropoffPreference::LeaveAtDoor && !input.door_risk_accepted {
-        return Err(wasm_error!(WasmErrorInner::Guest("To have it left at your door, accept that it's delivered once it's left there.".into())));
+        return Err(guest("To have it left at your door, accept that it's delivered once it's left there."));
     }
     let code = crate::pin::new_code()?;
     let order = DeliveryOrder {
@@ -324,7 +324,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     upkeep::tend_my_orders_soon()?;
 
     get(action_hash, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back delivery order".into())))
+        .ok_or(guest("could not read back delivery order"))
 }
 
 /// The one narrow transition out of `Scheduled`: placing the order with its
@@ -336,21 +336,19 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
 pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action, "DeliveryOrder")?;
     if order.status != DeliveryStatus::Scheduled {
-        return Err(wasm_error!(WasmErrorInner::Guest("order is not Scheduled".into())));
+        return Err(guest("This order isn't scheduled."));
     }
     let now = sys_time()?;
     if let Some(due) = order.requested_delivery_time {
         if now < due {
-            return Err(wasm_error!(WasmErrorInner::Guest(
-                "requested_delivery_time has not arrived yet".into()
-            )));
+            return Err(guest("It isn't time to send this order yet."));
         }
     }
     order.status = DeliveryStatus::Placed;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     upkeep::tend_my_orders_soon()?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back opened order".into())))
+        .ok_or(guest("could not read back opened order"))
 }
 
 /// `Placed -> Open` -- the store accepting a delivery order, which is what
@@ -375,10 +373,10 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let order_original_action = input.order_original_action;
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Placed {
-        return Err(wasm_error!(WasmErrorInner::Guest("this order has already been accepted or cancelled".into())));
+        return Err(guest("This order has already been accepted or cancelled."));
     }
     if order.merchant != agent_info()?.agent_initial_pubkey {
-        return Err(wasm_error!(WasmErrorInner::Guest("only the order's store can accept it".into())));
+        return Err(guest("Only the order's store can accept it."));
     }
     crate::accounts::ensure_not_moved(&order.requester, "This customer")?;
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
@@ -395,14 +393,15 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let float = order.max_delivery_fee.unwrap_or_else(|| relay_governance::suggested_delivery_fees().into_iter().max().unwrap_or(0));
     let spendable = crate::settlement::spendable()?;
     if spendable < i128::from(float) {
-        return Err(wasm_error!(WasmErrorInner::Guest(format!(
-            "Your balance can't cover a driver's fee for this order (up to {float} cents), which you set aside when you check them in. Add funds, then accept it."
-        ))));
+        return Err(guest(format!(
+            "Your balance can't cover a driver's fee for this order (up to {float_cents}), which you set aside when you check them in. Add funds, then accept it.",
+            float_cents = float
+        )));
     }
     // The store's own limit on what may be left at a door.
     let limit = current_catalog(&order.catalog_ref)?.leave_at_door_max_cents;
     if order.dropoff_preference == DropoffPreference::LeaveAtDoor && limit.is_some_and(|max| order.order_total > max) {
-        return Err(wasm_error!(WasmErrorInner::Guest("This order is over your limit for leaving at the door -- decline it, or ask the customer to have it handed over.".into())));
+        return Err(guest("This order is over your limit for leaving at the door -- decline it, or ask the customer to have it handed over."));
     }
     // The store's check-in code, for the driver collecting it.
     let code = crate::pin::new_code()?;
@@ -415,7 +414,7 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     publish_to_open_anchor(&updated, &dropoff_geohash, sys_time()?)?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back accepted order".into())))
+        .ok_or(guest("could not read back accepted order"))
 }
 
 /// Reads a specific, already-known order's current state -- every other
@@ -449,11 +448,11 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
         DeliveryStatus::MerchantConfirmed => crate::deliveries::start_cooking(order),
         DeliveryStatus::DriverAtStore => {
             let checked_in = crate::deliveries::ensure_checked_in(order)?;
-            get(checked_in, GetOptions::local())?.ok_or(wasm_error!(WasmErrorInner::Guest("could not read back the order".into())))
+            get(checked_in, GetOptions::local())?.ok_or(guest("could not read back the order"))
         }
-        other => Err(wasm_error!(WasmErrorInner::Guest(format!(
+        other => Err(guest(format!(
             "{other:?} is recorded by its own step: accept_delivery_order, accept_bid, drop_order, pick_up_order, complete_delivery, cancel_order or decline_order"
-        )))),
+        ))),
     }
 }
 
@@ -500,6 +499,8 @@ pub struct NetworkTerms {
     /// Different stores a driver must have delivered for before their
     /// check-in reports count.
     pub min_reporter_stores: u32,
+    /// How far back ratings and records reach, in days.
+    pub reputation_window_days: u32,
     /// What a minute of a driver's arrival time counts for when matching.
     pub minute_value_cents: u64,
     /// Where apps fetch the network's time source from.
@@ -562,6 +563,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         bid_window_secs: relay_governance::bid_window().as_secs(),
         max_driver_changes: relay_governance::max_driver_changes(),
         min_reporter_stores: relay_governance::min_reporter_stores(),
+        reputation_window_days: (relay_governance::reputation_window().as_secs() / 86_400) as u32,
         minute_value_cents: relay_governance::minute_value_cents(),
         time_relays: relay_governance::time_source().relays,
         time_chain_hash: relay_governance::time_source().chain_hash,
@@ -594,18 +596,18 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
 pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::DriverAtStore {
-        return Err(wasm_error!(WasmErrorInner::Guest("an order is picked up once the store has checked its driver in".into())));
+        return Err(guest("An order can be picked up only once the store has checked its driver in."));
     }
     let proof = call(CallTargetCell::Local, "attestation", "pickup_proof_for_order".into(), None, order_original_action.clone())?;
     let proof: Option<ActionHash> = match proof {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
         _ => None,
     };
-    order.pickup_proof = Some(proof.ok_or(wasm_error!(WasmErrorInner::Guest("Have the store scan your code, or confirm they've handed it over.".into())))?);
+    order.pickup_proof = Some(proof.ok_or(guest("Have the store scan your code, or confirm they've handed it over."))?);
     order.status = DeliveryStatus::PickedUp;
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back picked-up order".into())))
+        .ok_or(guest("could not read back picked-up order"))
 }
 
 /// The customer withdrawing their delivery, until a driver picks it up --
@@ -616,9 +618,7 @@ pub fn cancel_order(order_original_action: ActionHash) -> ExternResult<Record> {
     let latest = resolve_latest(order_original_action.clone())?;
     if let Some(version) = dispatch_integrity::lineage::Version::of(latest.clone()) {
         if dispatch_integrity::lineage::liable_release(&version)?.is_some() {
-            return Err(wasm_error!(WasmErrorInner::Guest(
-                "Your driver left your order while it was cooking, so they answer for it: wait for another driver (you're refunded in full if none comes), or collect it yourself.".into()
-            )));
+            return Err(guest("Your driver left your order while it was cooking, so they answer for it: wait for another driver (you're refunded in full if none comes), or collect it yourself."));
         }
     }
     let store_late = dispatch_integrity::lineage::Version::of(latest).map(|v| dispatch_integrity::lineage::store_was_late(&v)).transpose()?.unwrap_or(false);
@@ -647,7 +647,7 @@ pub(crate) fn cancel_delivery(order_original_action: ActionHash, reason: Cancell
     let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
     order_queues::retire(&OrderParties::delivery(&order_original_action, &order)?)?;
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back cancelled order".into())))
+        .ok_or(guest("could not read back cancelled order"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -727,19 +727,19 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
 
     if !matches!(order.status, DeliveryStatus::PickedUp | DeliveryStatus::Disputed) {
-        return Err(wasm_error!(WasmErrorInner::Guest("an order is completed once it's picked up".into())));
+        return Err(guest("An order can be completed only once it's picked up."));
     }
     if order.accepted_bid.is_none() {
-        return Err(wasm_error!(WasmErrorInner::Guest("order has no accepted bid".into())));
+        return Err(guest("This order has no driver yet."));
     }
 
     // Proof the customer has it -- see `attestation::delivery_proof_for_order`.
     let proof_response = call(CallTargetCell::Local, "attestation", "delivery_proof_for_order".into(), None, input.order_original_action.clone())?;
     let proof: Option<ActionHash> = match proof_response {
         ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e))?,
-        other => return Err(wasm_error!(WasmErrorInner::Guest(format!("cannot complete this delivery yet: {other:?}")))),
+        other => return Err(guest(format!("cannot complete this delivery yet: {other:?}"))),
     };
-    let proof = proof.ok_or(wasm_error!(WasmErrorInner::Guest("There's no proof yet that the customer has it: scan their code, or have them confirm.".into())))?;
+    let proof = proof.ok_or(guest("There's no proof yet that the customer has it: scan their code, or have them confirm."))?;
 
     let parties = OrderParties::delivery(&input.order_original_action, &order)?;
     let merchant = order.merchant.clone();
@@ -762,6 +762,6 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
     get(updated, GetOptions::local())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("could not read back completed order".into())))
+        .ok_or(guest("could not read back completed order"))
 }
 

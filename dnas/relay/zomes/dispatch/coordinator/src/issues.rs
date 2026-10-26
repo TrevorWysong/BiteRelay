@@ -14,11 +14,7 @@ use crate::orders::{record_reputation_event, ReputationEventKindWire, Reputation
 use crate::settlement::find_hold;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, open_chunked, original_action_of, resolve_latest, seal_chunked};
-
-fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
+use relay_coordinator_support::{decode_or, guest, open_chunked, original_action_of, resolve_latest, seal_chunked};
 
 // --- the order, as issues need it ---
 
@@ -83,7 +79,7 @@ pub fn report_issue(input: ReportIssueInput) -> ExternResult<Record> {
     let order = original_action_of(input.order)?;
     let terms = priced(&order)?;
     if terms.requester != agent_info()?.agent_initial_pubkey {
-        return Err(guest("only the order's customer can report a problem with it"));
+        return Err(guest("Only the order's customer can report a problem with it."));
     }
     if decisions_of(&order)?.settlement.is_some() {
         return Err(guest("The store has already settled this order."));
@@ -470,7 +466,7 @@ pub fn decide_not_delivered(order: ActionHash) -> ExternResult<ActionHash> {
     let order = original_action_of(order)?;
     let (_, merchant) = parties_of(&order)?;
     if merchant != agent_info()?.agent_initial_pubkey {
-        return Err(guest("only the order's store decides this"));
+        return Err(guest("Only the order's store decides this."));
     }
     let decisions = decisions_of(&order)?;
     if decisions.delivered.is_some() || decisions.not_delivered.is_some() {

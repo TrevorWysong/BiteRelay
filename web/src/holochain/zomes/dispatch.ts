@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, AppealView, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, AppealView, AppealsPage, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -147,12 +147,6 @@ export async function getMyOrderHistory(before: Timestamp | null = null, limit: 
 /// what loyalty promos count. A local read of their own chain.
 export async function countMyCompletedOrders(catalogRef: ActionHash): Promise<number> {
   return callZome("dispatch", "count_my_completed_orders", catalogRef);
-}
-
-/// The order the caller already placed redeeming this goodie-bag claim, if
-/// any. A local read of their own chain.
-export async function getMyOrderForClaim(claimRef: ActionHash): Promise<ActionHash | null> {
-  return callZome("dispatch", "get_my_order_for_claim", claimRef);
 }
 
 /// An in-progress delivery and the accepted bid it's being delivered under.
@@ -526,12 +520,13 @@ export async function getAppealForOrder(order: ActionHash): Promise<AppealView |
   return callZome("dispatch", "get_appeal_for_order", order);
 }
 
-/// The appeals before the caller, an arbiter.
-export async function getMyDocket(): Promise<AppealView[]> {
-  return callZome("dispatch", "get_my_docket", null);
+/// The appeals before the caller, an arbiter -- newest first, a page at a
+/// time, open ones first in each; pass a page's `next_before` to continue.
+export async function getMyDocket(before: Timestamp | null = null): Promise<AppealsPage> {
+  return callZome("dispatch", "get_my_docket", { before });
 }
 
-/// Appeals of the caller's decisions as a store owner.
-export async function getAppealsAgainstMe(): Promise<AppealView[]> {
-  return callZome("dispatch", "get_appeals_against_me", null);
+/// Appeals of the caller's decisions as a store owner, paged the same way.
+export async function getAppealsAgainstMe(before: Timestamp | null = null): Promise<AppealsPage> {
+  return callZome("dispatch", "get_appeals_against_me", { before });
 }

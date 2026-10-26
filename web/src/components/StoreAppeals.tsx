@@ -18,7 +18,8 @@ export function StoreAppeals() {
   const t = useT();
   const { data, reload } = useResource(appeals ? "appeals-against-me" : null, getAppealsAgainstMe, { pollMs: POLL.slow });
   const [answering, setAnswering] = useState<AppealView | null>(null);
-  const waiting = (data ?? []).filter((a) => !a.answered && !a.ruling);
+  // The newest page: an appeal waits on its store only for a while.
+  const waiting = (data?.appeals ?? []).filter((a) => !a.answered && !a.ruling);
   if (waiting.length === 0) return null;
   return (
     <Card className="mb-4 p-4">

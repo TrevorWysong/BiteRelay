@@ -79,7 +79,7 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/dispatch/coordinator/src/issues.rs", &["IssueView", "OrderDecisions", "IssueItems"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/lines.rs", &["LineView"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/verification.rs", &["VerificationView", "VerificationTerms"]),
-    only("dnas/relay/zomes/dispatch/coordinator/src/appeals.rs", &["AppealView", "RulingView"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/appeals.rs", &["AppealView", "RulingView", "AppealsPage"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/receipts.rs", &["Receipt", "ReceiptLine", "ReceiptPayment"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/deliveries.rs", &["OrderTiming", "StoreStep", "StoreStepDue"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/matching.rs", &["RankedBid"]),

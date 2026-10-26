@@ -5,9 +5,9 @@
 // exercising the exact field names/shapes the TS client sends, not just
 // that the Rust side compiles.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { acceptOrder, actionHash, appSource, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntil, retryUntilOk, ST_PETE, testApp } from "./helpers.js";
+import { acceptOrder, actionHash, collectFromStore, commitAndCook, decodeEntry, handOff, retryUntil, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [customer, driver] = await scenario.addPlayersWithApps([
@@ -17,9 +17,9 @@ await runScenario(async (scenario) => {
   const both = [customer, driver];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof customer) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof customer) => getZomeCaller(p.cells[0], "catalog");
-  const dispatchOf = (p: typeof customer) => getZomeCaller(p.cells[0], "dispatch");
+  const profilesOf = (p: typeof customer) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof customer) => retryingCaller(p.cells[0], "catalog");
+  const dispatchOf = (p: typeof customer) => retryingCaller(p.cells[0], "dispatch");
 
   // --- Profile with bio/avatar/phone ---
   const now = Date.now() * 1000;
@@ -205,21 +205,20 @@ await runScenario(async (scenario) => {
   await dispatchOf(customer)("accept_bid", { order_original_action: orderRef, bid_action: bidRef, override_warrants: false });
   await commitAndCook(driver, customer, orderRef, both);
 
-  const attestationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "attestation");
   await collectFromStore(driver, customer, orderRef, both);
 
   await handOff(driver, customer, orderRef, "CustomerHandoff", both);
   await dhtSync(both, customer.cells[0].cell_id[0]);
 
   await dispatchOf(customer)("complete_delivery", { order_original_action: orderRef });
-  const ledgerOf = (p: typeof customer) => getZomeCaller(p.cells[0], "ledger");
+  const ledgerOf = (p: typeof customer) => retryingCaller(p.cells[0], "ledger");
   await dhtSync(both, customer.cells[0].cell_id[0]);
   const driverBalance = await retryUntil(() => ledgerOf(driver)<number>("get_balance", driver.agentPubKey), (b) => b === 400 + 150, 120, 1000);
   assert.equal(driverBalance, 400 + 150, "driver's payout must include the tip on top of the bid's price_offer");
   console.log("[PASS] complete_delivery pays the driver price_offer + tip_cents, confirming the tip is real money, not just a stored field");
 
   // --- Reviews ---
-  const reputationOf = (p: typeof customer) => getZomeCaller(p.cells[0], "reputation");
+  const reputationOf = (p: typeof customer) => retryingCaller(p.cells[0], "reputation");
   await reputationOf(customer)("submit_review", { target: { Driver: driver.agentPubKey }, order_original_action: orderRef, rating: 5, comment: "Great driver!" });
   await dhtSync(both, customer.cells[0].cell_id[0]);
   const driverReviews = (await reputationOf(driver)<{ reviews: HcRecord[] }>("get_reviews_for", { target: { Driver: driver.agentPubKey }, before: null })).reviews;

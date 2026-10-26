@@ -8,17 +8,17 @@
 // though the merchant's own get_my_catalog path (fixed earlier, see
 // storefront-details.test.ts) was already correct.
 import assert from "node:assert/strict";
-import { runScenario, dhtSync, getZomeCaller } from "@holochain-open-dev/tryorama";
+import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { appSource, actionHash, decodeEntry, bytesEqual, ST_PETE, testApp } from "./helpers.js";
+import { actionHash, decodeEntry, bytesEqual, ST_PETE, testApp, retryingCaller } from "./helpers.js";
 
 await runScenario(async (scenario) => {
   const [merchant, customer] = await scenario.addPlayersWithApps([testApp, testApp]);
   const all = [merchant, customer];
   await scenario.shareAllAgents();
 
-  const profilesOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "profiles");
-  const catalogOf = (p: typeof merchant) => getZomeCaller(p.cells[0], "catalog");
+  const profilesOf = (p: typeof merchant) => retryingCaller(p.cells[0], "profiles");
+  const catalogOf = (p: typeof merchant) => retryingCaller(p.cells[0], "catalog");
 
   const now = Date.now() * 1000;
   await profilesOf(merchant)("create_profile", { display_name: "Mo Merchant", roles: ["Merchant"], created_at: now });

@@ -14,9 +14,7 @@ mod standing;
 pub use cash_out::*;
 pub use standing::*;
 
-pub(crate) fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
+pub(crate) use relay_coordinator_support::guest;
 
 /// The caller's ledger entries, oldest first.
 pub(crate) fn my_entries() -> ExternResult<Vec<Record>> {
@@ -314,7 +312,7 @@ pub fn collect(input: CollectInput) -> ExternResult<ActionHash> {
         _ => share.amount,
     };
     if amount == 0 {
-        return Err(guest("there's nothing to collect"));
+        return Err(guest("There's nothing to collect."));
     }
     append(LedgerKind::Collect { hold: input.hold, portion: input.portion, basis: input.basis }, amount)
 }

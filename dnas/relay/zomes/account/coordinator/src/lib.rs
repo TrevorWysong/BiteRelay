@@ -18,9 +18,7 @@ pub use plans::*;
 pub use reissue::*;
 pub use succession::*;
 
-pub(crate) fn guest(message: impl Into<String>) -> WasmError {
-    wasm_error!(WasmErrorInner::Guest(message.into()))
-}
+pub(crate) use relay_coordinator_support::guest;
 
 pub(crate) fn me() -> ExternResult<AgentPubKey> {
     Ok(agent_info()?.agent_initial_pubkey)

@@ -8,11 +8,11 @@ import { useResource } from "../../lib/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
-import { formatCatalogAddress, formatCents, toMinorUnits, currencySymbol } from "../../lib/format";
+import { currencySymbol, formatCatalogAddress, formatCents, nowMicros, toMinorUnits } from "../../lib/format";
 import { describeError } from "../../lib/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { useTerms } from "../../store/network";
-import { appLocale, useT } from "../../i18n";
+import { useT } from "../../i18n";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { ItemSheet } from "../../components/ItemSheet";
@@ -20,10 +20,11 @@ import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { fetchMenu, groupByCategory } from "../../lib/menu";
 import { useFavorites } from "../../lib/useFavorites";
 import type { ItemRow } from "../../lib/menu";
-import type { GeoPoint, MerchantCatalog, Review, GoodieBag, Timestamp } from "../../holochain/types";
+import type { GeoPoint, MerchantCatalog, GoodieBag } from "../../holochain/types";
 import { POLL } from "../../lib/poll";
 import { useClock } from "../../lib/useClock";
 import { storeStatus } from "../../lib/storeHours";
+import { ReviewList } from "../../components/ReviewList";
 
 interface BagRow {
   hash: Uint8Array;
@@ -44,7 +45,7 @@ interface StoreMenu {
 async function fetchStoreMenu(catalogHash: Uint8Array): Promise<StoreMenu> {
   const [record, items, bagViews] = await Promise.all([getCatalog(catalogHash), fetchMenu(catalogHash), listGoodieBagsForCatalog(catalogHash)]);
   // Same as Browse.tsx's strip: drops a bag that closed since the last poll.
-  const now = Date.now() * 1000;
+  const now = nowMicros();
   return {
     catalog: decodeEntry<MerchantCatalog>(record),
     items,
@@ -99,12 +100,6 @@ function StorePage({ hash }: { hash: string }) {
   // How it treats drivers: times it kept one waiting (each refunded its
   // customer), and drivers' reports it wouldn't check them in.
   const { data: record = null } = useResource(`store-record:${hash}`, () => getReputationSummary({ Store: catalogHash }));
-  const { data: reviewFeed, mutate: mutateReviews } = useResource<{ reviews: Review[]; before: Timestamp | null }>(`store-reviews:${hash}`, () =>
-    getReviewsFor({ Store: catalogHash }).then((page) => ({ reviews: page.reviews.map((r) => decodeEntry<Review>(r)), before: page.next_before })),
-  );
-  const reviews = reviewFeed?.reviews ?? [];
-  const reviewsBefore = reviewFeed?.before ?? null;
-  const [loadingMoreReviews, setLoadingMoreReviews] = useState(false);
   const { favoritesHex, toggleFavorite } = useFavorites();
   const favorited = favoritesHex.has(hash);
   const [claimingBagHex, setClaimingBagHex] = useState<string | null>(null);
@@ -117,17 +112,6 @@ function StorePage({ hash }: { hash: string }) {
   const [dietaryFilter, setDietaryFilter] = useState<string[]>([]);
   /// The item whose choices are open, if any.
   const [choosing, setChoosing] = useState<ItemRow | null>(null);
-
-  async function loadMoreReviews() {
-    if (reviewsBefore === null) return;
-    setLoadingMoreReviews(true);
-    try {
-      const page = await getReviewsFor({ Store: catalogHash }, reviewsBefore);
-      mutateReviews((prev) => ({ reviews: [...(prev?.reviews ?? []), ...page.reviews.map((r) => decodeEntry<Review>(r))], before: page.next_before }));
-    } finally {
-      setLoadingMoreReviews(false);
-    }
-  }
 
   function openClaim(row: BagRow) {
     const hex = bytesToHex(row.hash);
@@ -394,29 +378,9 @@ function StorePage({ hash }: { hash: string }) {
 
         {items.length === 0 && <p className="mt-6 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-6 text-center text-sm text-ink-400">{t("store.noMenu")}</p>}
 
-        {reviews.length > 0 && (
-          <motion.div variants={fadeSlideUp} className="mt-6">
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-              <Star size={13} /> {t("store.reviews")}
-            </p>
-            <div className="flex flex-col gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4">
-              {reviews.map((r, i) => (
-                <div key={i} className="border-b border-ink-100 dark:border-ink-800 pb-3 last:border-0 last:pb-0">
-                  <div className="flex items-center justify-between">
-                    <StarRating value={r.rating} size={12} />
-                    <span className="text-[11px] text-ink-300">{new Date(r.created_at / 1000).toLocaleDateString(appLocale(), { month: "short", day: "numeric" })}</span>
-                  </div>
-                  {r.comment && <p className="mt-1 text-sm text-ink-600 dark:text-ink-300">{r.comment}</p>}
-                </div>
-              ))}
-              {reviewsBefore !== null && (
-                <Button variant="ghost" loading={loadingMoreReviews} onClick={loadMoreReviews} className="w-full py-2 text-xs">
-                  {t("store.olderReviews")}
-                </Button>
-              )}
-            </div>
-          </motion.div>
-        )}
+        <motion.div variants={fadeSlideUp}>
+          <ReviewList className="mt-6" feedKey={`store:${hash}`} fetchPage={(before) => getReviewsFor({ Store: catalogHash }, before)} />
+        </motion.div>
       </motion.div>
 
       {choosing && (
