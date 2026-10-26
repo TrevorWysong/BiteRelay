@@ -1,4 +1,5 @@
-// Proves moving a store to its owner's new key: the new key republishes
+// Proves moving a store to its owner's new key, after they recovered their
+// account onto it (their phone lost): the new key republishes
 // it -- details, choice groups (nested ones too), menu and live promo
 // codes, every reference remapped to the copies -- and records the move,
 // which only the key that took over the store's owner can; each store
@@ -8,7 +9,7 @@
 import assert from "node:assert/strict";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { ST_PETE, actionHash, decodeEntry, retryUntil, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { ST_PETE, actionHash, decodeEntry, phraseKey, phraseMessage, retryUntil, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
 
 interface View {
   original_action: Uint8Array;
@@ -50,12 +51,12 @@ await runScenario(async (scenario) => {
   );
   await catalog(alice)("create_promo_code", { catalog_ref: store, code: "FREECOMBO", requirement: "None", reward: { FreeItem: { item_ref: combo, quantity: 1 } }, expires_at: null, auto_apply: false });
 
-  // ===== Moving to a new phone: listings come down first =====
-  await assert.rejects(account(alice)("hand_over", { successor: bob.agentPubKey, parcel: "" }), /listings down first/, "a listed store's stake would be stranded");
-  await catalog(alice)("close_listing", store);
-  const bequest = await account(alice)<Uint8Array>("hand_over", { successor: bob.agentPubKey, parcel: "" });
+  // ===== Alice loses her phone, and recovers her account onto Bob's key =====
+  const phrase = phraseKey();
+  const plan = await account(alice)<{ plan: Uint8Array }>("set_recovery_plan", { phrase_key: phrase.key, guardians: [], threshold: 0 });
   await sync();
-  await account(bob)("take_over", { predecessor: alice.agentPubKey, authority: { HandOver: { bequest } } });
+  const head = await retryUntil(() => account(bob)<Uint8Array | null>("latest_action_of", alice.agentPubKey), (h) => !!h);
+  await account(bob)("take_over", { predecessor: alice.agentPubKey, authority: { Phrase: { plan: plan.plan, head, signature: phrase.sign(phraseMessage(alice.agentPubKey, bob.agentPubKey, head!)) } } });
   await sync();
 
   await assert.rejects(catalog(carol)("move_store", store), /hasn't taken over an account/, "only a key that took over an account moves its stores");

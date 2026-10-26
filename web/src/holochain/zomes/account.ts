@@ -1,8 +1,9 @@
-// Accounts: a person's recovery plan, guardians vouching, and a new key
-// taking an account over -- handed over from the old device, or recovered
-// when it's lost. See the account zome, and RECOVERY.md.
+// Accounts: a person's recovery plan, guardians vouching, a new key
+// recovering an account whose key was lost, moving to the next network,
+// and whether this device can send its key to a new phone. See the account
+// zome, and RECOVERY.md.
 import { callPrevious, callZome } from "../client";
-import type { ActionHash, AgentPubKey, PlanView, RecoveryPlan, Succession, SuccessionView, VouchView } from "../types";
+import type { ActionHash, AgentPubKey, MoveReadiness, PlanView, RecoveryPlan, Succession, SuccessionView, VouchView } from "../types";
 
 export async function setRecoveryPlan(plan: RecoveryPlan): Promise<PlanView> {
   return callZome("account", "set_recovery_plan", plan);
@@ -43,11 +44,6 @@ export async function vouchesForMe(): Promise<VouchView[]> {
   return callZome("account", "vouches_for_me", null);
 }
 
-/// Hands the caller's account to `successor`, with `parcel` sealed to it.
-export async function handOver(successor: AgentPubKey, parcel: string): Promise<ActionHash> {
-  return callZome("account", "hand_over", { successor, parcel });
-}
-
 export async function takeOver(succession: Succession): Promise<ActionHash> {
   return callZome("account", "take_over", succession);
 }
@@ -65,8 +61,11 @@ export async function latestActionOf(agent: AgentPubKey): Promise<ActionHash | n
   return callZome("account", "latest_action_of", agent);
 }
 
-export async function openParcels(): Promise<string[]> {
-  return callZome("account", "open_parcels", null);
+/// Where the network stands on this device's chain: whether it holds
+/// everything this device wrote, so a new phone restoring the account from
+/// it gets all of it.
+export async function readyToMove(): Promise<MoveReadiness> {
+  return callZome("account", "ready_to_move", null);
 }
 
 /// Asks `issuer` to reissue the balance of the account the caller recovered.

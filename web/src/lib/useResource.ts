@@ -19,6 +19,19 @@ interface PollOptions {
   background?: boolean;
 }
 
+/// A ref that always holds the latest `value` -- for a callback that must
+/// stay the same function (an interval's, a camera's) yet use the latest
+/// props. Refreshed after every render, before any effect or event handler
+/// can read it -- never written during render itself, which concurrent
+/// rendering may discard.
+export function useLatest<T>(value: T): { readonly current: T } {
+  const ref = useRef(value);
+  useLayoutEffect(() => {
+    ref.current = value;
+  });
+  return ref;
+}
+
 /// Runs `run` now, on every `pollMs` tick, and on every matching signal,
 /// for as long as `enabled` holds -- the polling-plus-signal loop that
 /// several screens otherwise duplicate. `run` always calls the *latest*
@@ -28,15 +41,8 @@ interface PollOptions {
 /// whatever identifies *what* is being polled, so moving to a different
 /// one fetches it straight away instead of waiting for the next tick.
 export function usePolling(run: () => unknown, { pollMs, refreshOn, background = false }: PollOptions, enabled = true, restartKey?: string | null) {
-  const runRef = useRef(run);
-  const filterRef = useRef(refreshOn);
-  // Refreshed after every render, before any effect (below) or event
-  // handler can read them -- never written during render itself, which
-  // concurrent rendering may discard.
-  useLayoutEffect(() => {
-    runRef.current = run;
-    filterRef.current = refreshOn;
-  });
+  const runRef = useLatest(run);
+  const filterRef = useLatest(refreshOn);
   const hasSignalFilter = !!refreshOn;
 
   useEffect(() => {
@@ -74,21 +80,18 @@ export function usePolling(run: () => unknown, { pollMs, refreshOn, background =
       if (pollMs) document.removeEventListener("visibilitychange", onVisible);
       unsub?.();
     };
-  }, [enabled, pollMs, hasSignalFilter, restartKey, background]);
+  }, [enabled, pollMs, hasSignalFilter, restartKey, background, runRef, filterRef]);
 }
 
 /// Calls `handler` with every conductor signal while mounted (and while
 /// `enabled`) -- for reacting to what a signal says, not just refreshing a
 /// read. The latest `handler` is always the one called.
 export function useLocalSignal(handler: (signal: LocalSignal) => void, enabled = true) {
-  const handlerRef = useRef(handler);
-  useLayoutEffect(() => {
-    handlerRef.current = handler;
-  });
+  const handlerRef = useLatest(handler);
   useEffect(() => {
     if (!enabled) return;
     return onLocalSignal((signal) => handlerRef.current(signal));
-  }, [enabled]);
+  }, [enabled, handlerRef]);
 }
 
 interface ResourceState<T> {

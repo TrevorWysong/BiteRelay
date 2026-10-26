@@ -11,8 +11,15 @@ use hdk::prelude::*;
 /// reasoning, same easy-to-miss failure mode if omitted.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    relay_coordinator_support::grant_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
+    prepare_device(())?;
     Ok(InitCallbackResult::Pass)
+}
+
+/// See `dispatch_coordinator::signals::prepare_device`.
+#[hdk_extern]
+pub fn prepare_device(_: ()) -> ExternResult<()> {
+    relay_coordinator_support::ensure_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
+    Ok(())
 }
 
 /// Local UI-facing signal, emitted from `recv_remote_signal` once a remote

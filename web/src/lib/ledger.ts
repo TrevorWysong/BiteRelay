@@ -26,7 +26,5 @@ export function describeLedgerEntry(entry: LedgerEntry): { label: string; direct
   if ("Stake" in kind) return { label: t("ledger.stake"), direction: "out" };
   if ("Redeem" in kind) return { label: t("ledger.redeem"), direction: "out" };
   if ("Reclaim" in kind) return { label: t("ledger.reclaim"), direction: "in" };
-  if ("HandOver" in kind) return { label: t("ledger.handOver"), direction: "out" };
-  if ("Inherit" in kind) return { label: t("ledger.inherit"), direction: "in" };
   return { label: t("ledger.unstake"), direction: "in" };
 }

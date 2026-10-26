@@ -87,15 +87,6 @@ export interface Arrival {
 
 export type Authority =
   /**
-   * The predecessor's own hand-over: its final ledger entry, naming the
-   * author.
-   */
-  | {
-      HandOver: {
-        bequest: ActionHash;
-      };
-    }
-  /**
    * The recovery phrase: its key's signature over `phrase_message`.
    * `plan` is the predecessor's latest plan as of `head`, an action on its
    * chain -- where the account stood when it was recovered.
@@ -185,16 +176,6 @@ export type BagClaimStatus =
 export interface Beacon {
   round: number;
   signature: Uint8Array;
-}
-
-/**
- * An account handed over to the caller.
- */
-export interface BequestView {
-  bequest: ActionHash;
-  from: AgentPubKey;
-  amount: number;
-  at: Timestamp;
 }
 
 export interface Bid {
@@ -1282,26 +1263,6 @@ export type LedgerKind =
         redemption: ActionHash;
         outcome: ActionHash;
       };
-    }
-  /**
-   * The author handing their account over to `successor`, a key on their
-   * new device: their whole balance, which can't be below zero, with no
-   * order in hand. Debit -- and their last: nothing follows it on their
-   * ledger, so the old key can never spend again.
-   */
-  | {
-      HandOver: {
-        successor: AgentPubKey;
-      };
-    }
-  /**
-   * The author, a successor, taking in the balance its predecessor handed
-   * over (`bequest`, that `HandOver`). Credit, once.
-   */
-  | {
-      Inherit: {
-        bequest: ActionHash;
-      };
     };
 
 /**
@@ -1458,7 +1419,7 @@ export const MAX_ORDER_CHOICES = 300;
 export const MAX_ORDER_LINES = 100;
 
 /**
- * The most a hand-over's parcel may hold, before sealing.
+ * The most a migration's parcel may hold, before sealing.
  */
 export const MAX_PARCEL_BYTES = 65536;
 
@@ -1720,6 +1681,27 @@ export interface ModifierOption {
    * by its original action -- one of the same store's.
    */
   nested_group: ActionHash | null;
+}
+
+/**
+ * Whether this device can hand its key to a new phone now.
+ */
+export interface MoveReadiness {
+  /**
+   * This device's latest action, and its place on the chain.
+   */
+  head: ActionHash;
+  seq: number;
+  /**
+   * The latest action the network's authorities for this account hold,
+   * as far as they answered -- none when none did.
+   */
+  seen: number | null;
+  /**
+   * Whether they hold this device's latest action, cleanly: everything
+   * it wrote is out, so a new phone restoring the account gets all of it.
+   */
+  ready: boolean;
 }
 
 /**
@@ -2036,9 +2018,10 @@ export type Outcome =
     };
 
 /**
- * What a key handing over its account passes on, sealed to its successor:
- * what only the person could read before (their name, phone, addresses),
- * which the old key alone could open. Its contents are the app's own.
+ * What an account moving to the next network passes on, sealed to its key
+ * there: what only the person could read before (their name, phone,
+ * addresses), which the old key alone could open. Its contents are the
+ * app's own.
  */
 export interface Parcel {
   successor: AgentPubKey;
@@ -2830,10 +2813,6 @@ export interface ShareView {
  */
 export interface Standing {
   balance: number;
-  /**
-   * Whether it had already been handed over -- nothing more to recover.
-   */
-  handed_over: boolean;
 }
 
 /**
@@ -2901,14 +2880,15 @@ export interface StoreSuccession {
 }
 
 /**
- * The author taking over `predecessor`'s account, on `authority`.
+ * The author recovering `predecessor`'s account, its key lost, on
+ * `authority`.
  */
 export interface Succession {
   predecessor: AgentPubKey;
   authority: Authority;
 }
 
-export type SuccessionKind = "HandOver" | "Phrase" | "Guardians";
+export type SuccessionKind = "Phrase" | "Guardians";
 
 /**
  * One key taking over another's account.
@@ -2919,9 +2899,9 @@ export interface SuccessionView {
   successor: AgentPubKey;
   kind: SuccessionKind;
   /**
-   * The plan a recovery rested on -- none for a hand-over.
+   * The plan the recovery rested on.
    */
-  plan: ActionHash | null;
+  plan: ActionHash;
   at: Timestamp;
 }
 

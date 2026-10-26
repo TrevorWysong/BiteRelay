@@ -10,9 +10,9 @@ use ledger_integrity::*;
 use relay_coordinator_support::original_action_of;
 
 mod cash_out;
-mod hand_over;
+mod standing;
 pub use cash_out::*;
-pub use hand_over::*;
+pub use standing::*;
 
 pub(crate) fn guest(message: impl Into<String>) -> WasmError {
     wasm_error!(WasmErrorInner::Guest(message.into()))
@@ -43,9 +43,6 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
         }
         None => (None, 0, InHand::default()),
     };
-    if latest.as_ref().and_then(entry_of).is_some_and(|e| matches!(e.kind, LedgerKind::HandOver { .. })) {
-        return Err(guest("This account has moved to a new device."));
-    }
     if chain_closed()? {
         return Err(guest("This account has moved to the new version of Relay."));
     }
@@ -67,14 +64,8 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
             }
             balance - signed
         }
-        LedgerKind::HandOver { .. } => {
-            if balance < 0 || balance != signed {
-                return Err(guest("An account is handed over with its whole balance, which can't be below zero."));
-            }
-            0
-        }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } | LedgerKind::Inherit { .. } => balance + signed,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => balance + signed,
     };
     create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
 }
@@ -480,7 +471,7 @@ pub fn my_holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 mod test_utils {
     use hdk::prelude::*;
     use ledger_integrity::{EntryTypes, LedgerEntry, LinkTypes};
-    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile, SuccessorToBequest);
+    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile);
 
     /// Writes a cash-out's outcome exactly as given -- what a modified
     /// client could.

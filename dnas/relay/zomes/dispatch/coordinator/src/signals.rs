@@ -29,14 +29,26 @@ use hdk::prelude::*;
 /// rejection as an error on the sending side.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    relay_coordinator_support::grant_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
+    prepare_device(())?;
+    Ok(InitCallbackResult::Pass)
+}
+
+/// What this device needs to take part, set up if it isn't: the grant that
+/// lets signals reach it, and its background work. Init does it once; the
+/// app calls it on every start too, because an account restored onto a new
+/// device skips init and arrives with neither -- the grant is private to
+/// the device that wrote it, and schedules are the conductor's own state.
+/// Writes nothing on a device that's already set up.
+#[hdk_extern]
+pub fn prepare_device(_: ()) -> ExternResult<()> {
+    relay_coordinator_support::ensure_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
     // Each party collects what it's owed from its own conductor, and a store
     // makes its decisions -- see `settlement::settle_periodically`.
     schedule("settle_periodically")?;
     // Tending a customer's waiting orders and answering a store's new ones
     // -- see `upkeep`.
     schedule("tend_orders_periodically")?;
-    Ok(InitCallbackResult::Pass)
+    Ok(())
 }
 
 /// Which side of an order a signal's recipient is on.

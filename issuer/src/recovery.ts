@@ -52,11 +52,6 @@ export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: n
       log(`recovery of ${recovery.predecessor} by ${recovery.successor}: its plan was replaced -- void`);
       continue;
     }
-    if (successions.some((s) => s.kind === "HandOver")) {
-      // Handed over by its owner: its balance went with it.
-      store.settleRecovery(recovery.succession, "nothing");
-      continue;
-    }
     if (new Set(successions.map((s) => agentId(s.successor))).size > 1) {
       store.settleRecovery(recovery.succession, "contested");
       log(`recovery of ${recovery.predecessor}: recovered onto more than one key -- left for review`);
@@ -71,7 +66,7 @@ export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: n
     }
     if (Date.now() - recovery.quietSince < waitMs) continue;
     const standing = await ledger.standingAt(predecessor, latest);
-    const amount = standing.handed_over ? 0 : Math.max(0, standing.balance);
+    const amount = Math.max(0, standing.balance);
     if (amount > reviewAboveCents) {
       store.settleRecovery(recovery.succession, "review", amount);
       log(`recovery of ${recovery.predecessor}: ${amount} is more than reissued without review -- left for a person`);

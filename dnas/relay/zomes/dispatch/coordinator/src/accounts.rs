@@ -1,5 +1,5 @@
-//! Whether someone's account has moved on to a new key -- handed over, or
-//! recovered after their device was lost. A key whose account moved on may
+//! Whether someone's account has moved on to a new key -- recovered after
+//! their device was lost. A key whose account moved on may
 //! be in someone else's hands (a lost phone found), so a store doesn't take
 //! its orders and a customer doesn't take its bids: the person carries on
 //! from their new key. Asked of the account zome.

@@ -82,7 +82,7 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
       return { requests: page, cursor: page.length ? Math.max(...page.map((r) => r.requested_at)) + 1 : after, more: false };
     },
     latestActionOf: async (agent) => accounts.latest.get(agentId(agent)) ?? null,
-    standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0, handed_over: false },
+    standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0 },
     standingOf: async (agent) => accounts.standingOf?.get(agentId(agent)) ?? SEASONED,
     currency: async () => "USD",
     network: async () => accounts.network ?? new Uint8Array(39).fill(7),
@@ -263,10 +263,10 @@ function recovered(accounts: Accounts, kind: Succession["kind"], balance: number
   const lost = identity().key;
   const found = identity().key;
   const succession = new Uint8Array(39).fill(100 + n);
-  accounts.successions.push({ succession, predecessor: lost, successor: found, kind, plan: kind === "HandOver" ? null : new Uint8Array(39).fill(200 + n), at: n });
-  if (kind !== "HandOver") accounts.reissues.push({ succession, predecessor: lost, successor: found, requested_at: 1_000 + n });
+  accounts.successions.push({ succession, predecessor: lost, successor: found, kind, plan: new Uint8Array(39).fill(200 + n), at: n });
+  accounts.reissues.push({ succession, predecessor: lost, successor: found, requested_at: 1_000 + n });
   accounts.latest.set(agentId(lost), new Uint8Array(39).fill(n));
-  accounts.standing.set(agentId(lost), { balance, handed_over: false });
+  accounts.standing.set(agentId(lost), { balance });
   return { lost, found, succession };
 }
 
@@ -297,7 +297,7 @@ test("the old key doing anything starts the wait again", async () => {
   assert.equal(grants.length, 1);
 });
 
-test("an account recovered onto two keys is left for review, and a hand-over is never reissued", async () => {
+test("an account recovered onto two keys is left for review", async () => {
   const store = new Store(":memory:");
   const accounts = noAccounts();
   const { lost } = recovered(accounts, "Phrase", 5000, 3);
@@ -305,10 +305,9 @@ test("an account recovered onto two keys is left for review, and a hand-over is 
   const succession = new Uint8Array(39).fill(120);
   accounts.successions.push({ succession, predecessor: lost, successor: second, kind: "Guardians", plan: new Uint8Array(39).fill(204), at: 4 });
   accounts.reissues.push({ succession, predecessor: lost, successor: second, requested_at: 1_010 });
-  recovered(accounts, "HandOver", 7000, 5);
   const { ledger, grants } = fakeLedger([], accounts);
   for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
-  assert.equal(grants.length, 0, "nobody is paid twice, or on a hand-over's account");
+  assert.equal(grants.length, 0, "nobody is paid twice");
 });
 
 test("a recovery whose plan the person replaced reissues nothing", async () => {
@@ -322,18 +321,18 @@ test("a recovery whose plan the person replaced reissues nothing", async () => {
   assert.equal(grants.length, 0);
 });
 
-test("a recovered account's old key can't cash out; one that handed over can", async () => {
+test("a recovered account's old key can't cash out; an account in use can", async () => {
   const store = new Store(":memory:");
   const accounts = noAccounts();
   const { lost } = recovered(accounts, "Phrase", 0, 6);
-  const { lost: movedOn } = recovered(accounts, "HandOver", 0, 7);
+  const movedOn = identity().key;
   store.setPayoutAccount(agentId(lost), "acct_lost");
   store.setPayoutAccount(agentId(movedOn), "acct_moved");
   const { ledger, decisions } = fakeLedger([request(1, 5000, lost), request(2, 5000, movedOn)], accounts);
   const { rail, payments } = fakeRail({ ready: new Set(["acct_lost", "acct_moved"]) });
   await sweep(payoutDeps(store, ledger, rail));
   assert.ok("Declined" in decisions[0].outcome && decisions[0].outcome.Declined.reason.includes("recovered"), "a found phone pays nothing out");
-  assert.ok("Paid" in decisions[1].outcome, "the owner who handed over is paid as usual");
+  assert.ok("Paid" in decisions[1].outcome, "an account still on its key is paid as usual");
   assert.deepEqual(payments.map((p) => p.account), ["acct_moved"]);
 });
 
@@ -577,8 +576,8 @@ test("a balance moving to the next network is credited there once, only after th
   const request: MigrationRequest = { migration: new Uint8Array(39).fill(1), account: mover, successor: moverNew, network: next, requested_at: 1_001, close: null };
   const previousAccounts = noAccounts();
   previousAccounts.migrations = [request, { migration: new Uint8Array(39).fill(2), account: other, successor: otherNew, network: elsewhere, requested_at: 1_002, close: new Uint8Array(39).fill(3) }];
-  previousAccounts.standing.set(agentId(mover), { balance: 4500, handed_over: false });
-  previousAccounts.standing.set(agentId(other), { balance: 999, handed_over: false });
+  previousAccounts.standing.set(agentId(mover), { balance: 4500 });
+  previousAccounts.standing.set(agentId(other), { balance: 999 });
   const { ledger: previous } = fakeLedger([], previousAccounts);
   const currentAccounts = noAccounts();
   currentAccounts.network = next;

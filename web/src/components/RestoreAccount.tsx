@@ -1,25 +1,29 @@
 // "I already have an account": bringing an existing account onto this
-// device. Three ways, each ending with this device's key taking the account
-// over (the account zome's `take_over`), then the person confirming their
-// details:
+// device.
 //
-//   - from their other device, which scans this one's code and hands over;
-//   - with their recovery phrase, which signs for this key;
-//   - with their guardians, who scan this one's code and vouch.
+//   - From their other phone, which still works: it sends the account's own
+//     key here, sealed, and this device restores the account from the
+//     network -- the same account, nothing to confirm (`FromDevice`).
+//   - From the previous version of the network (MIGRATION.md).
+//   - Recovering a lost phone's account onto this device's key, with the
+//     recovery phrase, which signs for this key, or guardians, who scan its
+//     code and vouch. The person then confirms their details.
 //
-// This device's key is made (and, in development, remembered) first, so the
-// code it shows stays the same across reloads -- guardians may take days.
-// Waiting is polled, not pushed: nothing tells a new device it's been
-// handed an account.
+// For a migration or a recovery, this device's key is made (and, in
+// development, remembered) first, so the code it shows stays the same
+// across reloads -- guardians may take days. Waiting is polled, not
+// pushed: nothing tells a new device it's been vouched for.
 import { useState } from "react";
 import { ArrowLeft, HeartHandshake, History, KeyRound, Smartphone } from "lucide-react";
 import type { AgentPubKey, PlanView, VouchView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { accountsForPhraseKey, arrive, arrivedFrom, latestActionOf, migrationsToMeOnPrevious, mySuccession, recoveryPlanOf, requestReissue, takeOver, vouchesForMe } from "../holochain/zomes/account";
 import { hasPreviousNetwork } from "../holochain/client";
-import { bequestsToMe, listIssuers } from "../holochain/zomes/ledger";
+import { listIssuers } from "../holochain/zomes/ledger";
+import { canReceiveAccount, deviceRuntime } from "../holochain/device";
+import { invitationFingerprint, sealedAccount } from "../lib/deviceMove";
 import { catalogsOf, importStore, moveStore, previousStores } from "../holochain/zomes/catalog";
-import { AccountCode } from "./AccountCode";
+import { AccountCode, CodeCard, CodeReader } from "./AccountCode";
 import { Button, Field, Input, Skeleton, Spinner, Textarea } from "./ui";
 import { adoptPredecessor, keyFingerprint, readPredecessor, type AccountPlace } from "../lib/accountMove";
 import { describeError } from "../lib/errors";
@@ -34,7 +38,11 @@ import { t as translate, useT } from "../i18n";
 export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: string; onBack: () => void; onDone: () => void }) {
   const { agentPubKey, prepareNewDevice } = useSession();
   const t = useT();
-  const [method, setMethod] = useState<Method | null>(() => (agentPubKey ? rememberedMethod() : null));
+  const [method, setMethod] = useState<Method | null>(() => {
+    const remembered = rememberedMethod();
+    return remembered === "device" || agentPubKey ? remembered : null;
+  });
+  const { data: canReceive } = useResource("can-receive-account", canReceiveAccount);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A key that already took an account over (a reload mid-way) goes
@@ -51,6 +59,12 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
 
   async function choose(next: Method) {
     setError(null);
+    // The account comes with its own key: this device needs none of its own.
+    if (next === "device") {
+      remember(next);
+      setMethod(next);
+      return;
+    }
     setPreparing(true);
     try {
       await prepareNewDevice(devAdminUrl);
@@ -68,7 +82,7 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
       <ConfirmDetails
         predecessor={takenOver}
         place={place}
-        recovered={place === "previous" ? false : taken ? taken.kind !== "HandOver" : method !== "device"}
+        recovered={place === "here"}
         onDone={() => {
           remember(null);
           onDone();
@@ -89,7 +103,9 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
       <button type="button" onClick={back} className="mb-3 flex items-center gap-1 text-xs font-semibold text-ink-500 hover:text-ink-700">
         <ArrowLeft size={14} /> {t("common.back")}
       </button>
-      {!method || !agentPubKey ? (
+      {method === "device" ? (
+        <FromDevice />
+      ) : !method || !agentPubKey ? (
         <>
           <h2 className="mb-1 text-lg font-bold">{t("restore.title")}</h2>
           <p className="mb-4 text-sm text-ink-500">{t("restore.subtitle")}</p>
@@ -97,7 +113,7 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
             {hasPrevious && (
               <MethodCard icon={<History size={18} />} title={t("restore.previous")} blurb={t("restore.previousBlurb")} onClick={() => choose("previous")} disabled={preparing} />
             )}
-            <MethodCard icon={<Smartphone size={18} />} title={t("restore.device")} blurb={t("restore.deviceBlurb")} onClick={() => choose("device")} disabled={preparing} />
+            {canReceive && <MethodCard icon={<Smartphone size={18} />} title={t("restore.device")} blurb={t("restore.deviceBlurb")} onClick={() => choose("device")} disabled={preparing} />}
             <MethodCard icon={<KeyRound size={18} />} title={t("restore.phrase")} blurb={t("restore.phraseBlurb")} onClick={() => choose("phrase")} disabled={preparing} />
             <MethodCard icon={<HeartHandshake size={18} />} title={t("restore.guardians")} blurb={t("restore.guardiansBlurb")} onClick={() => choose("guardians")} disabled={preparing} />
           </div>
@@ -108,8 +124,6 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
           )}
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
         </>
-      ) : method === "device" ? (
-        <FromDevice me={agentPubKey} onTaken={setPredecessor} />
       ) : method === "previous" ? (
         <FromPreviousVersion me={agentPubKey} onTaken={setPredecessor} />
       ) : method === "phrase" ? (
@@ -133,41 +147,72 @@ function MethodCard({ icon, title, blurb, onClick, disabled }: { icon: React.Rea
   );
 }
 
-/// Waits for the old device to hand the account over, then takes it.
-function FromDevice({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
+/// This phone's side of receiving the account from the person's other one,
+/// with its key (RECOVERY.md): it shows an invitation, scans the key the
+/// other phone seals to it, and restores the account from the network --
+/// the very same account, so there are no details to confirm. The app then
+/// starts again as it.
+function FromDevice() {
   const t = useT();
+  const { data: invitation, error: inviteError } = useResource("move-invitation", async () => {
+    const runtime = await deviceRuntime();
+    if (!runtime) throw new Error(t("move.unsupported"));
+    return runtime.invite();
+  });
+  const [scanning, setScanning] = useState(false);
+  const [sealed, setSealed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const finish = (predecessor: AgentPubKey) => {
-    setDone(true);
-    onTaken(predecessor);
-  };
-  usePolling(
-    async () => {
-      try {
-        // Taken over already, on a try whose answer was lost.
-        const taken = await mySuccession();
-        if (taken) return finish(taken.predecessor);
-        const [bequest] = await bequestsToMe();
-        if (!bequest) return;
-        await takeOver({ predecessor: bequest.from, authority: { HandOver: { bequest: bequest.bequest } } });
-        finish(bequest.from);
-      } catch (err) {
-        setError(describeError(err));
-      }
-    },
-    { pollMs: POLL.waitingDevice, background: true },
-    !done,
-  );
+
+  async function receive(code: string) {
+    setSealed(code);
+    setError(null);
+    try {
+      await (await deviceRuntime())!.receive(code);
+      remember(null);
+      window.location.reload();
+    } catch (err) {
+      setError(describeError(err));
+    }
+  }
+
+  if (sealed) {
+    return (
+      <>
+        <h2 className="mb-1 text-lg font-bold">{t("receive.bringingTitle")}</h2>
+        <p className="mb-4 text-sm text-ink-500">{t("receive.bringing")}</p>
+        {error ? (
+          <>
+            <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+            <Button className="w-full" onClick={() => receive(sealed)}>
+              {t("receive.tryAgain")}
+            </Button>
+          </>
+        ) : (
+          <p className="flex items-center justify-center gap-2 text-xs text-ink-400">
+            <Spinner className="h-3 w-3" /> {t("receive.waiting")}
+          </p>
+        )}
+      </>
+    );
+  }
   return (
     <>
-      <h2 className="mb-1 text-lg font-bold">{t("restore.scanOther")}</h2>
-      <p className="mb-4 text-sm text-ink-500">{t("restore.scanOtherHow")}</p>
-      <AccountCode agent={me} note={t("restore.scanOtherNote")} />
-      <p className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-400">
-        <Spinner className="h-3 w-3" /> {t("restore.waitingOther")}
-      </p>
-      {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+      <h2 className="mb-1 text-lg font-bold">{scanning ? t("receive.scan") : t("receive.title")}</h2>
+      <p className="mb-4 text-sm text-ink-500">{scanning ? t("receive.scanHow") : t("receive.how")}</p>
+      {scanning ? (
+        <CodeReader accepts={(code) => sealedAccount(code) !== null} onCode={receive} prompt={t("receive.point")} refusal={t("receive.notSealed")} placeholder="relay-key:1:…" />
+      ) : invitation ? (
+        <>
+          <CodeCard code={invitation} fingerprint={invitationFingerprint(invitation)} note={t("receive.note")} />
+          <Button className="mt-4 w-full" onClick={() => setScanning(true)}>
+            {t("receive.next")}
+          </Button>
+        </>
+      ) : inviteError ? (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{describeError(inviteError)}</p>
+      ) : (
+        <Skeleton className="mx-auto h-56 w-56" />
+      )}
     </>
   );
 }
@@ -333,7 +378,7 @@ async function askForReissue() {
 }
 
 /// The account's details, confirmed for this device: the name and phone it
-/// had (sealed to the old key, so carried only by a hand-over).
+/// had (sealed to the old key, so carried only by a migration).
 function ConfirmDetails({ predecessor, place, recovered, onDone }: { predecessor: AgentPubKey; place: AccountPlace; recovered: boolean; onDone: () => void }) {
   const reconnect = useSession((s) => s.reconnect);
   const t = useT();

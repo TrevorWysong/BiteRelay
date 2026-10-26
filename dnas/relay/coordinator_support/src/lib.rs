@@ -271,13 +271,31 @@ pub fn agent_activity(agent: AgentPubKey, filter: ChainQueryFilter) -> ExternRes
     Ok(get_agent_activity(agent, filter, ActivityRequest::Full, GetOptions::local())?.valid_activity)
 }
 
-/// Lets any agent call `functions` of the calling zome on this agent's
-/// conductor -- a zome-call grant with no constraint, written to the chain
-/// (privately) at init. What `send_remote_signal` needs to reach
-/// `recv_remote_signal`, which Holochain refuses without a grant; and what a
-/// giver's conductor needs to answer a typed handoff code.
-pub fn grant_open_calls(tag: &str, functions: &[&str]) -> ExternResult<ActionHash> {
+/// Lets any agent call `functions` of the calling zome on this device: a
+/// zome-call grant with no constraint, written (privately) unless this
+/// device already holds it. What `send_remote_signal` needs to reach
+/// `recv_remote_signal`, which Holochain refuses without a grant, and what
+/// a giver's conductor needs to answer a typed handoff code. Returns
+/// whether it wrote one.
+///
+/// A grant's entry is private, so it lives only on the device that wrote
+/// it: an account restored onto a new device from the network
+/// (RECOVERY.md) has the grant's action but not the grant. Each zome's
+/// `prepare_device` calls this on every start, so a device always ends up
+/// holding its own.
+pub fn ensure_open_calls(tag: &str, functions: &[&str]) -> ExternResult<bool> {
     let zome = zome_info()?.name;
-    let functions = functions.iter().map(|f| (zome.clone(), FunctionName::from(*f))).collect();
-    create_cap_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, GrantedFunctions::Listed(functions)))
+    let functions: GrantedFunctions = GrantedFunctions::Listed(functions.iter().map(|f| (zome.clone(), FunctionName::from(*f))).collect());
+    let held = query(ChainQueryFilter::new().entry_type(EntryType::CapGrant).include_entries(true))?.into_iter().any(|record| {
+        matches!(
+            record.entry().as_option(),
+            Some(Entry::CapGrant(CapGrantEntry { tag: held_tag, constraint: GrantConstraint::Unrestricted, capability: Capability::ZomeCall(ZomeCallGrant { functions: held }) }))
+                if held_tag == tag && held == &functions
+        )
+    });
+    if held {
+        return Ok(false);
+    }
+    create_cap_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, functions))?;
+    Ok(true)
 }

@@ -19,8 +19,15 @@ pub use legs::*;
 /// order's own driver, and only the right code, within a few tries, counts.
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
-    relay_coordinator_support::grant_open_calls("codes", &["confirm_by_code", "confirm_check_in"])?;
+    prepare_device(())?;
     Ok(InitCallbackResult::Pass)
+}
+
+/// See `dispatch_coordinator::signals::prepare_device`.
+#[hdk_extern]
+pub fn prepare_device(_: ()) -> ExternResult<()> {
+    relay_coordinator_support::ensure_open_calls("codes", &["confirm_by_code", "confirm_check_in"])?;
+    Ok(())
 }
 
 #[cfg(feature = "test-utils")]

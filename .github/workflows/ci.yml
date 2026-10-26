@@ -68,6 +68,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --lib
 
+  device-runtime:
+    # The runtime's side of moving an account to a new phone (runtime/device):
+    # its unit tests, and the move between real conductors, each with its own
+    # keystore.
+    name: Device runtime
+    needs: [checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            runtime/device
+      - uses: ./.github/actions/holochain-bins
+      - name: Build and pack the hApp
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          hc dna pack dnas/relay/workdir
+          hc app pack workdir
+      - name: Lint and test
+        working-directory: runtime/device
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo test -- --include-ignored
+
   tryorama:
     # Ten jobs, each a share of the files balanced by their recorded CI
     # duration (tests/tryorama/durations.json) -- about 25 minutes each.

@@ -1,15 +1,18 @@
 //! Coordinator zome for accounts: a person's recovery plan, guardians
-//! vouching, and a new key taking an account over -- by hand-over from the
-//! old device, or by recovery when it's lost. See `account_integrity` for
-//! what validation guarantees, and RECOVERY.md for the whole design.
+//! vouching, a new key recovering an account whose key was lost, moving to
+//! the next network, and the check a phone makes before it sends its key to
+//! a new one. See `account_integrity` for what validation guarantees, and
+//! RECOVERY.md for the whole design.
 
 use account_integrity::*;
 use hdk::prelude::*;
 
+mod device;
 mod migration;
 mod plans;
 mod reissue;
 mod succession;
+pub use device::*;
 pub use migration::*;
 pub use plans::*;
 pub use reissue::*;

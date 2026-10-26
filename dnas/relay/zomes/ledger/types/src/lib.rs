@@ -50,14 +50,6 @@ pub enum LedgerKind {
     /// The author taking back a cash-out its issuer declined (`outcome`, the
     /// issuer's `RedemptionOutcome`). Credit, of what the cash-out took.
     Reclaim { redemption: ActionHash, outcome: ActionHash },
-    /// The author handing their account over to `successor`, a key on their
-    /// new device: their whole balance, which can't be below zero, with no
-    /// order in hand. Debit -- and their last: nothing follows it on their
-    /// ledger, so the old key can never spend again.
-    HandOver { successor: AgentPubKey },
-    /// The author, a successor, taking in the balance its predecessor handed
-    /// over (`bequest`, that `HandOver`). Credit, once.
-    Inherit { bequest: ActionHash },
 }
 
 #[hdk_entry_helper]

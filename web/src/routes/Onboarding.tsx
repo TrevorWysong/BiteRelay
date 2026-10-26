@@ -15,7 +15,7 @@ import { DEV_ADMIN_URL } from "../lib/devNode";
 import { HOST } from "../holochain/host";
 import { DevIdentityPicker } from "../components/DevIdentityPicker";
 import { RestoreAccount } from "../components/RestoreAccount";
-import { isRestoring } from "../lib/restoring";
+import { isRestoring, rememberedMethod } from "../lib/restoring";
 import { MAX_LABEL_CHARS, MAX_LICENSE_PLATE_CHARS, MAX_NOTE_CHARS, MAX_PHONE_CHARS, MAX_VEHICLE_CHARS } from "../holochain/types";
 import { useT, type MessageKey } from "../i18n";
 
@@ -55,7 +55,9 @@ export function Onboarding() {
   const [roles, setRoles] = useState<RoleTag[]>(["Requester"]);
   // Part-way through bringing an account here (a reload while guardians
   // vouch): back to that, not to sign-up.
-  const [step, setStep] = useState<Step>(() => (isRestoring() && status === "connected" ? "restore" : "roles"));
+  // Part-way through bringing an account here: back to it. Receiving one
+  // from another phone needs no key of this device's own, so no connection.
+  const [step, setStep] = useState<Step>(() => (isRestoring() && (status === "connected" || rememberedMethod() === "device") ? "restore" : "roles"));
   const [localError, setLocalError] = useState<string | null>(null);
 
   const [vehicleType, setVehicleType] = useState(VEHICLE_TYPES[0]);

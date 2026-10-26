@@ -15,10 +15,6 @@ use relay_coordinator_support::next_page_cursor;
 pub fn request_reissue(issuer: AgentPubKey) -> ExternResult<()> {
     let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Succession)?).include_entries(true))?;
     let record = mine.first().ok_or(guest("This device hasn't recovered an account."))?;
-    let succession = decoded::<Succession>(record).ok_or(guest("couldn't read the recovery"))?;
-    if !succession.authority.is_recovery() {
-        return Err(guest("A hand-over brings its balance with it."));
-    }
     let hash = record.action_address().clone();
     let me = me()?;
     let existing = get_links(LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToReissue)?, GetStrategy::Local)?;
@@ -69,9 +65,6 @@ pub fn get_reissue_requests(input: ReissueRequestsInput) -> ExternResult<Reissue
         let Some(hash) = link.target.into_action_hash() else { continue };
         let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
         let Some(succession) = decoded::<Succession>(&record) else { continue };
-        if !succession.authority.is_recovery() {
-            continue;
-        }
         requests.push(ReissueRequest { succession: hash, predecessor: succession.predecessor, successor: record.action().author().clone(), requested_at: link.timestamp });
     }
     Ok(ReissueRequestsPage { requests, cursor, more })

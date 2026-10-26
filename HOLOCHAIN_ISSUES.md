@@ -9,7 +9,7 @@ has been re-checked against 0.7.0 and annotated where anything changed.
 The 0.7.1 changelog was read in full for the 0.7.1 bump: nothing in it
 touches #1–#8 (its fixes are to publishing with no peers, entry/hash
 checking on receipt, validation receipts, capability grants, direct
-signals and DHT indexes), so they stand as written until re-run. #9 is new.
+signals and DHT indexes), so they stand as written until re-run. #9 and #10 are new.
 
 These are things found in Holochain itself (or its immediate dependencies)
 while building this project — not bugs in this project's own zome code.
@@ -567,3 +567,19 @@ replaced with a first-party mechanism.
 **In this project:** every "once" rule bounded by time ("since the order was placed", "since the grant was made") used `until_timestamp`. So each check cost the whole chain, and a busy store's chain grows by thousands of actions a day.
 
 **Workaround:** `relay_integrity_support::chain::activity_since` walks back in counted steps: 32 actions, then doubling to at most 4,096, stopping at the first action older than the cutoff. It's sound because Holochain's own validation never lets an action be older than the one before it (`check_prev_timestamp`), and each step depends only on where it starts, so every validator reads the same actions. A walk costs what happened since the cutoff, in a handful of reads. Every time-bounded rule goes through it; nothing else in the zomes uses `until_timestamp`.
+
+## 10. Restoring a chain needs two other peers, and leaves behind what was private to the device (0.7.1)
+
+**Classification:** Intended design, easy to misread.
+
+**Component:** `holochain 0.7.1`, the source-chain restore workflow (`restore_from_dht`; `docs/design/source_chain_restore.md`).
+
+**Description:** Three things, each found by running restore against our app rather than from the docs alone:
+
+- **A quorum of two.** Restore asks peers for the agent's chain head and goes ahead only when at least `restore_chain_quorum` of them (default 2) agree. With the original device stopped, and one other node holding the chain, it waits forever in `AwaitingRestore` (our `runtime/device/tests/move.rs` needed a second witness).
+- **Not on one node.** Restore asks *other* peers, and a node's network lookup of an agent's activity skips agents on the node itself. So on a single conductor -- the dev node -- restore never finishes, and a network check of a chain only that node holds (`get_agent_activity` with `GetOptions::network()`) reports nothing. Confirmed with several agents on one conductor.
+- **Private entries stay behind.** Only public chain data is restored. Every capability grant's entry is private, so the restored device has the grants' actions but not the grants: the app's own (for `recv_remote_signal`, and our handoff-code checks), and a client's zome-call signing grant too. The cell's scheduled functions are the conductor's local state, and `init` doesn't run again (`InitZomesComplete` is on the restored chain), so those are gone as well.
+
+**In this project:** moving to a new phone (RECOVERY.md).
+
+**Workaround:** each zome's `prepare_device` writes its grants where the device doesn't hold them, and schedules its background work; init and the app's every start call it. A grant written again has the same entry as the old one, so the old grant's action counts again too. The dev host moves the identity, not the chain, because it is one node. Tests restore across separate conductors, with enough peers.

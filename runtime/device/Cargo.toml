@@ -1,0 +1,24 @@
+[package]
+name = "relay_device"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "What a Relay runtime does natively to move an account to a new phone with the same key"
+
+# Standalone: native code a runtime shell links, never part of the wasm zome
+# workspace. Its Holochain crates are the ones conductor 0.7.1 ships with.
+[workspace]
+
+[dependencies]
+base64 = "0.22"
+holochain_client = "=0.9.1"
+holochain_types = "=0.7.1"
+lair_keystore_api = "=0.7.1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"

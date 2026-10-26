@@ -1,12 +1,12 @@
 //! Integrity zome for accounts: carrying someone's account on to a new key
-//! when they move device or lose their old one. See `account_types` for
-//! the model.
+//! when they lose their old one, or to the next version of the network.
+//! See `account_types` for the model.
 //!
 //! What validation guarantees:
 //!
 //! - **Only a real authority passes an account on.** A key takes over an
-//!   account (`Succession`) on the old key's own hand-over, on a signature
-//!   by the recovery phrase's key, or on enough of its guardians' vouches --
+//!   account (`Succession`) on a signature by the recovery phrase's key, or
+//!   on enough of its guardians' vouches --
 //!   each checked against the plan the account itself published, its latest
 //!   as of where the account stood. Nobody can claim someone else's account
 //!   on their own say-so.
@@ -23,7 +23,6 @@
 
 pub use account_types::*;
 use hdi::prelude::*;
-use ledger_types::{LedgerEntry, LedgerKind};
 use relay_integrity_support::chain::{entries_created, wrote_since};
 use relay_integrity_support::{classify, decode, first_problem, invalid, linked_record, require, sealed_chunks_problem, valid, Checked};
 
@@ -54,7 +53,7 @@ pub enum LinkTypes {
     PredecessorToSuccession,
     /// A succession, base = its author -- the account a key carries on.
     SuccessorToSuccession,
-    /// A hand-over's parcel, base = the successor it's sealed to.
+    /// A migration's parcel, base = the successor it's sealed to.
     SuccessorToParcel,
     /// A recovered account asking an issuer to reissue its balance, base =
     /// the issuer.
@@ -143,14 +142,6 @@ fn validate_succession(succession: &Succession, author: &AgentPubKey, prev_actio
     }
     let predecessor = &succession.predecessor;
     match &succession.authority {
-        Authority::HandOver { bequest } => {
-            let record = must_get_valid_record(bequest.clone())?;
-            let handed_to = match decode::<LedgerEntry>(&record).map(|e| e.kind) {
-                Some(LedgerKind::HandOver { successor }) => successor,
-                _ => return invalid("a hand-over cites the account's hand-over"),
-            };
-            require(record.action().author() == predecessor && &handed_to == author, "a hand-over passes the account to the key it names")
-        }
         Authority::Phrase { plan, head, signature } => {
             let plan = match plan_as_of(predecessor, plan, head)? {
                 Ok(plan) => plan,
@@ -280,9 +271,8 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
             vec![base.clone()]
         }
         LinkTypes::IssuerToReissue => {
-            // Only a recovery is reissued (a hand-over moves its own money),
-            // and only by an issuer on the roster.
-            let recovered = decode::<Succession>(&record).is_some_and(|s| s.authority.is_recovery());
+            // Only by an issuer on the roster.
+            let recovered = decode::<Succession>(&record).is_some();
             let issuer = base.clone().into_agent_pub_key();
             if !recovered || !issuer.map(|i| relay_governance::is_issuer(&i)).transpose()?.unwrap_or(false) {
                 return invalid("a recovered account asks an issuer on the roster to reissue it");

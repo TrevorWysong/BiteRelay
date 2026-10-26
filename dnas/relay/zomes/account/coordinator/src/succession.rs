@@ -1,68 +1,29 @@
-//! A new key taking an account over: handed over by the old device, or
-//! recovered when it's lost. The money moves in the ledger zome, called
-//! from here so the two commit together.
+//! A new key recovering an account whose key was lost: on the recovery
+//! phrase, or on guardians. Its balance is reissued by an issuer
+//! (`request_reissue`); see RECOVERY.md.
 
-use crate::{decoded, guest, linked_records, me, recovery_plan_of};
+use crate::{decoded, guest, linked_records, recovery_plan_of};
 use account_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{open_chunked, seal_chunked};
 
 /// How far back an account's line of keys is followed.
 const MAX_LINEAGE: usize = 16;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct HandOverInput {
-    /// The key on the new device.
-    pub successor: AgentPubKey,
-    /// What only this key can read, for the new one (the app's own
-    /// encoding) -- empty for nothing.
-    pub parcel: String,
-}
-
-/// Hands the caller's account to `successor`: seals `parcel` to it, then
-/// passes on the whole balance in the ledger's final entry. After this the
-/// caller's key can't spend; the new device carries on.
-#[hdk_extern]
-pub fn hand_over(input: HandOverInput) -> ExternResult<ActionHash> {
-    if input.successor == me()? {
-        return Err(guest("That's this device's own key: scan the code on your new device."));
-    }
-    if input.parcel.len() > MAX_PARCEL_BYTES {
-        return Err(guest("There's too much to carry over at once."));
-    }
-    if !input.parcel.is_empty() {
-        let sealed = seal_chunked(&input.successor, &input.parcel)?;
-        let hash = create_entry(&EntryTypes::Parcel(Parcel { successor: input.successor.clone(), sealed }))?;
-        create_link(input.successor.clone(), hash, LinkTypes::SuccessorToParcel, ())?;
-    }
-    match call(CallTargetCell::Local, "ledger", "hand_over".into(), None, input.successor)? {
-        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
-        other => Err(guest(format!("Couldn't hand the account over: {other:?}"))),
-    }
-}
-
-/// The caller taking over `succession.predecessor`'s account. A hand-over's
-/// balance comes with it; a recovered account's is reissued by an issuer
-/// (`request_reissue`).
+/// The caller recovering `succession.predecessor`'s account.
 #[hdk_extern]
 pub fn take_over(succession: Succession) -> ExternResult<ActionHash> {
     if my_succession(())?.is_some() {
         return Err(guest("This device has already taken over an account."));
     }
     let predecessor = succession.predecessor.clone();
-    let handed_over = matches!(succession.authority, Authority::HandOver { .. });
     let hash = create_entry(&EntryTypes::Succession(succession))?;
     create_link(predecessor, hash.clone(), LinkTypes::PredecessorToSuccession, ())?;
-    create_link(me()?, hash.clone(), LinkTypes::SuccessorToSuccession, ())?;
-    if handed_over && !matches!(call(CallTargetCell::Local, "ledger", "collect_bequests".into(), None, ())?, ZomeCallResponse::Ok(_)) {
-        return Err(guest("Couldn't take in the account's balance. Try again."));
-    }
+    create_link(agent_info()?.agent_initial_pubkey, hash.clone(), LinkTypes::SuccessorToSuccession, ())?;
     Ok(hash)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuccessionKind {
-    HandOver,
     Phrase,
     Guardians,
 }
@@ -74,30 +35,28 @@ pub struct SuccessionView {
     pub predecessor: AgentPubKey,
     pub successor: AgentPubKey,
     pub kind: SuccessionKind,
-    /// The plan a recovery rested on -- none for a hand-over.
-    pub plan: Option<ActionHash>,
+    /// The plan the recovery rested on.
+    pub plan: ActionHash,
     pub at: Timestamp,
 }
 
 fn view_of(record: &Record) -> Option<SuccessionView> {
     let succession = decoded::<Succession>(record)?;
     let (kind, plan) = match succession.authority {
-        Authority::HandOver { .. } => (SuccessionKind::HandOver, None),
-        Authority::Phrase { plan, .. } => (SuccessionKind::Phrase, Some(plan)),
-        Authority::Guardians { plan, .. } => (SuccessionKind::Guardians, Some(plan)),
+        Authority::Phrase { plan, .. } => (SuccessionKind::Phrase, plan),
+        Authority::Guardians { plan, .. } => (SuccessionKind::Guardians, plan),
     };
     Some(SuccessionView { succession: record.action_address().clone(), predecessor: succession.predecessor, successor: record.action().author().clone(), kind, plan, at: record.action().timestamp() })
 }
 
-/// Whether a succession still stands. A hand-over always does. A recovery
-/// stands while its plan is still the account's current one: validation
+/// Whether a recovery still stands: while its plan is still the account's
+/// current one. Validation
 /// can only check the plan was current as of the point in the account's
 /// history the recovery cites -- which could be an old point, before the
 /// person replaced a phrase that leaked or dropped a guardian. So everyone
 /// asks again when they look, and a replaced plan recovers nothing.
 fn stands(view: &SuccessionView) -> ExternResult<bool> {
-    let Some(plan) = &view.plan else { return Ok(true) };
-    Ok(recovery_plan_of(view.predecessor.clone())?.is_some_and(|current| &current.plan == plan))
+    Ok(recovery_plan_of(view.predecessor.clone())?.is_some_and(|current| current.plan == view.plan))
 }
 
 /// The account the caller's key took over, if it did.
@@ -147,28 +106,11 @@ pub fn latest_action_of(agent: AgentPubKey) -> ExternResult<Option<ActionHash>> 
 }
 
 /// When `agent`'s account began: the first action of the oldest key in its
-/// line -- an account moved to a new phone keeps its age. What an issuer
+/// line -- a recovered account keeps its age. What an issuer
 /// weighs, among other things, in how much it lets a card add at once.
 #[hdk_extern]
 pub fn account_since(agent: AgentPubKey) -> ExternResult<Option<Timestamp>> {
     let first = lineage(agent.clone())?.pop().unwrap_or(agent);
     let Some((_, hash)) = relay_coordinator_support::agent_activity(first, ChainQueryFilter::new())?.into_iter().next() else { return Ok(None) };
     Ok(get(hash, GetOptions::default())?.map(|record| record.action().timestamp()))
-}
-
-/// What the caller's predecessors sealed to them as they handed over, opened.
-#[hdk_extern]
-pub fn open_parcels(_: ()) -> ExternResult<Vec<String>> {
-    let me = me()?;
-    let mut parcels = Vec::new();
-    for record in linked_records(me.clone(), LinkTypes::SuccessorToParcel)? {
-        let Some(parcel) = decoded::<Parcel>(&record) else { continue };
-        if parcel.successor != me {
-            continue;
-        }
-        if let Some(contents) = open_chunked::<String>(record.action().author(), &parcel.sealed)? {
-            parcels.push(contents);
-        }
-    }
-    Ok(parcels)
 }

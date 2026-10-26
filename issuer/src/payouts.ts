@@ -34,9 +34,8 @@ export async function decide(request: CashOutRequest, deps: PayoutDeps, now = Da
   const agent = agentId(request.redeemer);
   // A recovered account's old key may be in someone else's hands now (a
   // lost phone found): it pays nothing out. Its owner's balance is reissued
-  // to their new key instead (recovery.ts). A key that handed its account
-  // over did so itself, and is paid as usual.
-  if ((await ledger.successionsOf(request.redeemer)).some((s) => s.kind !== "HandOver")) {
+  // to their new key instead (recovery.ts).
+  if ((await ledger.successionsOf(request.redeemer)).length > 0) {
     return { Declined: { reason: "This account was recovered on a new device, so this key can't cash out. Its balance goes to the new device." } };
   }
   if (store.frozen(agent)) return { Defer: { until: now + FROZEN_RECHECK_MS, reason: "a card payment on this account is disputed" } };

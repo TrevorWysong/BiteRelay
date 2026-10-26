@@ -13,7 +13,6 @@ serde.workspace = true
 relay_coordinator_support.workspace = true
 relay_governance.workspace = true
 account_integrity = { path = "../integrity" }
-ledger_types.workspace = true
 
 [features]
 test-utils = []

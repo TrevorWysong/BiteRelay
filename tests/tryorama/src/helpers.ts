@@ -1,11 +1,12 @@
 // Shared across all three test files -- pulled out once these stopped being
 // "a couple of lines" and started being copy-pasted three times over.
 import assert from "node:assert/strict";
+import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { decode } from "@msgpack/msgpack";
 import type { CallableCell, Conductor, PlayerApp, Scenario } from "@holochain-open-dev/tryorama";
 import { dhtSync, enableAndGetAgentApp, getZomeCaller } from "@holochain-open-dev/tryorama";
-import { encodeHashToBase64 } from "@holochain/client";
+import { dhtLocationFrom32, encodeHashToBase64 } from "@holochain/client";
 import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/client";
 
 export const HAPP_PATH = fileURLToPath(new URL("../../../workdir/relay.happ", import.meta.url));
@@ -399,4 +400,48 @@ export function retryingCaller(cell: CallableCell, zome: string) {
 export async function shareAgentsOn(conductors: Conductor[], network: Uint8Array): Promise<void> {
   const infos = (await Promise.all(conductors.map((c) => c.adminWs().agentInfo({ dna_hashes: [network] } as never)))).flat();
   await Promise.all(conductors.map((c) => c.adminWs().addAgentInfo({ agent_infos: infos } as never)));
+}
+
+/// A recovery phrase's key, as the app derives one: an Ed25519 key in the
+/// form Holochain carries agent keys (a 3-byte prefix, 32 bytes, 4 of
+/// location).
+export function phraseKey() {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const raw = new Uint8Array(publicKey.export({ format: "der", type: "spki" }).subarray(-32));
+  const key = new Uint8Array([0x84, 0x20, 0x24, ...raw, ...dhtLocationFrom32(raw)]);
+  const der = privateKey.export({ format: "der", type: "pkcs8" });
+  return { key, sign: (message: Uint8Array) => new Uint8Array(sign(null, message, createPrivateKey({ key: der, format: "der", type: "pkcs8" }))) };
+}
+
+/// What a phrase's key signs -- `account_types::phrase_message`.
+export const phraseMessage = (predecessor: Uint8Array, successor: Uint8Array, head: Uint8Array) =>
+  new Uint8Array([...new TextEncoder().encode("relay-recovery:v1:"), ...predecessor, 58, ...successor, 58, ...head]);
+
+/// `player`'s account on a new install, as a new phone would get it: their
+/// app -- with everything only their device held -- uninstalled, then
+/// installed again for the same key, restored from the network
+/// (Holochain's `restore_from_dht`; RECOVERY.md). What this can't stand in
+/// for is the key crossing to another keystore: here it never left. Pass
+/// the `properties` the player was installed with.
+export async function restoreInPlace(player: PlayerApp, properties: Record<string, unknown> = {}): Promise<PlayerApp> {
+  const admin = player.conductor.adminWs();
+  const appId = player.appId;
+  await admin.uninstallApp({ installed_app_id: appId });
+  await admin.installApp({ source: appSource, agent_key: player.agentPubKey, installed_app_id: appId, roles_settings: rolesSettingsWith(properties), restore_from_dht: true } as never);
+  // Awaiting restore until the chain is back, then disabled, ready to enable.
+  const app = await retryUntil(
+    async () => (await admin.listApps({})).find((a) => a.installed_app_id === appId)!,
+    (a) => a.status.type !== ("awaiting_restore" as string),
+    120,
+    1000,
+  );
+  assert.equal(app.status.type, "disabled", `restored, not ${JSON.stringify(app.status)}`);
+  const port = await player.conductor.attachAppInterface();
+  const issued = await admin.issueAppAuthenticationToken({ installed_app_id: appId });
+  const appWs = await player.conductor.connectAppWs(issued.token, port);
+  const agentApp = await enableAndGetAgentApp(admin, appWs, app);
+  // The test client signs calls with a key a grant lets in -- one more of
+  // the device's private entries a restore doesn't bring back.
+  for (const cell of agentApp.cells) await admin.authorizeSigningCredentials(cell.cell_id);
+  return { conductor: player.conductor, appWs, ...agentApp };
 }

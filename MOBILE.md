@@ -9,6 +9,7 @@ The UI needs no changes. It speaks only the App API, and `@holochain/client` det
 Check these against the plugin's current release before committing to dates:
 
 - **The plugin's Holochain version.** Relay needs Holochain 0.7.1 (DEPLOYMENT.md). As of October 2026 the plugin's newest branch (`develop`) is on Holochain 0.6. A phone build waits for a 0.7 release of the plugin, or builds it against 0.7.1 ourselves.
+- **Moving to a new phone.** The shell links `relay_device` (`runtime/device`): its first launch makes the account's key with `Device::start_account`, and it exposes the six commands as `window.__RELAY_DEVICE__` (an initialization script calling Tauri commands). See DEPLOYMENT.md.
 
 - **Android** is the plugin's best-supported mobile target. The conductor runs in-process, and zome WASM compiles on the device.
 - **iOS forbids JIT compilation.** Holochain's default WASM engine compiles at runtime, so iOS needs an interpreter build. Holochain has been adding one (a `wasmer_wamr` feature); confirm it ships in the 0.7 line the plugin uses.

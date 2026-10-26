@@ -1,5 +1,6 @@
 /target
 /tools/*/target
+/runtime/*/target
 *.dna
 *.happ
 *.webhapp

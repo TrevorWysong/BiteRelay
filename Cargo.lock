@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "account_integrity",
  "hdk",
- "ledger_types",
  "relay_coordinator_support",
  "relay_governance",
  "serde",
@@ -21,7 +20,6 @@ dependencies = [
  "account_types",
  "hdi",
  "holochain_serialized_bytes",
- "ledger_types",
  "relay_governance",
  "relay_integrity_support",
  "serde",

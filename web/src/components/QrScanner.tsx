@@ -5,6 +5,7 @@
 import { useCallback, useState } from "react";
 import { CameraOff } from "lucide-react";
 import { t as translate } from "../i18n";
+import { useLatest } from "../lib/useResource";
 
 /// The slice of the Barcode Detection API this uses.
 interface BarcodeDetectorLike {
@@ -19,10 +20,11 @@ declare global {
 /// How often a frame is checked, at most.
 const SCAN_INTERVAL_MS = 120;
 
-/// `onScan` is called with each code read until the scanner unmounts; keep
-/// it stable (`useCallback`), as a new one restarts the camera.
+/// `onScan` -- the latest one passed -- is called with each code read until
+/// the scanner unmounts. The camera starts once.
 export function QrScanner({ onScan, prompt }: { onScan: (text: string) => void; prompt?: string }) {
   const [problem, setProblem] = useState<string | null>(null);
+  const scanned = useLatest(onScan);
 
   const viewfinder = useCallback(
     (node: HTMLVideoElement | null) => {
@@ -64,7 +66,7 @@ export function QrScanner({ onScan, prompt }: { onScan: (text: string) => void; 
             if (stopped) return;
             if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
               const text = await read(video).catch(() => null);
-              if (text && !stopped) onScan(text);
+              if (text && !stopped) scanned.current(text);
             }
             timer = window.setTimeout(tick, SCAN_INTERVAL_MS);
           };
@@ -83,7 +85,7 @@ export function QrScanner({ onScan, prompt }: { onScan: (text: string) => void; 
         stream?.getTracks().forEach((t) => t.stop());
       };
     },
-    [onScan],
+    [scanned],
   );
 
   if (problem) {

@@ -157,6 +157,18 @@ export async function reconnectIdentity(adminUrl: string, installedAppId: Instal
   }
 }
 
+/// Development's stand-in for a runtime stopping (`running: false`) or
+/// restarting an identity's app -- see `devDevice.ts`.
+export async function setIdentityRunning(adminUrl: string, installedAppId: InstalledAppId, running: boolean): Promise<void> {
+  const adminWs = await AdminWebsocket.connect({ url: new URL(adminUrl) });
+  try {
+    if (running) await adminWs.enableApp({ installed_app_id: installedAppId });
+    else await adminWs.disableApp({ installed_app_id: installedAppId });
+  } finally {
+    adminWs.client.close();
+  }
+}
+
 export interface NodeIdentity {
   installedAppId: InstalledAppId;
   agentPubKey: AgentPubKey;

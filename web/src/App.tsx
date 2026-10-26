@@ -27,6 +27,8 @@ import VerifyPage from "./routes/Verify";
 import ArbitratePage from "./routes/Arbitrate";
 import { useLocale, useT } from "./i18n";
 import { MovedAway } from "./components/MovedAway";
+import { Departure } from "./components/Departure";
+import { useDeparture } from "./store/departure";
 
 /// Every fresh page load starts `status: "disconnected"`, regardless of
 /// whether a real identity is already provisioned on the conductor and
@@ -169,7 +171,10 @@ export default function App() {
   // A change of language remounts the screens, so every word -- including
   // those a screen computed once -- is read again in the new one.
   const locale = useLocale((s) => s.locale);
+  // Sent to a new phone: this device has stopped, and connects to nothing.
+  const departing = useDeparture((s) => s.sealed);
   if (HOST === "none") return <NoHost />;
+  if (departing) return <Departure sealed={departing} />;
   return (
     <SessionBootstrap>
       <Routes key={locale}>

@@ -60,15 +60,15 @@ export interface MigrationRequestsPage {
   more: boolean;
 }
 
-/// A key that took over an account -- `ledger`'s view of the account zome's
+/// A key that recovered an account -- `ledger`'s view of the account zome's
 /// `SuccessionView`.
 export interface Succession {
   succession: Uint8Array;
   predecessor: AgentPubKey;
   successor: AgentPubKey;
-  kind: "HandOver" | "Phrase" | "Guardians";
-  /// The plan a recovery rested on.
-  plan: Uint8Array | null;
+  kind: "Phrase" | "Guardians";
+  /// The plan the recovery rested on.
+  plan: Uint8Array;
   at: number;
 }
 
@@ -88,7 +88,6 @@ export interface ReissueRequestsPage {
 /// Where an account's ledger stood as of an action on its chain.
 export interface Standing {
   balance: number;
-  handed_over: boolean;
 }
 
 export interface IssuerLedger {

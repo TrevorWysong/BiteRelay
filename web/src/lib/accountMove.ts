@@ -1,11 +1,13 @@
-// Moving an account between keys, on the app's side: the code a device
-// shows so another can name it, what the old device seals for the new one
-// as it hands over (the parcel), and setting the new key up as the same
-// person -- their profile, vehicle, addresses and favourites.
+// An account carried on by another key, on the app's side: the code a
+// device shows so another can name it (a guardian, a verifier, the next
+// version of the network), what an account moving to the next network seals
+// for its key there (the parcel), and setting a new key up as the same
+// person -- their profile, vehicle, and, on a migration, addresses and
+// favourites. (Moving to a new phone keeps the key: `deviceMove.ts`.)
 import { decodeHashFromBase64, encodeHashToBase64 } from "@holochain/client";
 import type { AddressDetails, AgentPubKey, HcRecord, Profile, ProviderCredential, RoleTag } from "../holochain/types";
 import { callPrevious, callZome } from "../holochain/client";
-import { openParcels, openParcelsOnPrevious } from "../holochain/zomes/account";
+import { openParcelsOnPrevious } from "../holochain/zomes/account";
 import { addFavorite, createProfile, getMyName, getMyPhone, listFavorites, listMyAddresses, registerProviderCredential, saveAddress } from "../holochain/zomes/profiles";
 import { actionHash, decodeEntry } from "../holochain/decode";
 
@@ -13,8 +15,8 @@ const CODE_PREFIX = "relay-account:";
 /// Holochain's prefix for an agent key.
 const AGENT_PREFIX = [0x84, 0x20, 0x24];
 
-/// The code a device shows for its key: scanned by the old device to hand
-/// over, or by a guardian to vouch.
+/// The code a device shows for its key: scanned by a guardian to vouch, a
+/// verifier to verify, or the previous version of the app to move here.
 export function accountCode(agent: AgentPubKey): string {
   return `${CODE_PREFIX}${encodeHashToBase64(agent)}`;
 }
@@ -45,7 +47,7 @@ interface ParcelContents {
   favorites: string[];
 }
 
-/// The parcel the old device seals to the new one as it hands over.
+/// The parcel an account moving to the next network seals to its key there.
 export async function packParcel(): Promise<string> {
   const [name, phone, addresses, favorites] = await Promise.all([getMyName(), getMyPhone(), listMyAddresses(), listFavorites()]);
   const contents: ParcelContents = { v: 1, name: name ?? "", phone: phone ?? "", addresses: addresses.map((a) => a.address), favorites: favorites.map((f) => encodeHashToBase64(f)) };
@@ -62,8 +64,8 @@ function parcelContents(raw: string): ParcelContents | null {
 }
 
 /// What the new key knows of the person it's taking over for: their public
-/// profile and vehicle, and what the old key sealed to it (none on a
-/// recovery).
+/// profile and vehicle, and what the old key sealed to it (only on a
+/// migration: a recovered key's old one is lost).
 export interface Predecessor {
   profile: Profile | null;
   vehicle: ProviderCredential | null;
@@ -72,15 +74,15 @@ export interface Predecessor {
   parcel: ParcelContents | null;
 }
 
-/// Where the old account lives: this network (a hand-over or recovery), or
-/// the previous version of it (a migration -- MIGRATION.md).
+/// Where the old account lives: this network (a recovery), or the previous
+/// version of it (a migration -- MIGRATION.md).
 export type AccountPlace = "here" | "previous";
 
 export async function readPredecessor(predecessor: AgentPubKey, where: AccountPlace = "here"): Promise<Predecessor> {
   const call = where === "here" ? callZome : callPrevious;
   const [profileRecord, parcels] = await Promise.all([
     call<HcRecord | null>("profiles", "get_profile_for_agent", predecessor),
-    where === "here" ? openParcels() : openParcelsOnPrevious(),
+    where === "previous" ? openParcelsOnPrevious() : Promise.resolve([] as string[]),
   ]);
   const profile = profileRecord ? decodeEntry<Profile>(profileRecord) : null;
   const vehicleRecord = profileRecord ? await call<HcRecord | null>("profiles", "get_provider_credential_for_profile", actionHash(profileRecord)).catch(() => null) : null;
@@ -89,7 +91,7 @@ export async function readPredecessor(predecessor: AgentPubKey, where: AccountPl
 }
 
 /// Sets the new key up as the person: their profile (as they confirm it),
-/// their vehicle if they drive, and -- handed over -- their addresses and
+/// their vehicle if they drive, and -- migrating -- their addresses and
 /// favourites. Best-effort past the profile: a favourite whose store is
 /// gone doesn't stop the move.
 export async function adoptPredecessor(known: Predecessor, name: string, phone: string): Promise<void> {

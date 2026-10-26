@@ -1,6 +1,6 @@
 // Account & recovery: how this person gets their account back if they lose
 // this device -- their recovery phrase, and guardians -- moving it to a new
-// device, and helping the people they guard recover theirs. No company can
+// phone, and helping the people they guard recover theirs. No company can
 // reset anyone's account here: these are the only ways back in, so this
 // screen says plainly which are set up. See RECOVERY.md.
 import { useState } from "react";
@@ -11,12 +11,15 @@ import { encodeHashToBase64 } from "@holochain/client";
 import { ArrowLeft, ChevronRight, Gavel, HeartHandshake, KeyRound, QrCode, ShieldAlert, ShieldCheck, Smartphone, Sparkles, Trash2, UserPlus, Users } from "lucide-react";
 import type { AgentPubKey, PlanView } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
-import { handOver, migrateOut, myRecoveryPlan, myWards, setRecoveryPlan, vouch } from "../holochain/zomes/account";
+import { migrateOut, myRecoveryPlan, myWards, readyToMove, setRecoveryPlan, vouch } from "../holochain/zomes/account";
+import { canMoveAccount, deviceRuntime } from "../holochain/device";
+import { useDeparture } from "../store/departure";
+import { invitationFingerprint, isInvitation } from "../lib/deviceMove";
 import { nextNetwork } from "../lib/migration";
 import { MAX_GUARDIANS } from "../holochain/types";
 import { fetchProfile } from "../holochain/zomes/profiles";
 import { closeListing, isStoreListed, listMyCatalogs } from "../holochain/zomes/catalog";
-import { AccountCode, AccountCodeReader } from "../components/AccountCode";
+import { AccountCode, AccountCodeReader, CodeReader } from "../components/AccountCode";
 import { Sheet } from "../components/Sheet";
 import { Badge, Button, Card, Checkbox, Field, Input, Select, Skeleton } from "../components/ui";
 import { keyFingerprint, packParcel } from "../lib/accountMove";
@@ -162,7 +165,7 @@ export function AccountPage() {
 
       {open === "phrase" && <PhraseSheet plan={plan ?? null} onClose={close} onSaved={saved} />}
       {open === "guardians" && <GuardiansSheet plan={plan ?? null} me={agentPubKey} onClose={close} onSaved={saved} />}
-      {open === "move" && <MoveSheet me={agentPubKey} onClose={close} />}
+      {open === "move" && <MoveSheet onClose={close} />}
       {open === "upgrade" && next && <UpgradeSheet me={agentPubKey} next={next} onClose={close} />}
       {open === "help" && wards && <HelpRecoverSheet wards={wards} me={agentPubKey} onClose={close} />}
       {open === "code" && (
@@ -486,29 +489,39 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
   );
 }
 
-function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
-  const merchant = useSession((s) => !!s.profile?.roles.includes("Merchant"));
+/// How many times, a couple of seconds apart, this phone checks the network
+/// holds everything it wrote before it sends its key.
+const READY_TRIES = 30;
+
+/// This phone's side of moving the account to a new one with its key
+/// (RECOVERY.md): it scans the new phone's invitation, waits until the
+/// network holds everything it wrote, then stops and shows the account's
+/// key sealed to that phone (`Departure`).
+function MoveSheet({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const [successor, setSuccessor] = useState<AgentPubKey | null>(null);
+  const depart = useDeparture((s) => s.depart);
+  const { data: movable } = useResource("can-move-account", canMoveAccount);
+  const [invitation, setInvitation] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   async function move() {
-    if (!successor) return;
-    setBusy(true);
+    if (!invitation) return;
+    setChecking(true);
     setError(null);
     try {
-      // A listed store's stake comes back only to this key: its listing
-      // closes here, and the new phone lists the moved store again.
-      for (const store of await listMyCatalogs()) {
-        if (await isStoreListed(store.original_action)) await closeListing(store.original_action);
+      const runtime = await deviceRuntime();
+      if (!runtime) throw new Error(t("move.unsupported"));
+      let ready = !!runtime.oneNode;
+      for (let attempt = 0; attempt < READY_TRIES && !ready; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+        ready = (await readyToMove()).ready;
       }
-      await handOver(successor, await packParcel());
-      // This key is done: the app shows so, from here on.
-      useSession.setState({ movedTo: successor });
+      if (!ready) throw new Error(t("move.notReady"));
+      depart(await runtime.send(invitation));
     } catch (err) {
       setError(describeError(err));
-      setBusy(false);
+      setChecking(false);
     }
   }
 
@@ -516,39 +529,38 @@ function MoveSheet({ me, onClose }: { me: AgentPubKey; onClose: () => void }) {
     <Sheet
       open
       onClose={onClose}
-      title={t("account.move")}
-      subtitle={successor ? t("account.checkNewDevice") : t("account.moveHow")}
+      title={t("move.title")}
+      subtitle={invitation ? undefined : t("move.how")}
       footer={
-        successor ? (
+        invitation ? (
           <>
+            {checking && <p className="mb-2 text-xs text-ink-500">{t("move.checking")}</p>}
             {error && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
-            <Button className="w-full" loading={busy} onClick={move}>
-              {t("account.moveMine")}
+            <Button className="w-full" loading={checking} onClick={move}>
+              {t("move.go")}
             </Button>
           </>
         ) : undefined
       }
     >
-      {successor ? (
+      {movable === undefined ? (
+        <Skeleton className="h-48 w-full" />
+      ) : !movable ? (
+        <p className="text-sm text-ink-600 dark:text-ink-300">{t("move.unsupported")}</p>
+      ) : invitation ? (
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl bg-ink-50 p-4 text-center dark:bg-ink-800">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("account.newDevice")}</p>
-            <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{keyFingerprint(successor)}</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("move.checkFingerprint")}</p>
+            <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{invitationFingerprint(invitation)}</p>
           </div>
           <ul className="flex flex-col gap-2 text-sm text-ink-600 dark:text-ink-300">
-            <li>{t("account.moveWhat1")}</li>
-            <li>{t("account.moveWhat2")}</li>
-            {merchant && <li>{t("account.moveStores")}</li>}
-            <li className="font-semibold">{t("account.moveStops")}</li>
+            <li>{t("move.what1")}</li>
+            <li className="font-semibold">{t("move.what2")}</li>
           </ul>
         </div>
       ) : (
-        <AccountCodeReader
-          prompt={t("account.pointNewDevice")}
-          onKey={(key) => (bytesToHex(key) === bytesToHex(me) ? setError(t("account.thisDeviceCode")) : setSuccessor(key))}
-        />
+        <CodeReader accepts={isInvitation} onCode={setInvitation} prompt={t("move.point")} refusal={t("move.notInvitation")} placeholder="relay-move:1:…" />
       )}
-      {!successor && error && <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
     </Sheet>
   );
 }

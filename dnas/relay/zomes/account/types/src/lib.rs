@@ -3,14 +3,13 @@
 //! `ledger_types`.
 //!
 //! An account is a line of agent keys: someone's first key, and each key
-//! that took over from the one before (`Succession`). A key is lost with its
-//! device, and nothing on a peer-to-peer network can bring it back, so what
-//! carries an account on is a *new* key, with authority to speak for the old
-//! one:
+//! that took over from the one before (`Succession`). Moving to a new phone
+//! keeps the same key -- the old phone sends it over, and the new one
+//! restores the account from the network (RECOVERY.md), so nothing here
+//! changes. But a key is lost with its device, and nothing on a
+//! peer-to-peer network can bring it back, so what carries a *lost*
+//! account on is a new key, with authority to speak for the old one:
 //!
-//! - **a hand-over**, signed by the old key itself (its final ledger entry,
-//!   `ledger_types::LedgerKind::HandOver`) -- moving to a new device while
-//!   the old one still works;
 //! - **the recovery phrase**: a key derived from words the person wrote
 //!   down, whose public half their `RecoveryPlan` names;
 //! - **guardians**: enough of the people their plan names vouching
@@ -53,7 +52,8 @@ pub struct Vouch {
     pub plan: ActionHash,
 }
 
-/// The author taking over `predecessor`'s account, on `authority`.
+/// The author recovering `predecessor`'s account, its key lost, on
+/// `authority`.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
 // Decodes only from its own fields: a record of another type that
@@ -66,9 +66,6 @@ pub struct Succession {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Authority {
-    /// The predecessor's own hand-over: its final ledger entry, naming the
-    /// author.
-    HandOver { bequest: ActionHash },
     /// The recovery phrase: its key's signature over `phrase_message`.
     /// `plan` is the predecessor's latest plan as of `head`, an action on its
     /// chain -- where the account stood when it was recovered.
@@ -76,13 +73,6 @@ pub enum Authority {
     /// Guardians: at least the plan's threshold of them vouching for the
     /// author, under `plan` -- the predecessor's latest plan as of `head`.
     Guardians { plan: ActionHash, head: ActionHash, vouches: Vec<ActionHash> },
-}
-
-impl Authority {
-    /// Whether this is a recovery (the old key lost), not a hand-over.
-    pub fn is_recovery(&self) -> bool {
-        !matches!(self, Authority::HandOver { .. })
-    }
 }
 
 /// What a recovery phrase's key signs: a fixed label, the account, its new
@@ -95,9 +85,10 @@ pub fn phrase_message(predecessor: &AgentPubKey, successor: &AgentPubKey, head: 
 /// See `phrase_message`.
 pub const PHRASE_LABEL: &[u8] = b"relay-recovery:v1:";
 
-/// What a key handing over its account passes on, sealed to its successor:
-/// what only the person could read before (their name, phone, addresses),
-/// which the old key alone could open. Its contents are the app's own.
+/// What an account moving to the next network passes on, sealed to its key
+/// there: what only the person could read before (their name, phone,
+/// addresses), which the old key alone could open. Its contents are the
+/// app's own.
 #[hdk_entry_helper]
 #[derive(Clone, PartialEq, Eq)]
 // Decodes only from its own fields: a record of another type that

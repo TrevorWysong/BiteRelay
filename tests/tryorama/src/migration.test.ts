@@ -103,7 +103,7 @@ await runScenario(async (scenario) => {
     (r) => r.length === 1 && !!r[0].close,
   );
   assert.ok(Buffer.from(request.successor).equals(Buffer.from(bobKey)) && Buffer.from(request.network).equals(Buffer.from(newNetwork)));
-  const standing = await on(issuerOld.cells[0], "ledger")<{ balance: number; handed_over: boolean }>("standing_at", { agent: aliceKey, head: request.close });
+  const standing = await on(issuerOld.cells[0], "ledger")<{ balance: number }>("standing_at", { agent: aliceKey, head: request.close });
   assert.equal(standing.balance, 3000, "what the ledger held at the close");
   await on(issuerNew.cells[0], "ledger")("issue_grant", { to: bobKey, amount: standing.balance, reference: `migration:${encodeHashToBase64(aliceKey)}` });
   await syncNew();

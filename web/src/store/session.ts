@@ -8,6 +8,7 @@ import { HOST } from "../holochain/host";
 import { forgetStoredIdentity, loadStoredIdentity, storedIdentityNeedsUnlock } from "../holochain/devIdentityStorage";
 import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { chainClosed, successionsOf } from "../holochain/zomes/account";
+import { prepareDevice } from "../holochain/device";
 import { actionHash, decodeEntry } from "../holochain/decode";
 import { describeError } from "../lib/errors";
 import { useNetwork } from "./network";
@@ -69,9 +70,9 @@ interface SessionState {
   agentPubKey: Uint8Array | null;
   profile: Profile | null;
   profileActionHash: ActionHash | null;
-  /// The key this account moved on to, if it has -- handed over, or
-  /// recovered after this device was lost. This key is done: the app says
-  /// so instead of carrying on.
+  /// The key this account moved on to, if it has -- recovered onto another
+  /// device after this one was lost. This key is done: the app says so
+  /// instead of carrying on.
   movedTo: Uint8Array | null;
   /// Whether this account moved to the next version of the network
   /// (MIGRATION.md): its chain here is closed.
@@ -165,6 +166,9 @@ export const useSession = create<SessionState>((set, get) => ({
         mode: profile ? primaryModeForRoles(profile.roles) : "customer",
         hasDeviceLock,
       });
+      // An account this device received from another phone arrives without
+      // what's private to a device; set it up, in the background.
+      void prepareDevice();
     } catch (err) {
       set({ status: "error", error: describeError(err) });
       throw err;

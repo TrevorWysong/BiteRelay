@@ -89,5 +89,5 @@ pub const SEALED_IMAGE_OVERHEAD_BYTES: usize = 4_096;
 
 /// The most guardians a recovery plan may name.
 pub const MAX_GUARDIANS: usize = 7;
-/// The most a hand-over's parcel may hold, before sealing.
+/// The most a migration's parcel may hold, before sealing.
 pub const MAX_PARCEL_BYTES: usize = 65_536;

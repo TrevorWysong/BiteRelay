@@ -7,7 +7,7 @@
 use crate::{decoded, guest, linked_records, me};
 use account_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{next_page_cursor, seal_chunked};
+use relay_coordinator_support::{next_page_cursor, open_chunked, seal_chunked};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MigrateInput {
@@ -263,4 +263,22 @@ pub fn arrived_from(agent: AgentPubKey) -> ExternResult<Option<AgentPubKey>> {
     let Some(migration) = on_previous::<_, Option<MigrationRequest>>("account", "get_migration", arrival.migration)?.flatten() else { return Ok(None) };
     let genuine = migration.account == arrival.previous_account && migration.successor == agent && migration.network == dna_info()?.hash && migration.close.is_some();
     Ok(genuine.then_some(arrival.previous_account))
+}
+
+/// What the caller's account on the previous network sealed to them as it
+/// moved here, opened -- read there, through the app's `previous` role.
+#[hdk_extern]
+pub fn open_parcels(_: ()) -> ExternResult<Vec<String>> {
+    let me = me()?;
+    let mut parcels = Vec::new();
+    for record in linked_records(me.clone(), LinkTypes::SuccessorToParcel)? {
+        let Some(parcel) = decoded::<Parcel>(&record) else { continue };
+        if parcel.successor != me {
+            continue;
+        }
+        if let Some(contents) = open_chunked::<String>(record.action().author(), &parcel.sealed)? {
+            parcels.push(contents);
+        }
+    }
+    Ok(parcels)
 }

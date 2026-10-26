@@ -1,13 +1,11 @@
-// Proves carrying an account on to a new key: handed over by the old device
-// (its ledger closes, its balance moves once, to the key it names), or
-// recovered when it's lost -- by the recovery phrase's signature, or by
-// enough guardians -- each checked against the account's own latest plan.
-// Forgeries are written raw (test-utils), as a modified client would.
+// Proves recovering an account whose key was lost, onto a new key: by the
+// recovery phrase's signature, or by enough guardians -- each checked
+// against the account's own latest plan. (Moving to a new phone keeps the
+// key: device-move.test.ts.) Forgeries are written raw (test-utils), as a
+// modified client would.
 import assert from "node:assert/strict";
-import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
 import { dhtSync, getZomeCaller, runScenario } from "@holochain-open-dev/tryorama";
-import { dhtLocationFrom32 } from "@holochain/client";
-import { EMPTY_HANDS, agentAsLinkBase, latestLedgerEntry, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
+import { agentAsLinkBase, phraseKey, phraseMessage, retryUntil, retryUntilOk, setupPlayersWithProperties, useTestCoordinators } from "./helpers.js";
 
 interface PlanView {
   plan: Uint8Array;
@@ -20,23 +18,8 @@ interface SuccessionView {
   succession: Uint8Array;
   predecessor: Uint8Array;
   successor: Uint8Array;
-  kind: "HandOver" | "Phrase" | "Guardians";
+  kind: "Phrase" | "Guardians";
 }
-
-/// A recovery phrase's key, as the app derives one: an Ed25519 key in the
-/// form Holochain carries agent keys (a 3-byte prefix, 32 bytes, 4 of
-/// location).
-function phraseKey() {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  const raw = new Uint8Array(publicKey.export({ format: "der", type: "spki" }).subarray(-32));
-  const key = new Uint8Array([0x84, 0x20, 0x24, ...raw, ...dhtLocationFrom32(raw)]);
-  const der = privateKey.export({ format: "der", type: "pkcs8" });
-  return { key, sign: (message: Uint8Array) => new Uint8Array(sign(null, message, createPrivateKey({ key: der, format: "der", type: "pkcs8" }))) };
-}
-
-/// What a phrase's key signs -- `account_types::phrase_message`.
-const phraseMessage = (predecessor: Uint8Array, successor: Uint8Array, head: Uint8Array) =>
-  new Uint8Array([...new TextEncoder().encode("relay-recovery:v1:"), ...predecessor, 58, ...successor, 58, ...head]);
 
 const same = (a: Uint8Array | null | undefined, b: Uint8Array) => !!a && Buffer.from(a).equals(Buffer.from(b));
 
@@ -65,50 +48,6 @@ await runScenario(async (scenario) => {
   await assert.rejects(rawPlan(dana, { phrase_key: dana.agentPubKey, guardians: [], threshold: 0 }), /its own, not the account's/);
   console.log("[PASS] a recovery plan names others, each once, with a sensible threshold");
 
-  // ===== Moving to a new device: Alice hands over to Bob's key =====
-  await fund(alice, 3000, "alice-1");
-  await assert.rejects(account(alice)("hand_over", { successor: alice.agentPubKey, parcel: "" }), /this device's own key/);
-  const bequest = await account(alice)<Uint8Array>("hand_over", { successor: bob.agentPubKey, parcel: JSON.stringify({ name: "Alice", phone: "+44 20 7946 0000" }) });
-  assert.equal(await balance(alice), 0, "the whole balance goes");
-  await assert.rejects(ledger(alice)("cash_out", { issuer: issuer.agentPubKey, amount: 1000, instructions: "" }), /moved to a new device/, "the old key can't spend");
-  const latest = await latestLedgerEntry(alice);
-  await assert.rejects(
-    ledger(alice)("create_raw_ledger_entry_for_testing", { kind: { Inherit: { bequest } }, amount: 3000, balance: 3000, in_hand: EMPTY_HANDS, previous: latest.hash }),
-    /ledger is closed/,
-    "nor can a modified app write after the hand-over",
-  );
-  await fund(carol, 1000, "carol-1");
-  const carolLatest = await latestLedgerEntry(carol);
-  await assert.rejects(
-    ledger(carol)("create_raw_ledger_entry_for_testing", { kind: { HandOver: { successor: dana.agentPubKey } }, amount: 400, balance: 600, in_hand: EMPTY_HANDS, previous: carolLatest.hash }),
-    /whole balance/,
-    "a hand-over takes everything, or nothing",
-  );
-  console.log("[PASS] a hand-over passes on the whole balance, and closes the old key's ledger");
-
-  await sync();
-  const [found] = await retryUntil(() => ledger(bob)<{ bequest: Uint8Array; amount: number }[]>("bequests_to_me", null), (list) => list.length === 1);
-  assert.equal(found.amount, 3000);
-  await assert.rejects(account(carol)("take_over", { predecessor: alice.agentPubKey, authority: { HandOver: { bequest } } }), /to the key it names/, "only the key it names takes it over");
-  await account(bob)("take_over", { predecessor: alice.agentPubKey, authority: { HandOver: { bequest } } });
-  assert.equal(await balance(bob), 3000, "the balance comes with it");
-  const bobLatest = await latestLedgerEntry(bob);
-  await assert.rejects(
-    ledger(bob)("create_raw_ledger_entry_for_testing", { kind: { Inherit: { bequest } }, amount: 3000, balance: 6000, in_hand: EMPTY_HANDS, previous: bobLatest.hash }),
-    /taken in once/,
-    "once",
-  );
-  assert.deepEqual(await account(bob)<string[]>("open_parcels", null), [JSON.stringify({ name: "Alice", phone: "+44 20 7946 0000" })], "what only Alice could read, Bob now can");
-  assert.deepEqual(await account(carol)<string[]>("open_parcels", null), [], "and nobody else");
-  await sync();
-  const moved = await retryUntil(() => account(carol)<SuccessionView[]>("successions_of", alice.agentPubKey), (list) => list.length === 1);
-  assert.ok(same(moved[0].successor, bob.agentPubKey) && moved[0].kind === "HandOver", "everyone sees Alice's account moved to Bob");
-  const line = await account(carol)<Uint8Array[]>("lineage", bob.agentPubKey);
-  assert.ok(line.length === 1 && same(line[0], alice.agentPubKey), "and Bob's account carries Alice's history");
-  const since = (who: typeof alice) => account(carol)<number | null>("account_since", who.agentPubKey);
-  assert.equal(await since(bob), await since(alice), "and her account's age: a new phone doesn't make it new");
-  console.log("[PASS] the new key takes the account over once, with its balance and sealed details");
-
   // ===== Recovery by phrase =====
   const phrase = phraseKey();
   await fund(dana, 2500, "dana-1");
@@ -126,8 +65,19 @@ await runScenario(async (scenario) => {
 
   await account(erin)("take_over", viaPhrase(phrase.sign(phraseMessage(dana.agentPubKey, erin.agentPubKey, head!))));
   await assert.rejects(account(erin)("take_over", viaPhrase(phrase.sign(phraseMessage(dana.agentPubKey, erin.agentPubKey, head!)))), /already taken over/, "a key takes over one account");
-  await assert.rejects(account(erin)("create_raw_succession_for_testing", { predecessor: carol.agentPubKey, authority: { HandOver: { bequest } } }), /one account/, "even forged");
+  await assert.rejects(
+    account(erin)("create_raw_succession_for_testing", { predecessor: carol.agentPubKey, authority: { Phrase: { plan: firstPlan.plan, head, signature: phrase.sign(phraseMessage(carol.agentPubKey, erin.agentPubKey, head!)) } } }),
+    /one account/,
+    "even forged",
+  );
   assert.equal(await balance(erin), 0, "a recovered account's money isn't moved on the phrase's word");
+  await sync();
+  const moved = await retryUntil(() => account(carol)<SuccessionView[]>("successions_of", dana.agentPubKey), (list) => list.length === 1);
+  assert.ok(same(moved[0].successor, erin.agentPubKey) && moved[0].kind === "Phrase", "everyone sees Dana's account recovered onto Erin's key");
+  const line = await account(carol)<Uint8Array[]>("lineage", erin.agentPubKey);
+  assert.ok(line.length === 1 && same(line[0], dana.agentPubKey), "and Erin's key carries Dana's history");
+  const since = (who: typeof alice) => account(carol)<number | null>("account_since", who.agentPubKey);
+  assert.equal(await since(erin), await since(dana), "and her account's age: a recovery doesn't make it new");
   console.log("[PASS] the recovery phrase's signature, for this key and this account, recovers it");
 
   // An issuer reissues it -- asked only by the recovering key.
@@ -135,9 +85,9 @@ await runScenario(async (scenario) => {
   await sync();
   const reissue = await retryUntil(() => account(issuer)<{ requests: { predecessor: Uint8Array; successor: Uint8Array }[] }>("get_reissue_requests", { after: null }).then((p) => p.requests), (r) => r.length === 1);
   assert.ok(same(reissue[0].predecessor, dana.agentPubKey) && same(reissue[0].successor, erin.agentPubKey));
-  const standing = await ledger(issuer)<{ balance: number; handed_over: boolean }>("standing_at", { agent: dana.agentPubKey, head });
-  assert.deepEqual(standing, { balance: 2500, handed_over: false }, "where the account's ledger stood");
-  await assert.rejects(account(bob)("request_reissue", issuer.agentPubKey), /brings its balance with it/, "a hand-over isn't reissued");
+  const standing = await ledger(issuer)<{ balance: number }>("standing_at", { agent: dana.agentPubKey, head });
+  assert.deepEqual(standing, { balance: 2500 }, "where the account's ledger stood");
+  await assert.rejects(account(bob)("request_reissue", issuer.agentPubKey), /hasn't recovered an account/, "only a recovering key asks");
   await assert.rejects(account(erin)("test_create_link", { link_type: "IssuerToReissue", base: agentAsLinkBase(carol.agentPubKey), target: (await account(erin)<SuccessionView>("my_succession", null)).succession }), /issuer on the roster/, "only an issuer reissues");
   console.log("[PASS] a recovered account asks an issuer to reissue its balance");
 

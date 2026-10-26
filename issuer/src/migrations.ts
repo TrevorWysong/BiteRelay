@@ -30,7 +30,7 @@ export async function migrationSweep(store: Store, previous: IssuerLedger, curre
         continue;
       }
       const standing = await previous.standingAt(request.account, request.close);
-      const amount = standing.handed_over ? 0 : Math.max(0, standing.balance);
+      const amount = Math.max(0, standing.balance);
       if (amount > 0) await current.issueGrant(request.successor, amount, `migration:${account}`);
       store.recordMigration(account, agentId(request.successor), amount);
       credited++;
