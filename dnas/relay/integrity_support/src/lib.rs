@@ -26,6 +26,7 @@ use hdi::prelude::*;
 pub mod beacon;
 pub mod chain;
 pub mod limits;
+pub mod versions;
 mod sealed;
 pub use sealed::{max_sealed_image_bytes, sealed_chunks_problem, sealed_problem, SealedChunks};
 

@@ -122,18 +122,12 @@ fn read_appeal(hash: &ActionHash) -> ExternResult<(Appeal, AgentPubKey, Timestam
 /// The appeal of `order` (its original action), by its customer.
 fn appeal_of(order: &ActionHash) -> ExternResult<Option<ActionHash>> {
     let (customer, _) = parties_of(order)?;
-    Ok(get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToAppeal)?, GetStrategy::default())?
-        .into_iter()
-        .filter(|link| link.author == customer)
-        .find_map(|link| link.target.into_action_hash()))
+    Ok(get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToAppeal)?.author(customer), GetStrategy::default())?.into_iter().find_map(|link| link.target.into_action_hash()))
 }
 
 /// The ruling on an appeal, by its arbiter.
 fn ruling_of(appeal: &ActionHash, arbiter: &AgentPubKey) -> ExternResult<Option<(ActionHash, Ruling, Timestamp)>> {
-    for link in get_links(LinkQuery::try_new(appeal.clone(), LinkTypes::AppealToRuling)?, GetStrategy::default())? {
-        if &link.author != arbiter {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(appeal.clone(), LinkTypes::AppealToRuling)?.author(arbiter.clone()), GetStrategy::default())? {
         let Some(hash) = link.target.into_action_hash() else { continue };
         if let Some(record) = get(hash.clone(), GetOptions::default())? {
             if let Some(ruling) = decode_or::<Ruling>(&record) {
@@ -146,10 +140,7 @@ fn ruling_of(appeal: &ActionHash, arbiter: &AgentPubKey) -> ExternResult<Option<
 
 /// The store's answer to an appeal, if it's given one.
 fn answer_of(appeal: &ActionHash, store_owner: &AgentPubKey) -> ExternResult<Option<AppealAnswer>> {
-    for link in get_links(LinkQuery::try_new(appeal.clone(), LinkTypes::AppealToAnswer)?, GetStrategy::default())? {
-        if &link.author != store_owner {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(appeal.clone(), LinkTypes::AppealToAnswer)?.author(store_owner.clone()), GetStrategy::default())? {
         let Some(hash) = link.target.into_action_hash() else { continue };
         if let Some(answer) = get(hash, GetOptions::default())?.and_then(|r| decode_or::<AppealAnswer>(&r)) {
             return Ok(Some(answer));
@@ -257,16 +248,12 @@ pub struct AppealsPage {
 }
 
 /// The appeals linked from `base` filed before `before`, newest first, a
-/// page at a time: the links come together (cheap), but only a page's
-/// appeals are read in full -- an arbiter's or a busy store's list grows
-/// for good. Keeps those `keep` accepts; `open` sorts first.
+/// page at a time -- an arbiter's or a busy store's list grows for good.
+/// Keeps those `keep` accepts; `open` sorts first.
 fn appeal_page(base: AgentPubKey, link_type: LinkTypes, before: Option<Timestamp>, keep: impl Fn(&AppealView) -> bool, open: impl Fn(&AppealView) -> bool) -> ExternResult<AppealsPage> {
     let mut query = LinkQuery::try_new(base, link_type)?;
     query.before = before;
-    let mut links = get_links(query, GetStrategy::default())?;
-    links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
-    let next_before = (links.len() > APPEALS_PAGE_SIZE).then(|| Timestamp::from_micros(links[APPEALS_PAGE_SIZE - 1].timestamp.as_micros() - 1));
-    links.truncate(APPEALS_PAGE_SIZE);
+    let (links, next_before) = relay_coordinator_support::links::newest_first_page(query, APPEALS_PAGE_SIZE)?;
     let mut appeals = Vec::with_capacity(links.len());
     for link in links {
         let Some(hash) = link.target.into_action_hash() else { continue };

@@ -2,9 +2,8 @@
 //! issuer reissues when the account is recovered (its key lost), or carries
 //! to the next network when it migrates.
 
-use crate::{entry_of, guest};
+use crate::{guest, latest_balance};
 use hdk::prelude::*;
-use ledger_integrity::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StandingInput {
@@ -26,12 +25,7 @@ pub fn standing_at(input: StandingInput) -> ExternResult<Standing> {
     if head.action().author() != &input.agent {
         return Err(guest("That isn't on this account's chain."));
     }
-    let filter = ChainQueryFilter::new()
-        .entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?)
-        .sequence_range(ChainQueryFilterRange::ActionSeqRange(0, head.action().action_seq()));
-    let activity = relay_coordinator_support::agent_activity(input.agent, filter)?;
-    let Some((_, latest)) = activity.last() else { return Ok(Standing { balance: 0 }) };
-    let record = get(latest.clone(), GetOptions::default())?.ok_or(guest("couldn't read that ledger entry"))?;
-    let entry = entry_of(&record).ok_or(guest("that isn't a ledger entry"))?;
-    Ok(Standing { balance: entry.balance })
+    // Validation ties each entry to the one before it, so the newest at or
+    // before `head` says it all.
+    Ok(Standing { balance: latest_balance(&input.agent, &input.head)? })
 }

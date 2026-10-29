@@ -145,7 +145,7 @@
      the tile layer (rather than a second, paid dark-tile provider) is the
      standard trick for giving free OSM raster tiles a branded, desaturated
      look and a usable dark variant -- consistent with LiveMap's own "no
-     paid service" design constraint (architecture plan §12). */
+     paid service" design constraint. */
   .leaflet-tile-pane {
     filter: grayscale(0.25) saturate(0.85) brightness(1.03);
   }

@@ -6,10 +6,9 @@
 
 use crate::order_queues::my_completions_at;
 use catalog_types::{order_tax, order_total, total_with_tax, BagClaim, GoodieBag, MerchantCatalog, MenuItem, PricedLine, PromoCode, TaxableLine};
-use relay_coordinator_support::{decode_or, guest, original_action_of};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::resolve_latest_fresh;
 
 pub use dispatch_integrity::OrderItem;
 
@@ -132,7 +131,7 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     let mut age_restricted = false;
     let mut pricer = LinePricer::default();
     for OrderItem { item_ref, quantity, selections } in merged {
-        let record = resolve_latest_fresh(item_ref.clone())?;
+        let record = resolve_latest(item_ref.clone())?;
         let item: MenuItem = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("that isn't a menu item"))?;
         if &item.catalog_ref != catalog_ref {
             return Err(guest(format!("{} isn't on this store's menu", item.name)));
@@ -173,7 +172,7 @@ fn at_latest(selections: &[SelectionInput]) -> ExternResult<Vec<Selection>> {
         .iter()
         .map(|s| {
             let options = s.options.iter().map(|c| Ok(Chosen { option: c.option, quantity: c.quantity, nested: at_latest(&c.nested)? })).collect::<ExternResult<_>>()?;
-            Ok(Selection { group: s.group.clone(), version: resolve_latest_fresh(s.group.clone())?.action_address().clone(), options })
+            Ok(Selection { group: s.group.clone(), version: resolve_latest(s.group.clone())?.action_address().clone(), options })
         })
         .collect()
 }
@@ -385,9 +384,9 @@ fn placement_time(order_ref: &ActionHash) -> ExternResult<Timestamp> {
     Ok(record.action().timestamp())
 }
 
-/// An entry at its current state, from the network.
+/// An entry at its current state.
 fn decode_latest<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(action_hash: &ActionHash, type_name: &str) -> ExternResult<T> {
-    resolve_latest_fresh(action_hash.clone())?
+    resolve_latest(action_hash.clone())?
         .entry()
         .to_app_option::<T>()
         .map_err(|e| wasm_error!(e))?

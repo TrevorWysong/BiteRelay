@@ -109,7 +109,7 @@ await runScenario(async (scenario) => {
 
   // --- Ledger: a hold is found under its own order. ---
   await rejects(rawLink(attacker, "ledger", "OrderToHold", activeOrder, hold.hold), /authored by the author of the entry/, "a stranger can't file someone else's hold");
-  await rejects(rawLink(customer, "ledger", "OrderToHold", activeOrder, hold.hold), /must sit under the order, hold or agent its entry is about/, "a hold can't be filed under an order it isn't for");
+  await rejects(rawLink(customer, "ledger", "OrderToHold", activeOrder, hold.hold), /must sit under the order, hold, grant or agent its entry is about/, "a hold can't be filed under an order it isn't for");
   console.log("[PASS] ledger: a hold can only be linked under its own order, by its payer");
 
   // --- A store's decisions: only its own outcome or settlement, under its order. ---

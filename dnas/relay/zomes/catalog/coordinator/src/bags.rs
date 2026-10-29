@@ -17,24 +17,11 @@
 //! their side.
 
 use catalog_integrity::*;
-use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, open, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original, seal};
+use relay_coordinator_support::{decode_or, guest, open, resolve_latest, resolve_latest_decoded, resolve_links_to_records, resolve_links_to_records_with_original, resolve_version, resolve_version_decoded, seal, update_version, written};
 use relay_types::GeoPoint;
 
 use crate::NearbyMerchantsInput;
-
-/// Keyed on the catalog's *original* creation hash -- same convention as
-/// `promo_anchor_path`, and the exact reason `get_my_catalog` was fixed to
-/// expose that stable hash separately from its latest-resolved content
-/// (see `CatalogView`'s own doc comment).
-fn bag_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(bag_path(catalog_ref)).typed(LinkTypes::CatalogToBag)
-}
-
-fn claim_anchor_path(bag_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(claim_path(bag_ref)).typed(LinkTypes::BagToClaim)
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateGoodieBagInput {
@@ -76,9 +63,8 @@ pub fn create_goodie_bag(input: CreateGoodieBagInput) -> ExternResult<Record> {
     };
     let catalog_ref = bag.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::GoodieBag(bag))?;
-    create_link(bag_anchor_path(&catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back goodie bag"))
+    create_link(catalog_ref, action_hash.clone(), LinkTypes::CatalogToBag, ())?;
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -89,10 +75,9 @@ pub struct UpdateGoodieBagInput {
 
 #[hdk_extern]
 pub fn update_goodie_bag(input: UpdateGoodieBagInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::GoodieBag(input.bag))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated goodie bag"))
+    let current = resolve_version(input.original_action)?;
+    let updated = update_version(&current, &EntryTypes::GoodieBag(input.bag), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[hdk_extern]
@@ -115,8 +100,7 @@ pub struct BagView {
 /// ones that can still be live (validation caps a bag's lifetime), so this
 /// reads a week of links at most, never a store's whole history.
 fn recent_bags(catalog_ref: &ActionHash) -> ExternResult<Vec<(BagView, GoodieBag)>> {
-    let path_hash = bag_anchor_path(catalog_ref)?.path_entry_hash()?;
-    let mut query = LinkQuery::try_new(path_hash, LinkTypes::CatalogToBag)?;
+    let mut query = LinkQuery::try_new(catalog_ref.clone(), LinkTypes::CatalogToBag)?;
     query.after = Some(Timestamp::from_micros(sys_time()?.as_micros() - bag_lifetime_micros()));
     let links = get_links(query, GetStrategy::default())?;
     Ok(resolve_links_to_records_with_original(links)
@@ -162,10 +146,14 @@ pub enum FulfillmentInput {
 #[hdk_extern]
 pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
     let customer = agent_info()?.agent_initial_pubkey;
-    // One claim per customer per bag -- validation's rule, told first.
-    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::BagClaim)?).include_entries(true).action_type(ActionType::Create))?;
-    if mine.iter().filter_map(decode_or::<BagClaim>).any(|claim| claim.bag_ref == input.bag_ref) {
-        return Err(guest("You've already claimed this goodie bag."));
+    // One claim per customer per bag -- validation's rule, told first. The
+    // customer's claims are linked from them.
+    let claims = LinkQuery::try_new(customer.clone(), LinkTypes::CustomerToClaim)?.author(customer.clone());
+    for link in get_links(claims, GetStrategy::Local)? {
+        let Some(claim) = link.target.into_action_hash() else { continue };
+        if get(claim, GetOptions::local())?.as_ref().and_then(decode_or::<BagClaim>).is_some_and(|claim| claim.bag_ref == input.bag_ref) {
+            return Err(guest("You've already claimed this goodie bag."));
+        }
     }
     let fulfillment = match input.fulfillment {
         FulfillmentInput::Pickup => BagClaimFulfillment::Pickup,
@@ -179,10 +167,9 @@ pub fn claim_goodie_bag(input: ClaimGoodieBagInput) -> ExternResult<Record> {
         claimed_at: sys_time()?,
     };
     let action_hash = create_entry(&EntryTypes::BagClaim(claim.clone()))?;
-    create_link(claim_anchor_path(&input.bag_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::BagToClaim, ())?;
+    create_link(input.bag_ref.clone(), action_hash.clone(), LinkTypes::BagToClaim, ())?;
     create_link(claim.customer, action_hash.clone(), LinkTypes::CustomerToClaim, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back bag claim"))
+    written(action_hash)
 }
 
 #[hdk_extern]
@@ -192,12 +179,7 @@ pub fn get_bag_claim(claim_ref: ActionHash) -> ExternResult<Record> {
 
 #[hdk_extern]
 pub fn list_claims_for_bag(bag_ref: ActionHash) -> ExternResult<Vec<Record>> {
-    let path = claim_anchor_path(&bag_ref)?;
-    let path_hash = match path.path_entry_hash() {
-        Ok(hash) => hash,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let links = get_links(LinkQuery::try_new(path_hash, LinkTypes::BagToClaim)?, GetStrategy::default())?;
+    let links = get_links(LinkQuery::try_new(bag_ref, LinkTypes::BagToClaim)?, GetStrategy::default())?;
     Ok(resolve_links_to_records(links))
 }
 
@@ -272,7 +254,7 @@ fn holds_a_bag(claim_record: &Record, bag: &GoodieBag, now: Timestamp) -> bool {
 /// the store refuses an order for it after that (`dispatch` acceptance).
 #[hdk_extern]
 pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
-    let (record, mut claim): (_, BagClaim) = resolve_latest_decoded(claim_ref, "BagClaim")?;
+    let (current, mut claim): (_, BagClaim) = resolve_version_decoded(claim_ref, "BagClaim")?;
     let (_, bag): (_, GoodieBag) = resolve_latest_decoded(claim.bag_ref.clone(), "GoodieBag")?;
 
     let now = sys_time()?;
@@ -283,10 +265,9 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
 
     claim.status = BagClaimStatus::Confirmed;
     let customer = claim.customer.clone();
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::BagClaim(claim))?;
+    let updated = update_version(&current, &EntryTypes::BagClaim(claim), LinkTypes::Version)?;
     let _ = send_remote_signal(crate::signals::RemoteSignal::ClaimConfirmed { claim_hash: updated.clone() }, vec![customer]);
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back confirmed claim"))
+    written(updated)
 }
 
 /// The store recording that a confirmed claim was ordered -- called by its
@@ -294,13 +275,13 @@ pub fn confirm_claim(claim_ref: ActionHash) -> ExternResult<Record> {
 /// repeat.
 #[hdk_extern]
 pub fn redeem_claim(claim_ref: ActionHash) -> ExternResult<Record> {
-    let (record, mut claim): (_, BagClaim) = resolve_latest_decoded(claim_ref, "BagClaim")?;
+    let (current, mut claim): (_, BagClaim) = resolve_version_decoded(claim_ref, "BagClaim")?;
     if claim.status == BagClaimStatus::Redeemed {
-        return Ok(record);
+        return Ok(current.record);
     }
     claim.status = BagClaimStatus::Redeemed;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::BagClaim(claim))?;
-    get(updated, GetOptions::local())?.ok_or(guest("could not read back redeemed claim"))
+    let updated = update_version(&current, &EntryTypes::BagClaim(claim), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// The longest a goodie bag may stay listed, in microseconds.

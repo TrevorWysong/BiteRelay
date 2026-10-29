@@ -14,8 +14,9 @@
 //! money returned) can outrun the data it's about. Those are dropped only
 //! when what this agent can read *contradicts* them -- if the order hasn't
 //! arrived yet, the refresh they prompt reads it and checks it like any
-//! other read. A signal that carries content (chat, a location, a status
-//! to tell the user) is never passed on unverified.
+//! other read. A signal that carries content (a status to tell the user)
+//! is never passed on unverified. Chat and live location don't come
+//! through here at all: they're direct signals, app to app (`live`).
 
 use crate::upkeep;
 use dispatch_integrity::*;
@@ -42,6 +43,8 @@ pub fn init() -> ExternResult<InitCallbackResult> {
 #[hdk_extern]
 pub fn prepare_device(_: ()) -> ExternResult<()> {
     relay_coordinator_support::ensure_open_calls("recv_remote_signal", &["recv_remote_signal"])?;
+    // Chat and live location arrive as direct signals (see `live`).
+    relay_coordinator_support::ensure_direct_signals("live")?;
     // Each party collects what it's owed from its own conductor, and a store
     // makes its decisions -- see `settlement::settle_periodically`.
     schedule("settle_periodically")?;
@@ -81,10 +84,6 @@ pub enum LocalSignal {
     BidPlaced(ActionHash),
     BidAccepted(ActionHash),
     BidReleased(ActionHash),
-    /// `from` is the verified sender; `sent_at` is when it arrived here.
-    ChatMessage { order_ref: ActionHash, from: AgentPubKey, text: String, sent_at: Timestamp },
-    /// See `tracking::send_location_update` -- driver -> requester only.
-    LocationUpdate { order_ref: ActionHash, lat: f64, lon: f64, sent_at: Timestamp },
     /// See `pickup::mark_ready_for_pickup` -- merchant -> requester only.
     PickupReady(ActionHash),
     /// The driver says this order reached the customer: confirm it, or
@@ -110,12 +109,6 @@ pub enum RemoteSignal {
     BidPlaced { order_hash: ActionHash, bid_hash: ActionHash },
     BidAccepted { bid_hash: ActionHash },
     BidReleased { bid_hash: ActionHash },
-    /// Between an order's customer and its assigned driver only (see
-    /// `chat::send_chat_message`). The sender is whoever sent it.
-    ChatMessage { order_hash: ActionHash, text: String },
-    /// From the assigned driver to the order's customer only (see
-    /// `tracking::send_location_update`).
-    LocationUpdate { order_hash: ActionHash, lat: f64, lon: f64 },
     /// From a pickup order's store to its customer only.
     PickupReady { order_hash: ActionHash },
     /// From a party who's given back part of an order's held money, to the
@@ -262,23 +255,6 @@ pub fn recv_remote_signal(payload: RemoteSignal) -> ExternResult<()> {
             emit_signal(LocalSignal::BidAccepted(bid_hash))
         }
         RemoteSignal::BidReleased { bid_hash } => emit_signal(LocalSignal::BidReleased(bid_hash)),
-        RemoteSignal::ChatMessage { order_hash, text } => {
-            let Some(order) = current_state(&order_hash) else { return Ok(()) };
-            let between = [order.requester.clone(), order.driver.clone().unwrap_or(order.requester.clone())];
-            let ok = order.driver.is_some() && sender != me && between.contains(&sender) && between.contains(&me) && !text.trim().is_empty() && text.chars().count() <= relay_integrity_support::limits::MAX_NOTE_CHARS;
-            if !ok {
-                return Ok(());
-            }
-            emit_signal(LocalSignal::ChatMessage { order_ref: order_hash, from: sender, text, sent_at: sys_time()? })
-        }
-        RemoteSignal::LocationUpdate { order_hash, lat, lon } => {
-            let Some(order) = current_state(&order_hash) else { return Ok(()) };
-            let plausible = lat.is_finite() && lon.is_finite() && (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon);
-            if order.requester != me || order.driver.as_ref() != Some(&sender) || !plausible {
-                return Ok(());
-            }
-            emit_signal(LocalSignal::LocationUpdate { order_ref: order_hash, lat, lon, sent_at: sys_time()? })
-        }
         RemoteSignal::Returned { order_hash } => {
             if current_state(&order_hash).is_some_and(|order| order.role_of(&me).is_none() || order.role_of(&sender).is_none()) {
                 return Ok(());

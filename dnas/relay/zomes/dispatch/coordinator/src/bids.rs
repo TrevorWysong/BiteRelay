@@ -6,7 +6,7 @@
 use crate::signals::RemoteSignal;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{guest, next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records};
+use relay_coordinator_support::{guest, next_page_cursor, original_action_of, resolve_latest_decoded, resolve_links_to_records, resolve_version_decoded, update_version, written};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SubmitBidInput {
@@ -28,9 +28,11 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
     if order.status != DeliveryStatus::Open {
         return Err(guest("This order isn't taking offers any more."));
     }
-    // One bid per driver per order -- validation's rule, told first.
+    // One bid per driver per order -- validation's rule, told first. Each
+    // bid is linked from its order by its bidder.
     let order_original = original_action_of(input.order_ref.clone())?;
-    if my_bids()?.iter().any(|earlier| original_action_of(earlier.order_ref.clone()).ok().as_ref() == Some(&order_original)) {
+    let sent = LinkQuery::try_new(order_original.clone(), LinkTypes::OrderToBid)?.author(bidder.clone());
+    if !get_links(sent, GetStrategy::Local)?.is_empty() {
         return Err(guest("You've already bid on this order."));
     }
     if let Err(refusal) = crate::order_queues::get_driver_load(bidder.clone())?.taking(order.priority, relay_governance::max_concurrent_deliveries()) {
@@ -66,14 +68,7 @@ pub fn submit_bid(input: SubmitBidInput) -> ExternResult<Record> {
         vec![order.requester],
     );
 
-    get(bid_hash, GetOptions::local())?
-        .ok_or(guest("could not read back bid"))
-}
-
-/// The caller's bids, from their own chain.
-fn my_bids() -> ExternResult<Vec<Bid>> {
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Bid)?).include_entries(true).action_type(ActionType::Create);
-    Ok(query(filter)?.iter().filter_map(|record| record.entry().to_app_option::<Bid>().ok().flatten()).collect())
+    written(bid_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -83,14 +78,13 @@ pub struct WithdrawBidInput {
 
 #[hdk_extern]
 pub fn withdraw_bid(input: WithdrawBidInput) -> ExternResult<Record> {
-    let (record, mut bid): (_, Bid) = resolve_latest_decoded(input.bid_action, "Bid")?;
+    let (current, mut bid): (_, Bid) = resolve_version_decoded(input.bid_action, "Bid")?;
     bid.status = BidStatus::Withdrawn;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::Bid(bid))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back withdrawn bid"))
+    let updated = update_version(&current, &EntryTypes::Bid(bid), LinkTypes::Version)?;
+    written(updated)
 }
 
-/// Contested warrants (architecture plan §11.2). Warrant-checking cannot be
+/// Contested warrants. Warrant-checking cannot be
 /// enforced inside deterministic `validate()` -- an agent's warrant set is an
 /// ever-growing, gossip-propagated fact, so two validators asking "does this
 /// agent have warrants" at slightly different moments could get different,
@@ -141,7 +135,7 @@ pub struct AcceptBidInput {
 /// BidReleased signal so their client can drop the local candidate.
 #[hdk_extern]
 pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
-    let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+    let (order_record, mut order): (_, DeliveryOrder) = resolve_version_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
     let (_, winning_bid): (_, Bid) = resolve_latest_decoded(input.bid_action.clone(), "Bid")?;
     if winning_bid.status != BidStatus::Open {
         return Err(guest("That driver has withdrawn their offer."));
@@ -162,7 +156,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     }
 
     // An order changes drivers a bounded number of times.
-    if let Some(version) = dispatch_integrity::lineage::Version::of(order_record.clone()) {
+    if let Some(version) = dispatch_integrity::lineage::Version::of(order_record.record.clone()) {
         if !dispatch_integrity::lineage::driver_changes(&version)?.allow_another() {
             return Err(guest("This order has changed drivers too many times. You can collect it yourself, or cancel it."));
         }
@@ -186,10 +180,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
     // The driver's pay -- the customer's share of the fee, and their tip --
     // set aside in this same commit.
     order.driver_pay_hold = crate::settlement::place_hold(&input.order_original_action, HoldPurpose::DriverPay { bid: input.bid_action.clone() })?;
-    // order_record came from resolve_latest, so its action_address() is the
-    // real current chain tip -- see resolve_latest's doc comment for why
-    // that matters (a plain get() would not give this).
-    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_version(&order_record, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
     crate::order_queues::enqueue_for_driver(&input.order_original_action, &updated, &winning_bid.bidder)?;
 
     let _ = send_remote_signal(
@@ -211,8 +202,7 @@ pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {
         }
     }
 
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back accepted order"))
+    written(updated)
 }
 
 /// Why a driver can't take an order on, told to them.
@@ -240,7 +230,7 @@ pub struct ListBidsInput {
     /// `None` starts from the beginning. Bids-per-order is naturally small
     /// (unlike the shared cross-user anchors in `matching.rs`,
     /// this is scoped to one order), so this is defensive pagination rather
-    /// than a fix for a known hot spot -- see architecture plan §9.3.
+    /// than a fix for a known hot spot.
     pub after: Option<Timestamp>,
 }
 

@@ -126,7 +126,7 @@ pub fn updates_by(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHa
     let mut belongs: std::collections::HashMap<ActionHash, bool> = std::collections::HashMap::new();
     belongs.insert(order.clone(), true);
     let mut versions = Vec::new();
-    for item in activity_since(author, chain_top, placed, false)? {
+    for item in activity_since(author, chain_top, placed)? {
         let ActionData::Update(update) = &item.action.hashed.content.data else { continue };
         if !of_order(&update.original_action_address, &mut belongs)? {
             continue;
@@ -184,7 +184,7 @@ pub fn descends_from(version: &Version, ancestor: &ActionHash) -> ExternResult<b
 /// between `chain_top` and the order's placement.
 pub fn asked_to_collect(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash) -> ExternResult<bool> {
     let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
-    for item in activity_since(author, chain_top, placed, true)? {
+    for item in activity_since(author, chain_top, placed)? {
         let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
         let Entry::App(bytes) = entry_of(&item, &create.entry_hash)? else { continue };
         if CollectRequest::try_from(SerializedBytes::from(bytes)).is_ok_and(|request| &request.order == order) {

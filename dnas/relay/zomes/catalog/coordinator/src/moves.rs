@@ -8,6 +8,7 @@
 //! stake from the new key's balance.
 
 use crate::*;
+use relay_coordinator_support::chain::mine;
 use std::collections::BTreeMap;
 
 /// How far back a store's line is followed.
@@ -49,9 +50,13 @@ pub fn move_store(from: ActionHash) -> ExternResult<ActionHash> {
     };
     let mine: Option<MySuccession> = io.decode().map_err(|e| wasm_error!(e))?;
     let mine = mine.ok_or(guest("This device hasn't taken over an account."))?;
-    let moved = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::StoreSuccession)?).include_entries(true))?;
-    if let Some(earlier) = moved.iter().filter_map(decode_or::<StoreSuccession>).find(|m| m.from == from) {
-        return Ok(earlier.to);
+    // Safe to repeat: a move is linked from the store it moved.
+    let moved = LinkQuery::try_new(from.clone(), LinkTypes::CatalogToSuccessor)?.author(me.clone());
+    for link in get_links(moved, GetStrategy::Local)? {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        if let Some(earlier) = get(hash, GetOptions::local())?.as_ref().and_then(decode_or::<StoreSuccession>).filter(|m| m.from == from) {
+            return Ok(earlier.to);
+        }
     }
     let (_, store): (_, MerchantCatalog) = resolve_latest_decoded(from.clone(), "MerchantCatalog")?;
     if store.owner != mine.predecessor {
@@ -267,8 +272,10 @@ pub fn previous_stores(_: ()) -> ExternResult<Vec<CatalogView>> {
 pub fn import_store(from: ActionHash) -> ExternResult<ActionHash> {
     let me = agent_info()?.agent_initial_pubkey;
     let previous = arrived_from(me.clone())?.ok_or(guest("This account hasn't arrived from a previous network."))?;
-    let imported = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::StoreImport)?).include_entries(true))?;
-    if let Some(earlier) = imported.iter().filter_map(decode_or::<StoreImport>).find(|i| i.from == from) {
+    // Safe to repeat. Imports come just after an account arrives, while its
+    // chain here is short.
+    let imported = mine(&[EntryType::try_from(UnitEntryTypes::StoreImport)?]).creates().find(|r| decode_or::<StoreImport>(r).is_some_and(|i| i.from == from))?;
+    if let Some(earlier) = imported.as_ref().and_then(decode_or::<StoreImport>) {
         return Ok(earlier.to);
     }
     let record: Record = Source::Previous.read("get_catalog", from.clone())?;

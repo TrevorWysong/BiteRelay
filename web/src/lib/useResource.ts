@@ -5,6 +5,7 @@
 // external system -- but they live here, once.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { onLocalSignal } from "../holochain/client";
+import { onLiveSignal, type LiveSignal } from "../holochain/live";
 import type { LocalSignal } from "../holochain/types";
 
 interface PollOptions {
@@ -91,6 +92,16 @@ export function useLocalSignal(handler: (signal: LocalSignal) => void, enabled =
   useEffect(() => {
     if (!enabled) return;
     return onLocalSignal((signal) => handlerRef.current(signal));
+  }, [enabled, handlerRef]);
+}
+
+/// Calls `handler` with every checked chat line and driver location while
+/// mounted (and while `enabled`) -- see `holochain/live.ts`.
+export function useLiveSignal(handler: (signal: LiveSignal) => void, enabled = true) {
+  const handlerRef = useLatest(handler);
+  useEffect(() => {
+    if (!enabled) return;
+    return onLiveSignal((signal) => handlerRef.current(signal));
   }, [enabled, handlerRef]);
 }
 

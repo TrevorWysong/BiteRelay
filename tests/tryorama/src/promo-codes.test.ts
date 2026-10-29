@@ -1,5 +1,5 @@
 // Proves merchant-scoped promo codes, built on the generic
-// PromoRequirement/PromoReward split (architecture plan §13): a valid,
+// PromoRequirement/PromoReward split: a valid,
 // active plain-discount code is accepted on an order; an inactive one, an
 // expired one, and one belonging to a different merchant are all rejected
 // deterministically by dispatch_integrity::validate_new_order -- not just

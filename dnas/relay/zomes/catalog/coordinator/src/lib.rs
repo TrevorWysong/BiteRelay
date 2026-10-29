@@ -15,14 +15,15 @@ pub use signals::*;
 use catalog_integrity::*;
 use hdi::hash_path::path::Path;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records_with_original};
+use relay_coordinator_support::chain::{my_current_version, my_versions};
+use relay_coordinator_support::{decode_or, guest, next_page_cursor, resolve_latest, resolve_latest_decoded, resolve_links_to_records_with_original, resolve_version, resolve_version_decoded, update_version, written};
 use relay_types::GeoPoint;
 
 fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::TypedPath> {
     Path::from(catalog_geohash_path(geohash)).typed(LinkTypes::GeohashToCatalog)
 }
 
-/// Unlike presence beacons and open orders (architecture plan §9.2), old
+/// Unlike open orders, old
 /// catalog entries are *signal*, not noise -- a merchant published a year
 /// ago should still show up in "restaurants near me" today, so this anchor
 /// is deliberately *not* time-bucketed. The real scale concern here is
@@ -150,8 +151,7 @@ pub fn publish_catalog(input: PublishCatalogInput) -> ExternResult<Record> {
 
     list(&action_hash, &geohash)?;
 
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back published catalog"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -162,11 +162,10 @@ pub struct SetCatalogOpenInput {
 
 #[hdk_extern]
 pub fn set_catalog_open(input: SetCatalogOpenInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.is_open = input.is_open;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -179,11 +178,10 @@ pub struct SetAutoAcceptOrdersInput {
 /// see `MerchantCatalog::auto_accept_orders`.
 #[hdk_extern]
 pub fn set_auto_accept_orders(input: SetAutoAcceptOrdersInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.auto_accept_orders = input.auto_accept_orders;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -197,11 +195,10 @@ pub struct SetLeaveAtDoorLimitInput {
 /// `MerchantCatalog::leave_at_door_max_cents`.
 #[hdk_extern]
 pub fn set_leave_at_door_limit(input: SetLeaveAtDoorLimitInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.leave_at_door_max_cents = input.max_cents;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -215,11 +212,10 @@ pub struct SetMinimumOrderInput {
 /// `MerchantCatalog::min_order_cents`.
 #[hdk_extern]
 pub fn set_minimum_order(input: SetMinimumOrderInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.min_order_cents = input.min_cents;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -235,13 +231,12 @@ pub struct SetTaxSettingsInput {
 /// the rates they were placed under.
 #[hdk_extern]
 pub fn set_tax_settings(input: SetTaxSettingsInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.tax_rates = input.tax_rates;
     catalog.prices_include_tax = input.prices_include_tax;
     catalog.tax_registration = input.tax_registration.trim().to_string();
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -256,11 +251,10 @@ pub struct SetStoreWaitInput {
 /// wait they were placed under.
 #[hdk_extern]
 pub fn set_store_wait(input: SetStoreWaitInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.store_wait_minutes = input.minutes;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -274,11 +268,10 @@ pub struct SetBusyInput {
 /// `MerchantCatalog::busy_extra_minutes`.
 #[hdk_extern]
 pub fn set_busy(input: SetBusyInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.busy_extra_minutes = input.extra_minutes;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// A merchant fills in storefront depth (description, cuisine, hours,
@@ -307,7 +300,7 @@ pub struct UpdateCatalogDetailsInput {
 
 #[hdk_extern]
 pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.description = input.description;
     catalog.cuisine_type = input.cuisine_type;
     catalog.banner_data_uri = input.banner_data_uri;
@@ -320,9 +313,8 @@ pub fn update_catalog_details(input: UpdateCatalogDetailsInput) -> ExternResult<
     catalog.time_zone = input.time_zone;
     catalog.prep_minutes = input.prep_minutes;
     catalog.max_delivery_radius_km = input.max_delivery_radius_km;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// Cross-zome read for `dispatch::complete_delivery` (and the equivalent
@@ -351,18 +343,17 @@ pub struct SetDeliverySubsidyPercentInput {
     pub delivery_subsidy_percent: u8,
 }
 
-/// The standard delivery-cost-sharing model (architecture plan §12,
-/// 2026-10-01 revision), not a rare promotion -- defaults to 50 (an even
+/// The standard delivery-cost-sharing model, not a rare promotion --
+/// defaults to 50 (an even
 /// split with the customer) at `publish_catalog` time, adjustable here if a
 /// merchant needs a different split. A percentage, not a flat amount, so
 /// it stays proportional to whatever the winning bid turns out to be.
 #[hdk_extern]
 pub fn set_delivery_subsidy_percent(input: SetDeliverySubsidyPercentInput) -> ExternResult<Record> {
-    let (record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(input.original_action, "MerchantCatalog")?;
+    let (current, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(input.original_action, "MerchantCatalog")?;
     catalog.delivery_subsidy_percent = input.delivery_subsidy_percent;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated catalog"))
+    let updated = update_version(&current, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// Recomputes `MerchantCatalog.dietary_tags` as the sorted, deduplicated
@@ -392,10 +383,10 @@ pub(crate) fn recompute_dietary_tags(catalog_ref: &ActionHash) -> ExternResult<(
     tags.sort();
     tags.dedup();
 
-    let (catalog_record, mut catalog): (_, MerchantCatalog) = resolve_latest_decoded(catalog_ref.clone(), "MerchantCatalog")?;
+    let (catalog_record, mut catalog): (_, MerchantCatalog) = resolve_version_decoded(catalog_ref.clone(), "MerchantCatalog")?;
     if catalog.dietary_tags != tags {
         catalog.dietary_tags = tags;
-        update_entry(catalog_record.action_address().clone(), &EntryTypes::MerchantCatalog(catalog))?;
+        update_version(&catalog_record, &EntryTypes::MerchantCatalog(catalog), LinkTypes::Version)?;
     }
     Ok(())
 }
@@ -406,8 +397,7 @@ pub fn add_menu_item(item: MenuItem) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::MenuItem(item.clone()))?;
     create_link(catalog_ref.clone(), action_hash.clone(), LinkTypes::CatalogToMenuItem, ())?;
     recompute_dietary_tags(&catalog_ref)?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back menu item"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -418,17 +408,16 @@ pub struct UpdateMenuItemInput {
 
 #[hdk_extern]
 pub fn update_menu_item(input: UpdateMenuItemInput) -> ExternResult<Record> {
-    // Built on the latest version on the caller's own chain: a DHT read can
-    // lag the caller's own last edit and fork the item's history.
-    let record = match item_versions(&input.original_action, &my_menu_item_records()?).pop() {
-        Some(latest) => latest,
-        None => resolve_latest(input.original_action)?,
+    // Built on the caller's own latest version, which this device always
+    // has: building on an older one would fork the item's history.
+    let current = match my_current_version(input.original_action.clone())? {
+        Some(current) => current,
+        None => resolve_version(input.original_action)?,
     };
     let catalog_ref = input.item.catalog_ref.clone();
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::MenuItem(input.item))?;
+    let updated = update_version(&current, &EntryTypes::MenuItem(input.item), LinkTypes::Version)?;
     recompute_dietary_tags(&catalog_ref)?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated menu item"))
+    written(updated)
 }
 
 /// One version of a menu item (or a choice group): the action that wrote
@@ -454,16 +443,15 @@ pub struct ItemVersions {
 /// comes back with no versions.
 #[hdk_extern]
 pub fn get_my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersions>> {
-    let records = my_menu_item_records()?;
-    Ok(item_refs
+    item_refs
         .into_iter()
         .map(|item_ref| {
-            let versions = item_versions(&item_ref, &records);
+            let versions = my_versions(item_ref.clone())?;
             let name = versions.last().and_then(|r| r.entry().to_app_option::<MenuItem>().ok().flatten()).map(|item| item.name).unwrap_or_default();
             let versions = versions.iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect();
-            ItemVersions { item_ref, name, versions }
+            Ok(ItemVersions { item_ref, name, versions })
         })
-        .collect())
+        .collect()
 }
 
 /// Every version of one of the caller's own stores, oldest first, from their
@@ -471,8 +459,7 @@ pub fn get_my_item_versions(item_refs: Vec<ActionHash>) -> ExternResult<Vec<Item
 /// (`dispatch::pricing::terms_outdated`). Empty if the caller didn't write it.
 #[hdk_extern]
 pub fn get_my_store_versions(catalog_ref: ActionHash) -> ExternResult<Vec<ItemVersion>> {
-    let records = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::MerchantCatalog)?).include_entries(true))?;
-    Ok(item_versions(&catalog_ref, &records).iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect())
+    Ok(my_versions(catalog_ref)?.iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect())
 }
 
 /// One version of a promo code, as a store checks an order's promo against
@@ -490,33 +477,13 @@ pub struct PromoVersion {
 /// caller didn't write it.
 #[hdk_extern]
 pub fn get_my_promo_versions(promo_ref: ActionHash) -> ExternResult<Vec<PromoVersion>> {
-    let records = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::PromoCode)?).include_entries(true))?;
-    Ok(item_versions(&promo_ref, &records)
+    Ok(my_versions(promo_ref)?
         .iter()
         .filter_map(|record| {
             let promo = record.entry().to_app_option::<PromoCode>().ok().flatten()?;
             Some(PromoVersion { active: promo.active, expires_at: promo.expires_at, written_at: record.action().timestamp() })
         })
         .collect())
-}
-
-/// Every menu item version on the caller's chain, in the order written.
-fn my_menu_item_records() -> ExternResult<Vec<Record>> {
-    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::MenuItem)?).include_entries(true))
-}
-
-/// `item_ref` and each update after it, oldest first, from `records` (the
-/// caller's chain). Each version updates the one before it; were the history
-/// ever to fork, the later branch wins.
-pub(crate) fn item_versions(item_ref: &ActionHash, records: &[Record]) -> Vec<Record> {
-    let Some(first) = records.iter().find(|r| r.action_address() == item_ref) else { return Vec::new() };
-    let mut versions = vec![first.clone()];
-    let mut latest = first.action_address();
-    while let Some(next) = records.iter().rfind(|r| matches!(&r.action().data, ActionData::Update(update) if &update.original_action_address == latest)) {
-        versions.push(next.clone());
-        latest = next.action_address();
-    }
-    versions
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -581,8 +548,8 @@ pub struct NearbyMerchantsPage {
 
 /// Returns merchant catalogs declared in `geohash`'s cell and its 8
 /// neighbors -- the same discovery pattern drivers use for open orders, so
-/// restaurant browsing and order discovery compose over one grid. Paginated
-/// (architecture plan §9.3), not time-bucketed like open-order discovery -- old catalogs are signal here, not noise,
+/// restaurant browsing and order discovery compose over one grid. Paginated,
+/// not time-bucketed like open-order discovery -- old catalogs are signal here, not noise,
 /// so bucketing would just mean re-linking every merchant forever instead
 /// of fixing anything. `after` filtering happens per-cell before the
 /// cross-cell merge below, so it also reduces per-cell payload size, not
@@ -617,12 +584,8 @@ pub fn get_nearby_merchants(input: NearbyMerchantsInput) -> ExternResult<NearbyM
     Ok(NearbyMerchantsPage { catalogs, next_after })
 }
 
-// --- promo codes (architecture plan: merchant-scoped discounts, built
-// 2026-10-02 alongside the delivery-fee-sharing work) ---
+// --- promo codes: a store's own discounts ---
 
-fn promo_anchor_path(catalog_ref: &ActionHash) -> ExternResult<hdi::hash_path::path::TypedPath> {
-    Path::from(promo_path(catalog_ref)).typed(LinkTypes::CatalogToPromoCode)
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreatePromoCodeInput {
@@ -660,10 +623,9 @@ pub fn create_promo_code(input: CreatePromoCodeInput) -> ExternResult<Record> {
         auto_apply: input.auto_apply,
     };
     let action_hash = create_entry(&EntryTypes::PromoCode(promo))?;
-    create_link(promo_anchor_path(&input.catalog_ref)?.path_entry_hash()?, action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
+    create_link(input.catalog_ref.clone(), action_hash.clone(), LinkTypes::CatalogToPromoCode, ())?;
     create_link(input.catalog_ref, action_hash.clone(), LinkTypes::CatalogToLivePromo, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back promo code"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -674,10 +636,10 @@ pub struct SetPromoCodeActiveInput {
 
 #[hdk_extern]
 pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Record> {
-    let (record, mut promo): (_, PromoCode) = resolve_latest_decoded(input.original_action.clone(), "PromoCode")?;
+    let (current, mut promo): (_, PromoCode) = resolve_version_decoded(input.original_action.clone(), "PromoCode")?;
     let catalog_ref = promo.catalog_ref.clone();
     promo.active = input.active;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PromoCode(promo))?;
+    let updated = update_version(&current, &EntryTypes::PromoCode(promo), LinkTypes::Version)?;
     let target: AnyLinkableHash = input.original_action.clone().into();
     let live_links: Vec<Link> = get_links(LinkQuery::try_new(catalog_ref.clone(), LinkTypes::CatalogToLivePromo)?, GetStrategy::default())?
         .into_iter()
@@ -690,8 +652,7 @@ pub fn set_promo_code_active(input: SetPromoCodeActiveInput) -> ExternResult<Rec
             delete_link(link.create_link_hash, GetOptions::default())?;
         }
     }
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated promo code"))
+    written(updated)
 }
 
 /// A promo code's stable identity (what orders and `set_promo_code_active`
@@ -744,13 +705,9 @@ pub struct PromoCodesPage {
 /// merchant's management list.
 #[hdk_extern]
 pub fn list_promo_codes_for_catalog(input: ListPromoCodesInput) -> ExternResult<PromoCodesPage> {
-    let mut query = LinkQuery::try_new(promo_anchor_path(&input.catalog_ref)?.path_entry_hash()?, LinkTypes::CatalogToPromoCode)?;
+    let mut query = LinkQuery::try_new(input.catalog_ref.clone(), LinkTypes::CatalogToPromoCode)?;
     query.before = input.before;
-    let mut links = get_links(query, GetStrategy::default())?;
-    links.sort_by_key(|link| std::cmp::Reverse(link.timestamp));
-    // `before` is inclusive, so step one microsecond past the last code.
-    let next_before = (links.len() > PROMO_PAGE_SIZE).then(|| Timestamp::from_micros(links[PROMO_PAGE_SIZE - 1].timestamp.as_micros() - 1));
-    links.truncate(PROMO_PAGE_SIZE);
+    let (links, next_before) = relay_coordinator_support::links::newest_first_page(query, PROMO_PAGE_SIZE)?;
     Ok(PromoCodesPage { promo_codes: promo_views(&input.catalog_ref, links), next_before })
 }
 
@@ -815,9 +772,9 @@ fn my_listing(catalog_ref: &ActionHash) -> ExternResult<Option<(Link, ActionHash
     let me = agent_info()?.agent_initial_pubkey;
     let anchor = geohash_anchor_path(&catalog.geohash)?.path_entry_hash()?;
     let target = AnyLinkableHash::from(catalog_ref.clone());
-    Ok(get_links(LinkQuery::try_new(anchor, LinkTypes::GeohashToCatalog)?, GetStrategy::Local)?
+    Ok(get_links(LinkQuery::try_new(anchor, LinkTypes::GeohashToCatalog)?.author(me), GetStrategy::Local)?
         .into_iter()
-        .filter(|link| link.author == me && link.target == target)
+        .filter(|link| link.target == target)
         .find_map(|link| listing_stake(&link.tag.0).map(|stake| (link, stake))))
 }
 

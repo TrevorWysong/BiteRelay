@@ -64,6 +64,6 @@ await runScenario(async (scenario) => {
   assert.ok(ledger.entries.some((e) => Buffer.from(actionHash(e)).equals(Buffer.from(r.payments[0].transaction))), "the cited payment is on the customer's own ledger");
   console.log("[PASS] a completed order's receipt lists what was paid, at the prices paid, and the transaction that paid it");
 
-  await assert.rejects(call(merchant, "dispatch")("get_order_receipt", order), /only the customer has a receipt/);
+  await assert.rejects(call(merchant, "dispatch")("get_order_receipt", order), /Only the order's customer has a receipt/);
   console.log("[PASS] only the customer gets a receipt");
 });

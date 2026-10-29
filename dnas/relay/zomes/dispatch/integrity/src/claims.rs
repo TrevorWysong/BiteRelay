@@ -22,7 +22,7 @@ pub(crate) fn resolve_original_creation(action_hash: ActionHash) -> ExternResult
 /// is how validation sees them.
 pub(crate) fn wrote_update_of(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash, matches: impl Fn(&DeliveryOrder) -> bool) -> ExternResult<bool> {
     let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
-    for item in relay_integrity_support::chain::activity_since(author, chain_top, placed, true)? {
+    for item in relay_integrity_support::chain::activity_since(author, chain_top, placed)? {
         let ActionData::Update(update) = &item.action.hashed.content.data else { continue };
         let Entry::App(bytes) = relay_integrity_support::chain::entry_of(&item, &update.entry_hash)? else { continue };
         let Ok(version) = DeliveryOrder::try_from(SerializedBytes::from(bytes)) else { continue };

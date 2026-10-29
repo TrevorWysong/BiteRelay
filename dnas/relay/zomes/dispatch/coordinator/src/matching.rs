@@ -29,8 +29,8 @@ pub fn get_open_orders_near(geohash: String) -> ExternResult<Vec<Record>> {
     let current_bucket = relay_types::time_bucket(now.as_millis(), OPEN_ORDER_BUCKET_MILLIS);
     let mut orders = Vec::new();
     for cell in relay_types::cell_and_neighbors(&geohash) {
-        // Current bucket and the immediately preceding one -- see
-        // architecture plan §9.2.
+        // Current bucket and the immediately preceding one: an order
+        // published just before the bucket turned is still in the last.
         for bucket in [current_bucket, current_bucket - 1] {
             let path = open_order_anchor_path(&cell, bucket)?;
             let path_hash = match path.path_entry_hash() {

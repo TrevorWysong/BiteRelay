@@ -7,7 +7,8 @@
 use dispatch_types::{hold_amount, hold_terms, Bid, DeliveryOrder, OrderTerms, PickupOrder, Share};
 use hdk::prelude::*;
 use ledger_integrity::*;
-use relay_coordinator_support::original_action_of;
+use relay_coordinator_support::chain::{chain_head_of, latest_on_chain, mine};
+use relay_coordinator_support::{decode_or, original_action_of};
 
 mod cash_out;
 mod standing;
@@ -16,24 +17,32 @@ pub use standing::*;
 
 pub(crate) use relay_coordinator_support::guest;
 
-/// The caller's ledger entries, oldest first.
-pub(crate) fn my_entries() -> ExternResult<Vec<Record>> {
-    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?).include_entries(true))
+/// The ledger entry type, for a walk of the caller's chain (`mine`).
+pub(crate) fn ledger_entries() -> ExternResult<[EntryType; 1]> {
+    Ok([EntryType::try_from(UnitEntryTypes::LedgerEntry)?])
+}
+
+/// The caller's newest ledger entry since `since` that `matches` -- how
+/// each "once" rule is told first, reading back only as far as validation
+/// does: to when the thing it's about came to be.
+pub(crate) fn my_entry_since(since: Timestamp, matches: impl Fn(&LedgerKind) -> bool) -> ExternResult<Option<Record>> {
+    mine(&ledger_entries()?).since(since).find(|record| entry_of(record).is_some_and(|e| matches(&e.kind)))
 }
 
 pub(crate) fn entry_of(record: &Record) -> Option<LedgerEntry> {
     record.entry().to_app_option::<LedgerEntry>().ok().flatten()
 }
 
-/// Whether the caller closed their chain (moved to another network).
+/// Whether the caller closed their chain (moved to another network): a
+/// chain's close is its last action.
 fn chain_closed() -> ExternResult<bool> {
-    let closes = query(ChainQueryFilter::new().action_type(ActionType::CloseChain))?;
-    Ok(!closes.is_empty())
+    let head = agent_info()?.chain_head.0;
+    Ok(get(head, GetOptions::local())?.is_some_and(|record| matches!(record.action().data, ActionData::CloseChain(_))))
 }
 
 /// Writes the caller's next ledger entry, after their latest.
 pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> {
-    let latest = my_entries()?.into_iter().last();
+    let latest = mine(&ledger_entries()?).latest()?;
     let (previous, balance, in_hand) = match &latest {
         Some(record) => {
             let prior = entry_of(record);
@@ -114,44 +123,52 @@ pub fn issue_grant(input: IssueGrantInput) -> ExternResult<ActionHash> {
     // Safe to repeat: a payment granted already isn't granted again -- an
     // issuer's service that lost its connection mid-call can't know whether
     // its grant went through, so it asks again.
-    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::IssuerGrant)?).include_entries(true))?;
-    if let Some(existing) = mine.iter().find(|r| r.entry().to_app_option::<IssuerGrant>().ok().flatten().is_some_and(|g| g.reference == input.reference)) {
-        return Ok(existing.action_address().clone());
+    // Its link is tagged with the reference, so it's found by that alone.
+    let me = agent_info()?.agent_initial_pubkey;
+    let tag = LinkTag::new(input.reference.as_bytes());
+    let granted = LinkQuery::try_new(input.to.clone(), LinkTypes::AgentToGrant)?.tag_prefix(tag.clone()).author(me);
+    if let Some(existing) = get_links(granted, GetStrategy::Local)?.into_iter().find(|link| link.tag == tag).and_then(|link| link.target.into_action_hash()) {
+        return Ok(existing);
     }
     let to = input.to.clone();
     let hash = create_entry(&EntryTypes::IssuerGrant(IssuerGrant { to: input.to, amount: input.amount, reference: input.reference }))?;
-    create_link(to, hash.clone(), LinkTypes::AgentToGrant, ())?;
+    create_link(to, hash.clone(), LinkTypes::AgentToGrant, tag)?;
     Ok(hash)
 }
 
 /// Collects every grant made to the caller that they haven't yet; returns
-/// how many.
+/// how many. Each in a call of its own: one that doesn't validate yet can't
+/// hold up the rest.
 #[hdk_extern]
 pub fn collect_grants(_: ()) -> ExternResult<u32> {
     let me = agent_info()?.agent_initial_pubkey;
-    let collected: Vec<ActionHash> = my_entries()?
-        .iter()
-        .filter_map(entry_of)
-        .filter_map(|e| match e.kind {
-            LedgerKind::Deposit { grant } => Some(grant),
-            _ => None,
-        })
-        .collect();
     let mut count = 0;
-    for link in get_links(LinkQuery::try_new(me.clone(), LinkTypes::AgentToGrant)?, GetStrategy::default())? {
-        let Some(grant_ref) = link.target.into_action_hash() else { continue };
-        if collected.contains(&grant_ref) {
-            continue;
+    for link in get_links(LinkQuery::try_new(me, LinkTypes::AgentToGrant)?, GetStrategy::default())? {
+        let Some(grant) = link.target.into_action_hash() else { continue };
+        if !collected(&grant)? && relay_coordinator_support::isolated::<_, ActionHash>("collect_grant", grant).is_some() {
+            count += 1;
         }
-        let Some(record) = get(grant_ref.clone(), GetOptions::default())? else { continue };
-        let Ok(Some(grant)) = record.entry().to_app_option::<IssuerGrant>() else { continue };
-        if grant.to != me {
-            continue;
-        }
-        append(LedgerKind::Deposit { grant: grant_ref }, grant.amount)?;
-        count += 1;
     }
     Ok(count)
+}
+
+/// Whether the caller has collected `grant`: its collection links from it.
+fn collected(grant: &ActionHash) -> ExternResult<bool> {
+    let query = LinkQuery::try_new(grant.clone(), LinkTypes::GrantToDeposit)?.author(agent_info()?.agent_initial_pubkey);
+    Ok(!get_links(query, GetStrategy::Local)?.is_empty())
+}
+
+/// Collects one grant made to the caller (`collect_grants`).
+#[hdk_extern]
+pub fn collect_grant(grant_ref: ActionHash) -> ExternResult<ActionHash> {
+    let record = get(grant_ref.clone(), GetOptions::default())?.ok_or(guest("grant not found"))?;
+    let grant = decode_or::<IssuerGrant>(&record).ok_or(guest("that isn't a grant"))?;
+    if grant.to != agent_info()?.agent_initial_pubkey {
+        return Err(guest("that grant is someone else's"));
+    }
+    let deposit = append(LedgerKind::Deposit { grant: grant_ref.clone() }, grant.amount)?;
+    create_link(grant_ref, deposit.clone(), LinkTypes::GrantToDeposit, ())?;
+    Ok(deposit)
 }
 
 // --- holds ---
@@ -218,11 +235,14 @@ pub fn place_hold(input: PlaceHoldInput) -> ExternResult<Option<ActionHash>> {
     if shares.is_empty() {
         return Ok(None);
     }
-    let existing = my_entries()?.into_iter().find(|record| {
-        entry_of(record).is_some_and(|e| matches!(&e.kind, LedgerKind::Hold { order: o, purpose: p } if o == &order && p == &input.purpose))
-    });
-    if let Some(record) = existing {
-        return Ok(Some(record.action_address().clone()));
+    // The caller's holds on the order are linked from it.
+    let placed = LinkQuery::try_new(order.clone(), LinkTypes::OrderToHold)?.author(payer);
+    for link in get_links(placed, GetStrategy::Local)? {
+        let Some(hold) = link.target.into_action_hash() else { continue };
+        let held = get(hold.clone(), GetOptions::local())?.and_then(|record| entry_of(&record));
+        if held.is_some_and(|e| matches!(&e.kind, LedgerKind::Hold { order: o, purpose: p } if o == &order && p == &input.purpose)) {
+            return Ok(Some(hold));
+        }
     }
     let hash = append(LedgerKind::Hold { order: order.clone(), purpose: input.purpose }, hold_amount(&shares))?;
     create_link(order, hash.clone(), LinkTypes::OrderToHold, ())?;
@@ -263,16 +283,23 @@ pub fn holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 
 // --- deciding a part of a hold ---
 
+/// The part of a hold a ledger entry decides, if it decides one.
+fn decided_by(kind: &LedgerKind) -> Option<(&ActionHash, Portion)> {
+    match kind {
+        LedgerKind::Collect { hold, portion, .. } | LedgerKind::Waive { hold, portion } => Some((hold, *portion)),
+        LedgerKind::Forfeit { hold, .. } => Some((hold, Portion::Collateral)),
+        _ => None,
+    }
+}
+
+/// When a hold was placed: no part of it is decided before.
+fn held_at(hold: &ActionHash) -> ExternResult<Timestamp> {
+    Ok(get(hold.clone(), GetOptions::default())?.ok_or(guest("hold not found"))?.action().timestamp())
+}
+
 /// Whether the caller has already collected, waived or forfeited this part.
 fn my_decision(hold: &ActionHash, portion: Portion) -> ExternResult<Option<ActionHash>> {
-    Ok(my_entries()?.into_iter().find_map(|record| {
-        let decided = entry_of(&record).is_some_and(|e| match &e.kind {
-            LedgerKind::Collect { hold: h, portion: p, .. } | LedgerKind::Waive { hold: h, portion: p } => h == hold && *p == portion,
-            LedgerKind::Forfeit { hold: h, .. } => h == hold && portion == Portion::Collateral,
-            _ => false,
-        });
-        decided.then(|| record.action_address().clone())
-    }))
+    Ok(my_entry_since(held_at(hold)?, |kind| decided_by(kind) == Some((hold, portion)))?.map(|record| record.action_address().clone()))
 }
 
 /// A hold's part, as recorded on its order.
@@ -385,10 +412,25 @@ pub fn unstake_listing(input: UnstakeInput) -> ExternResult<ActionHash> {
     append(LedgerKind::Unstake { stake: input.stake, delisting: input.delisting }, amount)
 }
 
-/// Whether the caller has decided this part of a hold yet.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MyDecisionsInput {
+    pub holds: Vec<ActionHash>,
+    /// When the earliest of them was placed.
+    pub since: Timestamp,
+}
+
+/// The parts of `holds` the caller has decided -- one read back to when
+/// the earliest was placed, for every part of an order's holds at once.
 #[hdk_extern]
-pub fn have_i_decided(input: WaiveInput) -> ExternResult<bool> {
-    Ok(my_decision(&input.hold, input.portion)?.is_some())
+pub fn my_decisions(input: MyDecisionsInput) -> ExternResult<Vec<WaiveInput>> {
+    let mut decided = Vec::new();
+    for record in mine(&ledger_entries()?).since(input.since).records()? {
+        let Some(entry) = entry_of(&record) else { continue };
+        if let Some((hold, portion)) = decided_by(&entry.kind).filter(|(hold, _)| input.holds.contains(hold)) {
+            decided.push(WaiveInput { hold: hold.clone(), portion });
+        }
+    }
+    Ok(decided)
 }
 
 /// A part waived back to its payer.
@@ -422,12 +464,18 @@ pub fn waivers_for_hold(hold: ActionHash) -> ExternResult<Vec<WaiverView>> {
 #[hdk_extern]
 pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
     if agent == agent_info()?.agent_initial_pubkey {
-        return Ok(my_entries()?.last().and_then(entry_of).map_or(0, |e| e.balance));
+        return Ok(mine(&ledger_entries()?).latest()?.as_ref().and_then(entry_of).map_or(0, |e| e.balance));
     }
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::LedgerEntry)?);
-    let activity = relay_coordinator_support::agent_activity(agent, filter)?;
-    let Some((_, latest)) = activity.last() else { return Ok(0) };
-    let record = get(latest.clone(), GetOptions::default())?.ok_or(guest("couldn't read their latest ledger entry"))?;
+    let Some(head) = chain_head_of(&agent)? else { return Ok(0) };
+    latest_balance(&agent, &head)
+}
+
+/// The balance on `agent`'s newest ledger entry from `from` back.
+pub(crate) fn latest_balance(agent: &AgentPubKey, from: &ActionHash) -> ExternResult<i64> {
+    let ledger = EntryType::try_from(UnitEntryTypes::LedgerEntry)?;
+    let creates_ledger = |action: &Action| matches!(&action.data, ActionData::Create(create) if create.entry_type == ledger);
+    let Some(latest) = latest_on_chain(agent, from, creates_ledger)? else { return Ok(0) };
+    let record = get(latest, GetOptions::default())?.ok_or(guest("couldn't read their latest ledger entry"))?;
     Ok(entry_of(&record).map_or(0, |e| e.balance))
 }
 
@@ -437,23 +485,32 @@ const LEDGER_PAGE_SIZE: usize = 50;
 pub struct MyLedgerInput {
     /// Page cursor: the previous page's `next_before`. `None` starts with
     /// the newest entry.
-    pub before: Option<u32>,
+    pub before: Option<ActionHash>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LedgerPage {
     /// Newest first.
     pub entries: Vec<Record>,
-    pub next_before: Option<u32>,
+    pub next_before: Option<ActionHash>,
 }
 
 /// The caller's ledger, newest first -- every hold, collection, waiver and
 /// deposit, each with the balance it left them with.
 #[hdk_extern]
 pub fn list_my_ledger(input: MyLedgerInput) -> ExternResult<LedgerPage> {
-    let mut entries: Vec<Record> = my_entries()?.into_iter().filter(|r| input.before.is_none_or(|before| r.action().action_seq() < before)).collect();
-    entries.reverse();
-    let next_before = (entries.len() > LEDGER_PAGE_SIZE).then(|| entries[LEDGER_PAGE_SIZE - 1].action().action_seq());
+    let types = ledger_entries()?;
+    let walk = match input.before {
+        Some(before) => mine(&types).before(before),
+        None => mine(&types),
+    };
+    // One more than a page tells whether another follows.
+    let mut entries = Vec::new();
+    walk.walk(|record| {
+        entries.push(record);
+        Ok(if entries.len() > LEDGER_PAGE_SIZE { core::ops::ControlFlow::Break(()) } else { core::ops::ControlFlow::Continue(()) })
+    })?;
+    let next_before = (entries.len() > LEDGER_PAGE_SIZE).then(|| entries[LEDGER_PAGE_SIZE - 1].action_address().clone());
     entries.truncate(LEDGER_PAGE_SIZE);
     Ok(LedgerPage { entries, next_before })
 }
@@ -469,7 +526,7 @@ pub fn my_holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 mod test_utils {
     use hdk::prelude::*;
     use ledger_integrity::{EntryTypes, LedgerEntry, LinkTypes};
-    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile);
+    relay_coordinator_support::raw_link_test_externs!(OrderToHold, HoldToWaive, AgentToGrant, IssuerToRedemption, RedemptionToOutcome, IssuerToProfile, GrantToDeposit);
 
     /// Writes a cash-out's outcome exactly as given -- what a modified
     /// client could.

@@ -176,8 +176,8 @@ pub fn cell_and_neighbors(geohash: &str) -> Vec<String> {
     out
 }
 
-/// Folds a coarse time bucket into an anchor path (presence beacons, open-
-/// order discovery -- see architecture plan §9.2) so each bucket is a
+/// Folds a coarse time bucket into an anchor path (open-order discovery) so
+/// each bucket is a
 /// *distinct* base hash with a naturally bounded link set, rather than one
 /// anchor per geohash cell accumulating links forever. Readers should query
 /// `time_bucket(now, b)` and `time_bucket(now, b) - 1` (the immediately

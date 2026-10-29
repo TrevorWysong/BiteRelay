@@ -14,7 +14,7 @@ use crate::orders::{record_reputation_event, ReputationEventKindWire, Reputation
 use crate::settlement::find_hold;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, open_chunked, original_action_of, resolve_latest, seal_chunked};
+use relay_coordinator_support::{decode_or, guest, open_chunked, original_action_of, resolve_latest, seal_chunked, written};
 
 // --- the order, as issues need it ---
 
@@ -113,7 +113,7 @@ pub fn report_issue(input: ReportIssueInput) -> ExternResult<Record> {
     let hash = create_entry(&EntryTypes::ItemIssue(issue))?;
     create_link(order.clone(), hash.clone(), LinkTypes::OrderToIssue, ())?;
     let _ = send_remote_signal(crate::signals::RemoteSignal::IssueReported { order_hash: order }, vec![terms.merchant]);
-    get(hash, GetOptions::local())?.ok_or(guest("could not read back the report"))
+    written(hash)
 }
 
 // --- the store ---
@@ -136,7 +136,7 @@ pub fn respond_to_issue(input: RespondToIssueInput) -> ExternResult<Record> {
     }
     let hash = create_entry(&EntryTypes::IssueResponse(IssueResponse { issue: input.issue.clone(), accept: input.accept }))?;
     create_link(input.issue, hash.clone(), LinkTypes::IssueToResponse, ())?;
-    get(hash, GetOptions::local())?.ok_or(guest("could not read back the answer"))
+    written(hash)
 }
 
 // --- reading ---
@@ -196,10 +196,7 @@ pub fn get_issues_for_order(order: ActionHash) -> ExternResult<Vec<IssueView>> {
 
 /// The store's answer to an issue, if it's given one.
 fn store_answer(issue: &ActionHash, merchant: &AgentPubKey) -> ExternResult<Option<bool>> {
-    for link in get_links(LinkQuery::try_new(issue.clone(), LinkTypes::IssueToResponse)?, GetStrategy::default())? {
-        if &link.author != merchant {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(issue.clone(), LinkTypes::IssueToResponse)?.author(merchant.clone()), GetStrategy::default())? {
         let Some(hash) = link.target.into_action_hash() else { continue };
         if let Some(response) = get(hash, GetOptions::default())?.and_then(|r| decode_or::<IssueResponse>(&r)) {
             return Ok(Some(response.accept));
@@ -226,10 +223,7 @@ pub(crate) struct Decisions {
 pub(crate) fn decisions_of(order: &ActionHash) -> ExternResult<Decisions> {
     let (_, merchant) = parties_of(order)?;
     let mut decisions = Decisions::default();
-    for link in get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToDecision)?, GetStrategy::default())? {
-        if link.author != merchant {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToDecision)?.author(merchant.clone()), GetStrategy::default())? {
         let Some(hash) = link.target.into_action_hash() else { continue };
         let Some(record) = get(hash.clone(), GetOptions::default())? else { continue };
         if let Some(outcome) = decode_or::<OrderOutcome>(&record).filter(|o| &o.order == order) {

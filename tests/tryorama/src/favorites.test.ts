@@ -8,7 +8,7 @@
 // uses the caller's own pubkey as the link base; `remove_favorite` only
 // ever deletes links already scoped to `get_links(me, ...)`) -- the same
 // "would need a bypass-coordinator extern, not built for this zome" gap
-// named for warrants in the architecture plan's §11.2.
+// warrants.test.ts describes.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";

@@ -13,12 +13,11 @@ use relay_coordinator_support::next_page_cursor;
 /// recovered. Safe to repeat.
 #[hdk_extern]
 pub fn request_reissue(issuer: AgentPubKey) -> ExternResult<()> {
-    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Succession)?).include_entries(true))?;
+    let mine = crate::my_linked(LinkTypes::SuccessorToSuccession)?;
     let record = mine.first().ok_or(guest("This device hasn't recovered an account."))?;
     let hash = record.action_address().clone();
-    let me = me()?;
-    let existing = get_links(LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToReissue)?, GetStrategy::Local)?;
-    if existing.iter().any(|l| l.author == me && l.target.clone().into_action_hash().as_ref() == Some(&hash)) {
+    let asked = LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToReissue)?.author(me()?);
+    if get_links(asked, GetStrategy::Local)?.iter().any(|l| l.target.clone().into_action_hash().as_ref() == Some(&hash)) {
         return Ok(());
     }
     create_link(issuer, hash, LinkTypes::IssuerToReissue, ())?;

@@ -4,6 +4,7 @@
 // is `components/Notifier.tsx`'s job.
 import { bytesToHex } from "../holochain/decode";
 import type { DeliveryStatus, LocalSignal, OrderChange, OrderRole, PickupStatus } from "../holochain/types";
+import type { LiveSignal } from "../holochain/live";
 import { cancellationText } from "./storeAnswers";
 import { t, type MessageKey } from "../i18n";
 
@@ -66,7 +67,7 @@ function cancelledText(role: OrderRole, change: OrderChange): string {
 }
 
 /// The notification a signal calls for, if any.
-export function notificationFor(signal: LocalSignal): AppNotification | null {
+export function notificationFor(signal: LocalSignal | LiveSignal): AppNotification | null {
   if ("OrderPlaced" in signal) {
     return { title: t("notify.newOrder.title"), body: t("notify.newOrder.body"), tag: `order-${bytesToHex(signal.OrderPlaced)}`, route: "/merchant", urgent: true };
   }

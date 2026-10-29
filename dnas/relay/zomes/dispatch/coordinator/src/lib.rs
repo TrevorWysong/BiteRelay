@@ -30,44 +30,43 @@
 
 mod accounts;
 mod bids;
-mod chat;
 mod claims;
 mod deliveries;
 mod issues;
 mod lines;
+mod live;
 mod matching;
 mod never_arrived;
 mod order_queues;
 mod orders;
-mod parties;
 mod pin;
 mod pickup;
 mod pricing;
+mod reach;
 mod receipts;
 mod recurring;
 mod settlement;
 mod signals;
 mod stores;
-mod tracking;
 mod upkeep;
 mod verification;
 mod appeals;
 
 pub use bids::*;
-pub use chat::*;
 pub use deliveries::*;
 pub use issues::*;
+pub use live::*;
 pub use matching::{get_open_orders_near, rank_bids, RankedBid};
 pub use never_arrived::*;
 pub use order_queues::*;
 pub use orders::*;
 pub use pickup::*;
 pub use pricing::OrderItem;
+pub use reach::*;
 pub use recurring::*;
 pub use pin::*;
 pub use settlement::*;
 pub use signals::*;
-pub use tracking::*;
 
 #[cfg(feature = "test-utils")]
 mod test_utils {
@@ -153,9 +152,9 @@ mod test_utils {
         let (catalog_ref, requester) = (order.catalog_ref.clone(), order.requester.clone());
         let action_hash = create_entry(&EntryTypes::PickupOrder(order))?;
         crate::order_queues::enqueue(&action_hash, &catalog_ref, &requester, sys_time()?)?;
-        get(action_hash, GetOptions::local())?.ok_or(guest("could not read back raw order"))
+        written(action_hash)
     }
-    use relay_coordinator_support::{guest, resolve_latest_decoded};
+    use relay_coordinator_support::{guest, written};
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct RawDeliveryInput {
@@ -254,7 +253,7 @@ mod test_utils {
     /// immutability.
     #[hdk_extern]
     pub fn force_order_update_for_testing(input: ForceOrderUpdateInput) -> ExternResult<Record> {
-        let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+        let (current, mut order): (_, DeliveryOrder) = relay_coordinator_support::resolve_version_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
         order.status = input.next_status;
         order.beacon = input.beacon;
         order.delivery_receipts = input.delivery_receipts;
@@ -262,8 +261,8 @@ mod test_utils {
             order.pickup_proof = input.pickup_proof;
         }
         order.cancellation = input.cancellation;
-        let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-        get(updated, GetOptions::local())?.ok_or(guest("could not read back forced order update"))
+        let updated = relay_coordinator_support::update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
+        written(updated)
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -285,8 +284,8 @@ mod test_utils {
     /// coordinator makes, so a test can prove each branch's payments bind.
     #[hdk_extern]
     pub fn branch_order_for_testing(input: BranchInput) -> ExternResult<ActionHash> {
-        let record = get(input.version.clone(), GetOptions::default())?.ok_or(guest("no such version"))?;
-        let mut order: DeliveryOrder = record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("not a delivery"))?;
+        let version = relay_coordinator_support::version_at(input.version)?;
+        let mut order: DeliveryOrder = version.record.entry().to_app_option().map_err(|e| wasm_error!(e))?.ok_or(guest("not a delivery"))?;
         order.status = input.next_status;
         order.cancellation = input.cancellation;
         if input.release {
@@ -298,7 +297,7 @@ mod test_utils {
         if input.beacon.is_some() {
             order.beacon = input.beacon;
         }
-        update_entry(input.version, &EntryTypes::DeliveryOrder(order))
+        relay_coordinator_support::update_version(&version, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -313,14 +312,14 @@ mod test_utils {
     /// validation holds whoever writes it to them.
     #[hdk_extern]
     pub fn release_raw_for_testing(input: RawReleaseInput) -> ExternResult<ActionHash> {
-        let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action, "DeliveryOrder")?;
+        let (current, mut order): (_, DeliveryOrder) = relay_coordinator_support::resolve_version_decoded(input.order_original_action, "DeliveryOrder")?;
         order.accepted_bid = None;
         order.driver_pay_hold = None;
         order.subsidy_hold = None;
         order.collateral_hold = None;
         order.beacon = input.beacon;
         order.status = DeliveryStatus::Open;
-        update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))
+        relay_coordinator_support::update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -337,7 +336,7 @@ mod test_utils {
     /// cancellation and ready time, past every check the real externs make.
     #[hdk_extern]
     pub fn force_pickup_update_for_testing(input: ForcePickupUpdateInput) -> ExternResult<Record> {
-        let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(input.order_original_action.clone(), "PickupOrder")?;
+        let (current, mut order): (_, PickupOrder) = relay_coordinator_support::resolve_version_decoded(input.order_original_action.clone(), "PickupOrder")?;
         // Accepting cites the customer's food hold, as the real acceptance
         // does -- these tests are about the other rules.
         if order.status == PickupStatus::Placed && input.next_status == PickupStatus::MerchantConfirmed {
@@ -347,7 +346,7 @@ mod test_utils {
         order.status = input.next_status;
         order.cancellation = input.cancellation;
         order.ready_by = input.ready_by;
-        let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
-        get(updated, GetOptions::local())?.ok_or(guest("could not read back forced pickup update"))
+        let updated = relay_coordinator_support::update_version(&current, &EntryTypes::PickupOrder(order), LinkTypes::Version)?;
+        written(updated)
     }
 }

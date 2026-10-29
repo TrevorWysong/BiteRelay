@@ -6,7 +6,7 @@
 //! outcome, and every balance staying the arithmetic of its owner's chain.
 //! See `ledger_integrity` for the rules.
 
-use crate::{append, guest, my_entries};
+use crate::{append, entry_of, guest, my_entry_since};
 use hdk::prelude::*;
 use ledger_integrity::*;
 use relay_coordinator_support::{decode_or, next_page_cursor, open, seal};
@@ -29,10 +29,7 @@ pub fn list_issuers(_: ()) -> ExternResult<Vec<IssuerView>> {
 
 /// An issuer's profile at its latest, and its original action.
 fn profile_of(issuer: &AgentPubKey) -> ExternResult<Option<(ActionHash, IssuerProfile)>> {
-    for link in get_links(LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToProfile)?, GetStrategy::default())? {
-        if &link.author != issuer {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToProfile)?.author(issuer.clone()), GetStrategy::default())? {
         let Some(original) = link.target.into_action_hash() else { continue };
         let Ok(record) = relay_coordinator_support::resolve_latest(original.clone()) else { continue };
         if let Some(profile) = decode_or::<IssuerProfile>(&record) {
@@ -51,8 +48,8 @@ pub fn set_issuer_profile(profile: IssuerProfile) -> ExternResult<ActionHash> {
     }
     match profile_of(&me)? {
         Some((original, _)) => {
-            let latest = relay_coordinator_support::resolve_latest(original)?;
-            update_entry(latest.action_address().clone(), &EntryTypes::IssuerProfile(profile))
+            let current = relay_coordinator_support::resolve_version(original)?;
+            relay_coordinator_support::update_version(&current, &EntryTypes::IssuerProfile(profile), LinkTypes::Version)
         }
         None => {
             let created = create_entry(&EntryTypes::IssuerProfile(profile))?;
@@ -149,32 +146,38 @@ pub fn cash_out(input: CashOutInput) -> ExternResult<CashOutView> {
     Ok(CashOutView { redemption, issuer: input.issuer, amount: input.amount, requested_at: sys_time()?, status: CashOutStatus::Pending })
 }
 
-/// The caller's cash-outs, newest first, each with where it stands.
+/// The caller's cash-outs, newest first, each with where it stands. Each is
+/// linked from its issuer, so they're read from those links -- the caller's
+/// own, picked out where they're held -- not from the whole ledger.
 #[hdk_extern]
 pub fn list_my_cash_outs(_: ()) -> ExternResult<Vec<CashOutView>> {
-    let entries: Vec<(Record, LedgerEntry)> = my_entries()?.into_iter().filter_map(|r| decode_or::<LedgerEntry>(&r).map(|e| (r, e))).collect();
-    let returned: Vec<&ActionHash> = entries
-        .iter()
-        .filter_map(|(_, e)| match &e.kind {
-            LedgerKind::Reclaim { redemption, .. } => Some(redemption),
-            _ => None,
-        })
-        .collect();
+    let me = agent_info()?.agent_initial_pubkey;
     let mut views = Vec::new();
-    for (record, entry) in entries.iter().rev() {
-        let LedgerKind::Redeem { issuer, .. } = &entry.kind else { continue };
-        let redemption = record.action_address().clone();
-        let status = match outcome_of(&redemption, issuer)? {
-            None => CashOutStatus::Pending,
-            Some((_, outcome, at)) => match outcome {
-                PayoutOutcome::Paid { reference } => CashOutStatus::Paid { reference, at },
-                PayoutOutcome::Declined { reason } if returned.contains(&&redemption) => CashOutStatus::Returned { reason, at },
-                PayoutOutcome::Declined { reason } => CashOutStatus::Declined { reason, at },
-            },
-        };
-        views.push(CashOutView { redemption, issuer: issuer.clone(), amount: entry.amount, requested_at: record.action().timestamp(), status });
+    for issuer in relay_governance::issuers() {
+        let query = LinkQuery::try_new(issuer.clone(), LinkTypes::IssuerToRedemption)?.author(me.clone());
+        for link in get_links(query, GetStrategy::Local)? {
+            let Some(redemption) = link.target.into_action_hash() else { continue };
+            let Some(record) = get(redemption.clone(), GetOptions::local())? else { continue };
+            let Some(entry) = entry_of(&record).filter(|e| matches!(&e.kind, LedgerKind::Redeem { issuer: i, .. } if i == &issuer)) else { continue };
+            let status = match outcome_of(&redemption, &issuer)? {
+                None => CashOutStatus::Pending,
+                Some((_, outcome, at)) => match outcome {
+                    PayoutOutcome::Paid { reference } => CashOutStatus::Paid { reference, at },
+                    PayoutOutcome::Declined { reason } if reclaimed(&redemption, record.action().timestamp())? => CashOutStatus::Returned { reason, at },
+                    PayoutOutcome::Declined { reason } => CashOutStatus::Declined { reason, at },
+                },
+            };
+            views.push(CashOutView { redemption, issuer: issuer.clone(), amount: entry.amount, requested_at: record.action().timestamp(), status });
+        }
     }
+    views.sort_by_key(|view| std::cmp::Reverse(view.requested_at));
     Ok(views)
+}
+
+/// Whether the caller has taken back `redemption`, which they asked for at
+/// `requested_at` -- validation's own bound, on the caller's own clock.
+fn reclaimed(redemption: &ActionHash, requested_at: Timestamp) -> ExternResult<bool> {
+    Ok(my_entry_since(requested_at, |kind| matches!(kind, LedgerKind::Reclaim { redemption: r, .. } if r == redemption))?.is_some())
 }
 
 /// Takes back every cash-out of the caller's that its issuer declined and
@@ -197,10 +200,7 @@ pub fn reclaim_declined_cash_outs(_: ()) -> ExternResult<u32> {
 /// A cash-out's outcome, if its issuer has written one: the outcome's
 /// action, what it says, and when.
 fn outcome_of(redemption: &ActionHash, issuer: &AgentPubKey) -> ExternResult<Option<(ActionHash, PayoutOutcome, Timestamp)>> {
-    for link in get_links(LinkQuery::try_new(redemption.clone(), LinkTypes::RedemptionToOutcome)?, GetStrategy::default())? {
-        if &link.author != issuer {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(redemption.clone(), LinkTypes::RedemptionToOutcome)?.author(issuer.clone()), GetStrategy::default())? {
         let Some(target) = link.target.into_action_hash() else { continue };
         let Some(record) = get(target.clone(), GetOptions::default())? else { continue };
         if let Some(outcome) = decode_or::<RedemptionOutcome>(&record).filter(|o| &o.redemption == redemption) {

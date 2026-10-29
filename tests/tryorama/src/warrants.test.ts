@@ -1,12 +1,11 @@
-// Contested warrants (architecture plan §11.2). Verifies check_warrants
+// Contested warrants. Verifies check_warrants
 // against the real get_agent_activity API end to end, and that accept_bid's
 // warrant gate does not spuriously misfire on a clean agent.
 //
-// What this test deliberately does NOT do, and why: the plan originally
-// called for triggering a *genuine* warrant (via the same bypass-coordinator
-// pattern dispute-bypass.test.ts uses) and confirming check_warrants sees
-// it. Empirically probing that first (see the architecture plan's §11.2
-// follow-up) found it doesn't work -- a stock, unmodified conductor runs the
+// What this test deliberately does NOT do, and why: trigger a *genuine*
+// warrant (with a coordinator that bypasses the honest one's checks) and
+// confirm check_warrants sees it. Probing that empirically found it doesn't
+// work -- a stock, unmodified conductor runs the
 // exact same deterministic validate() at self-commit time (before anything
 // is ever published to the DHT) that a remote authority would run on
 // receipt, so a bypass attempt is rejected locally and never reaches any

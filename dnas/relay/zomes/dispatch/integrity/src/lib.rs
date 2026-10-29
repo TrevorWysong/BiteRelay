@@ -63,6 +63,10 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     OpenOrderGeohashAnchor,
     OrderToBid,
     /// `PickupOrder`'s discovery links -- no geohash anchor and no signal
@@ -102,7 +106,12 @@ pub enum LinkTypes {
     StoreOwnerToRuling,
     /// Appeals of a store owner's decisions, so they find them to answer.
     StoreOwnerToAppeal,
+    /// A customer's standing orders, base = the customer -- so their own
+    /// conductor finds them to fire without reading back through its chain.
+    OwnerToTemplate,
 }
+
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
 
 /// An order (or recurring template) names both a `merchant` and the store
 /// (`catalog_ref`) it's from -- and every per-store thing downstream (the
@@ -157,6 +166,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         // what payments, reviews and settlements cite.
         // Except a verification, which its verifier may revoke.
         Checked::Delete { action } => verification::validate_verification_delete(&action.data.deletes_address, action.author()),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type, action } => validate_create_link(OpLinkFields {
             link_type: &link_type,
             base: &action.base_address,

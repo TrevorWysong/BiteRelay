@@ -24,18 +24,33 @@ pub(crate) fn me() -> ExternResult<AgentPubKey> {
     Ok(agent_info()?.agent_initial_pubkey)
 }
 
-/// The records `base`'s links of `link_type` point at, oldest first.
-pub(crate) fn linked_records(base: impl Into<AnyLinkableHash>, link_type: LinkTypes) -> ExternResult<Vec<Record>> {
-    let mut links = get_links(LinkQuery::try_new(base, link_type)?, GetStrategy::default())?;
+/// The records `query`'s links point at, oldest first -- each read the
+/// way the links were: on this device (`GetStrategy::Local`) or from the
+/// network.
+pub(crate) fn linked_records(query: LinkQuery, strategy: GetStrategy) -> ExternResult<Vec<Record>> {
+    let mut links = get_links(query, strategy)?;
     links.sort_by_key(|l| l.timestamp);
+    let options = if strategy == GetStrategy::Local { GetOptions::local() } else { GetOptions::default() };
     let mut records = Vec::with_capacity(links.len());
     for link in links {
         let Some(hash) = link.target.into_action_hash() else { continue };
-        if let Some(record) = get(hash, GetOptions::default())? {
+        if let Some(record) = get(hash, options.clone())? {
             records.push(record);
         }
     }
     Ok(records)
+}
+
+/// `account`'s links of `link_type` from their own key, by them -- an
+/// account's own index, which only it writes.
+pub(crate) fn own_links(account: &AgentPubKey, link_type: LinkTypes) -> ExternResult<LinkQuery> {
+    Ok(LinkQuery::try_new(account.clone(), link_type)?.author(account.clone()))
+}
+
+/// The caller's own records their key links to with `link_type`, oldest
+/// first -- read on this device, from the index, not the whole chain.
+pub(crate) fn my_linked(link_type: LinkTypes) -> ExternResult<Vec<Record>> {
+    linked_records(own_links(&me()?, link_type)?, GetStrategy::Local)
 }
 
 pub(crate) fn decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(record: &Record) -> Option<T> {

@@ -17,7 +17,7 @@
 // off mid-flight isn't (it may have run), and says so. Signal listeners
 // carry over to each new socket.
 import { AppWebsocket } from "@holochain/client";
-import type { AppAuthenticationToken, Signal, WsClientOptions } from "@holochain/client";
+import type { AgentPubKey, AppAuthenticationToken, CellId, DirectSignal, Signal, WsClientOptions } from "@holochain/client";
 import type { LocalSignal } from "./types";
 
 const ROLE_NAME = "relay";
@@ -34,9 +34,15 @@ export type ConnectParams = {
 
 let appWs: AppWebsocket | null = null;
 
-/// Every `onLocalSignal` listener, so each socket the app opens hears them.
+/// Every `onLocalSignal` and `onDirectSignal` listener, so each socket the
+/// app opens hears them.
 const signalListeners = new Set<(signal: LocalSignal) => void>();
+const directListeners = new Set<(signal: DirectSignal) => void>();
 function deliverSignal(signal: Signal) {
+  if (signal.type === "app_direct") {
+    for (const listener of directListeners) listener(signal.value);
+    return;
+  }
   if (signal.type !== "app") return;
   for (const listener of signalListeners) listener(signal.value.payload as LocalSignal);
 }
@@ -224,4 +230,40 @@ export function myAgentPubKey(): Uint8Array {
 export function onLocalSignal(handler: (signal: LocalSignal) => void): () => void {
   signalListeners.add(handler);
   return () => signalListeners.delete(handler);
+}
+
+/// Subscribes to direct signals: bytes another agent's app sent this one,
+/// with no zome code on either end. The network vouches for `from_agent`;
+/// everything else is the sender's say-so (see `live.ts`). Holds across
+/// reconnections.
+export function onDirectSignal(handler: (signal: DirectSignal) => void): () => void {
+  directListeners.add(handler);
+  return () => directListeners.delete(handler);
+}
+
+let relayCell: Promise<CellId> | null = null;
+
+/// The "relay" cell's id -- which network a direct signal goes out on.
+function relayCellId(): Promise<CellId> {
+  relayCell ??= getAppWs()
+    .appInfo()
+    .then((info) => {
+      const cell = info?.cell_info[ROLE_NAME]?.find((c) => c.type === "provisioned");
+      if (!cell || cell.type !== "provisioned") throw new Error("this app has no relay cell");
+      return cell.value.cell_id;
+    })
+    .catch((err) => {
+      relayCell = null;
+      throw err;
+    });
+  return relayCell;
+}
+
+/// Sends `bytes` straight to `agents`' apps, best effort: it resolves once
+/// this conductor has taken it, not when anyone has it. Each recipient's
+/// device grants direct signals in `dispatch`'s `prepare_device`.
+export async function sendDirectSignal(agents: AgentPubKey[], bytes: Uint8Array): Promise<void> {
+  if (restoring) await restoring.catch(() => {});
+  const [dnaHash] = await relayCellId();
+  await getAppWs().sendDirectSignal({ dna_hash: dnaHash, agents, signal: bytes });
 }

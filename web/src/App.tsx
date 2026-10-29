@@ -146,6 +146,19 @@ function RequireSession({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/// Onboarding is for someone not signed in yet: a signed-in person who
+/// arrives at it -- an account just moved from another phone reloads where
+/// its move began -- goes home instead. Decided on arrival, so finishing
+/// onboarding, which signs the person in partway, isn't cut short.
+function RequireSignedOut({ children }: { children: React.ReactNode }) {
+  const [signedIn] = useState(() => {
+    const { status, profile } = useSession.getState();
+    return status === "connected" && !!profile;
+  });
+  if (signedIn) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function HomeForMode() {
   const mode = useSession((s) => s.mode);
   return <Navigate to={mode === "driver" ? "/driver" : mode === "merchant" ? "/merchant" : "/customer"} replace />;
@@ -177,7 +190,14 @@ export default function App() {
   return (
     <SessionBootstrap>
       <Routes key={locale}>
-        <Route path="/onboarding" element={<Onboarding />} />
+        <Route
+          path="/onboarding"
+          element={
+            <RequireSignedOut>
+              <Onboarding />
+            </RequireSignedOut>
+          }
+        />
         <Route
           element={
             <RequireSession>

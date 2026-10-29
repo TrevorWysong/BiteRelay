@@ -2,10 +2,11 @@
 //! the items that list them, as on DoorDash and Uber Eats (see
 //! `catalog_types::modifiers`).
 
-use crate::{item_versions, ItemVersion, ItemVersions};
+use crate::{ItemVersion, ItemVersions};
 use catalog_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, resolve_latest, resolve_links_to_records_with_original};
+use relay_coordinator_support::chain::{my_current_version, my_versions};
+use relay_coordinator_support::{decode_or, guest, resolve_latest, resolve_links_to_records_with_original, resolve_version, update_version, written};
 
 /// A choice group's stable identity (its original action -- what items and
 /// orders name) alongside its latest content.
@@ -20,7 +21,7 @@ pub fn create_modifier_group(group: ModifierGroup) -> ExternResult<Record> {
     let catalog_ref = group.catalog_ref.clone();
     let action_hash = create_entry(&EntryTypes::ModifierGroup(group))?;
     create_link(catalog_ref, action_hash.clone(), LinkTypes::CatalogToModifierGroup, ())?;
-    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back the choice group"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,14 +35,14 @@ pub struct UpdateModifierGroupInput {
 /// they were priced at.
 #[hdk_extern]
 pub fn update_modifier_group(input: UpdateModifierGroupInput) -> ExternResult<Record> {
-    // Built on the latest version on the caller's own chain: a DHT read can
-    // lag the caller's own last edit and fork the group's history.
-    let record = match item_versions(&input.original_action, &my_group_records()?).pop() {
-        Some(latest) => latest,
-        None => resolve_latest(input.original_action)?,
+    // Built on the caller's own latest version, which this device always
+    // has: building on an older one would fork the group's history.
+    let current = match my_current_version(input.original_action.clone())? {
+        Some(current) => current,
+        None => resolve_version(input.original_action)?,
     };
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::ModifierGroup(input.group))?;
-    get(updated, GetOptions::local())?.ok_or(guest("could not read back the choice group"))
+    let updated = update_version(&current, &EntryTypes::ModifierGroup(input.group), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// Every choice group a store has -- what its owner manages.
@@ -92,19 +93,14 @@ fn views(found: Vec<(ActionHash, Record)>, catalog_ref: &ActionHash) -> Vec<Modi
 /// group the caller didn't write comes back with no versions.
 #[hdk_extern]
 pub fn get_my_group_versions(group_refs: Vec<ActionHash>) -> ExternResult<Vec<ItemVersions>> {
-    let records = my_group_records()?;
-    Ok(group_refs
+    group_refs
         .into_iter()
         .map(|group_ref| {
-            let versions = item_versions(&group_ref, &records);
+            let versions = my_versions(group_ref.clone())?;
             let name = versions.last().and_then(decode_or::<ModifierGroup>).map(|g| g.name).unwrap_or_default();
             let versions = versions.iter().map(|r| ItemVersion { action: r.action_address().clone(), written_at: r.action().timestamp() }).collect();
-            ItemVersions { item_ref: group_ref, name, versions }
+            Ok(ItemVersions { item_ref: group_ref, name, versions })
         })
-        .collect())
+        .collect()
 }
 
-/// Every choice group version on the caller's chain, in the order written.
-fn my_group_records() -> ExternResult<Vec<Record>> {
-    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ModifierGroup)?).include_entries(true))
-}

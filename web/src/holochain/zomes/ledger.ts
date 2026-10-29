@@ -3,7 +3,7 @@
 // zome. Money for an order is set aside as the order goes and collected by
 // whoever it's owed to, from their own conductor.
 import { callZome } from "../client";
-import type { AgentPubKey, CashOutView, HcRecord, IssuerRequest, IssuerView } from "../types";
+import type { ActionHash, AgentPubKey, CashOutView, HcRecord, IssuerRequest, IssuerView } from "../types";
 
 /// An agent's balance: what their latest ledger entry says, which
 /// validation ties to every entry before it.
@@ -14,12 +14,13 @@ export async function getBalance(agent: AgentPubKey): Promise<number> {
 export interface LedgerPage {
   /// Newest first.
   entries: HcRecord[];
-  next_before: number | null;
+  /// The last entry shown: where the next page starts.
+  next_before: ActionHash | null;
 }
 
 /// The caller's ledger, newest first; pass the previous page's
 /// `next_before` to continue.
-export async function listMyLedger(before: number | null = null): Promise<LedgerPage> {
+export async function listMyLedger(before: ActionHash | null = null): Promise<LedgerPage> {
   return callZome("ledger", "list_my_ledger", { before });
 }
 

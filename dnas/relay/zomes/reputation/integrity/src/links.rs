@@ -35,6 +35,8 @@ pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target
         return invalid("a reputation link must be authored by the author of the entry it indexes");
     }
     let expected: Option<(LinkTypes, AnyLinkableHash, Option<LinkTag>)> = match link_type {
+        // Validated as a version (`validate`).
+        LinkTypes::Version => return invalid("a version link is validated as one"),
         LinkTypes::StoreToEvent | LinkTypes::DriverToEvent | LinkTypes::CustomerToEvent => match decode::<ReputationEvent>(&record) {
             Some(e) => {
                 let (t, b) = event_link(&e.target);

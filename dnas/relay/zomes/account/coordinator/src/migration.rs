@@ -4,7 +4,7 @@
 //! accepts nothing more from it here, so what its ledger held is final. An
 //! issuer on both networks credits that, once, to the key on the new one.
 
-use crate::{decoded, guest, linked_records, me};
+use crate::{decoded, guest, linked_records, me, own_links};
 use account_integrity::*;
 use hdk::prelude::*;
 use relay_coordinator_support::{next_page_cursor, open_chunked, seal_chunked};
@@ -90,7 +90,8 @@ pub struct Closed {
 /// Whether `agent` has closed their chain here (moved to another network).
 #[hdk_extern]
 pub fn chain_closed(agent: AgentPubKey) -> ExternResult<Option<Closed>> {
-    let Some((_, last)) = relay_coordinator_support::agent_activity(agent, ChainQueryFilter::new())?.pop() else { return Ok(None) };
+    // A chain's close is its last action.
+    let Some(last) = relay_coordinator_support::chain::chain_head_of(&agent)? else { return Ok(None) };
     let Some(record) = get(last.clone(), GetOptions::default())? else { return Ok(None) };
     Ok(match &record.action().data {
         ActionData::CloseChain(close) => Some(Closed {
@@ -173,7 +174,7 @@ pub fn get_migration_requests(input: MigrationRequestsInput) -> ExternResult<Mig
 pub fn migrations_to_me(_: ()) -> ExternResult<Vec<MigrationRequest>> {
     let me = me()?;
     let mut found = Vec::new();
-    for record in linked_records(me.clone(), LinkTypes::SuccessorToMigration)? {
+    for record in linked_records(LinkQuery::try_new(me.clone(), LinkTypes::SuccessorToMigration)?, GetStrategy::default())? {
         let Some(migration) = decoded::<Migration>(&record) else { continue };
         if migration.successor != me {
             continue;
@@ -244,8 +245,7 @@ pub fn arrive(_: ()) -> ExternResult<AgentPubKey> {
 }
 
 fn my_arrival() -> ExternResult<Option<Arrival>> {
-    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::Arrival)?).include_entries(true))?;
-    Ok(mine.first().and_then(decoded::<Arrival>))
+    Ok(crate::my_linked(LinkTypes::AccountToArrival)?.first().and_then(decoded::<Arrival>))
 }
 
 /// The account `agent` was on the previous network, if they arrived from
@@ -253,7 +253,7 @@ fn my_arrival() -> ExternResult<Option<Arrival>> {
 /// its chain closed. `None` without a previous network to check against.
 #[hdk_extern]
 pub fn arrived_from(agent: AgentPubKey) -> ExternResult<Option<AgentPubKey>> {
-    let Some(arrival) = linked_records(agent.clone(), LinkTypes::AccountToArrival)?.iter().filter(|r| r.action().author() == &agent).find_map(decoded::<Arrival>) else {
+    let Some(arrival) = linked_records(own_links(&agent, LinkTypes::AccountToArrival)?, GetStrategy::default())?.iter().find_map(decoded::<Arrival>) else {
         return Ok(None);
     };
     let Some(previous_network) = on_previous::<_, DnaHash>("account", "network_hash", ())? else { return Ok(None) };
@@ -271,7 +271,7 @@ pub fn arrived_from(agent: AgentPubKey) -> ExternResult<Option<AgentPubKey>> {
 pub fn open_parcels(_: ()) -> ExternResult<Vec<String>> {
     let me = me()?;
     let mut parcels = Vec::new();
-    for record in linked_records(me.clone(), LinkTypes::SuccessorToParcel)? {
+    for record in linked_records(LinkQuery::try_new(me.clone(), LinkTypes::SuccessorToParcel)?, GetStrategy::default())? {
         let Some(parcel) = decoded::<Parcel>(&record) else { continue };
         if parcel.successor != me {
             continue;

@@ -1,5 +1,5 @@
 import { callZome } from "../client";
-import type { ActionHash, AgentPubKey, AppealView, AppealsPage, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
+import type { ActionHash, AgentPubKey, AppealView, AppealsPage, Beacon, DeclineReason, DeliveryStatus, DropoffDetails, DropoffPreference, GeoPoint, HcRecord, InHand, IssueItems, IssueLine, IssueView, LineView, NetworkReach, NetworkTerms, OrderDecisions, OrderItem, OrderTiming, PinSecret, RankedBid, Receipt, RecurrenceRule, StoreStep, StoreStepDue, TemplateDetails, Timestamp, VerificationCheck, VerificationTerms, VerificationView, WarrantSummary } from "../types";
 
 // --- orders ---
 
@@ -212,17 +212,12 @@ export async function listBidsForOrder(orderRef: ActionHash, after: Timestamp | 
   return callZome("dispatch", "list_bids_for_order", { order_ref: orderRef, after });
 }
 
-// --- chat (signal-only, never persisted -- see chat.rs's own doc comment) ---
+// Chat and live location go app to app: holochain/live.ts.
 
-export async function sendChatMessage(orderRef: ActionHash, text: string): Promise<void> {
-  return callZome("dispatch", "send_chat_message", { order_ref: orderRef, text });
-}
-
-// --- live location (signal-only, driver -> requester, never persisted --
-// see tracking.rs's own doc comment) ---
-
-export async function sendLocationUpdate(orderRef: ActionHash, lat: number, lon: number): Promise<void> {
-  return callZome("dispatch", "send_location_update", { order_ref: orderRef, lat, lon });
+/// How far something this agent wrote has got -- `null` unless they wrote
+/// it (see reach.rs).
+export async function getNetworkReach(actionHash: ActionHash): Promise<NetworkReach | null> {
+  return callZome("dispatch", "network_reach", actionHash);
 }
 
 // --- recurring order templates ("same order every Monday") -- fired by

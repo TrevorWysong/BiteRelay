@@ -5,14 +5,14 @@
 use crate::orders::{record_reputation_event, ReputationEventKindWire, ReputationTargetWire};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{guest, resolve_latest_decoded};
+use relay_coordinator_support::{guest, resolve_latest_decoded, resolve_version_decoded, update_version, written};
 
 /// The customer saying their delivery never arrived -- once the driver has
 /// picked it up and before it's delivered. Recorded against the driver
 /// (informational: only the store's decision counts against them).
 #[hdk_extern]
 pub fn claim_never_arrived(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    let (current, mut order): (_, DeliveryOrder) = resolve_version_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.requester != agent_info()?.agent_initial_pubkey {
         return Err(guest("Only the order's customer can say it never arrived."));
     }
@@ -22,8 +22,8 @@ pub fn claim_never_arrived(order_original_action: ActionHash) -> ExternResult<Re
     let bid_ref = order.accepted_bid.clone().ok_or(guest("This order has no driver yet."))?;
     let (_, bid): (_, Bid) = resolve_latest_decoded(bid_ref, "Bid")?;
     order.status = DeliveryStatus::Disputed;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
     record_reputation_event(&bid.bidder, ReputationTargetWire::Driver(bid.bidder.clone()), order_original_action, ReputationEventKindWire::DisputeRaised, updated.clone())?;
-    get(updated, GetOptions::local())?.ok_or(guest("could not read back the order"))
+    written(updated)
 }
 

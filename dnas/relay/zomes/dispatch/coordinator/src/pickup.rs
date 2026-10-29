@@ -15,7 +15,7 @@ use crate::signals::RemoteSignal;
 use crate::order_queues::{self, OrderParties};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{guest, resolve_latest_decoded};
+use relay_coordinator_support::{guest, resolve_version_decoded, update_version, written};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestPickupOrderInput {
@@ -95,8 +95,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
     order_queues::enqueue(&action_hash, &catalog_ref, &requester, requested_at)?;
     upkeep::tend_my_orders_soon()?;
 
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back pickup order"))
+    written(action_hash)
 }
 
 #[hdk_extern]
@@ -111,7 +110,7 @@ pub fn get_pickup_order(order_original_action: ActionHash) -> ExternResult<Recor
 #[hdk_extern]
 pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let order_original_action = input.order_original_action;
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    let (current, mut order): (_, PickupOrder) = resolve_version_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::Placed {
         return Err(guest("This order has already been accepted or cancelled."));
     }
@@ -128,9 +127,8 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     order.food_hold = settlement::required_hold(&original, HoldPurpose::Food, &order.requester, settlement::owes(&original, &HoldPurpose::Food, None)?)?;
     order.ready_by = Some(ready_by(&order.catalog_ref, input.prep_minutes)?);
     order.status = PickupStatus::MerchantConfirmed;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back accepted pickup order"))
+    let updated = update_version(&current, &EntryTypes::PickupOrder(order), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// `MerchantConfirmed -> ReadyForPickup` -- signals the requester directly
@@ -139,13 +137,12 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
 /// if it's missed).
 #[hdk_extern]
 pub fn mark_ready_for_pickup(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action, "PickupOrder")?;
+    let (current, mut order): (_, PickupOrder) = resolve_version_decoded(order_original_action, "PickupOrder")?;
     order.status = PickupStatus::ReadyForPickup;
     let requester = order.requester.clone();
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+    let updated = update_version(&current, &EntryTypes::PickupOrder(order), LinkTypes::Version)?;
     let _ = send_remote_signal(RemoteSignal::PickupReady { order_hash: updated.clone() }, vec![requester]);
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back ready pickup order"))
+    written(updated)
 }
 
 /// The customer withdrawing their pickup order -- see `orders::cancel_order`.
@@ -163,13 +160,12 @@ pub fn decline_pickup_order(input: DeclineOrderInput) -> ExternResult<Record> {
 /// Cancels a pickup order for `reason`, which validation checks against the
 /// caller, and takes it off every queue.
 pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellation) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    let (current, mut order): (_, PickupOrder) = resolve_version_decoded(order_original_action.clone(), "PickupOrder")?;
     order.status = PickupStatus::Cancelled;
     order.cancellation = Some(reason);
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order.clone()))?;
+    let updated = update_version(&current, &EntryTypes::PickupOrder(order.clone()), LinkTypes::Version)?;
     order_queues::retire(&OrderParties::pickup(&order_original_action, &order))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back cancelled pickup order"))
+    written(updated)
 }
 
 /// The gated completion path -- `ReadyForPickup -> PickedUp`, called by the
@@ -180,7 +176,7 @@ pub(crate) fn cancel_pickup(order_original_action: ActionHash, reason: Cancellat
 /// fee or tip.
 #[hdk_extern]
 pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    let (current, mut order): (_, PickupOrder) = resolve_version_decoded(order_original_action.clone(), "PickupOrder")?;
     if !matches!(order.status, PickupStatus::ReadyForPickup | PickupStatus::Disputed) {
         return Err(guest("A pickup order can be collected only once it's ready."));
     }
@@ -188,7 +184,7 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     let catalog_ref = order.catalog_ref.clone();
     order.status = PickupStatus::PickedUp;
     let parties = OrderParties::pickup(&order_original_action, &order);
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
+    let updated = update_version(&current, &EntryTypes::PickupOrder(order), LinkTypes::Version)?;
     order_queues::retire(&parties)?;
     // This update is the customer's receipt: the store settles the food's
     // held payment on it once their report window has run (`issues`).
@@ -197,8 +193,7 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
     // for a merchant picking up from their own store (see `record_reputation_event`).
     record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_original_action, ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back completed pickup order"))
+    written(updated)
 }
 
 /// The customer telling the store they can't get their order (it isn't
@@ -207,11 +202,11 @@ pub fn complete_pickup(order_original_action: ActionHash) -> ExternResult<Record
 /// (`decline_pickup_order`).
 #[hdk_extern]
 pub fn report_pickup_problem(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, PickupOrder) = resolve_latest_decoded(order_original_action.clone(), "PickupOrder")?;
+    let (current, mut order): (_, PickupOrder) = resolve_version_decoded(order_original_action.clone(), "PickupOrder")?;
     if order.status != PickupStatus::ReadyForPickup {
         return Err(guest("You can report a problem once the store says it's ready."));
     }
     order.status = PickupStatus::Disputed;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::PickupOrder(order))?;
-    get(updated, GetOptions::local())?.ok_or(guest("could not read back the order"))
+    let updated = update_version(&current, &EntryTypes::PickupOrder(order), LinkTypes::Version)?;
+    written(updated)
 }

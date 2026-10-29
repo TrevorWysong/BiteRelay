@@ -20,7 +20,8 @@
 use attestation_integrity::*;
 use dispatch_types::DeliveryOrder;
 use hdk::prelude::*;
-use relay_coordinator_support::{guest, open, open_chunked, original_action_of, resolve_latest, resolve_latest_decoded, seal_chunked};
+use relay_coordinator_support::chain::mine;
+use relay_coordinator_support::{decode_or, guest, open, open_chunked, original_action_of, resolve_latest, resolve_latest_decoded, seal_chunked, written};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -87,7 +88,7 @@ pub fn record_leg(input: RecordLegInput) -> ExternResult<Record> {
     if is_dropoff {
         let _ = call(CallTargetCell::Local, "dispatch", "notify_handoff".into(), None, order);
     }
-    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back leg"))
+    written(action_hash)
 }
 
 /// The other party to a handoff confirming it -- signed on their own chain.
@@ -125,7 +126,7 @@ pub fn acknowledge_leg(leg_action: ActionHash) -> ExternResult<Record> {
     if is_pickup {
         let _ = dispatch::<()>("notify_handed_over", original_action_of(leg.order_ref)?);
     }
-    get(action_hash, GetOptions::local())?.ok_or(guest("could not read back receipt"))
+    written(action_hash)
 }
 
 /// Calls the dispatch zome on this cell.
@@ -301,10 +302,14 @@ pub fn confirm_by_code(input: HandoffCodeInput) -> ExternResult<CodeCheck> {
     Ok(CodeCheck::Confirmed(acknowledge_leg(input.leg)?.action_address().clone()))
 }
 
-/// Wrong codes typed in for `order`, from the caller's own chain.
+/// Wrong codes typed in for `order`, from the caller's own chain -- read
+/// back to when the order was placed (on its customer's clock, so less the
+/// network's tolerance for clocks: none can come before it).
 fn wrong_attempts(order: &ActionHash) -> ExternResult<u32> {
-    let attempts = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::CodeAttempt)?).include_entries(true))?;
-    Ok(attempts.iter().filter(|r| r.entry().to_app_option::<CodeAttempt>().ok().flatten().is_some_and(|a| &a.order == order)).count() as u32)
+    let placed = get(order.clone(), GetOptions::default())?.ok_or(guest("order not found"))?.action().timestamp();
+    let since = Timestamp::from_micros(placed.as_micros() - relay_governance::clock_tolerance().as_micros() as i64);
+    let attempts = mine(&[EntryType::try_from(UnitEntryTypes::CodeAttempt)?]).since(since).records()?;
+    Ok(attempts.iter().filter(|r| decode_or::<CodeAttempt>(r).is_some_and(|a| &a.order == order)).count() as u32)
 }
 
 // --- reading ---
@@ -328,17 +333,16 @@ pub fn get_handoff_evidence(leg_action: ActionHash) -> ExternResult<Option<Hando
     Ok(evidence.filter(|e| relay_integrity_support::image_problem(&e.photo_data_uri).is_none()))
 }
 
-/// The caller's own receipt for `leg`, from their chain.
+/// The caller's own receipt for `leg`: their receipts are linked from it.
 fn my_receipt_for(leg: &ActionHash) -> ExternResult<Option<Record>> {
-    Ok(list_my_receipts(())?
-        .into_iter()
-        .find(|record| record.entry().to_app_option::<ReceiptAttestation>().ok().flatten().is_some_and(|r| &r.leg == leg)))
-}
-
-/// Every receipt the caller has signed, from their own chain.
-#[hdk_extern]
-pub fn list_my_receipts(_: ()) -> ExternResult<Vec<Record>> {
-    query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ReceiptAttestation)?).include_entries(true))
+    let query = LinkQuery::try_new(leg.clone(), LinkTypes::LegToReceipt)?.author(agent_info()?.agent_initial_pubkey);
+    for link in get_links(query, GetStrategy::Local)? {
+        let Some(hash) = link.target.into_action_hash() else { continue };
+        if let Some(record) = get(hash, GetOptions::local())?.filter(|r| decode_or::<ReceiptAttestation>(r).is_some_and(|receipt| &receipt.leg == leg)) {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
 }
 
 /// The confirmation of a handoff, if it has one -- only ever from the
@@ -347,10 +351,7 @@ pub fn list_my_receipts(_: ()) -> ExternResult<Vec<Record>> {
 pub fn get_receipt_for_leg(leg: ActionHash) -> ExternResult<Option<Record>> {
     let Some(leg_record) = get(leg.clone(), GetOptions::default())? else { return Ok(None) };
     let Some(to) = leg_record.entry().to_app_option::<Leg>().ok().flatten().map(|l| l.to) else { return Ok(None) };
-    for link in get_links(LinkQuery::try_new(leg, LinkTypes::LegToReceipt)?, GetStrategy::default())? {
-        if link.author != to {
-            continue;
-        }
+    for link in get_links(LinkQuery::try_new(leg, LinkTypes::LegToReceipt)?.author(to.clone()), GetStrategy::default())? {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
         if let Some(record) = get(action_hash, GetOptions::default())? {
             return Ok(Some(record));

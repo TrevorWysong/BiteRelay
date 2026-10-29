@@ -48,12 +48,12 @@ use crate::signals::RemoteSignal;
 use dispatch_integrity::lineage::{self, Version};
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{decode_or, EntryVersion, guest, original_action_of, resolve_latest, resolve_version_decoded, update_version, written};
 use relay_types::Beacon;
 
 /// The order as it stands.
-fn current(order_ref: &ActionHash) -> ExternResult<(Record, DeliveryOrder)> {
-    resolve_latest_decoded(order_ref.clone(), "DeliveryOrder")
+fn current(order_ref: &ActionHash) -> ExternResult<(EntryVersion, DeliveryOrder)> {
+    resolve_version_decoded(order_ref.clone(), "DeliveryOrder")
 }
 
 /// The driver behind the order's accepted bid.
@@ -62,10 +62,10 @@ fn driver_of(order: &DeliveryOrder) -> ExternResult<Option<(ActionHash, Bid)>> {
     Ok(resolve_latest(bid_ref.clone())?.entry().to_app_option::<Bid>().map_err(|e| wasm_error!(e))?.map(|bid| (bid_ref.clone(), bid)))
 }
 
-/// Writes `order` as the next version of `record`.
-fn write(record: &Record, order: DeliveryOrder) -> ExternResult<Record> {
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    get(updated, GetOptions::local())?.ok_or(guest("could not read back the order"))
+/// Writes `order` as the version after `current`.
+fn write(current: &EntryVersion, order: DeliveryOrder) -> ExternResult<Record> {
+    let updated = update_version(current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
+    written(updated)
 }
 
 fn me() -> ExternResult<AgentPubKey> {
@@ -88,7 +88,7 @@ fn without_driver(order: &mut DeliveryOrder) {
 #[hdk_extern]
 pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     let Some((bid_ref, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver yet.")) };
     if bid.bidder != me()? {
         return Err(guest("Only the order's driver commits to it."));
@@ -98,7 +98,7 @@ pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
     }
     order.collateral_hold = place_hold(&order_ref, HoldPurpose::Collateral { bid: bid_ref })?;
     order.status = DeliveryStatus::DriverEnRouteToMerchant;
-    write(&record, order)
+    write(&version, order)
 }
 
 // --- the customer shares their address ---
@@ -110,14 +110,14 @@ pub fn commit_to_order(order_ref: ActionHash) -> ExternResult<Record> {
 #[hdk_extern]
 pub fn share_address(order_ref: ActionHash) -> ExternResult<ActionHash> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     let me = me()?;
     if order.requester != me {
         return Err(guest("Only the order's customer shares its address."));
     }
     let Some(driver) = owed_driver(&order_ref, &order)? else { return Err(guest("There's no committed driver waiting for the address.")) };
     let dropoff: DropoffDetails = relay_coordinator_support::open(&me, &order.sealed_dropoff)?.ok_or(guest("Couldn't open your address on this device."))?;
-    let share = DropoffShare { order: order_ref.clone(), committed: record.action_address().clone(), sealed: relay_coordinator_support::seal(&driver, &dropoff)?, driver: driver.clone() };
+    let share = DropoffShare { order: order_ref.clone(), committed: version.record.action_address().clone(), sealed: relay_coordinator_support::seal(&driver, &dropoff)?, driver: driver.clone() };
     let action = create_entry(&EntryTypes::DropoffShare(share))?;
     create_link(order_ref, action.clone(), LinkTypes::OrderToDropoffShare, driver.get_raw_39().to_vec())?;
     Ok(action)
@@ -156,7 +156,7 @@ pub(crate) fn dropoff_share_for(order_ref: &ActionHash, driver: &AgentPubKey) ->
 #[hdk_extern]
 pub fn start_cooking(order_ref: ActionHash) -> ExternResult<Record> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     if order.merchant != me()? {
         return Err(guest("Only the order's store cooks it."));
     }
@@ -167,7 +167,7 @@ pub fn start_cooking(order_ref: ActionHash) -> ExternResult<Record> {
         order.ready_by = Some(ready_in(order.prep_minutes)?);
     }
     order.status = DeliveryStatus::MerchantConfirmed;
-    write(&record, order)
+    write(&version, order)
 }
 
 /// When an order the store starts now will be ready, by the prep time it
@@ -186,24 +186,24 @@ fn ready_in(prep_minutes: Option<u16>) -> ExternResult<Timestamp> {
 #[hdk_extern]
 pub fn ensure_checked_in(order_ref: ActionHash) -> ExternResult<ActionHash> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     if order.merchant != me()? {
         return Err(guest("Only the order's store checks its driver in."));
     }
-    let (record, mut order) = match order.status {
-        DeliveryStatus::DriverAtStore => return Ok(record.action_address().clone()),
+    let (version, mut order) = match order.status {
+        DeliveryStatus::DriverAtStore => return Ok(version.record.action_address().clone()),
         DeliveryStatus::DriverEnRouteToMerchant => {
             let cooking = start_cooking(order_ref.clone())?;
             let order = decode_or::<DeliveryOrder>(&cooking).ok_or(guest("could not read back the order"))?;
-            (cooking, order)
+            (version.next(cooking), order)
         }
-        DeliveryStatus::MerchantConfirmed => (record, order),
+        DeliveryStatus::MerchantConfirmed => (version, order),
         _ => return Err(guest("This order has no driver on their way to collect it.")),
     };
     let bid = order.accepted_bid.clone().ok_or(guest("This order has no driver yet."))?;
     order.subsidy_hold = place_hold(&order_ref, HoldPurpose::Subsidy { bid })?;
     order.status = DeliveryStatus::DriverAtStore;
-    Ok(write(&record, order)?.action_address().clone())
+    Ok(write(&version, order)?.action_address().clone())
 }
 
 /// Tells the order's driver the store has handed it over -- called by
@@ -238,7 +238,7 @@ pub struct DropOrderInput {
 #[hdk_extern]
 pub fn drop_order(input: DropOrderInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     let Some((_, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver.")) };
     if bid.bidder != me()? {
         return Err(guest("Only the order's driver can drop it."));
@@ -249,15 +249,15 @@ pub fn drop_order(input: DropOrderInput) -> ExternResult<Record> {
     without_driver(&mut order);
     order.status = DeliveryStatus::Open;
     order.beacon = Some(input.beacon);
-    reopen(&record, order)
+    reopen(&version, order)
 }
 
 /// Writes `order` reopened to bids, and publishes it where drivers look.
 /// The customer's app takes it off the driver's queue on seeing it
 /// (`record_what_changed`): only the customer edits that queue.
-fn reopen(record: &Record, order: DeliveryOrder) -> ExternResult<Record> {
+fn reopen(current: &EntryVersion, order: DeliveryOrder) -> ExternResult<Record> {
     let geohash = order.dropoff_geohash.clone();
-    let reopened = write(record, order)?;
+    let reopened = write(current, order)?;
     publish_to_open_anchor(reopened.action_address(), &geohash, sys_time()?)?;
     Ok(reopened)
 }
@@ -291,13 +291,13 @@ fn past(deadline: Timestamp, proved: bool, beacon: Option<&Beacon>) -> ExternRes
 #[hdk_extern]
 pub fn move_driver_on(input: TimedStepInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     if order.merchant != me()? {
         return Err(guest("Only the order's store moves its driver on."));
     }
     let Some((bid_ref, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver.")) };
     let committed = order.collateral_hold.is_some();
-    match driver_due(&record, &order, &bid)? {
+    match driver_due(&version.record, &order, &bid)? {
         Some(due) if past(due, committed, input.beacon.as_ref())? => {}
         _ => return Err(guest("This driver still has time.")),
     }
@@ -306,7 +306,7 @@ pub fn move_driver_on(input: TimedStepInput) -> ExternResult<Record> {
     if committed {
         order.beacon = input.beacon;
     }
-    let reopened = reopen(&record, order)?;
+    let reopened = reopen(&version, order)?;
     let _ = send_remote_signal(RemoteSignal::BidReleased { bid_hash: bid_ref }, vec![bid.bidder]);
     Ok(reopened)
 }
@@ -340,12 +340,12 @@ pub struct StoreLateInput {
 #[hdk_extern]
 pub fn call_store_late(input: StoreLateInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     let Some((_, bid)) = driver_of(&order)? else { return Err(guest("This order has no driver.")) };
     if bid.bidder != me()? || order.status != DeliveryStatus::DriverAtStore {
         return Err(guest("Only the driver the store checked in can call it late."));
     }
-    let at_store = Version::of(record.clone()).ok_or(guest("not a delivery"))?;
+    let at_store = Version::of(version.record.clone()).ok_or(guest("not a delivery"))?;
     if relay_integrity_support::beacon::proves_past(Some(&input.beacon), lineage::store_late_after(&at_store)?).is_err() {
         return Err(guest("The store still has time: it's not late yet."));
     }
@@ -353,7 +353,7 @@ pub fn call_store_late(input: StoreLateInput) -> ExternResult<Record> {
     without_driver(&mut order);
     order.status = DeliveryStatus::Open;
     order.beacon = Some(input.beacon);
-    let released = reopen(&record, order)?;
+    let released = reopen(&version, order)?;
     let _ = record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), order_ref, ReputationEventKindWire::StoreLate, released.action_address().clone());
     Ok(released)
 }
@@ -365,9 +365,9 @@ pub fn call_store_late(input: StoreLateInput) -> ExternResult<Record> {
 pub fn report_check_in_refused(order_ref: ActionHash) -> ExternResult<()> {
     let order_ref = original_action_of(order_ref)?;
     let me = me()?;
-    let (latest, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     // A version naming them: the current one, or the one they left on.
-    let basis = lineage::find_back(Version::of(latest).ok_or(guest("not a delivery"))?, |v, p| {
+    let basis = lineage::find_back(Version::of(version.record).ok_or(guest("not a delivery"))?, |v, p| {
         let names_me = |o: &DeliveryOrder| driver_of(o).ok().flatten().is_some_and(|(_, bid)| bid.bidder == me);
         (names_me(&v.order) || p.is_some_and(|p| v.released(p).is_some() && names_me(&p.order))).then(|| v.record.action_address().clone())
     })?;
@@ -402,12 +402,7 @@ pub fn request_collect(order_ref: ActionHash) -> ExternResult<ActionHash> {
 
 /// The customer's request to collect `order`, if they've made one.
 pub(crate) fn collect_request_of(order: &ActionHash, requester: &AgentPubKey) -> ExternResult<Option<ActionHash>> {
-    for link in get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToCollectRequest)?, GetStrategy::default())? {
-        if &link.author == requester {
-            return Ok(link.target.into_action_hash());
-        }
-    }
-    Ok(None)
+    Ok(get_links(LinkQuery::try_new(order.clone(), LinkTypes::OrderToCollectRequest)?.author(requester.clone()), GetStrategy::default())?.into_iter().find_map(|link| link.target.into_action_hash()))
 }
 
 /// The store recording its customer's request to collect: the order leaves
@@ -416,7 +411,7 @@ pub(crate) fn collect_request_of(order: &ActionHash, requester: &AgentPubKey) ->
 #[hdk_extern]
 pub fn record_collecting(input: TimedStepInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     if order.merchant != me()? {
         return Err(guest("Only the order's store records it collecting."));
     }
@@ -424,7 +419,7 @@ pub fn record_collecting(input: TimedStepInput) -> ExternResult<Record> {
     let committed = order.collateral_hold.is_some();
     let released = match driver_of(&order)? {
         Some((bid_ref, bid)) => {
-            match driver_due(&record, &order, &bid)? {
+            match driver_due(&version.record, &order, &bid)? {
                 Some(due) if past(due, committed, input.beacon.as_ref())? => {}
                 _ => return Err(guest("The driver still has time; the customer can collect it if they're late.")),
             }
@@ -441,7 +436,7 @@ pub fn record_collecting(input: TimedStepInput) -> ExternResult<Record> {
     without_driver(&mut order);
     order.status = DeliveryStatus::Collecting;
     order.collect_request = Some(request);
-    let collecting = write(&record, order)?;
+    let collecting = write(&version, order)?;
     if let Some((bid_ref, driver)) = released {
         let _ = send_remote_signal(RemoteSignal::BidReleased { bid_hash: bid_ref }, vec![driver]);
     }
@@ -470,7 +465,7 @@ pub fn hand_over_collection(input: HandOverInput) -> ExternResult<Record> {
 
 fn collected(order_ref: ActionHash, code: Option<PinSecret>) -> ExternResult<Record> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, mut order) = current(&order_ref)?;
+    let (version, mut order) = current(&order_ref)?;
     let me = me()?;
     let by_store = code.is_some();
     let allowed = if by_store { order.merchant == me } else { order.requester == me };
@@ -484,7 +479,7 @@ fn collected(order_ref: ActionHash, code: Option<PinSecret>) -> ExternResult<Rec
     }
     order.status = DeliveryStatus::Collected;
     order.collection_proof = code;
-    let done = write(&record, order.clone())?;
+    let done = write(&version, order.clone())?;
     retire(&OrderParties::delivery(&order_ref, &order)?)?;
     // The customer has it, so the store's order is complete -- credited by
     // the customer; when the store handed it over, the customer's app
@@ -500,23 +495,23 @@ fn collected(order_ref: ActionHash, code: Option<PinSecret>) -> ExternResult<Rec
 #[hdk_extern]
 pub fn mark_not_collected(input: TimedStepInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     if order.merchant != me()? || order.status != DeliveryStatus::Collecting {
         return Err(guest("Only the store records an order it was waiting to hand over as uncollected."));
     }
-    let window_ends = Timestamp::from_micros(record.action().timestamp().as_micros().saturating_add(relay_governance::collection_window().as_micros() as i64));
+    let window_ends = Timestamp::from_micros(version.record.action().timestamp().as_micros().saturating_add(relay_governance::collection_window().as_micros() as i64));
     if !past(window_ends, true, input.beacon.as_ref())? {
         return Err(guest("The customer still has time to collect it."));
     }
-    cancel_proved(&record, order, &order_ref, Cancellation::NotCollected, input.beacon)
+    cancel_proved(&version, order, &order_ref, Cancellation::NotCollected, input.beacon)
 }
 
 /// Cancels a delivery for `reason`, with the proof of the time it needs.
-fn cancel_proved(record: &Record, mut order: DeliveryOrder, order_ref: &ActionHash, reason: Cancellation, beacon: Option<Beacon>) -> ExternResult<Record> {
+fn cancel_proved(current: &EntryVersion, mut order: DeliveryOrder, order_ref: &ActionHash, reason: Cancellation, beacon: Option<Beacon>) -> ExternResult<Record> {
     order.status = DeliveryStatus::Cancelled;
     order.cancellation = Some(reason);
     order.beacon = beacon;
-    let cancelled = write(record, order.clone())?;
+    let cancelled = write(current, order.clone())?;
     retire(&OrderParties::delivery(order_ref, &order)?)?;
     Ok(cancelled)
 }
@@ -542,16 +537,16 @@ fn no_driver_after(record: &Record) -> ExternResult<Option<Timestamp>> {
 #[hdk_extern]
 pub fn end_for_no_driver(input: TimedStepInput) -> ExternResult<Record> {
     let order_ref = original_action_of(input.order_ref)?;
-    let (record, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     if order.merchant != me()? {
         return Err(guest("Only the order's store ends it."));
     }
-    match no_driver_after(&record)? {
+    match no_driver_after(&version.record)? {
         Some(after) if past(after, true, input.beacon.as_ref())? => {}
         Some(_) => return Err(guest("Another driver still has time to take it.")),
         None => return Err(guest("No driver left this order cooking.")),
     }
-    cancel_proved(&record, order, &order_ref, Cancellation::NoDriver, input.beacon)
+    cancel_proved(&version, order, &order_ref, Cancellation::NoDriver, input.beacon)
 }
 
 // --- timing, for screens ---
@@ -583,33 +578,33 @@ pub struct OrderTiming {
 #[hdk_extern]
 pub fn get_order_timing(order_ref: ActionHash) -> ExternResult<OrderTiming> {
     let order_ref = original_action_of(order_ref)?;
-    let (record, order) = current(&order_ref)?;
+    let (version, order) = current(&order_ref)?;
     let mut timing = OrderTiming { collect_requested: collect_request_of(&order_ref, &order.requester)?.is_some(), ..Default::default() };
     let now = sys_time()?;
     let driver = driver_of(&order)?;
     match order.status {
-        DeliveryStatus::BidAccepted => timing.offer_ends = driver.as_ref().and_then(|_| Version::of(record.clone()).map(|v| lineage::offer_ends(&v))),
+        DeliveryStatus::BidAccepted => timing.offer_ends = driver.as_ref().and_then(|_| Version::of(version.record.clone()).map(|v| lineage::offer_ends(&v))),
         DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed => {
             if let Some((_, bid)) = &driver {
-                timing.driver_due = driver_due(&record, &order, bid)?;
+                timing.driver_due = driver_due(&version.record, &order, bid)?;
             }
         }
         DeliveryStatus::DriverAtStore => {
-            timing.store_late_after = Version::of(record.clone()).map(|v| lineage::store_late_after(&v)).transpose()?;
+            timing.store_late_after = Version::of(version.record.clone()).map(|v| lineage::store_late_after(&v)).transpose()?;
         }
-        DeliveryStatus::Open => timing.no_driver_after = no_driver_after(&record)?,
+        DeliveryStatus::Open => timing.no_driver_after = no_driver_after(&version.record)?,
         DeliveryStatus::Collecting => {
-            timing.collect_by = Some(Timestamp::from_micros(record.action().timestamp().as_micros().saturating_add(relay_governance::collection_window().as_micros() as i64)));
+            timing.collect_by = Some(Timestamp::from_micros(version.record.action().timestamp().as_micros().saturating_add(relay_governance::collection_window().as_micros() as i64)));
         }
         _ => {}
     }
     let driver_late = match (&driver, order.status.clone()) {
         (None, DeliveryStatus::Open) => true,
-        (Some((_, bid)), DeliveryStatus::BidAccepted | DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed) => driver_due(&record, &order, bid)?.is_some_and(|due| now >= due),
+        (Some((_, bid)), DeliveryStatus::BidAccepted | DeliveryStatus::DriverEnRouteToMerchant | DeliveryStatus::MerchantConfirmed) => driver_due(&version.record, &order, bid)?.is_some_and(|due| now >= due),
         _ => false,
     };
     timing.can_collect = driver_late && !timing.collect_requested;
-    timing.store_was_late = Version::of(record).map(|v| lineage::store_was_late(&v)).transpose()?.unwrap_or(false);
+    timing.store_was_late = Version::of(version.record).map(|v| lineage::store_was_late(&v)).transpose()?.unwrap_or(false);
     Ok(timing)
 }
 

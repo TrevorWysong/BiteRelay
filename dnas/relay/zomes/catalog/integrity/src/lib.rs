@@ -9,7 +9,7 @@ use relay_integrity_support::chain::wrote_since;
 use relay_integrity_support::{classify, decode, invalid, require, Checked};
 
 mod links;
-pub use links::{bag_path, catalog_geohash_path, claim_path, promo_path};
+pub use links::catalog_geohash_path;
 
 // MerchantCatalog/MenuItem/PromoCode now live in catalog_types so
 // dispatch_integrity can decode a PromoCode too, for its own promo-code
@@ -42,6 +42,10 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     OwnerToCatalog,
     CatalogToMenuItem,
     GeohashToCatalog,
@@ -69,6 +73,8 @@ pub enum LinkTypes {
     CatalogToImport,
 }
 
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
+
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
@@ -95,6 +101,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         // A store's menu, promos and bags are retired by updating them
         // (unavailable, inactive), never deleted: orders and reviews cite them.
         Checked::Delete { .. } => invalid("catalog entries can't be deleted"),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action),
         Checked::DeleteLink { original, action, .. } => links::validate_delete_link(original.author(), action.author()),
         Checked::Other => Ok(ValidateCallbackResult::Valid),

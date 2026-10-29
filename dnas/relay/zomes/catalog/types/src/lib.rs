@@ -114,7 +114,7 @@ pub struct MerchantCatalog {
     /// moves the cost to the rare path (a merchant editing their menu)
     /// away from the hot one (a customer browsing), the same tradeoff
     /// `ledger`/`reputation`'s checkpoint mechanism makes for the opposite
-    /// reason (architecture plan §9.4). Not independently verified in
+    /// reason. Not independently verified in
     /// `validate()` -- recomputing "is this really the union of all this
     /// catalog's menu items" deterministically would need a non-deterministic
     /// `get_links` walk inside `validate()`, the same category of gap

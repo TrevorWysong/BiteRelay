@@ -46,9 +46,15 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     OrderToLeg,
     LegToReceipt,
 }
+
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
@@ -62,6 +68,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         // Handoffs and their acknowledgments are a permanent record.
         Checked::Update { .. } => invalid("handoffs and receipts can't be changed"),
         Checked::Delete { .. } => invalid("handoffs and receipts can't be deleted"),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
         Checked::DeleteLink { .. } => links::validate_delete_link(),
         Checked::Other => Ok(ValidateCallbackResult::Valid),

@@ -182,7 +182,7 @@ const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
   catalog: () => ["list_my_catalogs", null],
   ledger: (player) => ["get_balance", player.agentPubKey],
   reputation: (player) => ["get_reputation_summary", { Driver: player.agentPubKey }],
-  attestation: () => ["list_my_receipts", null],
+  attestation: () => ["prepare_device", null],
   profiles: () => ["get_my_name", null],
   account: () => ["my_recovery_plan", null],
 };

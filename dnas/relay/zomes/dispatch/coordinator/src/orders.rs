@@ -12,7 +12,7 @@ use crate::stores::{closed_reason, current_catalog, current_catalog_version};
 use crate::upkeep;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, open, original_action_of, resolve_latest, resolve_latest_decoded, seal};
+use relay_coordinator_support::{decode_or, guest, open, original_action_of, resolve_latest, resolve_version_decoded, seal, update_version, written};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -323,8 +323,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // and cancels one the store never answers -- see `upkeep`.
     upkeep::tend_my_orders_soon()?;
 
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back delivery order"))
+    written(action_hash)
 }
 
 /// The one narrow transition out of `Scheduled`: placing the order with its
@@ -334,7 +333,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
 /// recorded timestamp is the real, deterministic enforcement.
 #[hdk_extern]
 pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action, "DeliveryOrder")?;
+    let (current, mut order): (_, DeliveryOrder) = resolve_version_decoded(order_original_action, "DeliveryOrder")?;
     if order.status != DeliveryStatus::Scheduled {
         return Err(guest("This order isn't scheduled."));
     }
@@ -345,10 +344,9 @@ pub fn open_scheduled_order(order_original_action: ActionHash) -> ExternResult<R
         }
     }
     order.status = DeliveryStatus::Placed;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
     upkeep::tend_my_orders_soon()?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back opened order"))
+    written(updated)
 }
 
 /// `Placed -> Open` -- the store accepting a delivery order, which is what
@@ -371,7 +369,7 @@ pub struct AcceptOrderInput {
 #[hdk_extern]
 pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     let order_original_action = input.order_original_action;
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    let (current, mut order): (_, DeliveryOrder) = resolve_version_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::Placed {
         return Err(guest("This order has already been accepted or cancelled."));
     }
@@ -411,10 +409,9 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     order.prep_minutes = Some(crate::stores::prep_time(&order.catalog_ref, input.prep_minutes)?);
     order.status = DeliveryStatus::Open;
     let dropoff_geohash = order.dropoff_geohash.clone();
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
     publish_to_open_anchor(&updated, &dropoff_geohash, sys_time()?)?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back accepted order"))
+    written(updated)
 }
 
 /// Reads a specific, already-known order's current state -- every other
@@ -448,7 +445,7 @@ pub fn set_order_status(input: SetOrderStatusInput) -> ExternResult<Record> {
         DeliveryStatus::MerchantConfirmed => crate::deliveries::start_cooking(order),
         DeliveryStatus::DriverAtStore => {
             let checked_in = crate::deliveries::ensure_checked_in(order)?;
-            get(checked_in, GetOptions::local())?.ok_or(guest("could not read back the order"))
+            written(checked_in)
         }
         other => Err(guest(format!(
             "{other:?} is recorded by its own step: accept_delivery_order, accept_bid, drop_order, pick_up_order, complete_delivery, cancel_order or decline_order"
@@ -594,7 +591,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
 /// (`deliveries::tend_driver_deliveries`).
 #[hdk_extern]
 pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> {
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    let (current, mut order): (_, DeliveryOrder) = resolve_version_decoded(order_original_action.clone(), "DeliveryOrder")?;
     if order.status != DeliveryStatus::DriverAtStore {
         return Err(guest("An order can be picked up only once the store has checked its driver in."));
     }
@@ -605,9 +602,8 @@ pub fn pick_up_order(order_original_action: ActionHash) -> ExternResult<Record> 
     };
     order.pickup_proof = Some(proof.ok_or(guest("Have the store scan your code, or confirm they've handed it over."))?);
     order.status = DeliveryStatus::PickedUp;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back picked-up order"))
+    let updated = update_version(&current, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// The customer withdrawing their delivery, until a driver picks it up --
@@ -641,13 +637,12 @@ pub fn decline_order(input: DeclineOrderInput) -> ExternResult<Record> {
 /// Cancels a delivery for `reason`, which validation checks against the
 /// caller, and takes it off every queue.
 pub(crate) fn cancel_delivery(order_original_action: ActionHash, reason: Cancellation) -> ExternResult<Record> {
-    let (record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(order_original_action.clone(), "DeliveryOrder")?;
+    let (current, mut order): (_, DeliveryOrder) = resolve_version_decoded(order_original_action.clone(), "DeliveryOrder")?;
     order.status = DeliveryStatus::Cancelled;
     order.cancellation = Some(reason);
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::DeliveryOrder(order.clone()))?;
+    let updated = update_version(&current, &EntryTypes::DeliveryOrder(order.clone()), LinkTypes::Version)?;
     order_queues::retire(&OrderParties::delivery(&order_original_action, &order)?)?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back cancelled order"))
+    written(updated)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -724,7 +719,7 @@ pub(crate) fn record_reputation_event(subject: &AgentPubKey, target: ReputationT
 /// validation rejects the receipts, nothing is paid out.
 #[hdk_extern]
 pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
-    let (order_record, mut order): (_, DeliveryOrder) = resolve_latest_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
+    let (order_record, mut order): (_, DeliveryOrder) = resolve_version_decoded(input.order_original_action.clone(), "DeliveryOrder")?;
 
     if !matches!(order.status, DeliveryStatus::PickedUp | DeliveryStatus::Disputed) {
         return Err(guest("An order can be completed only once it's picked up."));
@@ -746,7 +741,7 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     let catalog_ref = order.catalog_ref.clone();
     order.status = DeliveryStatus::Delivered;
     order.delivery_receipts = vec![proof];
-    let updated = update_entry(order_record.action_address().clone(), &EntryTypes::DeliveryOrder(order))?;
+    let updated = update_version(&order_record, &EntryTypes::DeliveryOrder(order), LinkTypes::Version)?;
     order_queues::retire(&parties)?;
     // Nothing is paid here: the money was set aside as the order went. The
     // store's conductor decides the order delivered on this update, and
@@ -761,7 +756,6 @@ pub fn complete_delivery(input: CompleteDeliveryInput) -> ExternResult<Record> {
     // decision that it was delivered (`issues::decide_order`).
     record_reputation_event(&merchant, ReputationTargetWire::Store(catalog_ref), input.order_original_action.clone(), ReputationEventKindWire::OrderCompleted, updated.clone())?;
 
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back completed order"))
+    written(updated)
 }
 

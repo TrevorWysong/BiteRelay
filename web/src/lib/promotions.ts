@@ -1,8 +1,7 @@
 // Generic promo-code evaluation, mirroring the Rust side's
 // `PromoRequirement`/`PromoReward` split (itself grounded in how DoorDash's
 // own Promotion Management API separates `purchase_criteria` from
-// `discount_options` -- see architecture plan §13 for the research this is
-// based on). A plain percent/flat-off code, a "spend $X get item Y free"
+// `discount_options`). A plain percent/flat-off code, a "spend $X get item Y free"
 // deal, and a buy-X-get-Y-free (BOGO) deal are all just one requirement
 // variant paired with one reward variant -- nothing here branches on "which
 // promo type is this," so a new requirement or reward shape later is a new

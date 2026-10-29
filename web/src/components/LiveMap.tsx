@@ -12,7 +12,7 @@ import type { GeoPoint } from "../holochain/types";
 // component sidesteps any react-leaflet/React-19 peer-dependency question
 // entirely. Tiles come from the public OpenStreetMap raster endpoint --
 // no API key, no vendor account, consistent with this project's "0
-// overhead" stance on infrastructure costs (architecture plan §12) --
+// overhead" stance on infrastructure costs --
 // the same provider `AddressSearch`'s Nominatim-backed geocoding uses.
 
 function emojiIcon(emoji: string): L.DivIcon {

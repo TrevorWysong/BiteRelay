@@ -18,7 +18,7 @@ use crate::pricing::OrderItem;
 use crate::stores::current_catalog;
 use catalog_types::{BagClaim, BagClaimFulfillment, BagClaimStatus, GoodieBag};
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest_fresh};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 use relay_types::GeoPoint;
 
 /// Mirrors `catalog::MyClaim` over the zome-call boundary.
@@ -54,11 +54,10 @@ pub fn redeem_one_claim(mine: MyClaimWire) -> ExternResult<()> {
 fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
     let Some(mut claim) = decode_or::<BagClaim>(&mine.record) else { return Ok(()) };
     let mut record = mine.record.clone();
-    // The store confirms on its own chain, and this conductor's local copy
-    // of the claim can lag that indefinitely -- so a claim that still looks
-    // pending is checked against the network.
+    // The store confirms on its own chain: a claim that still looks pending
+    // here is checked for its current version.
     if claim.status != BagClaimStatus::Confirmed {
-        record = resolve_latest_fresh(original_action_of(record.action_address().clone())?)?;
+        record = resolve_latest(original_action_of(record.action_address().clone())?)?;
         match decode_or::<BagClaim>(&record) {
             Some(latest) if latest.status == BagClaimStatus::Confirmed => claim = latest,
             _ => return Ok(()),

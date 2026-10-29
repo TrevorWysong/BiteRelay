@@ -1,14 +1,14 @@
-// Signal-only chat between an order's two active parties -- see
-// dispatch_coordinator::chat's doc comment for why this is deliberately
-// not persisted on the DHT. Consequence of that design, named honestly:
+// Chat between an order's customer and its driver, app to app -- see
+// holochain/live.ts, and dispatch_coordinator::live for why it's
+// deliberately never stored. Consequence of that design, named honestly:
 // history is in-memory only and does not survive a page reload or
 // switching away from this screen.
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import clsx from "clsx";
-import { sendChatMessage } from "../holochain/zomes/dispatch";
+import { sendChatMessage } from "../holochain/live";
 import { myAgentPubKey } from "../holochain/client";
-import { useLocalSignal } from "../lib/useResource";
+import { useLiveSignal } from "../lib/useResource";
 import { bytesEqual } from "../holochain/decode";
 import { nowMicros, shortAgentId } from "../lib/format";
 import type { ActionHash } from "../holochain/types";
@@ -30,7 +30,7 @@ export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: s
   const me = myAgentPubKey();
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useLocalSignal((signal) => {
+  useLiveSignal((signal) => {
     if (!("ChatMessage" in signal)) return;
     const msg = signal.ChatMessage;
     if (!bytesEqual(msg.order_ref, orderRef)) return;
@@ -47,7 +47,7 @@ export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: s
     setSending(true);
     try {
       await sendChatMessage(orderRef, text);
-      // send_remote_signal only reaches the *other* party -- append our own
+      // A direct signal only reaches the *other* party -- append our own
       // message locally so it shows up immediately for the sender too.
       setLines((prev) => [...prev, { from: me, text, sentAt: nowMicros() }]);
       setDraft("");

@@ -724,28 +724,6 @@ export type DispatchLocalSignal =
   | { BidAccepted: ActionHash }
   | { BidReleased: ActionHash }
   /**
-   * `from` is the verified sender; `sent_at` is when it arrived here.
-   */
-  | {
-      ChatMessage: {
-        order_ref: ActionHash;
-        from: AgentPubKey;
-        text: string;
-        sent_at: Timestamp;
-      };
-    }
-  /**
-   * See `tracking::send_location_update` -- driver -> requester only.
-   */
-  | {
-      LocationUpdate: {
-        order_ref: ActionHash;
-        lat: number;
-        lon: number;
-        sent_at: Timestamp;
-      };
-    }
-  /**
    * See `pickup::mark_ready_for_pickup` -- merchant -> requester only.
    */
   | { PickupReady: ActionHash }
@@ -1334,6 +1312,18 @@ export interface LineView {
 }
 
 /**
+ * The other active party on an order, and which side the caller is on.
+ */
+export interface LiveCounterpart {
+  counterpart: AgentPubKey;
+  /**
+   * `Customer` or `Driver`: only the driver shares a location, and only
+   * the customer hears one.
+   */
+  role: OrderRole;
+}
+
+/**
  * The most any single amount may be -- a price, fee, tip, minimum or grant
  * -- in minor units of the network's currency. Far past any real order, and
  * small enough that no total of an order's amounts can overflow: 100 lines
@@ -1598,7 +1588,7 @@ export interface MerchantCatalog {
    * moves the cost to the rare path (a merchant editing their menu)
    * away from the hot one (a customer browsing), the same tradeoff
    * `ledger`/`reputation`'s checkpoint mechanism makes for the opposite
-   * reason (architecture plan §9.4). Not independently verified in
+   * reason. Not independently verified in
    * `validate()` -- recomputing "is this really the union of all this
    * catalog's menu items" deterministically would need a non-deterministic
    * `get_links` walk inside `validate()`, the same category of gap
@@ -1713,6 +1703,18 @@ export interface MoveReadiness {
    * it wrote is out, so a new phone restoring the account gets all of it.
    */
   ready: boolean;
+}
+
+export interface NetworkReach {
+  /**
+   * How many distinct peers have validated one of the write's ops.
+   */
+  peers: number;
+  /**
+   * Whether every op has all the receipts Holochain asks for -- the
+   * write is as public as it'll get.
+   */
+  complete: boolean;
 }
 
 /**
@@ -2558,6 +2560,13 @@ export type RecurrenceRule =
       };
     };
 
+/**
+ * A customer's own saved "repeat this order" recipe, linked from their own
+ * key (`OwnerToTemplate`) so their conductor finds every one at once --
+ * nobody else ever looks for them, and the details are sealed. Their own
+ * conductor fires it when `next_run_at` arrives, with no app open, and
+ * advances it to the next occurrence (`dispatch::upkeep`).
+ */
 export interface RecurringOrderTemplate {
   requester: AgentPubKey;
   merchant: AgentPubKey;
@@ -2939,14 +2948,6 @@ export interface TaxRate {
 }
 
 /**
- * A customer's own saved "repeat this order" recipe. Deliberately a plain
- * entry with **no DHT link at all** -- nobody but the owner ever needs to
- * discover these, so `list_my_recurring_templates` is a local chain
- * `query()`, the same zero-anchor-growth shape as
- * `attestation::list_my_receipts`, not a `get_links` anchor like
- * `DeliveryOrder` itself needs for matching. The requester's own conductor
- * fires it when `next_run_at` arrives, with no app open, and advances it
- * to the next occurrence (`dispatch::upkeep`).
  * A recurring order's private parts -- only ever stored sealed.
  */
 export interface TemplateDetails {
@@ -3031,7 +3032,7 @@ export interface WaiverView {
 }
 
 /**
- * Contested warrants (architecture plan §11.2). Warrant-checking cannot be
+ * Contested warrants. Warrant-checking cannot be
  * enforced inside deterministic `validate()` -- an agent's warrant set is an
  * ever-growing, gossip-propagated fact, so two validators asking "does this
  * agent have warrants" at slightly different moments could get different,

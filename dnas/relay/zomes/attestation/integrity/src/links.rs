@@ -11,6 +11,8 @@ pub fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target
         return invalid("attestation links must target a record");
     };
     match link_type {
+        // Validated as a version (`validate`).
+        LinkTypes::Version => invalid("a version link is validated as one"),
         LinkTypes::OrderToLeg => {
             let Some(leg) = decode::<Leg>(&record) else { return invalid("target is not a Leg") };
             require(

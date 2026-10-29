@@ -111,9 +111,6 @@ export async function setCatalogOpen(originalAction: ActionHash, isOpen: boolean
   return callZome("catalog", "set_catalog_open", { original_action: originalAction, is_open: isOpen });
 }
 
-/// A single catalog by reference -- Cart.tsx uses this to read the
-/// merchant's current `delivery_subsidy_percent` before checkout
-/// (architecture plan §12: the standard delivery-cost-sharing model).
 /// Whether the caller's store is listed for customers to find.
 export async function isStoreListed(catalogRef: ActionHash): Promise<boolean> {
   return callZome("catalog", "is_store_listed", catalogRef);

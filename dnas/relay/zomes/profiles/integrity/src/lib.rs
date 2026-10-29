@@ -131,6 +131,10 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     AgentToProfile,
     /// Lets any peer find a driver's vehicle info starting only from the
     /// driver's Profile action -- without this, `get_provider_credential`
@@ -157,6 +161,8 @@ pub enum LinkTypes {
     OwnerToSavedAddress,
 }
 
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
+
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
@@ -173,6 +179,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         // Profiles and credentials are referenced by orders and bids; an
         // address is retired by unlinking it.
         Checked::Delete { .. } => relay_integrity_support::invalid("profile entries can't be deleted"),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type: LinkTypes::AgentToFavorite, action } => validate_new_favorite(&action),
         Checked::DeleteLink { link_type: LinkTypes::AgentToFavorite, original, action } => validate_favorite_removal(&original, &action),
         Checked::CreateLink { link_type: LinkTypes::OwnerToSavedAddress, action } => validate_new_saved_address_link(&action),
@@ -407,6 +415,6 @@ fn validate_identity_link(link_type: LinkTypes, base: &AnyLinkableHash, target: 
             require(base == &AnyLinkableHash::from(credential.profile_action), "a credential may only be linked under the profile it names")
         }
         // Handled by their own rules above.
-        LinkTypes::AgentToFavorite | LinkTypes::OwnerToSavedAddress => Ok(ValidateCallbackResult::Valid),
+        LinkTypes::Version | LinkTypes::AgentToFavorite | LinkTypes::OwnerToSavedAddress => Ok(ValidateCallbackResult::Valid),
     }
 }

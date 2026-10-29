@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { notificationFor } from "../lib/notifications";
 import { playChime } from "../lib/chime";
-import { useLocalSignal } from "../lib/useResource";
+import { useLiveSignal, useLocalSignal } from "../lib/useResource";
 import { usePreferences } from "../store/preferences";
 import type { LocalSignal } from "../holochain/types";
+import type { LiveSignal } from "../holochain/live";
 
 /// Tells this person about their orders as they change: a system
 /// notification (when they've turned them on and allowed them), and a chime
@@ -15,7 +16,7 @@ import type { LocalSignal } from "../holochain/types";
 export function Notifier() {
   const navigate = useNavigate();
   const { notifications, newOrderChime } = usePreferences();
-  useLocalSignal((signal: LocalSignal) => {
+  const notify = (signal: LocalSignal | LiveSignal) => {
     const notice = notificationFor(signal);
     if (!notice) return;
     if (notice.urgent && "OrderPlaced" in signal && newOrderChime) playChime();
@@ -29,6 +30,8 @@ export function Notifier() {
       navigate(notice.route);
       shown.close();
     };
-  });
+  };
+  useLocalSignal(notify);
+  useLiveSignal(notify);
   return null;
 }

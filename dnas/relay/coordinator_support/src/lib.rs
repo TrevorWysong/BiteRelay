@@ -2,6 +2,9 @@
 //! specific -- it exists so each coordinator crate doesn't have to
 //! reimplement the same low-level HDK plumbing.
 
+pub mod chain;
+pub mod links;
+
 use hdk::prelude::*;
 use relay_integrity_support::limits::SEAL_CHUNK_BYTES;
 pub use relay_integrity_support::SealedChunks;
@@ -9,6 +12,12 @@ pub use relay_integrity_support::SealedChunks;
 /// A refusal the person sees: a zome call's error, as a sentence.
 pub fn guest(message: impl Into<String>) -> WasmError {
     wasm_error!(WasmErrorInner::Guest(message.into()))
+}
+
+/// The record the caller just wrote -- what most writing externs answer
+/// with. Read from this device: it's on the caller's own chain.
+pub fn written(action_hash: ActionHash) -> ExternResult<Record> {
+    get(action_hash, GetOptions::local())?.ok_or(guest("couldn't read back what was just written"))
 }
 
 /// The original creation action behind `action_hash` -- itself, unless
@@ -30,58 +39,114 @@ pub fn original_action_of(action_hash: ActionHash) -> ExternResult<ActionHash> {
 /// updates. `get()` on an ActionHash is literal -- it returns exactly that
 /// action, never its latest update -- so this is what lets every extern take
 /// one stable reference (the original action) across any number of edits.
-/// Each update must be applied to the *latest* record, too: updating the
-/// original again would branch the history instead of extending it.
-///
-/// Reads locally first (the common case: the caller's own data, or data
-/// it already holds) and falls back to the network for a record it doesn't.
 pub fn resolve_latest(action_hash: ActionHash) -> ExternResult<Record> {
-    match resolve_latest_with(action_hash.clone(), GetOptions::local()) {
-        Ok(record) => Ok(record),
-        Err(_) => resolve_latest_with(action_hash, GetOptions::network()),
+    Ok(resolve_version(action_hash)?.record)
+}
+
+/// An entry's current version, and where it stands among its updates --
+/// what the next update builds on (`update_version`).
+#[derive(Debug, Clone)]
+pub struct EntryVersion {
+    /// The entry's original action: its identity.
+    pub original: ActionHash,
+    pub record: Record,
+    /// How many updates below the original it is.
+    pub depth: u32,
+}
+
+impl EntryVersion {
+    /// `record`, written on top of this version.
+    pub fn next(&self, record: Record) -> Self {
+        Self { original: self.original.clone(), record, depth: self.depth + 1 }
     }
 }
 
-/// `resolve_latest`, always asking the network -- for when a stale local
-/// copy would be wrong, like pricing an order at an item's current price.
-pub fn resolve_latest_fresh(action_hash: ActionHash) -> ExternResult<Record> {
-    resolve_latest_with(action_hash, GetOptions::network())
-}
-
-/// When an entry's history has branched -- two parties updating an order
-/// at once, say -- its current version is the tip of the branch that has
-/// gone furthest, and between equally long branches, the one written first.
-/// Never the latest timestamp: an author chooses their own timestamps, so
+/// The current version of the entry `action_hash` is (any version of it).
+///
+/// Each update is linked from the entry's original, tagged with its depth
+/// (`relay_integrity_support::versions`), so this is one read of those
+/// links, asked of the network -- current wherever the updates were
+/// written -- and one of the version it picks, which never changes once
+/// written, so it's read from this device when it's here. Offline, it's
+/// the newest version this device has seen.
+///
+/// When the history has branched -- two parties updating an order at once,
+/// say -- the current version is the deepest; between equally deep ones,
+/// the one written first, then the lower hash, so every peer agrees. Never
+/// the latest timestamp: an author chooses their own timestamps, so
 /// "latest" would let anyone win a branch by dating their update ahead.
 /// Nothing that moves money depends on which branch this picks -- each
 /// party's held money is settled by the exact version it cites (see
 /// `ledger_integrity`) -- it's what screens show and what the next update
 /// builds on.
-fn resolve_latest_with(action_hash: ActionHash, options: GetOptions) -> ExternResult<Record> {
-    Ok(deepest(action_hash, &options)?.0)
+pub fn resolve_version(action_hash: ActionHash) -> ExternResult<EntryVersion> {
+    let given = read_record(action_hash.clone())?;
+    let original = match given.action().data {
+        ActionData::Update(_) => original_action_of(action_hash)?,
+        _ => action_hash,
+    };
+    let Some(EntryType::App(def)) = given.action().entry_type() else { return Err(guest("that isn't an entry")) };
+    let versions = LinkQuery::new(original.clone(), LinkTypeFilter::single_type(def.zome_index, LinkType(relay_integrity_support::versions::VERSION_LINK_TYPE)));
+    // The network's answer, or -- when it can't be reached -- what this
+    // device has seen: older, perhaps, but never nothing.
+    let links = get_links(versions.clone(), GetStrategy::Network).or_else(|_| get_links(versions, GetStrategy::Local))?;
+    let tip = links
+        .into_iter()
+        .filter_map(|link| Some((relay_integrity_support::versions::version_depth(&link.tag)?, link.timestamp, link.target.into_action_hash()?)))
+        .max_by(|(d1, t1, h1), (d2, t2, h2)| d1.cmp(d2).then(t2.cmp(t1)).then(h2.cmp(h1)));
+    match tip {
+        Some((depth, _, hash)) => Ok(EntryVersion { original, record: read_record(hash)?, depth }),
+        None if given.action_address() == &original => Ok(EntryVersion { original, record: given, depth: 0 }),
+        None => Ok(EntryVersion { record: read_record(original.clone())?, original, depth: 0 }),
+    }
 }
 
-/// The tip of the deepest branch of updates below `action_hash`, and its
-/// depth. Between equally deep branches, the one whose first update was
-/// written earliest; then the lower action hash, so every peer agrees.
-fn deepest(action_hash: ActionHash, options: &GetOptions) -> ExternResult<(Record, u32)> {
-    let details = get_details(action_hash, options.clone())?.ok_or(wasm_error!(WasmErrorInner::Guest("record not found".into())))?;
-    let Details::Record(record_details) = details else {
-        return Err(wasm_error!(WasmErrorInner::Guest("expected Details::Record for an ActionHash query".into())));
-    };
-    let mut best: Option<(Record, u32, Timestamp, ActionHash)> = None;
-    for update in &record_details.updates {
-        let (tip, depth) = deepest(update.action_address().clone(), options)?;
-        let (written, hash) = (update.action().timestamp(), update.action_address().clone());
-        let better = best.as_ref().is_none_or(|(_, d, t, h)| (depth + 1, std::cmp::Reverse(written), std::cmp::Reverse(&hash)) > (*d, std::cmp::Reverse(*t), std::cmp::Reverse(h)));
-        if better {
-            best = Some((tip, depth + 1, written, hash));
-        }
+/// `resolve_version`, decoded as a `T` -- or an error naming what was
+/// expected.
+pub fn resolve_version_decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(action_hash: ActionHash, type_name: &str) -> ExternResult<(EntryVersion, T)> {
+    let version = resolve_version(action_hash)?;
+    let decoded = decode_or::<T>(&version.record).ok_or(guest(format!("record is not a {type_name}")))?;
+    Ok((version, decoded))
+}
+
+/// Writes `entry` as the version after `current` -- the entry's current
+/// version (`resolve_version`) -- and links it from the entry's original,
+/// tagged with its depth, with the zome's own `Version` link type. Each
+/// update builds on the current version: updating an older one would
+/// branch the history instead of extending it.
+pub fn update_version<I, E, L, LE>(current: &EntryVersion, entry: I, version_link: L) -> ExternResult<ActionHash>
+where
+    Entry: TryFrom<I, Error = E>,
+    WasmError: From<E>,
+    ScopedLinkType: TryFrom<L, Error = LE>,
+    WasmError: From<LE>,
+{
+    let updated = update_entry(current.record.action_address().clone(), entry)?;
+    create_link(current.original.clone(), updated.clone(), version_link, relay_integrity_support::versions::version_tag(current.depth + 1))?;
+    Ok(updated)
+}
+
+/// The version `action_hash` is, current or not -- its original and depth,
+/// counted back through its updates. For updating a version the caller
+/// names exactly (`resolve_version` finds the current one).
+pub fn version_at(action_hash: ActionHash) -> ExternResult<EntryVersion> {
+    let record = read_record(action_hash)?;
+    let mut depth = 0;
+    let mut original = record.clone();
+    while let ActionData::Update(update) = &original.action().data {
+        depth += 1;
+        original = read_record(update.original_action_address.clone())?;
     }
-    Ok(match best {
-        Some((tip, depth, _, _)) => (tip, depth),
-        None => (record_details.record, 0),
-    })
+    Ok(EntryVersion { original: original.action_address().clone(), record, depth })
+}
+
+/// A record by its action, which never changes once written: from this
+/// device when it's here, else the network.
+fn read_record(action_hash: ActionHash) -> ExternResult<Record> {
+    match get(action_hash.clone(), GetOptions::local())? {
+        Some(record) => Ok(record),
+        None => get(action_hash, GetOptions::network())?.ok_or(guest("record not found")),
+    }
 }
 
 /// Encrypts `value` from the caller to `recipient` (libsodium box, keyed off
@@ -151,17 +216,9 @@ pub fn decode_or<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(reco
 
 /// `resolve_latest`, decoded as a `T` -- or an error naming what was
 /// expected. Returns the record too, since most callers update it next.
-pub fn resolve_latest_decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
-    action_hash: ActionHash,
-    type_name: &str,
-) -> ExternResult<(Record, T)> {
-    let record = resolve_latest(action_hash)?;
-    let decoded = record
-        .entry()
-        .to_app_option::<T>()
-        .map_err(|e| wasm_error!(e))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest(format!("record is not a {type_name}"))))?;
-    Ok((record, decoded))
+pub fn resolve_latest_decoded<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(action_hash: ActionHash, type_name: &str) -> ExternResult<(Record, T)> {
+    let (version, decoded) = resolve_version_decoded(action_hash, type_name)?;
+    Ok((version.record, decoded))
 }
 
 /// Each link's target at its current state (via `resolve_latest`), skipping
@@ -191,20 +248,6 @@ pub fn resolve_links_to_records_with_original(links: Vec<Link>) -> Vec<(ActionHa
     }
     out
 }
-
-/// The `(ScopedEntryDefIndex, EntryVisibility)` a chain `query()` filter
-/// needs, from an `EntryTypes` value. (`EntryType::try_from(UnitEntryTypes::X)`
-/// does the same without needing a value, and is preferred.)
-pub fn entry_def_parts<'a, E>(entry: &'a E) -> ExternResult<(ScopedEntryDefIndex, EntryVisibility)>
-where
-    &'a E: TryInto<ScopedEntryDefIndex, Error = WasmError>,
-    EntryVisibility: From<&'a E>,
-{
-    let scoped: ScopedEntryDefIndex = entry.try_into().map_err(|e: WasmError| e)?;
-    let visibility = EntryVisibility::from(entry);
-    Ok((scoped, visibility))
-}
-
 
 /// Test-only externs for proving link validation: raw `create_link` /
 /// `delete_link`, which an honest coordinator never exposes, so a test can
@@ -277,31 +320,37 @@ pub fn agent_activity(agent: AgentPubKey, filter: ChainQueryFilter) -> ExternRes
 }
 
 /// Lets any agent call `functions` of the calling zome on this device: a
-/// zome-call grant with no constraint, written (privately) unless this
-/// device already holds it. What `send_remote_signal` needs to reach
-/// `recv_remote_signal`, which Holochain refuses without a grant, and what
-/// a giver's conductor needs to answer a typed handoff code. Returns
-/// whether it wrote one.
+/// zome-call grant with no constraint. What `send_remote_signal` needs to
+/// reach `recv_remote_signal`, which Holochain refuses without a grant, and
+/// what a giver's conductor needs to answer a typed handoff code. Returns
+/// whether it wrote one (`ensure_grant`).
+pub fn ensure_open_calls(tag: &str, functions: &[&str]) -> ExternResult<bool> {
+    let zome = zome_info()?.name;
+    let functions: GrantedFunctions = GrantedFunctions::Listed(functions.iter().map(|f| (zome.clone(), FunctionName::from(*f))).collect());
+    ensure_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, functions))
+}
+
+/// Lets any agent send this device direct signals -- app to app, with no
+/// zome code on either end (chat and live location; see the app's
+/// `holochain/live.ts`). Holochain drops a direct signal without one, even
+/// one from this device's own agent. Returns whether it wrote one.
+pub fn ensure_direct_signals(tag: &str) -> ExternResult<bool> {
+    ensure_grant(CapGrantEntry::new_direct_signal_grant(tag.into(), GrantConstraint::Unrestricted))
+}
+
+/// Writes `grant` (privately) unless this device already holds it.
 ///
 /// A grant's entry is private, so it lives only on the device that wrote
 /// it: an account restored onto a new device from the network
 /// (RECOVERY.md) has the grant's action but not the grant. Each zome's
-/// `prepare_device` calls this on every start, so a device always ends up
-/// holding its own.
-pub fn ensure_open_calls(tag: &str, functions: &[&str]) -> ExternResult<bool> {
-    let zome = zome_info()?.name;
-    let functions: GrantedFunctions = GrantedFunctions::Listed(functions.iter().map(|f| (zome.clone(), FunctionName::from(*f))).collect());
-    let held = query(ChainQueryFilter::new().entry_type(EntryType::CapGrant).include_entries(true))?.into_iter().any(|record| {
-        matches!(
-            record.entry().as_option(),
-            Some(Entry::CapGrant(CapGrantEntry { tag: held_tag, constraint: GrantConstraint::Unrestricted, capability: Capability::ZomeCall(ZomeCallGrant { functions: held }) }))
-                if held_tag == tag && held == &functions
-        )
-    });
+/// `prepare_device` ensures its grants on every start, so a device always
+/// ends up holding its own.
+fn ensure_grant(grant: CapGrantEntry) -> ExternResult<bool> {
+    let held = chain::mine(&[EntryType::CapGrant]).creates().any(|record| matches!(record.entry().as_option(), Some(Entry::CapGrant(held)) if held == &grant))?;
     if held {
         return Ok(false);
     }
-    create_cap_grant(CapGrantEntry::new_zome_call_grant(tag.into(), GrantConstraint::Unrestricted, functions))?;
+    create_cap_grant(grant)?;
     Ok(true)
 }
 

@@ -18,7 +18,7 @@ pub struct OpLinkFields<'a> {
     pub timestamp: Timestamp,
 }
 
-/// How long an open-order anchor bucket is (architecture plan §9.2):
+/// How long an open-order anchor bucket is:
 /// otherwise `open_order_geohash.{geohash}` accumulates one never-deleted
 /// link per order, forever, and every discovery read walks the entire
 /// history of every order ever placed in that cell. 5 minutes: generous
@@ -34,6 +34,8 @@ pub fn open_order_anchor(geohash: &str, bucket: i64) -> String {
 
 pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
+        // Validated as a version (`validate`).
+        LinkTypes::Version => invalid("a version link is validated as one"),
         LinkTypes::StoreToActiveOrder
         | LinkTypes::StoreHistoryPath
         | LinkTypes::StoreHistoryToOrder
@@ -52,6 +54,13 @@ pub fn validate_create_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCall
         LinkTypes::OrderToIssue | LinkTypes::IssueToResponse | LinkTypes::OrderToDecision | LinkTypes::OrderToCollectRequest | LinkTypes::OrderToDropoffShare => validate_issue_link(&link),
         LinkTypes::DriverToVerification => crate::verification::validate_verification_link(&link),
         LinkTypes::OrderToAppeal | LinkTypes::ArbiterToAppeal | LinkTypes::AppealToAnswer | LinkTypes::AppealToRuling | LinkTypes::StoreOwnerToRuling | LinkTypes::StoreOwnerToAppeal => crate::appeals::validate_appeal_link(&link),
+        LinkTypes::OwnerToTemplate => {
+            let Some(record) = linked_record(link.target)? else { return invalid("target is not a record") };
+            require(
+                decode::<RecurringOrderTemplate>(&record).is_some() && matches!(record.action().data, ActionData::Create(_)) && record.action().author() == link.author && link.base == &AnyLinkableHash::from(link.author.clone()),
+                "a standing order is listed only by its owner, under their own key",
+            )
+        }
     }
 }
 
@@ -83,7 +92,7 @@ fn validate_open_order_link(link: &OpLinkFields<'_>) -> ExternResult<ValidateCal
 
 pub fn validate_delete_link(link: OpLinkFields<'_>) -> ExternResult<ValidateCallbackResult> {
     match link.link_type {
-        LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid => invalid("this dispatch link type can't be deleted"),
+        LinkTypes::OpenOrderGeohashAnchor | LinkTypes::OrderToBid | LinkTypes::OwnerToTemplate => invalid("this dispatch link type can't be deleted"),
         LinkTypes::DriverToVerification => {
             let Some(record) = linked_record(link.target)? else { return invalid("target is not a record") };
             require(record.action().author() == link.author, "only its verifier unlinks a verification")

@@ -26,6 +26,11 @@
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/reputation/coordinator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/reputation/integrity/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/integrity_support/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/account/coordinator/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/account/integrity/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/account/types/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/dnas/relay/zomes/ledger/types/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

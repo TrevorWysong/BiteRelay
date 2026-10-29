@@ -60,11 +60,16 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     /// An order's holds, so its parties can find what they're owed.
     OrderToHold,
     /// A hold's waivers, so its payer can find what's returned to them.
     HoldToWaive,
-    /// An agent's grants, so they can collect them.
+    /// An agent's grants, so they can collect them. Tagged with the grant's
+    /// reference, so its issuer finds a payment it already granted.
     AgentToGrant,
     /// The cash-outs an issuer is asked to pay, base = the issuer -- swept by
     /// its service in the order they arrive (`LinkQuery::after`).
@@ -73,7 +78,12 @@ pub enum LinkTypes {
     RedemptionToOutcome,
     /// An issuer's profile, base = the issuer.
     IssuerToProfile,
+    /// A grant's collection, base = the grant, so its recipient knows it's
+    /// collected without reading back through their ledger.
+    GrantToDeposit,
 }
+
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
 
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
@@ -94,7 +104,9 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         }
         Checked::Update { .. } => invalid("ledger entries can't be changed"),
         Checked::Delete { .. } => invalid("ledger entries can't be deleted"),
-        Checked::CreateLink { link_type, action } => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
+        Checked::CreateLink { link_type, action } => validate_create_link(link_type, &action.base_address, &action.target_address, &action.tag, action.author()),
         Checked::DeleteLink { .. } => invalid("ledger links can't be deleted"),
         Checked::Other => valid(),
     }
@@ -116,7 +128,7 @@ fn validate_grant(grant: &IssuerGrant, author: &AgentPubKey) -> ExternResult<Val
     }
 }
 
-fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
+fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, tag: &LinkTag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
     let Some(record) = linked_record(target)? else {
         return invalid("ledger links must target a record");
     };
@@ -124,6 +136,8 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
         return invalid("a ledger link must be authored by the author of the entry it indexes");
     }
     let expected: Option<AnyLinkableHash> = match link_type {
+        // Validated as a version (`validate`).
+        LinkTypes::Version => return invalid("a version link is validated as one"),
         LinkTypes::OrderToHold => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
             Some(LedgerKind::Hold { order, .. }) => Some(order.into()),
             _ => None,
@@ -132,7 +146,14 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
             Some(LedgerKind::Waive { hold, .. }) => Some(hold.into()),
             _ => None,
         },
-        LinkTypes::AgentToGrant => decode::<IssuerGrant>(&record).map(|grant| grant.to.into()),
+        LinkTypes::AgentToGrant => match decode::<IssuerGrant>(&record) {
+            Some(grant) if tag.0 != grant.reference.as_bytes() => return invalid("a grant's link is tagged with its reference"),
+            grant => grant.map(|grant| grant.to.into()),
+        },
+        LinkTypes::GrantToDeposit => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
+            Some(LedgerKind::Deposit { grant }) => Some(grant.into()),
+            _ => None,
+        },
         LinkTypes::IssuerToRedemption => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
             Some(LedgerKind::Redeem { issuer, .. }) => Some(issuer.into()),
             _ => None,
@@ -141,7 +162,7 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
         LinkTypes::IssuerToProfile => decode::<IssuerProfile>(&record).filter(|_| matches!(record.action().data, ActionData::Create(_))).map(|_| author.clone().into()),
     };
     match expected {
-        Some(expected) => require(&expected == base, "a ledger link must sit under the order, hold or agent its entry is about"),
+        Some(expected) => require(&expected == base, "a ledger link must sit under the order, hold, grant or agent its entry is about"),
         None => invalid("a ledger link's target is not the entry its link type indexes"),
     }
 }
@@ -161,7 +182,7 @@ fn is_ledger_entry(action: &Action) -> ExternResult<bool> {
 /// action at or after `since`, newest first -- none if the chain hadn't
 /// reached `since` yet.
 fn ledger_since(agent: &AgentPubKey, chain_top: &ActionHash, since: Timestamp) -> ExternResult<Vec<ChainEntry>> {
-    Ok(ledger_of(relay_integrity_support::chain::activity_since(agent, chain_top, since, true)?)?.0)
+    Ok(ledger_of(relay_integrity_support::chain::activity_since(agent, chain_top, since)?)?.0)
 }
 
 /// The same, and whether the walk passed the chain's close (`close_chain`,
@@ -170,7 +191,7 @@ fn ledger_since(agent: &AgentPubKey, chain_top: &ActionHash, since: Timestamp) -
 /// activity is held, not where a record is: a counterparty must_get-ing a
 /// hold wouldn't see it. So the ledger checks for itself.
 fn ledger_walk(agent: &AgentPubKey, filter: ChainFilter) -> ExternResult<(Vec<ChainEntry>, bool)> {
-    ledger_of(must_get_agent_activity(agent.clone(), filter.include_cached_entries())?)
+    ledger_of(must_get_agent_activity(agent.clone(), filter)?)
 }
 
 /// The ledger entries among `activity`, and whether it holds the chain's close.
@@ -215,8 +236,15 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
             (prior.balance, prior.in_hand)
         }
         None => {
-            let (earlier, closed) = ledger_walk(author, ChainFilter::new(prev_action.clone()))?;
-            if !earlier.is_empty() {
+            // Its first: no ledger entry before it, read from the actions alone.
+            let (mut earlier, mut closed) = (false, false);
+            relay_integrity_support::chain::walk_back(author, prev_action, |item| {
+                let action = &item.action.hashed.content;
+                closed |= matches!(action.data, ActionData::CloseChain(_));
+                earlier = is_ledger_entry(action)?;
+                Ok(if earlier { core::ops::ControlFlow::Break(()) } else { core::ops::ControlFlow::Continue(()) })
+            })?;
+            if earlier {
                 return invalid("previous must name the author's latest ledger entry");
             }
             if closed {

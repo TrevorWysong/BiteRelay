@@ -1,5 +1,4 @@
-// Proves the merchant delivery-cost-sharing model (architecture plan §12,
-// 2026-10-01 revision): a 50/50 percentage split with the customer is the
+// Proves the merchant delivery-cost-sharing model: a 50/50 percentage split with the customer is the
 // real default (set at publish_catalog time, not a rare opt-in), the split
 // stays proportional to whatever the winning bid turns out to be, and the
 // driver is always paid the full bid regardless of which side(s) it came

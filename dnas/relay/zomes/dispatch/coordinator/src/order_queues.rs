@@ -7,6 +7,7 @@
 
 use dispatch_integrity::*;
 use hdk::prelude::*;
+use relay_coordinator_support::chain::mine;
 use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 use std::cmp::Reverse;
 
@@ -254,16 +255,18 @@ pub fn get_my_order_history(input: HistoryInput) -> ExternResult<OrderHistoryPag
     history_page(QueueOwner::Customer(&me), input.before, input.limit)
 }
 
-/// Every order action on the caller's own source chain (creates and
-/// updates, both kinds) -- a local read, no network. Only usable for facts
-/// the caller's own actions establish.
-fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
-    let mut out = Vec::new();
-    for (unit, kind) in [(UnitEntryTypes::DeliveryOrder, OrderKind::Delivery), (UnitEntryTypes::PickupOrder, OrderKind::Pickup)] {
-        let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(unit)?).include_entries(true);
-        out.extend(query(filter)?.into_iter().map(|record| (kind, record)));
-    }
-    Ok(out)
+/// The orders the caller placed (their creations, both kinds), newest
+/// first, from their own chain -- since `since`, or ever. A local read, no
+/// network; only usable for facts the caller's own actions establish.
+fn my_orders(since: Option<Timestamp>) -> ExternResult<Vec<(OrderKind, Record)>> {
+    let delivery = EntryType::try_from(UnitEntryTypes::DeliveryOrder)?;
+    let types = [delivery.clone(), EntryType::try_from(UnitEntryTypes::PickupOrder)?];
+    let walk = mine(&types).creates();
+    let records = match since {
+        Some(since) => walk.since(since).records()?,
+        None => walk.records()?,
+    };
+    Ok(records.into_iter().map(|record| (if record.action().entry_type() == Some(&delivery) { OrderKind::Delivery } else { OrderKind::Pickup }, record)).collect())
 }
 
 /// Refuses another order while the caller has placed as many as the network
@@ -274,12 +277,7 @@ fn my_order_actions() -> ExternResult<Vec<(OrderKind, Record)>> {
 pub(crate) fn ensure_order_rate() -> ExternResult<()> {
     let window = relay_governance::store_response_window().as_micros() as i64;
     let since = sys_time()?.as_micros() - window;
-    let mut recent: Vec<i64> = my_order_actions()?
-        .iter()
-        .filter(|(_, record)| matches!(record.action().data, ActionData::Create(_)))
-        .map(|(_, record)| record.action().timestamp().as_micros())
-        .filter(|at| *at >= since)
-        .collect();
+    let mut recent: Vec<i64> = my_orders(Some(Timestamp::from_micros(since)))?.iter().map(|(_, record)| record.action().timestamp().as_micros()).collect();
     let most = relay_governance::max_pending_orders() as usize;
     if recent.len() >= most {
         recent.sort_unstable();
@@ -300,13 +298,13 @@ pub fn count_my_completed_orders(catalog_ref: ActionHash) -> ExternResult<u32> {
 /// The versions completing the caller's orders at `catalog_ref`, oldest
 /// first -- exactly what a loyalty promo's `loyalty_proof` lists. The
 /// caller placed each of their orders, so which are at this store is a
-/// local read; who completed each varies (a delivery's driver, a pickup's
-/// customer), so its completion is read from the network -- one read per
-/// order at this store, never their whole history.
+/// local read (every order they've placed: loyalty counts them all); who
+/// completed each varies (a delivery's driver, a pickup's customer), so its
+/// completion is read from the network -- one read per order at this store.
 pub(crate) fn my_completions_at(catalog_ref: &ActionHash) -> ExternResult<Vec<ActionHash>> {
     let mut completions: Vec<(Timestamp, ActionHash)> = Vec::new();
-    for (kind, record) in my_order_actions()? {
-        if !matches!(record.action().data, ActionData::Create(_)) || order_store(kind, &record).as_ref() != Some(catalog_ref) {
+    for (kind, record) in my_orders(None)? {
+        if order_store(kind, &record).as_ref() != Some(catalog_ref) {
             continue;
         }
         let Ok(latest) = resolve_latest(record.action_address().clone()) else { continue };
@@ -337,10 +335,9 @@ fn order_store(kind: OrderKind, record: &Record) -> Option<ActionHash> {
 pub fn get_my_order_for_claim(claim_ref: ActionHash) -> ExternResult<Option<ActionHash>> {
     // Compared by the claim's identity: an order may cite any version of it.
     let claim_origin = original_action_of(claim_ref)?;
-    for (kind, record) in my_order_actions()? {
-        if !matches!(record.action().data, ActionData::Create(_)) {
-            continue;
-        }
+    // An order redeeming it comes after the claim, on the caller's own clock.
+    let claimed_at = get(claim_origin.clone(), GetOptions::default())?.ok_or(guest("claim not found"))?.action().timestamp();
+    for (kind, record) in my_orders(Some(claimed_at))? {
         let cited = match kind {
             OrderKind::Delivery => record.entry().to_app_option::<DeliveryOrder>().ok().flatten().and_then(|o| o.bag_claim_ref),
             OrderKind::Pickup => record.entry().to_app_option::<PickupOrder>().ok().flatten().and_then(|o| o.bag_claim_ref),

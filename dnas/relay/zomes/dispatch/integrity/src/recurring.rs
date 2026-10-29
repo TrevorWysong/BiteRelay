@@ -19,14 +19,6 @@ pub enum RecurrenceRule {
     Weekly { weekday: u8, hour: u8, minute: u8 },
 }
 
-/// A customer's own saved "repeat this order" recipe. Deliberately a plain
-/// entry with **no DHT link at all** -- nobody but the owner ever needs to
-/// discover these, so `list_my_recurring_templates` is a local chain
-/// `query()`, the same zero-anchor-growth shape as
-/// `attestation::list_my_receipts`, not a `get_links` anchor like
-/// `DeliveryOrder` itself needs for matching. The requester's own conductor
-/// fires it when `next_run_at` arrives, with no app open, and advances it
-/// to the next occurrence (`dispatch::upkeep`).
 /// A recurring order's private parts -- only ever stored sealed.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TemplateDetails {
@@ -38,6 +30,11 @@ pub struct TemplateDetails {
     pub priority: bool,
 }
 
+/// A customer's own saved "repeat this order" recipe, linked from their own
+/// key (`OwnerToTemplate`) so their conductor finds every one at once --
+/// nobody else ever looks for them, and the details are sealed. Their own
+/// conductor fires it when `next_run_at` arrives, with no app open, and
+/// advances it to the next occurrence (`dispatch::upkeep`).
 #[hdk_entry_helper]
 #[derive(Clone)]
 // Decodes only from its own fields: a record of another type that

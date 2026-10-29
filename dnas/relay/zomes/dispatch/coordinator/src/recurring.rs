@@ -9,7 +9,7 @@ use chrono::{Datelike, Duration as Days, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use dispatch_integrity::*;
 use hdk::prelude::*;
-use relay_coordinator_support::{decode_or, guest, open_chunked, resolve_latest, resolve_latest_decoded, seal_chunked};
+use relay_coordinator_support::{decode_or, guest, open_chunked, resolve_latest, resolve_version_decoded, seal_chunked, update_version, written};
 use relay_types::GeoPoint;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -69,11 +69,12 @@ pub fn create_recurring_template(input: CreateRecurringTemplateInput) -> ExternR
         active: true,
         created_at: sys_time()?,
     };
+    let owner = template.requester.clone();
     let action_hash = create_entry(&EntryTypes::RecurringOrderTemplate(template))?;
+    create_link(owner, action_hash.clone(), LinkTypes::OwnerToTemplate, ())?;
     // The conductor fires it when it's due -- see `upkeep`.
     crate::upkeep::tend_my_orders_soon()?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back recurring order template"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -84,11 +85,10 @@ pub struct SetRecurringTemplateActiveInput {
 
 #[hdk_extern]
 pub fn set_recurring_template_active(input: SetRecurringTemplateActiveInput) -> ExternResult<Record> {
-    let (record, mut template): (_, RecurringOrderTemplate) = resolve_latest_decoded(input.original_action, "RecurringOrderTemplate")?;
+    let (current, mut template): (_, RecurringOrderTemplate) = resolve_version_decoded(input.original_action, "RecurringOrderTemplate")?;
     template.active = input.active;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::RecurringOrderTemplate(template))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated recurring order template"))
+    let updated = update_version(&current, &EntryTypes::RecurringOrderTemplate(template), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// A template's stable identity (what `set_recurring_template_active`
@@ -101,16 +101,17 @@ pub struct RecurringTemplateView {
     pub details: Option<TemplateDetails>,
 }
 
-/// Every template the caller has created, at its latest state -- a local
-/// chain read. Filtered to creations (one per template; `query` would
-/// otherwise return every update as well), each resolved to its latest.
+/// Every template the caller has created, at its latest state -- found by
+/// the links from their own key, read on this device.
 #[hdk_extern]
 pub fn list_my_recurring_templates(_: ()) -> ExternResult<Vec<RecurringTemplateView>> {
     let me = agent_info()?.agent_initial_pubkey;
-    let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::RecurringOrderTemplate)?).action_type(ActionType::Create);
+    let query = LinkQuery::try_new(me.clone(), LinkTypes::OwnerToTemplate)?.author(me.clone());
+    let mut links = get_links(query, GetStrategy::Local)?;
+    links.sort_by_key(|link| link.timestamp);
     let mut views = Vec::new();
-    for creation in query(filter)? {
-        let original_action = creation.action_address().clone();
+    for link in links {
+        let Some(original_action) = link.target.into_action_hash() else { continue };
         let Ok(record) = resolve_latest(original_action.clone()) else { continue };
         let details = match record.entry().to_app_option::<RecurringOrderTemplate>().ok().flatten() {
             Some(template) => open_chunked(&me, &template.sealed_details)?,
@@ -171,10 +172,10 @@ pub struct AdvanceInput {
 /// own.
 #[hdk_extern]
 pub fn advance_template(input: AdvanceInput) -> ExternResult<ActionHash> {
-    let record = get(input.version.clone(), GetOptions::default())?.ok_or(guest("couldn't read that standing order"))?;
-    let mut template = decode_or::<RecurringOrderTemplate>(&record).ok_or(guest("that isn't a standing order"))?;
+    let version = relay_coordinator_support::version_at(input.version)?;
+    let mut template = decode_or::<RecurringOrderTemplate>(&version.record).ok_or(guest("that isn't a standing order"))?;
     template.next_run_at = input.next_run_at;
-    update_entry(input.version, &EntryTypes::RecurringOrderTemplate(template))
+    update_version(&version, &EntryTypes::RecurringOrderTemplate(template), LinkTypes::Version)
 }
 
 fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternResult<()> {

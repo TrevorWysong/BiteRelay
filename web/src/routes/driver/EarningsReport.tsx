@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { listMyLedger } from "../../holochain/zomes/ledger";
 import { actionHash, decodeEntry, timestampOf } from "../../holochain/decode";
-import type { LedgerEntry } from "../../holochain/types";
+import type { ActionHash, LedgerEntry } from "../../holochain/types";
 import { Card, Skeleton } from "../../components/ui";
 import { earned, earningsByPeriod, earningsCsv, type Grouping, type LedgerRow } from "../../lib/earnings";
 import { formatCents, fromMinorUnits } from "../../lib/format";
@@ -15,11 +15,11 @@ import { useResource } from "../../lib/useResource";
 /// Every entry on the caller's ledger, page by page.
 async function wholeLedger(): Promise<LedgerRow[]> {
   const rows: LedgerRow[] = [];
-  let before: number | null = null;
+  let before: ActionHash | null = null;
   for (;;) {
     const page = await listMyLedger(before);
     rows.push(...page.entries.map((r) => ({ hash: actionHash(r), entry: decodeEntry<LedgerEntry>(r), at: timestampOf(r) })));
-    if (page.next_before === null || page.next_before === undefined) return rows;
+    if (!page.next_before) return rows;
     before = page.next_before;
   }
 }

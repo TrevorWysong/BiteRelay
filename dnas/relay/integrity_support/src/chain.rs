@@ -5,65 +5,95 @@
 
 use hdi::prelude::*;
 
-/// How many actions a walk back to a time reads first. Each further read
-/// takes twice as many, up to `LONGEST_READ`: a walk over `n` actions costs
-/// about log2(n / 32) reads and at most twice the actions it needed.
+use core::ops::ControlFlow;
+
+/// How many actions a walk back reads first. Each further read takes twice
+/// as many, up to `LONGEST_READ`: a walk over `n` actions costs about
+/// log2(n / 32) reads and at most twice the actions it needed.
 const FIRST_READ: u32 = 32;
 const LONGEST_READ: u32 = 4_096;
 
-/// `author`'s actions from `chain_top` back to the first at or after
-/// `since`, newest first -- none if the chain hadn't reached `since` yet.
-/// With `entries`, each carries its entry where the authority has it.
+/// Walks `author`'s actions from `chain_top` back toward their first,
+/// newest first, handing each to `visit` until it says to stop.
 ///
-/// Read in counted steps (`ChainFilter::take`) rather than as one
-/// `until_timestamp` filter: Holochain reads a counted range straight from
-/// its index, while a timestamp bound reads the author's whole chain and
-/// filters after. This way a walk costs what happened since `since`, not
-/// how long the chain is -- what keeps a busy store's checks cheap. Sound
-/// because an action is never older than the one before it (Holochain's
-/// own validation), so the first one before `since` ends the walk, and
-/// each step depends only on where it starts, so every validator reads the
-/// same actions.
-pub fn activity_since(author: &AgentPubKey, chain_top: &ActionHash, since: Timestamp, entries: bool) -> ExternResult<Vec<AgentActivity>> {
-    let mut walked = Vec::new();
+/// Read in counted steps (`ChainFilter::take`): Holochain reads a counted
+/// range straight from its index, where an `until_timestamp` filter -- or a
+/// coordinator's `query()`, whatever its filter -- reads the author's whole
+/// chain. So a walk costs what it visits, not how long the chain is. Each
+/// step depends only on where it starts, so every validator reads the same
+/// actions; and a coordinator walking its own chain from
+/// `agent_info().chain_head` sees what the call has written so far too.
+pub fn walk_back(author: &AgentPubKey, chain_top: &ActionHash, mut visit: impl FnMut(AgentActivity) -> ExternResult<ControlFlow<()>>) -> ExternResult<()> {
     let mut from = Some(chain_top.clone());
     let mut count = FIRST_READ;
     while let Some(top) = from.take() {
-        let filter = ChainFilter::take(top, count);
-        let read = must_get_agent_activity(author.clone(), if entries { filter.include_cached_entries() } else { filter })?;
+        let read = must_get_agent_activity(author.clone(), ChainFilter::take(top, count))?;
         let reached_genesis = read.len() < count as usize;
         for item in read {
-            let action = &item.action.hashed.content;
-            if action.timestamp() < since {
-                return Ok(walked);
+            from = item.action.hashed.content.prev_action().cloned();
+            if visit(item)?.is_break() {
+                return Ok(());
             }
-            from = action.prev_action().cloned();
-            walked.push(item);
         }
         if reached_genesis {
             break;
         }
         count = (count * 2).min(LONGEST_READ);
     }
+    Ok(())
+}
+
+/// `author`'s actions from `chain_top` back to the first at or after
+/// `since`, newest first -- none if the chain hadn't reached `since` yet.
+/// Sound because an action is never older than the one before it
+/// (Holochain's own validation), so the first one before `since` ends it.
+pub fn activity_since(author: &AgentPubKey, chain_top: &ActionHash, since: Timestamp) -> ExternResult<Vec<AgentActivity>> {
+    let mut walked = Vec::new();
+    walk_back(author, chain_top, |item| {
+        if item.action.hashed.content.timestamp() < since {
+            return Ok(ControlFlow::Break(()));
+        }
+        walked.push(item);
+        Ok(ControlFlow::Continue(()))
+    })?;
     Ok(walked)
+}
+
+/// Whether `action` created an entry of one of `types`.
+pub fn creates_one_of(action: &Action, types: &[ScopedEntryDefIndex]) -> bool {
+    let ActionData::Create(create) = &action.data else { return false };
+    let EntryType::App(def) = &create.entry_type else { return false };
+    types.iter().any(|t| t.zome_index == def.zome_index && t.zome_type == def.entry_index)
+}
+
+/// Whether `author` ever created an entry of one of `types`, from
+/// `chain_top` back -- the "only once, ever" rules' question. Reads the
+/// actions alone: the entry type is on each, so no entry is fetched.
+pub fn ever_created(author: &AgentPubKey, chain_top: &ActionHash, types: &[ScopedEntryDefIndex]) -> ExternResult<bool> {
+    let mut found = false;
+    walk_back(author, chain_top, |item| {
+        found = creates_one_of(&item.action.hashed.content, types);
+        Ok(if found { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+    })?;
+    Ok(found)
 }
 
 /// The entries of the given types that `author` created within `filter`,
 /// newest first, as bytes to decode.
 pub fn entries_created(author: &AgentPubKey, filter: ChainFilter, types: &[ScopedEntryDefIndex]) -> ExternResult<Vec<SerializedBytes>> {
-    created_of(must_get_agent_activity(author.clone(), filter.include_cached_entries())?, types)
+    created_of(must_get_agent_activity(author.clone(), filter)?, types)
 }
 
 /// The entries of the given types created among `activity`, as bytes.
 fn created_of(activity: Vec<AgentActivity>, types: &[ScopedEntryDefIndex]) -> ExternResult<Vec<SerializedBytes>> {
     let mut entries = Vec::new();
     for item in activity {
-        let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
-        let EntryType::App(def) = &create.entry_type else { continue };
-        if !types.iter().any(|t| t.zome_index == def.zome_index && t.zome_type == def.entry_index) {
+        let action = &item.action.hashed.content;
+        if !creates_one_of(action, types) {
             continue;
         }
-        if let Entry::App(bytes) = entry_of(&item, &create.entry_hash)? {
+        let Some(entry_hash) = action.entry_hash() else { continue };
+        if let Entry::App(bytes) = entry_of(&item, entry_hash)? {
             entries.push(SerializedBytes::from(bytes));
         }
     }
@@ -82,7 +112,7 @@ pub fn entry_of(item: &AgentActivity, entry_hash: &EntryHash) -> ExternResult<En
 /// The same, from `chain_top` back to the first action at or after `since`
 /// -- none if the chain hadn't reached `since` yet.
 pub fn entries_since(author: &AgentPubKey, chain_top: &ActionHash, since: Timestamp, types: &[ScopedEntryDefIndex]) -> ExternResult<Vec<SerializedBytes>> {
-    created_of(activity_since(author, chain_top, since, true)?, types)
+    created_of(activity_since(author, chain_top, since)?, types)
 }
 
 /// Whether `author` created an entry of `entry_type` matching `matches`
@@ -143,28 +173,28 @@ mod tests {
     fn walks_back_to_the_first_action_at_or_after_the_time() {
         let (actions, _) = chain(500);
         let top = actions[499].hashed.hash.clone();
-        assert_eq!(seqs(&activity_since(&author(), &top, at(400), false).unwrap()), (400..500).rev().collect::<Vec<_>>());
-        assert_eq!(seqs(&activity_since(&author(), &top, at(499), false).unwrap()), vec![499]);
+        assert_eq!(seqs(&activity_since(&author(), &top, at(400)).unwrap()), (400..500).rev().collect::<Vec<_>>());
+        assert_eq!(seqs(&activity_since(&author(), &top, at(499)).unwrap()), vec![499]);
     }
 
     #[test]
     fn nothing_when_the_chain_had_not_reached_the_time() {
         let (actions, _) = chain(50);
-        assert!(activity_since(&author(), &actions[49].hashed.hash, at(60), false).unwrap().is_empty());
+        assert!(activity_since(&author(), &actions[49].hashed.hash, at(60)).unwrap().is_empty());
     }
 
     #[test]
     fn stops_at_genesis() {
         let (actions, _) = chain(100);
-        assert_eq!(activity_since(&author(), &actions[99].hashed.hash, at(0), false).unwrap().len(), 100);
+        assert_eq!(activity_since(&author(), &actions[99].hashed.hash, at(0)).unwrap().len(), 100);
         let (actions, _) = chain(1);
-        assert_eq!(seqs(&activity_since(&author(), &actions[0].hashed.hash, at(0), false).unwrap()), vec![0]);
+        assert_eq!(seqs(&activity_since(&author(), &actions[0].hashed.hash, at(0)).unwrap()), vec![0]);
     }
 
     #[test]
     fn reads_what_happened_since_the_time_not_the_whole_chain() {
         let (actions, read) = chain(20_000);
-        let walked = activity_since(&author(), &actions[19_999].hashed.hash, at(19_900), false).unwrap();
+        let walked = activity_since(&author(), &actions[19_999].hashed.hash, at(19_900)).unwrap();
         assert_eq!(walked.len(), 100);
         // 32 + 64 + 128: three reads, under twice what was needed plus the first.
         assert_eq!(read.load(Ordering::SeqCst), 224);

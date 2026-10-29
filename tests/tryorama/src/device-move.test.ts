@@ -52,7 +52,7 @@ await runScenario(async (scenario) => {
   const checkIn = () => call(neighbour.cells[0], "attestation")("check_in_at_store", { order_ref: delivery, code: "000000" });
   await sync();
   await assert.rejects(checkIn(), /Only the order's driver/, "other devices reach the store's conductor");
-  assert.deepEqual(await grantTags(), ["codes", "recv_remote_signal", "recv_remote_signal"], "a device set up at init holds its grants");
+  assert.deepEqual(await grantTags(), ["codes", "live", "recv_remote_signal", "recv_remote_signal"], "a device set up at init holds its grants");
 
   // ===== The old phone: ready only once the network holds all it wrote =====
   const before = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
@@ -79,7 +79,7 @@ await runScenario(async (scenario) => {
   await prepare();
   // Written again, each grant is the same entry as the old one, so the old
   // grant's action counts again too.
-  assert.deepEqual([...new Set(await grantTags())], ["codes", "recv_remote_signal"], "the new device writes its own");
+  assert.deepEqual([...new Set(await grantTags())], ["codes", "live", "recv_remote_signal"], "the new device writes its own");
   const prepared = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);
   await prepare();
   const again = await retryingCaller(merchant.cells[0], "account")<MoveReadiness>("ready_to_move", null);

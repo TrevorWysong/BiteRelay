@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Bike, Link2, MapPin, Power, Route, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOpenOrdersNear, submitBid, withdrawBid, getMyActiveDeliveries, getOrderPrivateDetails, dropOrder, commitToOrder, sendLocationUpdate } from "../../holochain/zomes/dispatch";
+import { getOpenOrdersNear, submitBid, withdrawBid, getMyActiveDeliveries, getOrderPrivateDetails, dropOrder, commitToOrder } from "../../holochain/zomes/dispatch";
+import { sendLocationUpdate } from "../../holochain/live";
 import { Sheet } from "../../components/Sheet";
 import { decodeEntry, actionHash, bytesToHex, bytesEqual, hexToBytes } from "../../holochain/decode";
 import { getCatalog } from "../../holochain/zomes/catalog";
@@ -43,10 +44,9 @@ const DROPOFF_PREFERENCE_LABEL: Record<DeliveryOrder["dropoff_preference"], Mess
 };
 
 // Live location is only meaningful once the driver has committed and is
-// moving on this delivery. 8s matches the "a few seconds, not sub-second"
-// cadence named in tracking.rs's own doc comment -- fast enough to feel
-// live, far below anything that would stress signal delivery the way a
-// tighter interval could.
+// moving on this delivery. Every 8s: a few seconds, not sub-second -- fast
+// enough to feel live, far below anything that would stress signal
+// delivery the way a tighter interval could.
 const TRACKED_STATUSES: DeliveryStatus[] = ["DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore", "PickedUp"];
 /// Before the driver has the food -- when they can still drop a delivery.
 const BEFORE_PICKUP: DeliveryStatus[] = ["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"];
@@ -58,10 +58,9 @@ const ON_THE_WAY: DeliveryStatus[] = ["DriverEnRouteToMerchant", "MerchantConfir
 const autoBidOn = new Set<string>();
 const LOCATION_BROADCAST_MS = 8000;
 
-/// Browser geolocation, throttled client-side (there's no way to
-/// deterministically rate-limit a signal on the backend -- see
-/// tracking.rs) and silently inert if the API is unavailable or the user
-/// denies permission. Named, not hidden: a driver who never grants
+/// Browser geolocation, throttled client-side (nothing on the network can
+/// rate-limit a direct signal -- see holochain/live.ts) and silently inert
+/// if the API is unavailable or the user denies permission. Named, not hidden: a driver who never grants
 /// location access simply never appears on the customer's live map --
 /// everything else about the delivery still works.
 function useLocationBroadcast(orderRef: Uint8Array, active: boolean) {
@@ -212,7 +211,7 @@ export function DriverDashboard() {
     }
   }
 
-  // Order batching (architecture plan §7's named v2 gap) -- a client-side
+  // Order batching -- a client-side
   // convenience sort, not real route optimization: there's no way to
   // deterministically validate "is this a good route" inside a zome, and
   // that remains a deliberately open gap. Two zero-fetch signals, both

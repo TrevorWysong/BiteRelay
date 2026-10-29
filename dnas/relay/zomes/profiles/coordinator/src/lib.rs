@@ -4,7 +4,7 @@
 
 use hdk::prelude::*;
 use profiles_integrity::*;
-use relay_coordinator_support::{guest, open, resolve_latest, resolve_links_to_records_with_original, seal};
+use relay_coordinator_support::{guest, open, resolve_latest, resolve_links_to_records_with_original, resolve_version, seal, update_version, written};
 
 /// A profile as the person's own client sends it: the phone in the clear,
 /// sealed before it's stored (`Profile::sealed_phone`).
@@ -50,8 +50,7 @@ pub fn create_profile(input: ProfileInput) -> ExternResult<Record> {
     let action_hash = create_entry(&EntryTypes::Profile(input.into_profile()?))?;
     let agent = agent_info()?.agent_initial_pubkey;
     create_link(agent, action_hash.clone(), LinkTypes::AgentToProfile, ())?;
-    let record = get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back created profile"))?;
+    let record = written(action_hash)?;
     Ok(record)
 }
 
@@ -73,10 +72,9 @@ pub fn get_profile_for_agent(agent: AgentPubKey) -> ExternResult<Option<Record>>
 
 #[hdk_extern]
 pub fn update_profile(input: UpdateProfileInput) -> ExternResult<Record> {
-    let current = resolve_latest(input.original_action)?;
-    let updated_hash = update_entry(current.action_address().clone(), &EntryTypes::Profile(input.updated_profile.into_profile()?))?;
-    let record = get(updated_hash, GetOptions::local())?
-        .ok_or(guest("could not read back updated profile"))?;
+    let current = resolve_version(input.original_action)?;
+    let updated_hash = update_version(&current, &EntryTypes::Profile(input.updated_profile.into_profile()?), LinkTypes::Version)?;
+    let record = written(updated_hash)?;
     Ok(record)
 }
 
@@ -115,8 +113,7 @@ pub fn register_provider_credential(credential: ProviderCredential) -> ExternRes
     let profile_action = credential.profile_action.clone();
     let action_hash = create_entry(&EntryTypes::ProviderCredential(credential))?;
     create_link(profile_action, action_hash.clone(), LinkTypes::ProfileToProviderCredential, ())?;
-    let record = get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back provider credential"))?;
+    let record = written(action_hash)?;
     Ok(record)
 }
 
@@ -205,8 +202,7 @@ pub fn save_address(address: AddressDetails) -> ExternResult<Record> {
     let me = agent_info()?.agent_initial_pubkey;
     let action_hash = create_entry(&EntryTypes::SavedAddress(sealed_address(&address)?))?;
     create_link(me, action_hash.clone(), LinkTypes::OwnerToSavedAddress, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back saved address"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -217,10 +213,9 @@ pub struct UpdateSavedAddressInput {
 
 #[hdk_extern]
 pub fn update_saved_address(input: UpdateSavedAddressInput) -> ExternResult<Record> {
-    let record = resolve_latest(input.original_action)?;
-    let updated = update_entry(record.action_address().clone(), &EntryTypes::SavedAddress(sealed_address(&input.address)?))?;
-    get(updated, GetOptions::local())?
-        .ok_or(guest("could not read back updated saved address"))
+    let current = resolve_version(input.original_action)?;
+    let updated = update_version(&current, &EntryTypes::SavedAddress(sealed_address(&input.address)?), LinkTypes::Version)?;
+    written(updated)
 }
 
 /// Finds and deletes the specific link for this `original_action` among

@@ -16,7 +16,7 @@
 //! doc comment for why.
 
 use hdk::prelude::*;
-use relay_coordinator_support::{guest, original_action_of, resolve_latest};
+use relay_coordinator_support::{decode_or, guest, original_action_of, resolve_latest, written};
 use std::collections::BTreeMap;
 use reputation_integrity::*;
 
@@ -121,8 +121,7 @@ pub fn record_event(input: RecordEventInput) -> ExternResult<Record> {
     let event = ReputationEvent { target: input.target, counterparty, order_ref: input.order_ref, basis: input.basis, kind: input.kind, recorded_at: sys_time()? };
     let action_hash = create_entry(&EntryTypes::ReputationEvent(event))?;
     create_link(base, action_hash.clone(), event_link, tag)?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back reputation event"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -289,12 +288,9 @@ pub struct SubmitReviewInput {
 /// review and one driver review per order).
 fn my_reviews_for_order(order_original_action: &ActionHash) -> ExternResult<Vec<(Record, Review)>> {
     let me = agent_info()?.agent_initial_pubkey;
-    let links = get_links(LinkQuery::try_new(order_original_action.clone(), LinkTypes::OrderToReview)?, GetStrategy::default())?;
+    let links = get_links(LinkQuery::try_new(order_original_action.clone(), LinkTypes::OrderToReview)?.author(me), GetStrategy::default())?;
     let mut out = Vec::new();
     for link in links {
-        if link.author != me {
-            continue;
-        }
         let Some(hash) = link.target.into_action_hash() else { continue };
         let Some(record) = get(hash, GetOptions::default())? else { continue };
         if let Ok(Some(review)) = record.entry().to_app_option::<Review>() {
@@ -339,8 +335,7 @@ pub fn submit_review(input: SubmitReviewInput) -> ExternResult<Record> {
     let (base, review_link) = review_links(&input.target);
     create_link(base, action_hash.clone(), review_link, review_tag(input.rating, &input.order_original_action))?;
     create_link(input.order_original_action, action_hash.clone(), LinkTypes::OrderToReview, ())?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back review"))
+    written(action_hash)
 }
 
 /// What the caller has already rated on this order -- lets an order screen
@@ -369,17 +364,11 @@ pub struct ReviewsPage {
 
 /// One newest-first page of the reviews linked from `base`, keeping only
 /// those `belongs` accepts (link validation already guarantees it; checking
-/// again keeps a list honest even if that ever regressed). `before` is
-/// inclusive (`<=`, the mirror of `after`'s `>=`, see `next_page_cursor`),
-/// so the next cursor steps one microsecond back from the oldest review
-/// included.
+/// again keeps a list honest even if that ever regressed).
 fn review_page(base: AnyLinkableHash, link_type: LinkTypes, before: Option<Timestamp>, belongs: impl Fn(&Record) -> bool) -> ExternResult<ReviewsPage> {
     let mut query = LinkQuery::try_new(base, link_type)?;
     query.before = before;
-    let mut links = get_links(query, GetStrategy::default())?;
-    links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
-    let next_before = (links.len() > REVIEW_PAGE_SIZE).then(|| Timestamp::from_micros(links[REVIEW_PAGE_SIZE - 1].timestamp.as_micros() - 1));
-    links.truncate(REVIEW_PAGE_SIZE);
+    let (links, next_before) = relay_coordinator_support::links::newest_first_page(query, REVIEW_PAGE_SIZE)?;
     let mut reviews = Vec::with_capacity(links.len());
     for link in links {
         let Some(action_hash) = link.target.into_action_hash() else { continue };
@@ -456,11 +445,12 @@ pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> 
     if input.rating < 1 || input.rating > 5 {
         return Err(guest("Choose between 1 and 5 stars."));
     }
-    // Once per item per order -- validation's rule, told first.
-    let mine = query(ChainQueryFilter::new().entry_type(EntryType::try_from(UnitEntryTypes::ItemReview)?).include_entries(true))?;
-    let reviewed = mine.iter().filter_map(|r| r.entry().to_app_option::<ItemReview>().ok().flatten()).any(|earlier| {
-        earlier.item_ref == input.item_ref && original_action_of(earlier.order_ref).is_ok_and(|order| order == input.order_original_action)
-    });
+    // Once per item per order -- validation's rule, told first, read back as
+    // far as it reads: to when the order was placed.
+    let placed = get(input.order_original_action.clone(), GetOptions::default())?.ok_or(guest("order not found"))?.action().timestamp();
+    let reviewed = relay_coordinator_support::chain::mine(&[EntryType::try_from(UnitEntryTypes::ItemReview)?]).since(placed).any(|r| {
+        decode_or::<ItemReview>(r).is_some_and(|earlier| earlier.item_ref == input.item_ref && original_action_of(earlier.order_ref).is_ok_and(|order| order == input.order_original_action))
+    })?;
     if reviewed {
         return Err(guest("You've already rated this item from this order."));
     }
@@ -477,8 +467,7 @@ pub fn submit_item_review(input: SubmitItemReviewInput) -> ExternResult<Record> 
     };
     let action_hash = create_entry(&EntryTypes::ItemReview(review))?;
     create_link(input.item_ref, action_hash.clone(), LinkTypes::ItemToReview, review_tag(input.rating, &input.order_original_action))?;
-    get(action_hash, GetOptions::local())?
-        .ok_or(guest("could not read back item review"))
+    written(action_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

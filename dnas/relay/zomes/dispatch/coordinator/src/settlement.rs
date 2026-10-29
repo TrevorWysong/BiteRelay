@@ -15,6 +15,7 @@ use dispatch_integrity::*;
 use crate::stores::my_stores;
 use hdk::prelude::*;
 use dispatch_integrity::lineage;
+use relay_coordinator_support::chain::mine;
 use relay_coordinator_support::{decode_or, guest, original_action_of};
 
 fn ledger<I: Serialize + std::fmt::Debug, O: serde::de::DeserializeOwned + std::fmt::Debug>(function: &str, input: I) -> ExternResult<O> {
@@ -57,6 +58,7 @@ pub(crate) struct HoldWire {
     pub hold: ActionHash,
     pub payer: AgentPubKey,
     pub purpose: HoldPurpose,
+    pub held_at: Timestamp,
     pub shares: Vec<ShareWire>,
 }
 
@@ -223,10 +225,16 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
 
 // --- deciding ---
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct DecideWire {
     hold: ActionHash,
     portion: Portion,
+}
+
+#[derive(Serialize, Debug)]
+struct MyDecisionsWire {
+    holds: Vec<ActionHash>,
+    since: Timestamp,
 }
 
 #[derive(Serialize, Debug)]
@@ -384,14 +392,22 @@ pub(crate) fn settle(order: &ActionHash) -> ExternResult<u32> {
     // The store makes its decisions first -- in a call of its own, so one
     // that doesn't validate yet can't undo the rest.
     crate::issues::decide_as_store(&order);
+    // What the caller has decided already, read once for every part; an
+    // order with nothing left to decide is done before its facts are read.
+    let held: Vec<&HoldWire> = holds.iter().filter(|h| mine(h)).collect();
+    let since = held.iter().map(|h| h.held_at).min().unwrap_or_else(|| Timestamp::from_micros(0));
+    let already: Vec<DecideWire> = ledger("my_decisions", MyDecisionsWire { holds: held.iter().map(|h| h.hold.clone()).collect(), since })?;
+    let open = |hold: &HoldWire, share: &ShareWire| (share.recipient == me || hold.payer == me) && !already.contains(&DecideWire { hold: hold.hold.clone(), portion: share.portion });
+    if !held.iter().any(|h| h.shares.iter().any(|s| open(h, s))) {
+        return Ok(0);
+    }
     let Some(facts) = facts(&order)? else { return Ok(0) };
     let mut decided = 0;
     // Payers whose money this gave back, to tell them it's theirs to collect.
     let mut returned: Vec<AgentPubKey> = Vec::new();
-    for hold in holds.iter().filter(|h| mine(h)) {
+    for hold in held {
         for share in &hold.shares {
-            let already: bool = ledger("have_i_decided", DecideWire { hold: hold.hold.clone(), portion: share.portion })?;
-            if already {
+            if !open(hold, share) {
                 continue;
             }
             let decision = match decide(&me, hold, share, &facts) {
@@ -431,21 +447,16 @@ pub fn settle_order(order_original_action: ActionHash) -> ExternResult<u32> {
 /// Orders the caller might have money to settle on, from the last `days`:
 /// those they placed, bid on, or received at one of their stores.
 fn candidates(days: i64) -> ExternResult<Vec<ActionHash>> {
-    let since = sys_time()?.as_micros() - days * 86_400_000_000;
+    let since = Timestamp::from_micros(sys_time()?.as_micros() - days * 86_400_000_000);
+    let types = [EntryType::try_from(UnitEntryTypes::DeliveryOrder)?, EntryType::try_from(UnitEntryTypes::PickupOrder)?, EntryType::try_from(UnitEntryTypes::Bid)?];
     let mut orders: Vec<ActionHash> = Vec::new();
-    for unit in [UnitEntryTypes::DeliveryOrder, UnitEntryTypes::PickupOrder, UnitEntryTypes::Bid] {
-        let filter = ChainQueryFilter::new().entry_type(EntryType::try_from(unit)?).include_entries(true);
-        for record in query(filter)? {
-            if record.action().timestamp().as_micros() < since {
-                continue;
-            }
-            let order = match decode_or::<Bid>(&record) {
-                Some(bid) => original_action_of(bid.order_ref).ok(),
-                None if matches!(record.action().data, ActionData::Create(_)) => Some(record.action_address().clone()),
-                None => None,
-            };
-            orders.extend(order);
-        }
+    for record in mine(&types).since(since).records()? {
+        let order = match decode_or::<Bid>(&record) {
+            Some(bid) => original_action_of(bid.order_ref).ok(),
+            None if matches!(record.action().data, ActionData::Create(_)) => Some(record.action_address().clone()),
+            None => None,
+        };
+        orders.extend(order);
     }
     let today = history_day(sys_time()?);
     for store in my_stores()? {

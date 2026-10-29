@@ -15,6 +15,7 @@ import { OrderStatusTimeline, StatusBadge } from "../../components/OrderStatus";
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRating, StarRatingInput } from "../../components/StarRating";
 import { ChatPanel } from "../../components/ChatPanel";
+import { NetworkReach } from "../../components/NetworkReach";
 import { LiveMap } from "../../components/LiveMap";
 import { WaitingForStore } from "../../components/WaitingForStore";
 import { formatCatalogAddress, formatCents, formatEta, shortAgentId, formatClockTime, formatDeadline } from "../../lib/format";
@@ -22,7 +23,7 @@ import { received } from "../../lib/orderEntries";
 import { LateOrder } from "../../components/LateOrder";
 import { fadeSlideUp, staggerContainer } from "../../lib/motion";
 import { describeError } from "../../lib/errors";
-import { useLocalSignal, useResource } from "../../lib/useResource";
+import { useLiveSignal, useResource } from "../../lib/useResource";
 import type { Bid, DeliveryOrder, DeliveryStatus, GeoPoint, InHand, Leg, LocalSignal, MerchantCatalog, Profile, Review, WarrantSummary } from "../../holochain/types";
 import { carryRefusal, customerRefusal, describeLoad } from "../../lib/driverLoad";
 import { useTerms } from "../../store/network";
@@ -34,7 +35,7 @@ import { useT, type MessageKey } from "../../i18n";
 import { HandoverCode } from "../../components/HandoverCode";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
 
-// Chat is only valid once a driver is assigned (send_chat_message requires
+// Chat is only valid once a driver is assigned (live_counterpart needs
 // order.accepted_bid to exist) and before the delivery's own terminal state.
 const ACTIVE_DELIVERY_STATUSES: DeliveryStatus[] = ["BidAccepted", "MerchantConfirmed", "DriverEnRouteToMerchant", "PickedUp"];
 
@@ -58,8 +59,8 @@ interface DriverStats {
 
 /// The customer is the one who accepts a bid, so this is the one place
 /// that choice should actually be informed by the bidder's track record,
-/// not just price/ETA/warrants -- see the architecture plan's discussion
-/// of why the restaurant doesn't get a separate veto: shared visibility
+/// not just price/ETA/warrants. The restaurant doesn't get a separate
+/// veto: shared visibility
 /// into the same trust signal covers that interest too. Driver-scoped
 /// only: a bidder who also runs a restaurant is judged on their deliveries
 /// here, never their store's food. Also resolves a real display name
@@ -240,7 +241,7 @@ export function OrderDetail() {
 
   // The driver's live position is pushed (signal-only, never stored), not
   // read -- a genuine subscription, so it stays an effect.
-  useLocalSignal((signal) => {
+  useLiveSignal((signal) => {
     if (hash && "LocationUpdate" in signal && bytesEqual(signal.LocationUpdate.order_ref, hexToBytes(hash))) {
       setDriverLocation({ lat: signal.LocationUpdate.lat, lon: signal.LocationUpdate.lon });
     }
@@ -385,6 +386,7 @@ export function OrderDetail() {
               {t("order.prepAfterDriver", { minutes: order.prep_minutes })}
             </p>
           )}
+          {order.status === "Placed" && <NetworkReach action={orderRef} />}
         </Card>
       </motion.div>
 

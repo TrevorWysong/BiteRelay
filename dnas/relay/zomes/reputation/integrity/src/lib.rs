@@ -71,7 +71,7 @@ pub enum ReputationEventKind {
     OfferLapsed,
 }
 
-/// Append-only by design (see architecture plan §2): a single mutable
+/// Append-only by design: a single mutable
 /// "score" entry would invite concurrent-update races when two orders
 /// complete near-simultaneously. "Score" is always a derived read over these
 /// events, never stored.
@@ -167,6 +167,10 @@ pub enum EntryTypes {
 /// roles on every read. A store's links hang off its catalog's original action instead.
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     StoreToEvent,
     DriverToEvent,
     CustomerToEvent,
@@ -181,6 +185,8 @@ pub enum LinkTypes {
     ItemToReview,
 }
 
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
+
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
@@ -192,6 +198,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         // Reputation is an append-only record.
         Checked::Update { .. } => Ok(ValidateCallbackResult::Invalid("reputation entries can't be changed".into())),
         Checked::Delete { .. } => Ok(ValidateCallbackResult::Invalid("reputation entries can't be deleted".into())),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type, action } => links::validate_create_link(link_type, &action.base_address, &action.target_address, &action.tag, action.author()),
         Checked::DeleteLink { .. } => links::validate_delete_link(),
         Checked::Other => Ok(ValidateCallbackResult::Valid),
@@ -331,8 +339,6 @@ fn reviewed_before<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
     }
     Ok(false)
 }
-
-
 
 /// Only the order's requester may review, only once the order is genuinely
 /// `Delivered`/`PickedUp`, and only about a target that was actually part

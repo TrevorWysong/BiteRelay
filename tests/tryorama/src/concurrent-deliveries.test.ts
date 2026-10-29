@@ -1,6 +1,5 @@
 // Proves the premise behind the driver dashboard's multi-delivery support
-// (architecture plan §7's "offer an active driver a 3rd delivery on their
-// route" gap): nothing in the backend actually restricts a single driver
+// (offering an active driver another delivery on their route): nothing in the backend actually restricts a single driver
 // to one accepted order at a time -- confirmed here empirically, against a
 // real conductor, rather than just read off validate_new_bid/accept_bid's
 // source. The client-side MAX_CONCURRENT_DELIVERIES cap is a deliberate UX

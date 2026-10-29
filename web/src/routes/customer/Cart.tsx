@@ -298,8 +298,8 @@ export function Cart() {
   const tipCents = tipPercent !== null ? Math.round((cart.total() * tipPercent) / 100) : toMinorUnits(Number(customTip || 0));
   const maxFeeCents = feePreset !== null ? feePreset : toMinorUnits(Number(customFee || 0));
   // Worst case (a winning bid right at the cap): mirrors the settlement
-  // formula in dispatch::settle_delivery_fee exactly (architecture plan
-  // §12) -- merchant_share floor-rounded, customer absorbs the remainder.
+  // split in dispatch_types::split_delivery_fee exactly -- the store's share
+  // floor-rounded, the customer's the remainder.
   const customerFeeShareCents = maxFeeCents - Math.floor((maxFeeCents * subsidyPercent) / 100);
   // Re-evaluated against the *current* cart every render, not just at the
   // moment the code was applied -- a requirement can stop being met (e.g.

@@ -9,18 +9,10 @@ use catalog_types::LISTING_TAG_PREFIX;
 use ledger_types::{LedgerEntry, LedgerKind};
 use relay_integrity_support::{decode, invalid, linked_record, path_hash, require, valid};
 
-/// Mirrors each coordinator anchor path (catalog/coordinator lib.rs, bags.rs).
+/// The anchor a store is listed under, for the geohash cell it's in --
+/// mirrored by the coordinator's `geohash_anchor_path`.
 pub fn catalog_geohash_path(geohash: &str) -> String {
     format!("catalog_geohash.{geohash}")
-}
-pub fn promo_path(catalog_ref: &ActionHash) -> String {
-    format!("catalog_promo.{catalog_ref}")
-}
-pub fn bag_path(catalog_ref: &ActionHash) -> String {
-    format!("catalog_bag.{catalog_ref}")
-}
-pub fn claim_path(bag_ref: &ActionHash) -> String {
-    format!("bag_claim.{bag_ref}")
 }
 
 pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkData>) -> ExternResult<ValidateCallbackResult> {
@@ -36,6 +28,8 @@ pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkD
     let Some(record) = linked_record(target)? else { return invalid("catalog links must target a record") };
     let entry_author = record.action().author();
     match link_type {
+        // Validated as a version (`validate`).
+        LinkTypes::Version => invalid("a version link is validated as one"),
         LinkTypes::OwnerToCatalog => {
             let Some(catalog) = decode::<MerchantCatalog>(&record) else { return invalid("target is not a MerchantCatalog") };
             require(author == &catalog.owner && base == &AnyLinkableHash::from(catalog.owner.clone()), "a store is linked from its owner, by its owner")
@@ -67,8 +61,8 @@ pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkD
         LinkTypes::CatalogToPromoCode => {
             let Some(promo) = decode::<PromoCode>(&record) else { return invalid("target is not a PromoCode") };
             require(
-                author == entry_author && base == &path_hash(promo_path(&promo.catalog_ref))?,
-                "a promo code may only be linked under its own catalog's anchor, by its author",
+                author == entry_author && base == &AnyLinkableHash::from(promo.catalog_ref),
+                "a promo code may only be linked under its own catalog, by its author",
             )
         }
         LinkTypes::CatalogToLivePromo => {
@@ -81,14 +75,14 @@ pub fn validate_create_link(link_type: LinkTypes, link: &TypedAction<CreateLinkD
         LinkTypes::CatalogToBag => {
             let Some(bag) = decode::<GoodieBag>(&record) else { return invalid("target is not a GoodieBag") };
             require(
-                author == entry_author && base == &path_hash(bag_path(&bag.catalog_ref))?,
-                "a goodie bag may only be linked under its own catalog's anchor, by its author",
+                author == entry_author && base == &AnyLinkableHash::from(bag.catalog_ref),
+                "a goodie bag may only be linked under its own catalog, by its author",
             )
         }
         LinkTypes::BagToClaim | LinkTypes::CustomerToClaim => {
             let Some(claim) = decode::<BagClaim>(&record) else { return invalid("target is not a BagClaim") };
             let expected_base: AnyLinkableHash = match link_type {
-                LinkTypes::BagToClaim => path_hash(claim_path(&claim.bag_ref))?,
+                LinkTypes::BagToClaim => claim.bag_ref.clone().into(),
                 _ => claim.customer.clone().into(),
             };
             require(
@@ -133,7 +127,7 @@ fn validate_listing(link: &TypedAction<CreateLinkData>, record: &Record) -> Exte
     // other link with this tag.
     let staked_at = stake_record.action().timestamp();
     let Some(chain_top) = link.prev_action() else { return invalid("a listing can't open a chain") };
-    let earlier = relay_integrity_support::chain::activity_since(link.author(), chain_top, staked_at, false)?;
+    let earlier = relay_integrity_support::chain::activity_since(link.author(), chain_top, staked_at)?;
     let reused = earlier.iter().any(|item| matches!(&item.action.hashed.content.data, ActionData::CreateLink(other) if other.tag == link.tag));
     if reused {
         return invalid("a stake backs one listing");

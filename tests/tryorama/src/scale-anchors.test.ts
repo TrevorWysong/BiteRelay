@@ -1,4 +1,4 @@
-// Proves the time-bucketed anchor rewrite (architecture plan §9.2) didn't
+// Proves time-bucketed open-order anchors don't
 // break ordinary discovery: an order published *now* still lands in the
 // *current* bucket and is still found by get_open_orders_near. This is deliberately a modest, 2-conductor test --
 // it proves current-bucket read/write correctness live, not the fan-out cap

@@ -23,7 +23,7 @@
 
 pub use account_types::*;
 use hdi::prelude::*;
-use relay_integrity_support::chain::{entries_created, wrote_since};
+use relay_integrity_support::chain::{ever_created, wrote_since};
 use relay_integrity_support::{classify, decode, first_problem, invalid, linked_record, require, sealed_chunks_problem, valid, Checked};
 
 #[hdk_entry_types]
@@ -39,6 +39,10 @@ pub enum EntryTypes {
 
 #[hdk_link_types]
 pub enum LinkTypes {
+    /// An entry's update, base = its original, tagged with how deep it is --
+    /// how its current version is found in one read
+    /// (`relay_integrity_support::versions`). First in every zome.
+    Version,
     /// An account's plans, base = the account -- its latest is current.
     AccountToPlan,
     /// A plan, base = its recovery phrase's key -- how the phrase finds the
@@ -68,6 +72,8 @@ pub enum LinkTypes {
     AccountToArrival,
 }
 
+const _: () = assert!(LinkTypes::Version as u8 == relay_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
+
 #[hdk_extern]
 pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
     match classify(op.flattened::<EntryTypes, LinkTypes>()?)? {
@@ -81,6 +87,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         },
         Checked::Update { .. } => invalid("account entries can't be changed: publish a new plan instead"),
         Checked::Delete { .. } => invalid("account entries can't be deleted"),
+        Checked::CreateLink { link_type: LinkTypes::Version, action } => relay_integrity_support::versions::validate_version_link(&action.base_address, &action.target_address, &action.tag, action.author()),
+        Checked::DeleteLink { link_type: LinkTypes::Version, .. } => Ok(ValidateCallbackResult::Invalid("an entry's versions stay linked".into())),
         Checked::CreateLink { link_type, action } => validate_create_link(link_type, &action.base_address, &action.target_address, action.author()),
         Checked::DeleteLink { .. } => invalid("account links can't be deleted"),
         Checked::Other => valid(),
@@ -137,7 +145,7 @@ fn validate_succession(succession: &Succession, author: &AgentPubKey, prev_actio
     if &succession.predecessor == author {
         return invalid("a key takes over another account, not its own");
     }
-    if !entries_created(author, ChainFilter::new(prev_action.clone()), &[entry_type(UnitEntryTypes::Succession)?])?.is_empty() {
+    if ever_created(author, prev_action, &[entry_type(UnitEntryTypes::Succession)?])? {
         return invalid("a key takes over one account");
     }
     let predecessor = &succession.predecessor;
@@ -241,7 +249,7 @@ fn validate_arrival(arrival: &Arrival, author: &AgentPubKey, prev_action: Option
         return invalid("an account arrives from another network");
     }
     require(
-        entries_created(author, ChainFilter::new(prev_action.clone()), &[entry_type(UnitEntryTypes::Arrival)?])?.is_empty(),
+        !ever_created(author, prev_action, &[entry_type(UnitEntryTypes::Arrival)?])?,
         "an account arrives once",
     )
 }
@@ -254,6 +262,8 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
         return invalid("an account link is made by the author of the entry it indexes");
     }
     let bases: Vec<AnyLinkableHash> = match link_type {
+        // Validated as a version, above.
+        LinkTypes::Version => return invalid("a version link is validated as one"),
         LinkTypes::AccountToPlan => decode::<RecoveryPlan>(&record).map(|_| vec![author.clone().into()]).unwrap_or_default(),
         LinkTypes::PhraseKeyToPlan => decode::<RecoveryPlan>(&record).and_then(|p| p.phrase_key).map(|k| vec![k.into()]).unwrap_or_default(),
         LinkTypes::GuardianToPlan => decode::<RecoveryPlan>(&record).map(|p| p.guardians.into_iter().map(Into::into).collect()).unwrap_or_default(),

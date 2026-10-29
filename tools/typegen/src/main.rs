@@ -83,6 +83,8 @@ const SOURCES: &[Source] = &[
     only("dnas/relay/zomes/dispatch/coordinator/src/receipts.rs", &["Receipt", "ReceiptLine", "ReceiptPayment"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/deliveries.rs", &["OrderTiming", "StoreStep", "StoreStepDue"]),
     only("dnas/relay/zomes/dispatch/coordinator/src/matching.rs", &["RankedBid"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/live.rs", &["LiveCounterpart"]),
+    only("dnas/relay/zomes/dispatch/coordinator/src/reach.rs", &["NetworkReach"]),
     only("dnas/relay/zomes/reputation/coordinator/src/lib.rs", &["ReputationSummary", "RatingSummary"]),
     renamed("dnas/relay/zomes/dispatch/coordinator/src/signals.rs", &["LocalSignal", "OrderChange", "OrderRole"], &[("LocalSignal", "DispatchLocalSignal")]),
     renamed("dnas/relay/zomes/catalog/coordinator/src/signals.rs", &["LocalSignal"], &[("LocalSignal", "CatalogLocalSignal")]),
