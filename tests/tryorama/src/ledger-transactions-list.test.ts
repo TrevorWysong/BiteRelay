@@ -86,7 +86,11 @@ await runScenario(async (scenario) => {
   // but the customer's share again in case it kept them waiting -- and
   // collected back once delivered; and the food.
   const merchantEntries = await retryUntil(() => ledger(merchant), (entries) => entries.filter((e) => "Collect" in e.kind).length === 2, 120, 1000);
-  assert.deepEqual(kinds(merchantEntries), ["Collect", "Collect", "Hold", "Stake"], "the store collected the food and its late cover back");
+  // A store whose sweep sees the order finished before its outcome gives
+  // the driver's collateral back with a waiver -- nothing moves its way.
+  const givenBack = merchantEntries.filter((e) => "Waive" in e.kind);
+  assert.ok(givenBack.every((e) => e.amount === 0 && (e.kind.Waive as { portion: string }).portion === "Collateral"), "anything the store waives is only the driver's collateral, back to them");
+  assert.deepEqual(kinds(merchantEntries.filter((e) => !("Waive" in e.kind))), ["Collect", "Collect", "Hold", "Stake"], "the store collected the food and its late cover back");
   const net = merchantEntries.reduce((sum, e) => sum + ("Collect" in e.kind ? e.amount : -e.amount), 0);
   assert.equal(net, 1000, "and is up exactly the food");
   console.log("[PASS] the store's ledger shows the food collected");
