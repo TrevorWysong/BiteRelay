@@ -1,0 +1,15 @@
+{
+  "network_seed": "handshake-desktop-test-1",
+  "bootstrap_url": "https://dev-test-bootstrap2.holochain.org/",
+  "relay_url": "https://dev-test-bootstrap2.holochain.org/",
+  "properties": {
+    "arbitrators": [
+      "uhCAktIQGfw8vXQeYQ9tH7fiio0YITF9m99c2NpmemSVwL4miUimn"
+    ],
+    "store_response_secs": 300,
+    "issuers": [
+      "uhCAktIQGfw8vXQeYQ9tH7fiio0YITF9m99c2NpmemSVwL4miUimn"
+    ],
+    "credit_limit_cents": 0
+  }
+}

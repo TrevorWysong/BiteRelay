@@ -28,3 +28,7 @@ deploy/issuer.env
 deploy/push.env
 deploy/handshake.network.json
 deploy/releases/
+
+# Desktop builds: Kangaroo, fetched and patched by desktop/build.mjs
+desktop/.kangaroo/
+desktop/.kangaroo.tar.gz

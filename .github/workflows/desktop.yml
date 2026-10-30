@@ -1,0 +1,109 @@
+name: Desktop
+
+# Builds HandShake's desktop installers (desktop/, Kangaroo) for macOS, Windows
+# and Linux into a draft GitHub release, v<version> from
+# desktop/kangaroo.config.ts. Publish the draft by hand once it looks right;
+# installed apps update themselves from published releases.
+#
+# Run it from the Actions tab ("Run workflow"). Bump the version first: a
+# release's assets are replaced, not versioned, if the draft already exists.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: desktop
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    name: Bundle and draft release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          echo "version=$(sed -nE "s/^  version: '([^']+)',$/\1/p" desktop/kangaroo.config.ts)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/holochain-bins
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Package the network's bundle
+        working-directory: web
+        run: |
+          npm ci
+          npm run package -- --network ../desktop/network.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webhapp
+          path: deploy/handshake.webhapp
+          if-no-files-found: error
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release create "v$VERSION" --draft --target "$GITHUB_SHA" --title "HandShake $VERSION" \
+              --notes "Desktop installers for macOS (Apple Silicon and Intel), Windows and Linux. Unsigned for now: see desktop/README.md for opening them."
+          fi
+
+  installers:
+    name: Installer (${{ matrix.target }})
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: mac-arm64, runs-on: macos-latest }
+          - { target: mac-x64, runs-on: macos-15-intel }
+          - { target: win, runs-on: windows-2022 }
+          - { target: linux, runs-on: ubuntu-22.04 }
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.bundle.outputs.version }}
+      APP_ID: io.github.trevorwysong.handshake
+      # Unsigned until the signing secrets exist (desktop/README.md).
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+      MACOSX_DEPLOYMENT_TARGET: "10.13"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: webhapp
+          path: deploy
+      - name: Build and upload
+        run: node desktop/build.mjs ${{ matrix.target }}
+      - name: Linux package fix-ups
+        if: matrix.target == 'linux'
+        working-directory: desktop/.kangaroo
+        run: |
+          node ./scripts/extend-deb-postinst.mjs
+          gh release upload "v$VERSION" -R "$GITHUB_REPOSITORY" latest-linux.yml "dist/${APP_ID}_${VERSION}_amd64.deb" --clobber
+      - name: One macOS update manifest for both architectures
+        if: startsWith(matrix.target, 'mac-')
+        working-directory: desktop/.kangaroo
+        run: node ./scripts/merge-mac-yamls.mjs

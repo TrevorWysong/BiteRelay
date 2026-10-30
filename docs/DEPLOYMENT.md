@@ -150,7 +150,7 @@ This builds the zomes and the production UI and writes `deploy/handshake.webhapp
 
 ## 4. Ship it
 
-- **Desktop installers:** [Kangaroo](https://github.com/holochain/kangaroo-electron). Put `handshake.webhapp` in its `pouch/`, set the app id, name and version in `kangaroo.config.ts`, and build signed installers for macOS, Windows and Linux. Kangaroo runs the conductor and keystore and handles auto-updates.
+- **Desktop installers:** [`desktop/`](../desktop) builds them with [Kangaroo](https://github.com/holochain/kangaroo-electron) for macOS, Windows and Linux, into a GitHub release (the **Desktop** workflow). Kangaroo runs the conductor and keystore and handles auto-updates. The network is `desktop/network.json`'s: package from it with `--network ../desktop/network.json` so the bundle and the app agree.
 - **Desktop and mobile from one codebase:** a Tauri app with `tauri-plugin-holochain`. It embeds the conductor and serves this same UI; `@holochain/client` detects the Tauri runtime on its own, so the UI needs no changes.
 - **Holochain Launcher:** users can install `handshake.webhapp` directly.
 

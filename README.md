@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="web/public/favicon.svg" width="112" alt="">
+
 # HandShake
 
 **Local delivery with no company in the middle.**
@@ -230,6 +232,7 @@ There is no password to reset and no company to call, so HandShake gives people 
 | [`issuer/`](issuer) | The issuer service: card top-ups and bank payouts through Stripe. |
 | [`push/`](push) | The push relay: wakes a closed app without learning who asked or about what. |
 | [`runtime/device/`](runtime/device) | What the app's runtime does natively: moving an account's key to a new phone. |
+| [`desktop/`](desktop) | The desktop app for macOS, Windows and Linux: an installer that runs its own Holochain node. |
 | [`deploy/`](deploy) | Running a network's servers, and the bundles a network ships. |
 | [`tools/typegen/`](tools/typegen) | Generates the app's TypeScript types from the Rust ones, so the two can't drift. |
 | [`docs/`](docs) | How it works, how to run it, and the plans. |
@@ -250,13 +253,15 @@ npm run dev          # the app, at http://localhost:5173
 
 Sign in as anyone the seed created, from the onboarding screen's "Use an existing identity". [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers every command, the tests, and how the rules are written.
 
+To use it rather than work on it, install the desktop app from [Releases](https://github.com/TrevorWysong/HandShake/releases) once one is published. It carries its own node, so there's nothing to host and nothing else to install. [desktop/](desktop) says how it's built.
+
 <br>
 
 ## Status
 
-HandShake runs end to end on a local network: stores, menus, deliveries and pickups, bidding, handoffs, escrow and settlement, refunds and appeals, ratings, recovery, card top-ups and payouts, two languages, and waking a closed app. It is tested by an integration suite of real Holochain nodes.
+HandShake runs end to end on a local network: stores, menus, deliveries and pickups, bidding, handoffs, escrow and settlement, refunds and appeals, ratings, recovery, card top-ups and payouts, two languages, and waking a closed app. It is tested by an integration suite of real Holochain nodes, and it builds as a desktop app for macOS, Windows and Linux.
 
-Not yet: the phone builds, which wait on Holochain's mobile tooling, and HoloFuel as a second way to pay, which waits on its launch for third-party apps.
+Not yet: signed desktop installers, the phone builds, which wait on Holochain's mobile tooling, and HoloFuel as a second way to pay, which waits on its launch for third-party apps.
 
 <br>
 

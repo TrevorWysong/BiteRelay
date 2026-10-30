@@ -9,6 +9,10 @@
 // The bootstrap and relay URLs are the network's own servers (see
 // docs/DEPLOYMENT.md); without them, runtimes use their defaults.
 //
+//   npm run package -- --network ../desktop/network.json
+//
+// takes the seed, servers and properties from one file instead.
+//
 // A new version of the network (docs/MIGRATION.md) also carries the one before
 // it, so people can move their accounts over:
 //
@@ -28,17 +32,22 @@ import { REPO, DNA_PATH } from "./lib/devEnv.mjs";
 
 const args = process.argv.slice(2);
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-const networkSeed = option("--network-seed");
-const bootstrapUrl = option("--bootstrap-url");
+// Or the whole network from one file -- `--network desktop/network.json`,
+// { network_seed, bootstrap_url, relay_url, properties } -- so whatever
+// else reads that file (the desktop build) can't disagree with the bundle.
+const networkFile = option("--network");
+const network = networkFile ? JSON.parse(readFileSync(path.resolve(networkFile), "utf8")) : {};
+const networkSeed = network.network_seed ?? option("--network-seed");
+const bootstrapUrl = network.bootstrap_url ?? option("--bootstrap-url");
 const previousDir = option("--previous");
-const relayUrl = option("--relay-url");
-if (!args.includes("--network-seed") || !networkSeed) {
+const relayUrl = network.relay_url ?? option("--relay-url");
+if (!networkSeed) {
   fail("Pass --network-seed <name>: it names the network this bundle joins.");
 }
 
 const propertiesPath = path.join(REPO, "deploy/properties.json");
-if (!existsSync(propertiesPath)) fail("deploy/properties.json is missing -- copy deploy/properties.example.json and fill it in.");
-const properties = JSON.parse(readFileSync(propertiesPath, "utf8"));
+if (!network.properties && !existsSync(propertiesPath)) fail("deploy/properties.json is missing -- copy deploy/properties.example.json and fill it in.");
+const properties = network.properties ?? JSON.parse(readFileSync(propertiesPath, "utf8"));
 
 // Money: a network states how far into debt anyone may go (0 recommended:
 // everything prepaid, so a fresh identity can't order on credit), and who
