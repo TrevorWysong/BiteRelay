@@ -2,7 +2,7 @@
 //! vouching, a new key recovering an account whose key was lost, moving to
 //! the next network, and the check a phone makes before it sends its key to
 //! a new one. See `account_integrity` for what validation guarantees, and
-//! RECOVERY.md for the whole design.
+//! docs/RECOVERY.md for the whole design.
 
 use account_integrity::*;
 use hdk::prelude::*;

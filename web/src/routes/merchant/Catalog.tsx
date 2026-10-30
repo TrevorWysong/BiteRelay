@@ -4,9 +4,9 @@ import { getCatalog, listModifierGroups, setCatalogOpen } from "../../holochain/
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, hexToBytes } from "../../holochain/decode";
 import { useMerchantStores, useMyStores } from "../../store/merchantStores";
-import { useResource } from "../../lib/useResource";
-import { fetchMenu } from "../../lib/menu";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { useResource } from "../../lib/hooks/useResource";
+import { fetchMenu } from "../../lib/menu/menu";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
 import { Skeleton } from "../../components/ui";
 import { StarRating } from "../../components/StarRating";
 import { StoreSwitcher } from "../../components/StoreSwitcher";

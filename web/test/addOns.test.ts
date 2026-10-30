@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { offerable, offerRefusal, offerRules, type Commitment } from "../src/lib/addOns.ts";
-import { carryRefusal } from "../src/lib/driverLoad.ts";
-import { encodeGeohash } from "../src/lib/geohash.ts";
+import { offerable, offerRefusal, offerRules, type Commitment } from "../src/lib/driving/addOns.ts";
+import { carryRefusal } from "../src/lib/driving/driverLoad.ts";
+import { encodeGeohash } from "../src/lib/places/geohash.ts";
 import type { DeliveryOrder, GeoPoint } from "../src/holochain/types.ts";
 
 const NETWORK = { max_concurrent_deliveries: 3, add_on_detour_km: 2 };

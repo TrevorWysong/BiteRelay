@@ -6,19 +6,19 @@ import clsx from "clsx";
 import { getNearbyMerchants, getNearbyGoodieBags } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary } from "../../holochain/zomes/reputation";
 import { decodeEntry, bytesToHex } from "../../holochain/decode";
-import { encodeGeohash } from "../../lib/geohash";
+import { encodeGeohash } from "../../lib/places/geohash";
 import { useSession } from "../../store/session";
-import { useFavorites } from "../../lib/useFavorites";
-import { useResource } from "../../lib/useResource";
-import { formatCents, nowMicros } from "../../lib/format";
+import { useFavorites } from "../../lib/hooks/useFavorites";
+import { useResource } from "../../lib/hooks/useResource";
+import { formatCents, nowMicros } from "../../lib/ui/format";
 import type { MerchantCatalog, GoodieBag } from "../../holochain/types";
 import { RestaurantCard } from "../../components/RestaurantCard";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
 import { Chip, ChipRow, EmptyState, Skeleton } from "../../components/ui";
-import { staggerContainer } from "../../lib/motion";
-import { POLL } from "../../lib/poll";
-import { useClock } from "../../lib/useClock";
-import { storeStatus } from "../../lib/storeHours";
+import { staggerContainer } from "../../lib/ui/motion";
+import { POLL } from "../../lib/network/poll";
+import { useClock } from "../../lib/hooks/useClock";
+import { storeStatus } from "../../lib/menu/storeHours";
 import { useT } from "../../i18n";
 
 interface Row {

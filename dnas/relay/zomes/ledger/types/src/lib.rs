@@ -136,10 +136,10 @@ pub struct IssuerProfile {
     #[serde(default)]
     pub service_url: String,
     /// How many days a recovered account's old key must stay unused before
-    /// this issuer reissues its balance to the new one (see RECOVERY.md).
+    /// this issuer reissues its balance to the new one (see docs/RECOVERY.md).
     #[serde(default)]
     pub recovery_wait_days: u16,
-    /// The next version of the network, once there is one (MIGRATION.md):
+    /// The next version of the network, once there is one (docs/MIGRATION.md):
     /// its DNA. Apps offer to move people there, and this issuer carries
     /// their balances over.
     #[serde(default)]

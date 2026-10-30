@@ -1,4 +1,4 @@
-// Proves how a closed app gets woken (MOBILE.md, "Waking a closed app"):
+// Proves how a closed app gets woken (docs/MOBILE.md, "Waking a closed app"):
 // a customer's order carries their wake tokens sealed, one to its store and
 // one to its driver, and when either of them changes the order, their own
 // app is handed their token -- to pass to the network's push relay. Each

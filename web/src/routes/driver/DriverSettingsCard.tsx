@@ -6,7 +6,7 @@ import { useState } from "react";
 import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card, Input, Switch } from "../../components/ui";
-import { currencySymbol, formatCents, fromMinorUnits, toMinorUnits } from "../../lib/format";
+import { currencySymbol, formatCents, fromMinorUnits, toMinorUnits } from "../../lib/ui/format";
 import { useTerms } from "../../store/network";
 import { useDriverSettings } from "../../store/roleSettings";
 import { useT } from "../../i18n";

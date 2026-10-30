@@ -1,5 +1,5 @@
 //! Moving an account to the next version of the network -- a different DNA
-//! (MIGRATION.md). The account seals what's private to its key on the new
+//! (docs/MIGRATION.md). The account seals what's private to its key on the new
 //! network, records where it's going, and closes its chain: Holochain
 //! accepts nothing more from it here, so what its ledger held is final. An
 //! issuer on both networks credits that, once, to the key on the new one.

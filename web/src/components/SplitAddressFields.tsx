@@ -3,7 +3,7 @@ import { AddressSearch } from "./AddressSearch";
 import type { GeoPoint } from "../holochain/types";
 import { MAX_PLACE_CHARS, MAX_POSTAL_CODE_CHARS } from "../holochain/types";
 import { useT } from "../i18n";
-import type { SplitAddress } from "../lib/splitAddress";
+import type { SplitAddress } from "../lib/places/splitAddress";
 
 /// One live search box for the street line (fills every field below in
 /// one tap) plus plain, directly-editable City/State/Postal code fields --

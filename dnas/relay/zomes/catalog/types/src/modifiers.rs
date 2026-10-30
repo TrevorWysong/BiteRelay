@@ -8,7 +8,7 @@
 //! fit (`line_price`), used by the coordinator to price an order and by
 //! validation to check it -- so no one can order a choice that isn't on
 //! offer, skip a required one, or pay less than the menu says.
-//! `web/src/lib/choices.ts` mirrors it for the item sheet's running price;
+//! `web/src/lib/menu/choices.ts` mirrors it for the item sheet's running price;
 //! both are tested on the same cases.
 
 use super::MenuItem;

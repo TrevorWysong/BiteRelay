@@ -15,7 +15,7 @@ import { callZome, onDirectSignal, sendDirectSignal } from "./client";
 import { bytesEqual, bytesToHex } from "./decode";
 import { MAX_NOTE_CHARS } from "./types";
 import type { ActionHash, AgentPubKey, LiveCounterpart, Timestamp } from "./types";
-import { nowMicros } from "../lib/format";
+import { nowMicros } from "../lib/ui/format";
 
 /// What a screen hears: checked, with `from` the network-verified sender
 /// and `sent_at` when it arrived here.

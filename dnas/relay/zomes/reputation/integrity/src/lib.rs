@@ -347,7 +347,7 @@ fn reviewed_before<T: TryFrom<SerializedBytes, Error = SerializedBytesError>>(
 /// driver. `order_ref` is the order's *latest* action, not its original
 /// creation action -- `must_get_valid_record` is literal, so the as-created
 /// record would only ever show the initial status (the same literalness
-/// this codebase has hit repeatedly -- see `HOLOCHAIN_ISSUES.md` #4).
+/// this codebase has hit repeatedly -- see `docs/HOLOCHAIN_ISSUES.md` #4).
 /// There's no non-deterministic "current status" query available in
 /// validate() to work around that with, so the caller is trusted to pass
 /// the order's *own latest update action* here -- `must_get_valid_record`

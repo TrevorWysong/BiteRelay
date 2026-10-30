@@ -164,7 +164,7 @@ pub struct Services {
     /// Address search: the base of a Nominatim-compatible API (`/search`,
     /// `/reverse`) -- one's own Nominatim, or Photon's compatible endpoint.
     pub geocoder_url: String,
-    /// The push relay that wakes a closed app (MOBILE.md, `push/`). Unset,
+    /// The push relay that wakes a closed app (docs/MOBILE.md, `push/`). Unset,
     /// the network has none: apps hear of changes only while open.
     #[serde(default)]
     pub push_relay_url: Option<String>,

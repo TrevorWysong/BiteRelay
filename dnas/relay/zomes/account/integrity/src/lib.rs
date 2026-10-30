@@ -18,7 +18,7 @@
 //! What it can't: stop a lost key that turns up again. Nothing on a
 //! peer-to-peer network can prove a key is gone, so a recovered account's
 //! money doesn't move on this zome's word -- an issuer reissues it, once,
-//! after a wait (see RECOVERY.md); and everyone's app refuses to deal with
+//! after a wait (see docs/RECOVERY.md); and everyone's app refuses to deal with
 //! a key whose account has moved on.
 
 pub use account_types::*;

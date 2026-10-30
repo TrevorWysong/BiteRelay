@@ -3,14 +3,14 @@ import { Gift, ListChecks, Plus, Sparkles, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPromoCode, listPromoCodesForCatalog, setPromoCodeActive } from "../../../holochain/zomes/catalog";
 import { bytesToHex, decodeEntry } from "../../../holochain/decode";
-import { useResource } from "../../../lib/useResource";
-import { describeRequirement, describeReward } from "../../../lib/promotions";
-import { itemNamesByHex, type ItemRow } from "../../../lib/menu";
+import { useResource } from "../../../lib/hooks/useResource";
+import { describeRequirement, describeReward } from "../../../lib/menu/promotions";
+import { itemNamesByHex, type ItemRow } from "../../../lib/menu/menu";
 import { Button, Card, Checkbox, Input, Select } from "../../../components/ui";
 import { buildRequirement, buildReward, EMPTY_PROMO_FORM, type PromoForm, type RequirementKind, type RewardKind } from "./promoForm";
 import type { PromoCode, Timestamp } from "../../../holochain/types";
 import { MAX_PROMO_CODE_CHARS } from "../../../holochain/types";
-import { currencySymbol } from "../../../lib/format";
+import { currencySymbol } from "../../../lib/ui/format";
 import { useT } from "../../../i18n";
 
 interface PromoRow {

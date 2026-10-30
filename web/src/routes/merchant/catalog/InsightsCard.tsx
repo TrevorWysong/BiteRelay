@@ -4,10 +4,10 @@ import { useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { bytesToHex } from "../../../holochain/decode";
 import { Card, Skeleton, StatNumber } from "../../../components/ui";
-import { storeInsights, storeOrdersSince } from "../../../lib/insights";
-import type { ItemRow } from "../../../lib/menu";
-import { formatCents } from "../../../lib/format";
-import { useResource } from "../../../lib/useResource";
+import { storeInsights, storeOrdersSince } from "../../../lib/money/insights";
+import type { ItemRow } from "../../../lib/menu/menu";
+import { formatCents } from "../../../lib/ui/format";
+import { useResource } from "../../../lib/hooks/useResource";
 import { useT } from "../../../i18n";
 
 const PERIODS = [7, 30] as const;

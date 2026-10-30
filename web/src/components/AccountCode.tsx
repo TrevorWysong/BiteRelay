@@ -3,11 +3,11 @@
 // which two people compare aloud (or one person, on both screens) before
 // anything is trusted. An account code is a device's key: what a person
 // shows someone to make them a guardian or to be vouched for. Moving an
-// account to a new phone has codes of its own (`lib/deviceMove.ts`).
+// account to a new phone has codes of its own (`lib/account/deviceMove.ts`).
 import { useState } from "react";
 import { Camera, Check, Copy, Keyboard } from "lucide-react";
 import type { AgentPubKey } from "../holochain/types";
-import { accountCode, keyFingerprint, readAccountCode } from "../lib/accountMove";
+import { accountCode, keyFingerprint, readAccountCode } from "../lib/account/accountMove";
 import { QrSvg } from "./HandoverCode";
 import { QrScanner } from "./QrScanner";
 import { Button, Input } from "./ui";

@@ -1,5 +1,5 @@
 // The push relay: wakes a closed Relay app when something changes on one
-// of its orders, without learning who asked or about what (MOBILE.md,
+// of its orders, without learning who asked or about what (docs/MOBILE.md,
 // "Waking a closed app"). Configured from the environment (.env.example).
 import { apnsSender } from "./channels/apns.ts";
 import type { Fetch, Sender } from "./channels/channel.ts";

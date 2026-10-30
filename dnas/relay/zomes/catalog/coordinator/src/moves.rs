@@ -248,7 +248,7 @@ pub(crate) fn has_moved(catalog: &ActionHash) -> ExternResult<bool> {
     Ok(!links.is_empty() && store_successor(catalog.clone())?.is_some())
 }
 
-// --- bringing a store over from the previous network (MIGRATION.md) ---
+// --- bringing a store over from the previous network (docs/MIGRATION.md) ---
 
 /// The account zome's answer for who an agent was on the previous network.
 fn arrived_from(agent: AgentPubKey) -> ExternResult<Option<AgentPubKey>> {

@@ -1,4 +1,4 @@
-// This device has sent its account to a new phone (RECOVERY.md): its app
+// This device has sent its account to a new phone (docs/RECOVERY.md): its app
 // has stopped, so this is all it shows -- the sealed code for the new phone
 // to scan, until the person says the new phone has the account (and this
 // device lets it go), or takes it back because the new phone never
@@ -8,9 +8,9 @@ import { Smartphone } from "lucide-react";
 import { deviceRuntime } from "../holochain/device";
 import { HOST } from "../holochain/host";
 import { useDeparture } from "../store/departure";
-import { describeError } from "../lib/errors";
-import { sealedAccount } from "../lib/deviceMove";
-import { keyFingerprint } from "../lib/accountMove";
+import { describeError } from "../lib/ui/errors";
+import { sealedAccount } from "../lib/account/deviceMove";
+import { keyFingerprint } from "../lib/account/accountMove";
 import { CodeCard } from "./AccountCode";
 import { Button } from "./ui";
 import { useT } from "../i18n";

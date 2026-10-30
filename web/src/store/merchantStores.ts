@@ -11,8 +11,8 @@ import { listMyCatalogs } from "../holochain/zomes/catalog";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
 import { myAgentPubKey } from "../holochain/client";
 import type { ActionHash, MerchantCatalog } from "../holochain/types";
-import { readStored, store } from "../lib/storage";
-import { useResource } from "../lib/useResource";
+import { readStored, store } from "../lib/util/storage";
+import { useResource } from "../lib/hooks/useResource";
 
 export interface StoreRow {
   /// The store's catalog `original_action` -- its stable identity, used as

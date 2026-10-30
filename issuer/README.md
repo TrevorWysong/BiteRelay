@@ -13,7 +13,7 @@ A Relay network's issuer: the one party that turns real money into ledger credit
   - **No account, but card payments:** it refunds the amount less the fee to the owner's recent card payments, newest first (within Stripe's 180-day window), and records `Paid` with the refund ids. That's how a customer gets unspent funds back.
   - **Neither:** it records `Declined` with a link to set up a payout account, and the funds go back automatically.
 
-- **Recovered accounts.** When someone recovers their account after losing their phone (RECOVERY.md), the service reissues the old key's balance to the new key. It does so once, after the old key has been unused for `RECOVERY_WAIT_DAYS` (published as `recovery_wait_days`), keyed `recovery:<old key>`. A second recovery of the same account is left for review. A recovered key's own cash-outs are declined. A key that handed its account over is paid as usual.
+- **Recovered accounts.** When someone recovers their account after losing their phone (docs/RECOVERY.md), the service reissues the old key's balance to the new key. It does so once, after the old key has been unused for `RECOVERY_WAIT_DAYS` (published as `recovery_wait_days`), keyed `recovery:<old key>`. A second recovery of the same account is left for review. A recovered key's own cash-outs are declined. A key that handed its account over is paid as usual.
 
 Every request that touches someone's money (`/topups`, `/saved-card`, `/saved-card/charge`, `/payout-account`) carries the agent's signature over the service's one-time nonce for that purpose (`IssuerRequest`: `TopUp`, `SavedCard` or `PayoutAccount`), so a signature for one can't be replayed as another.
 
@@ -68,8 +68,8 @@ The Rust side and the cross-language signature are covered by `tests/tryorama/sr
 
 ## Before real money
 
-- **Legal review** of money transmission and prepaid access for the issuer's setup: see `CARD_PAYMENTS.md`. Payouts through Stripe Connect run under Stripe's licences.
-- **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`). `scripts/conductor.mjs` runs it, and `scripts/provision.mjs` makes the key and installs the network's bundle. DEPLOYMENT.md, "Run the network's servers", has the steps and a Docker Compose setup.
+- **Legal review** of money transmission and prepaid access for the issuer's setup: see `docs/CARD_PAYMENTS.md`. Payouts through Stripe Connect run under Stripe's licences.
+- **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`). `scripts/conductor.mjs` runs it, and `scripts/provision.mjs` makes the key and installs the network's bundle. docs/DEPLOYMENT.md, "Run the network's servers", has the steps and a Docker Compose setup.
 - **`APP_ORIGINS`**: the origins the Relay app's requests come from, in its runtime (Kangaroo's or Tauri's). After setting up a payout account, Stripe returns people to this service's own `/payouts/done` page.
 - **Hosting:** the service behind https (`PUBLIC_URL`), with its database backed up.
 - **Stripe Radar rules** on (see *Card risk*), and the limits tuned to the issuer's appetite for loss.

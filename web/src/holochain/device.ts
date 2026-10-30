@@ -1,4 +1,4 @@
-// Moving this account to a new phone with its key (RECOVERY.md) needs the
+// Moving this account to a new phone with its key (docs/RECOVERY.md) needs the
 // device's keystore and its conductor's admin side, which the UI never
 // touches. The runtime hosting the app does that work (runtime/device, the
 // `relay_device` crate) and hands the UI six commands, as

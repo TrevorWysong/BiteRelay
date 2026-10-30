@@ -1,6 +1,6 @@
-//! The two codes phones show each other to move an account (RECOVERY.md),
+//! The two codes phones show each other to move an account (docs/RECOVERY.md),
 //! as QR codes or text. The app reads them too, to show fingerprints and to
-//! refuse anything else early (`web/src/lib/deviceMove.ts`, which must
+//! refuse anything else early (`web/src/lib/account/deviceMove.ts`, which must
 //! agree with this).
 //!
 //! - An **invitation**, shown by the new phone: the public half of a

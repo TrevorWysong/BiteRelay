@@ -3,8 +3,8 @@
 // checking it. An order's lines never change, so they're read once.
 import { getOrderLines } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
-import { formatCents } from "../lib/format";
-import { useResource } from "../lib/useResource";
+import { formatCents } from "../lib/ui/format";
+import { useResource } from "../lib/hooks/useResource";
 import { Card, Skeleton } from "./ui";
 import { useT } from "../i18n";
 

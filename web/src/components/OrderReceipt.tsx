@@ -1,9 +1,9 @@
 import { Printer, Receipt as ReceiptIcon } from "lucide-react";
 import { getOrderReceipt } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
-import { useResource } from "../lib/useResource";
-import { formatCents } from "../lib/format";
-import { portionLabel } from "../lib/ledger";
+import { useResource } from "../lib/hooks/useResource";
+import { formatCents } from "../lib/ui/format";
+import { portionLabel } from "../lib/money/ledger";
 import { Button, Card, Skeleton } from "./ui";
 import { appLocale, useT } from "../i18n";
 

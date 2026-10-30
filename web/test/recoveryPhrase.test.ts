@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ed25519 } from "@noble/curves/ed25519";
-import { newPhrase, phraseKey, phraseMessage, readPhrase } from "../src/lib/recoveryPhrase";
+import { newPhrase, phraseKey, phraseMessage, readPhrase } from "../src/lib/account/recoveryPhrase";
 
 test("a new phrase is twelve words that read back as themselves", () => {
   for (const language of ["en-US", "es", "ja-JP", "zh-TW", "ko", "de"]) {

@@ -5,7 +5,7 @@ import { defineConfig, type Plugin } from 'vite'
 // driver or customer publishes is shown in this app -- names, photos,
 // notes -- so the browser itself refuses anything but this app's own code,
 // inline images, the conductor's local websocket, and OpenStreetMap's tiles
-// and geocoder (src/components/LiveMap.tsx, src/lib/geocoding.ts). Even if a
+// and geocoder (src/components/LiveMap.tsx, src/lib/places/geocoding.ts). Even if a
 // published entry ever slipped past validation, it couldn't load a tracking
 // pixel or a script. Build-only: Vite's dev server needs inline scripts.
 const CONTENT_SECURITY_POLICY = [
@@ -33,7 +33,7 @@ function contentSecurityPolicy(): Plugin {
 export default defineConfig(({ mode }) => ({
   plugins: [react(), contentSecurityPolicy()],
   // Relative asset paths, so a runtime can serve the build from wherever it
-  // unpacks it (a `.webhapp` -- see DEPLOYMENT.md).
+  // unpacks it (a `.webhapp` -- see docs/DEPLOYMENT.md).
   base: './',
   define: {
     // Whether this build carries the dev host's identity code (Admin API,

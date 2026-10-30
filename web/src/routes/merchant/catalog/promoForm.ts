@@ -1,6 +1,6 @@
 import { hexToBytes } from "../../../holochain/decode";
 import type { PromoRequirement, PromoReward } from "../../../holochain/types";
-import { toMinorUnits } from "../../../lib/format";
+import { toMinorUnits } from "../../../lib/ui/format";
 
 // Requirement and reward are picked independently (two dropdowns), the
 // same way `PromoRequirement`/`PromoReward` are two independent enums in

@@ -1,7 +1,7 @@
 //! What a Relay runtime -- the desktop or phone app that embeds the
 //! conductor and its keystore and shows Relay's UI -- does natively to move
 //! an account to a new phone with the same key. The UI can't: it speaks
-//! only the conductor's App API, and never sees a key. See RECOVERY.md for
+//! only the conductor's App API, and never sees a key. See docs/RECOVERY.md for
 //! the whole flow, and `web/src/holochain/device.ts` for the UI's side of
 //! the contract: each method of `Device` is one command the runtime exposes
 //! to it, taking and returning strings.

@@ -1,7 +1,7 @@
 // Accounts: a person's recovery plan, guardians vouching, a new key
 // recovering an account whose key was lost, moving to the next network,
 // and whether this device can send its key to a new phone. See the account
-// zome, and RECOVERY.md.
+// zome, and docs/RECOVERY.md.
 import { callPrevious, callZome } from "../client";
 import type { ActionHash, AgentPubKey, MoveReadiness, PlanView, RecoveryPlan, Succession, SuccessionView, VouchView } from "../types";
 
@@ -73,7 +73,7 @@ export async function requestReissue(issuer: AgentPubKey): Promise<void> {
   return callZome("account", "request_reissue", issuer);
 }
 
-// --- moving to the next version of the network (MIGRATION.md) ---
+// --- moving to the next version of the network (docs/MIGRATION.md) ---
 
 /// Moves the caller's account to the next network and closes its chain here.
 export async function migrateOut(input: { network: Uint8Array; successor: AgentPubKey; issuer: AgentPubKey; parcel: string }): Promise<ActionHash> {

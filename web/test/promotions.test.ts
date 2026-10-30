@@ -2,7 +2,7 @@
 // validation enforces (catalog_types::pricing) -- the same cases run there.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluatePromo } from "../src/lib/promotions.ts";
+import { evaluatePromo } from "../src/lib/menu/promotions.ts";
 import type { CartLine } from "../src/store/cart.ts";
 import type { PromoCode, PromoRequirement, PromoReward } from "../src/holochain/types.ts";
 

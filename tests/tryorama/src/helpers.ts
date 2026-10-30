@@ -136,8 +136,7 @@ export const testApp = appWithProperties({});
 /// identical regardless of process topology). This harness measures write/
 /// read throughput and anchor-contention behavior, which that caveat
 /// doesn't undermine -- it does NOT attempt to measure real WAN gossip
-/// latency, which is a separate, still-open limitation (see the plan's own
-/// §9 follow-up discussion).
+/// latency, which is a separate, still-open limitation.
 export async function installManyAgents(conductor: Conductor, count: number, labelPrefix: string): Promise<PlayerApp[]> {
   const port = await conductor.attachAppInterface();
   const adminWs = conductor.adminWs();
@@ -420,7 +419,7 @@ export const phraseMessage = (predecessor: Uint8Array, successor: Uint8Array, he
 /// `player`'s account on a new install, as a new phone would get it: their
 /// app -- with everything only their device held -- uninstalled, then
 /// installed again for the same key, restored from the network
-/// (Holochain's `restore_from_dht`; RECOVERY.md). What this can't stand in
+/// (Holochain's `restore_from_dht`; docs/RECOVERY.md). What this can't stand in
 /// for is the key crossing to another keystore: here it never left. Pass
 /// the `properties` the player was installed with.
 export async function restoreInPlace(player: PlayerApp, properties: Record<string, unknown> = {}): Promise<PlayerApp> {

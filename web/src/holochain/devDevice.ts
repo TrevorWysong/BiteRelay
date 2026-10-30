@@ -13,8 +13,8 @@ import { setIdentityRunning } from "./admin";
 import { forgetStoredIdentity, loadStoredIdentity } from "./devIdentityStorage";
 import { rememberIdentity } from "./devHost";
 import { base64Url, devSealedKey, readDevSealedKey } from "./devSealedKey";
-import { base64ToBytes } from "../lib/base64";
-import { INVITATION_PREFIX, isInvitation } from "../lib/deviceMove";
+import { base64ToBytes } from "../lib/util/base64";
+import { INVITATION_PREFIX, isInvitation } from "../lib/account/deviceMove";
 
 function stored() {
   const identity = loadStoredIdentity();

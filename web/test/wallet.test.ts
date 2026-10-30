@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { payoutAfterFees } from "../src/lib/wallet.ts";
+import { payoutAfterFees } from "../src/lib/money/wallet.ts";
 
 // The same cases as ledger_types::tests -- keep them in step.
 const profile = (flat: number, bps: number) => ({ payout_fee_cents: flat, payout_fee_basis_points: bps });

@@ -1,7 +1,7 @@
 import { CloudCheck, CloudUpload } from "lucide-react";
 import { getNetworkReach } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
-import { useResource } from "../lib/useResource";
+import { useResource } from "../lib/hooks/useResource";
 import type { ActionHash } from "../holochain/types";
 import { useT } from "../i18n";
 

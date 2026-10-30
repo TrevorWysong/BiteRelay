@@ -5,7 +5,7 @@
 // main.tsx at startup) -- so no screen ever waits on one.
 //
 // Numbers, money, dates and distances follow the same locale through
-// `appLocale()` (lib/format.ts). Messages from the network itself -- a
+// `appLocale()` (lib/ui/format.ts). Messages from the network itself -- a
 // zome's refusal -- are English: they're the network's, not the app's.
 import { create } from "zustand";
 import { persist } from "zustand/middleware";

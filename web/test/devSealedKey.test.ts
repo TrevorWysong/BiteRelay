@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { devSealedKey, readDevSealedKey } from "../src/holochain/devSealedKey";
-import { bytesToBase64, base64ToBytes } from "../src/lib/base64";
-import { sealedAccount } from "../src/lib/deviceMove";
+import { bytesToBase64, base64ToBytes } from "../src/lib/util/base64";
+import { sealedAccount } from "../src/lib/account/deviceMove";
 
 /// An agent key's 39 bytes: Holochain's prefix, 32 of key, 4 of location.
 const agent = new Uint8Array([0x84, 0x20, 0x24, ...new Array(32).fill(7), 1, 2, 3, 4]);

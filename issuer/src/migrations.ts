@@ -1,4 +1,4 @@
-// Carrying balances to the next version of the network (MIGRATION.md).
+// Carrying balances to the next version of the network (docs/MIGRATION.md).
 // Validation on one network can't read another, so the money crosses
 // through the issuer, which runs on both: an account moving on records the
 // move and closes its chain on the previous network -- Holochain, and the

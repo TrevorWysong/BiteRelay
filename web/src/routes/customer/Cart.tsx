@@ -6,31 +6,31 @@ import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { Button, Card, Checkbox, Input, Select, StatNumber, Textarea } from "../../components/ui";
 import { AddressSwitcher } from "../../components/AddressSwitcher";
-import { distanceKm } from "../../lib/geohash";
+import { distanceKm } from "../../lib/places/geohash";
 import { useCart, cartItems, lineKey, type CartLine } from "../../store/cart";
 import { ItemSheet } from "../../components/ItemSheet";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
-import { wakeTokensForOrder } from "../../lib/push";
+import { wakeTokensForOrder } from "../../lib/network/push";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
-import { currencySymbol, formatCents, formatDistance, fromMinorUnits, nowMicros, toMinorUnits } from "../../lib/format";
+import { currencySymbol, formatCents, formatDistance, fromMinorUnits, nowMicros, toMinorUnits } from "../../lib/ui/format";
 import { useCustomerSettings } from "../../store/roleSettings";
 import { useTerms } from "../../store/network";
 import { appLocale, t as translate, useT, type MessageKey } from "../../i18n";
-import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/promotions";
-import { fetchMenu, type ItemRow } from "../../lib/menu";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import { describeError } from "../../lib/errors";
-import { useResource } from "../../lib/useResource";
-import { POLL } from "../../lib/poll";
-import { orderTax, totalWithTax } from "../../lib/tax";
+import { computePromoEffect, describeRequirement, describeReward, evaluatePromo, isPromoEligible } from "../../lib/menu/promotions";
+import { fetchMenu, type ItemRow } from "../../lib/menu/menu";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
+import { describeError } from "../../lib/ui/errors";
+import { useResource } from "../../lib/hooks/useResource";
+import { POLL } from "../../lib/network/poll";
+import { orderTax, totalWithTax } from "../../lib/menu/tax";
 import { CardPaySheet } from "../../components/CardPaySheet";
-import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS } from "../../lib/issuerService";
+import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS } from "../../lib/money/issuerService";
 import { getBalance, listIssuers } from "../../holochain/zomes/ledger";
 import type { ActionHash, DropoffPreference, GeoPoint, MerchantCatalog, PromoCode, RecurrenceRule, TaxRate } from "../../holochain/types";
-import { useClock } from "../../lib/useClock";
-import { storeStatus } from "../../lib/storeHours";
+import { useClock } from "../../lib/hooks/useClock";
+import { storeStatus } from "../../lib/menu/storeHours";
 import { MAX_NOTE_CHARS, MAX_PROMO_CODE_CHARS } from "../../holochain/types";
 
 const TIP_PRESETS_PERCENT = [0, 10, 15, 20];
@@ -314,7 +314,7 @@ export function Cart() {
   const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
   // The store's tax on the food after any promo, as validation computes it
-  // (`lib/tax.ts`): added on top, or already in the prices.
+  // (`lib/menu/tax.ts`): added on top, or already in the prices.
   // Age-restricted items (alcohol, tobacco) are collected in person, where
   // the store checks ID -- the network's rule.
   const itemOf = (itemRef: Uint8Array) => storeInfo?.menuItems.find((row) => bytesToHex(row.hash) === bytesToHex(itemRef))?.item;

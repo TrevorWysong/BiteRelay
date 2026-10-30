@@ -2,7 +2,7 @@
 // this device -- their recovery phrase, and guardians -- moving it to a new
 // phone, and helping the people they guard recover theirs. No company can
 // reset anyone's account here: these are the only ways back in, so this
-// screen says plainly which are set up. See RECOVERY.md.
+// screen says plainly which are set up. See docs/RECOVERY.md.
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getMyDocket, getVerificationTerms } from "../holochain/zomes/dispatch";
@@ -14,24 +14,24 @@ import { bytesToHex } from "../holochain/decode";
 import { migrateOut, myRecoveryPlan, myWards, readyToMove, setRecoveryPlan, vouch } from "../holochain/zomes/account";
 import { canMoveAccount, deviceRuntime } from "../holochain/device";
 import { useDeparture } from "../store/departure";
-import { invitationFingerprint, isInvitation } from "../lib/deviceMove";
-import { nextNetwork } from "../lib/migration";
+import { invitationFingerprint, isInvitation } from "../lib/account/deviceMove";
+import { nextNetwork } from "../lib/account/migration";
 import { MAX_GUARDIANS } from "../holochain/types";
 import { fetchProfile } from "../holochain/zomes/profiles";
 import { closeListing, isStoreListed, listMyCatalogs } from "../holochain/zomes/catalog";
 import { AccountCode, AccountCodeReader, CodeReader } from "../components/AccountCode";
 import { Sheet } from "../components/Sheet";
 import { Badge, Button, Card, Checkbox, Field, Input, Select, Skeleton } from "../components/ui";
-import { keyFingerprint, packParcel } from "../lib/accountMove";
-import { describeError } from "../lib/errors";
-import { fadeSlideUp, staggerContainer } from "../lib/motion";
-import { POLL } from "../lib/poll";
-import { newPhrase, phraseKey } from "../lib/recoveryPhrase";
-import { useResource } from "../lib/useResource";
+import { keyFingerprint, packParcel } from "../lib/account/accountMove";
+import { describeError } from "../lib/ui/errors";
+import { fadeSlideUp, staggerContainer } from "../lib/ui/motion";
+import { POLL } from "../lib/network/poll";
+import { newPhrase, phraseKey } from "../lib/account/recoveryPhrase";
+import { useResource } from "../lib/hooks/useResource";
 import { useGuardianNames } from "../store/guardianNames";
 import { useSession } from "../store/session";
 import { t as translate, useT } from "../i18n";
-import { formatDate } from "../lib/format";
+import { formatDate } from "../lib/ui/format";
 
 type Open = "phrase" | "guardians" | "move" | "help" | "code" | "upgrade" | null;
 
@@ -44,7 +44,7 @@ export function AccountPage() {
   const [open, setOpen] = useState<Open>(null);
   const navigate = useNavigate();
   const names = useGuardianNames((s) => s.names);
-  // A new version of the network, once an issuer announces it (MIGRATION.md).
+  // A new version of the network, once an issuer announces it (docs/MIGRATION.md).
   const { data: next } = useResource("next-network", nextNetwork, { pollMs: POLL.slow });
   const { data: verification } = useResource("verification-terms", getVerificationTerms);
   const isVerifier = !!verification?.verifiers.some((v) => bytesToHex(v) === hex);
@@ -494,7 +494,7 @@ function GuardiansSheet({ plan, me, onClose, onSaved }: { plan: PlanView | null;
 const READY_TRIES = 30;
 
 /// This phone's side of moving the account to a new one with its key
-/// (RECOVERY.md): it scans the new phone's invitation, waits until the
+/// (docs/RECOVERY.md): it scans the new phone's invitation, waits until the
 /// network holds everything it wrote, then stops and shows the account's
 /// key sealed to that phone (`Departure`).
 function MoveSheet({ onClose }: { onClose: () => void }) {
@@ -652,7 +652,7 @@ function WardOption({ ward }: { ward: PlanView }) {
   return <option value={bytesToHex(ward.account)}>{useDisplayName(ward.account)}</option>;
 }
 
-/// Moving the account to the new version of Relay (MIGRATION.md): the new
+/// Moving the account to the new version of Relay (docs/MIGRATION.md): the new
 /// version, installed on this device or another, shows its code; this one
 /// seals what's private to it, records the move and closes its chain here.
 /// The issuer carries the balance over.

@@ -8,7 +8,7 @@ import { ChevronDown, Lock, QrCode } from "lucide-react";
 import QRCode from "qrcode";
 import { bytesToHex } from "../holochain/decode";
 import type { ActionHash, PinSecret } from "../holochain/types";
-import { encodeHandoverCode } from "../lib/handoverCode";
+import { encodeHandoverCode } from "../lib/orders/handoverCode";
 import { t as translate, useT, type MessageKey } from "../i18n";
 
 const FOR = {

@@ -4,11 +4,11 @@ import { useSession } from "../store/session";
 import { listMyLedger, getBalance } from "../holochain/zomes/ledger";
 import { decodeEntry, actionHash, bytesToHex, timestampOf } from "../holochain/decode";
 import { Card, Skeleton, StatNumber } from "../components/ui";
-import { formatCents, timeAgo } from "../lib/format";
-import { fadeSlideUp, staggerContainer } from "../lib/motion";
-import { useResource } from "../lib/useResource";
+import { formatCents, timeAgo } from "../lib/ui/format";
+import { fadeSlideUp, staggerContainer } from "../lib/ui/motion";
+import { useResource } from "../lib/hooks/useResource";
 import type { LedgerEntry } from "../holochain/types";
-import { describeLedgerEntry } from "../lib/ledger";
+import { describeLedgerEntry } from "../lib/money/ledger";
 import { useT } from "../i18n";
 
 interface Row {

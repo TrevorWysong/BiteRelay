@@ -1,6 +1,6 @@
 //! A new key recovering an account whose key was lost: on the recovery
 //! phrase, or on guardians. Its balance is reissued by an issuer
-//! (`request_reissue`); see RECOVERY.md.
+//! (`request_reissue`); see docs/RECOVERY.md.
 
 use crate::{decoded, guest, linked_records, own_links, recovery_plan_of};
 use account_integrity::*;

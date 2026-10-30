@@ -1,4 +1,4 @@
-// Proves moving an account to a new phone with the same key (RECOVERY.md):
+// Proves moving an account to a new phone with the same key (docs/RECOVERY.md):
 // the old phone waits until the network holds everything it wrote
 // (`ready_to_move`); the new one restores the account's chain from the
 // network and sets itself up (`prepare_device`) -- the grants that let

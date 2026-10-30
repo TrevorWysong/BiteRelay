@@ -1,34 +1,44 @@
-//! Coordinator zome for the delivery order lifecycle: matching a new order
-//! to nearby providers, bidding, and the gated path to completion (payment
-//! + reputation). Split by concern rather than kept as one flat file:
+//! Coordinator zome for orders, from checkout to settlement -- deliveries
+//! and pickups, the drivers who carry them, and the money held for them.
+//! One module per concern:
 //!
-//! - `signals` -- the capability grant and local/remote signal wire types
-//!   everything else here sends over.
-//! - `matching` -- Layers 1/2 of the matching mechanism (plan §3): the
-//!   geohash anchor, the cross-zome candidate lookup, the signal fan-out.
-//! - `bids` -- placing, withdrawing, and accepting bids.
-//! - `orders` -- the order itself: creation, status transitions, and the
-//!   gated completion path that settles payment and reputation.
-//! - `never_arrived` -- the customer's claim that a delivery never arrived.
-//! - `issues` -- missing and wrong items, and the store's decisions: each
-//!   order's outcome and its settlement of the food.
-//! - `chat` -- direct, signal-only messaging between an order's two active
-//!   parties once a bid is accepted. Deliberately not persisted on the DHT
-//!   (see that module's own doc comment).
-//! - `tracking` -- live driver-location sharing, same signal-only,
-//!   not-persisted posture as `chat`, but one-directional (driver ->
-//!   requester only).
-//! - `parties` -- the "resolve this order's accepted bid" lookup shared by
-//!   `chat` and `tracking`, not itself a zome-call surface.
-//! - `recurring` -- "same order every Monday" templates, client-fired
-//!   (no p2p cron), link-free (local chain query only).
-//! - `pickup` -- the pickup vertical's full lifecycle (creation, status,
-//!   completion, and a customer's report they can't get it) -- no bid/driver/leg-attestation
-//!   concept at all, so unlike delivery this stays one file.
-//! - `store_queue` -- each store's active queue and day-bucketed history,
-//!   shared by both verticals.
+//! Placing an order
+//! - `orders` -- a delivery: placing it, the store accepting or declining
+//!   it, its status, and completing it.
+//! - `pickup` -- a pickup order's whole life: no bid, no driver.
+//! - `pricing` -- pricing an order exactly as validation will check it.
+//! - `lines` -- an order's lines as people read them.
+//! - `recurring` -- standing orders ("same order every Monday").
+//! - `claims` -- goodie-bag claims turned into orders.
+//!
+//! Finding a driver
+//! - `matching` -- how drivers find open orders near them, and ranking bids.
+//! - `bids` -- placing, withdrawing and accepting bids.
+//! - `verification` -- the network's verifiers vouching for drivers.
+//! - `accounts` -- whether an account has moved to a new key.
+//!
+//! Under way
+//! - `deliveries` -- from a driver committing to their pickup, and what
+//!   happens when that goes wrong.
+//! - `pin` -- handoff codes.
+//! - `live` -- chat and live location, app to app.
+//! - `signals` -- telling an order's other parties it changed.
+//! - `upkeep` -- what an agent's conductor does with no app open.
+//! - `reach` -- whether a write has reached the network.
+//!
+//! Settling
+//! - `settlement` -- holding and settling the money for orders.
+//! - `issues` -- missing and wrong items, and the store's decisions.
+//! - `never_arrived` -- a delivery the customer says never came.
+//! - `appeals` -- appealing a store's decision to an arbiter.
+//! - `receipts` -- itemized receipts for completed orders.
+//!
+//! Reading
+//! - `order_queues` -- every party's order queues.
+//! - `stores` -- the caller's view of stores.
 
 mod accounts;
+mod appeals;
 mod bids;
 mod claims;
 mod deliveries;
@@ -39,8 +49,8 @@ mod matching;
 mod never_arrived;
 mod order_queues;
 mod orders;
-mod pin;
 mod pickup;
+mod pin;
 mod pricing;
 mod reach;
 mod receipts;
@@ -50,7 +60,6 @@ mod signals;
 mod stores;
 mod upkeep;
 mod verification;
-mod appeals;
 
 pub use bids::*;
 pub use deliveries::*;

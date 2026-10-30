@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { invitationFingerprint, isInvitation, sealedAccount } from "../src/lib/deviceMove.ts";
+import { invitationFingerprint, isInvitation, sealedAccount } from "../src/lib/account/deviceMove.ts";
 
 // Made by the runtime (runtime/device/src/code.rs, `the_app_reads_the_same_codes`):
 // the app must read exactly what it writes.

@@ -2,7 +2,7 @@
 // host.ts) -- kept apart from `devHost.ts` so checking for one doesn't load
 // the Admin API code.
 
-import { forget, readStoredJson, store } from "../lib/storage";
+import { forget, readStoredJson, store } from "../lib/util/storage";
 
 const STORAGE_KEY = "relay.identity.v1";
 

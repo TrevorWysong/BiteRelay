@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { distanceKm, encodeGeohash, geohashCenter } from "../src/lib/geohash.ts";
+import { distanceKm, encodeGeohash, geohashCenter } from "../src/lib/places/geohash.ts";
 
 test("a cell's center encodes back to the same cell", () => {
   const stPete = { lat: 27.7676, lon: -82.6403 };

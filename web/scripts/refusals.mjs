@@ -1,6 +1,6 @@
 // Writes web/src/i18n/refusals.ts: every refusal a person can meet, in
 // English as its source writes it, so the app can show it in their
-// language (`lib/errors.ts`'s `describeError`).
+// language (`lib/ui/errors.ts`'s `describeError`).
 //
 //   - the zomes: each `guest("...")` and `guest(format!("..."))` that's a
 //     sentence (it starts with a capital). A lowercase one is a diagnostic,

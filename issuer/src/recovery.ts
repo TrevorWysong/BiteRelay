@@ -1,6 +1,6 @@
 // Reissuing recovered accounts. When someone loses their device and
 // recovers their account on a new one (their recovery phrase, or their
-// guardians -- see RECOVERY.md), the network can't move their old key's
+// guardians -- see docs/RECOVERY.md), the network can't move their old key's
 // balance: nothing peer-to-peer can prove a lost key is gone, or that a
 // phrase was used once. The issuer -- which holds the money behind it --
 // reissues it instead:

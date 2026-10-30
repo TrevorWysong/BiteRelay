@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { notificationFor } from "../lib/notifications";
-import { playChime } from "../lib/chime";
-import { useLiveSignal, useLocalSignal } from "../lib/useResource";
+import { notificationFor } from "../lib/orders/notifications";
+import { playChime } from "../lib/ui/chime";
+import { useLiveSignal, useLocalSignal } from "../lib/hooks/useResource";
 import { usePreferences } from "../store/preferences";
-import { teachServiceWorker, wakeCustomer } from "../lib/push";
+import { teachServiceWorker, wakeCustomer } from "../lib/network/push";
 import { useT } from "../i18n";
 import type { LocalSignal } from "../holochain/types";
 import type { LiveSignal } from "../holochain/live";
@@ -15,7 +15,7 @@ import type { LiveSignal } from "../holochain/live";
 /// change -- the screen refreshing -- happens on the same signals already.
 ///
 /// Notifications reach this app while it's running, in front or behind;
-/// a closed app hears nothing until it's opened again (see DEPLOYMENT.md).
+/// a closed app hears nothing until it's opened again (see docs/DEPLOYMENT.md).
 export function Notifier() {
   const navigate = useNavigate();
   const { notifications, newOrderChime } = usePreferences();

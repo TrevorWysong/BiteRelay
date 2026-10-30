@@ -2,9 +2,9 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, UserRound } from "lucide-react";
 import { encodeHashToBase64 } from "@holochain/client";
-import { identityLabel } from "../lib/devNode";
-import { useResource } from "../lib/useResource";
-import { describeError } from "../lib/errors";
+import { identityLabel } from "../lib/network/devNode";
+import { useResource } from "../lib/hooks/useResource";
+import { describeError } from "../lib/ui/errors";
 import { Spinner } from "./ui";
 
 /// Dev-only: sign in as any identity already on the node -- most usefully

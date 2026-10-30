@@ -5,7 +5,7 @@
 // "Required" on the groups that need an answer and nested groups opening
 // under the option that leads to them. Adding before every required group
 // is answered scrolls to the first one that isn't and marks it. The running
-// price is the network's own (`lib/choices`), so it's what the order costs.
+// price is the network's own (`lib/menu/choices`), so it's what the order costs.
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Minus, Plus } from "lucide-react";
@@ -13,10 +13,10 @@ import { getModifierGroups } from "../holochain/zomes/catalog";
 import { bytesToHex, decodeEntry } from "../holochain/decode";
 import type { ActionHash, ModifierGroup, SelectionInput } from "../holochain/types";
 import { MAX_CHOICE_DEPTH } from "../holochain/types";
-import { choiceLabels, choose, emptySelections, isSingleChoice, linePrice, missingGroups, rangeLabel, withNested, type Groups } from "../lib/choices";
-import { formatCents } from "../lib/format";
-import type { ItemRow } from "../lib/menu";
-import { useResource } from "../lib/useResource";
+import { choiceLabels, choose, emptySelections, isSingleChoice, linePrice, missingGroups, rangeLabel, withNested, type Groups } from "../lib/menu/choices";
+import { formatCents } from "../lib/ui/format";
+import type { ItemRow } from "../lib/menu/menu";
+import { useResource } from "../lib/hooks/useResource";
 import type { CartLine } from "../store/cart";
 import { Button, Skeleton } from "./ui";
 import { Sheet } from "./Sheet";

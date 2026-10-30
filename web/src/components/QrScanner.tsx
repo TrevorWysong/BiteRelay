@@ -5,7 +5,7 @@
 import { useCallback, useState } from "react";
 import { CameraOff } from "lucide-react";
 import { t as translate } from "../i18n";
-import { useLatest } from "../lib/useResource";
+import { useLatest } from "../lib/hooks/useResource";
 
 /// The slice of the Barcode Detection API this uses.
 interface BarcodeDetectorLike {

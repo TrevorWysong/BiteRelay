@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cancellationText, DECLINE_REASONS, responseDeadlineMs } from "../src/lib/storeAnswers.ts";
+import { cancellationText, DECLINE_REASONS, responseDeadlineMs } from "../src/lib/orders/storeAnswers.ts";
 
 test("the response deadline is the window after the order reached the store", () => {
   // 1,000,000,000 µs = 1,000,000 ms; plus a 300 s window.

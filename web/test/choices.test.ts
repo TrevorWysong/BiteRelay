@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { choiceLabels, choose, groupProblem, linePrice, missingGroups, type Groups } from "../src/lib/choices.ts";
+import { choiceLabels, choose, groupProblem, linePrice, missingGroups, type Groups } from "../src/lib/menu/choices.ts";
 import { bytesToHex } from "../src/holochain/decode.ts";
 import type { MenuItem, ModifierGroup, ModifierOption, SelectionInput } from "../src/holochain/types.ts";
 

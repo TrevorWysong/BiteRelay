@@ -5,10 +5,10 @@
 import { connect, openSocket, setRestorer } from "./client";
 import { provisionNewIdentity, reconnectIdentity } from "./admin";
 import { forgetStoredIdentity, loadStoredIdentity, saveStoredIdentity } from "./devIdentityStorage";
-import { bytesToBase64, base64ToBytes } from "../lib/base64";
-import { describeError } from "../lib/errors";
-import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/webauthn";
-import { withTimeout } from "../lib/timeout";
+import { bytesToBase64, base64ToBytes } from "../lib/util/base64";
+import { describeError } from "../lib/ui/errors";
+import { isWebAuthnAvailable, registerPasskey, verifyPasskey } from "../lib/account/webauthn";
+import { withTimeout } from "../lib/util/timeout";
 
 /// Reconnects as the identity this browser remembers -- behind its passkey,
 /// if it has one. A passkey failure is tagged `PasskeyError` so the caller

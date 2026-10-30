@@ -1,6 +1,6 @@
 //! Bidding: placing a bid against an open order, withdrawing one, and
 //! accepting one. `accept_bid` is the single DHT commit that matters for
-//! the matching flow (plan §3) -- everything before it is off-DHT signal
+//! the matching flow -- everything before it is off-DHT signal
 //! traffic (see `matching.rs`).
 
 use crate::signals::RemoteSignal;
@@ -131,7 +131,7 @@ pub struct AcceptBidInput {
 
 /// The only DHT write in the matching flow that matters for settlement: the
 /// order transitions to BidAccepted and records which bid won. Losing bids
-/// are never written to (see plan §3) -- their bidders just get a
+/// are never written to -- their bidders just get a
 /// BidReleased signal so their client can drop the local candidate.
 #[hdk_extern]
 pub fn accept_bid(input: AcceptBidInput) -> ExternResult<Record> {

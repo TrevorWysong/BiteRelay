@@ -3,7 +3,7 @@
 // week or month.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { earned, earningsByPeriod, earningsCsv, periodStart, type LedgerRow } from "../src/lib/earnings";
+import { earned, earningsByPeriod, earningsCsv, periodStart, type LedgerRow } from "../src/lib/driving/earnings";
 import type { LedgerEntry } from "../src/holochain/types";
 
 const h = (n: number) => new Uint8Array(39).fill(n);

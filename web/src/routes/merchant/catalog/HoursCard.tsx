@@ -2,12 +2,12 @@ import { useState } from "react";
 import { Clock, Pencil, Plus, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { deviceTimeZone, detailsOf, updateCatalogDetails } from "../../../holochain/zomes/catalog";
-import { describeWeek, fromTimeInput, toTimeInput, WEEK } from "../../../lib/storeHours";
-import { describeError } from "../../../lib/errors";
+import { describeWeek, fromTimeInput, toTimeInput, WEEK } from "../../../lib/menu/storeHours";
+import { describeError } from "../../../lib/ui/errors";
 import { Button, Card, Field, Input, Switch } from "../../../components/ui";
 import type { MerchantCatalog, OpeningPeriod } from "../../../holochain/types";
 import { useT } from "../../../i18n";
-import { weekdayName } from "../../../lib/format";
+import { weekdayName } from "../../../lib/ui/format";
 
 /// What a newly opened day starts as.
 const DEFAULT_PERIOD = { opens: 9 * 60, closes: 21 * 60 };

@@ -168,7 +168,7 @@ export async function callZome<T>(zomeName: string, fnName: string, payload?: un
 }
 
 /// The app role that carries the previous version of the network, in a
-/// release made while people move from it (MIGRATION.md).
+/// release made while people move from it (docs/MIGRATION.md).
 const PREVIOUS_ROLE = "previous";
 
 /// A zome call on the previous version of the network -- only in a release
@@ -221,11 +221,11 @@ export function myAgentPubKey(): Uint8Array {
   return getAppWs().myPubKey;
 }
 
-/// Subscribes to `dispatch`'s fire-and-forget `LocalSignal`s (see plan §3 --
-/// this is Layer 2's fast path, never the sole guarantee). Every screen
+/// Subscribes to the zomes' fire-and-forget `LocalSignal`s -- a fast path,
+/// never the sole guarantee. Every screen
 /// that relies on a signal must *also* poll the corresponding DHT read on
 /// its own cadence; this is a UX accelerant, not a delivery guarantee --
-/// see `HOLOCHAIN_ISSUES.md` #1 for the measured, real reason why. Holds
+/// see `docs/HOLOCHAIN_ISSUES.md` #1 for the measured, real reason why. Holds
 /// across reconnections.
 export function onLocalSignal(handler: (signal: LocalSignal) => void): () => void {
   signalListeners.add(handler);

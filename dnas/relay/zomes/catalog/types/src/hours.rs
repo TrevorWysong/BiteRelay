@@ -2,7 +2,7 @@
 //! zone. Pure arithmetic on a local weekday and minute -- converting an
 //! instant to the store's local time is the coordinator's job (it has the
 //! time-zone database; integrity zomes don't need it). Mirrored for the app
-//! in `web/src/lib/storeHours.ts`, with shared test cases.
+//! in `web/src/lib/menu/storeHours.ts`, with shared test cases.
 
 use serde::{Deserialize, Serialize};
 

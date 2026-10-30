@@ -5,8 +5,8 @@
 import { ShieldAlert } from "lucide-react";
 import { getReputationSummary } from "../holochain/zomes/reputation";
 import { bytesToHex } from "../holochain/decode";
-import { useResource } from "../lib/useResource";
-import { POLL } from "../lib/poll";
+import { useResource } from "../lib/hooks/useResource";
+import { POLL } from "../lib/network/poll";
 import { useT } from "../i18n";
 
 export function CustomerHistory({ customer }: { customer: Uint8Array }) {

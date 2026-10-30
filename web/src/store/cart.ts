@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { base64ToBytes, bytesToBase64 } from "../lib/base64";
+import { base64ToBytes, bytesToBase64 } from "../lib/util/base64";
 import type { ActionHash, OrderItem, SelectionInput } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
-import { selectionsKey } from "../lib/choices";
+import { selectionsKey } from "../lib/menu/choices";
 
 export interface CartLine {
   itemRef: ActionHash;

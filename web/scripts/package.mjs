@@ -1,15 +1,15 @@
 // Builds the app as Holochain runtimes install it -- deploy/relay.webhapp,
 // the production hApp plus its production UI -- for a network whose DNA
 // properties are in deploy/properties.json (see deploy/properties.example.json
-// and DEPLOYMENT.md).
+// and docs/DEPLOYMENT.md).
 //
 //   npm run package -- --network-seed relay-2026 \
 //     [--bootstrap-url https://bootstrap.example.org --relay-url https://relay.example.org]
 //
 // The bootstrap and relay URLs are the network's own servers (see
-// DEPLOYMENT.md); without them, runtimes use their defaults.
+// docs/DEPLOYMENT.md); without them, runtimes use their defaults.
 //
-// A new version of the network (MIGRATION.md) also carries the one before
+// A new version of the network (docs/MIGRATION.md) also carries the one before
 // it, so people can move their accounts over:
 //
 //     --previous deploy/releases/<previous version>
@@ -55,7 +55,7 @@ if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uh
 // walk away and leave the debt. So a network bundle is prepaid unless its
 // builder deliberately says otherwise.
 if (!properties.services) {
-  console.warn("deploy/properties.json sets no `services`: apps will use OpenStreetMap's public tile and search servers, whose usage policies don't allow production traffic. Set your own (DEPLOYMENT.md).");
+  console.warn("deploy/properties.json sets no `services`: apps will use OpenStreetMap's public tile and search servers, whose usage policies don't allow production traffic. Set your own (docs/DEPLOYMENT.md).");
 }
 if (properties.credit_limit_cents > 0 && process.env.RELAY_ALLOW_CREDIT !== "1") {
   fail("credit_limit_cents is above 0: drivers could post collateral on credit and walk away from it. Set it to 0, or build with RELAY_ALLOW_CREDIT=1 if you mean to extend credit.");

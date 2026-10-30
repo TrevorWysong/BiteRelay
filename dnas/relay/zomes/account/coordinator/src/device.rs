@@ -1,7 +1,7 @@
 //! Moving an account to a new phone keeps its key: the old phone sends the
 //! key, sealed, to the new one, which rebuilds the account's chain from the
 //! network (Holochain's restore) and carries on as the same account -- same
-//! history, stores, balance and orders in hand. See RECOVERY.md.
+//! history, stores, balance and orders in hand. See docs/RECOVERY.md.
 //!
 //! The one thing that must never happen is both phones writing as the
 //! account: two chains with the same key fork it, and the network refuses

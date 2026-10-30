@@ -1,3 +1,8 @@
+//! Types and small functions every zome shares: places (`GeoPoint`, and
+//! geohash cells for finding what's nearby), time buckets for indexes that
+//! grow over time, handoff codes (`PinSecret`), and drand time beacons
+//! (`Beacon`) that prove when something happened.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -18,7 +23,7 @@ impl GeoPoint {
 const EARTH_RADIUS_KM: f64 = 6371.0;
 
 /// Great-circle (haversine) distance in kilometers -- ported line-for-line
-/// from `web/src/lib/geohash.ts`'s own `distanceKm` (used there for the
+/// from `web/src/lib/places/geohash.ts`'s own `distanceKm` (used there for the
 /// driver dashboard's client-side route sort) so the client-side delivery-
 /// radius pre-check and this zome's own deterministic enforcement
 /// (`dispatch_integrity::validate_new_order`) can never disagree about

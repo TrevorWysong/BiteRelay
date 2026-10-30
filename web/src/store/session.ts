@@ -10,11 +10,11 @@ import { createProfile, getProfileForAgent } from "../holochain/zomes/profiles";
 import { chainClosed, successionsOf } from "../holochain/zomes/account";
 import { prepareDevice } from "../holochain/device";
 import { actionHash, decodeEntry } from "../holochain/decode";
-import { describeError } from "../lib/errors";
+import { describeError } from "../lib/ui/errors";
 import { useNetwork } from "./network";
 import type { ActionHash, GeoPoint, Profile, RoleTag } from "../holochain/types";
-import { readStoredJson, store } from "../lib/storage";
-import { nowMicros } from "../lib/format";
+import { readStoredJson, store } from "../lib/util/storage";
+import { nowMicros } from "../lib/ui/format";
 
 /// The development host's identity code (Admin API, passkeys), loaded only
 /// where it exists -- see `holochain/host.ts`.
@@ -71,10 +71,10 @@ interface SessionState {
   /// instead of carrying on.
   movedTo: Uint8Array | null;
   /// Whether this account moved to the next version of the network
-  /// (MIGRATION.md): its chain here is closed.
+  /// (docs/MIGRATION.md): its chain here is closed.
   movedToNewVersion: boolean;
   /// Whether this identity has a device passkey gating `reconnect()` -- see
-  /// `lib/webauthn.ts`'s own doc comment for exactly what this does and
+  /// `lib/account/webauthn.ts`'s own doc comment for exactly what this does and
   /// doesn't protect against. Surfaced so the Profile screen can show real
   /// status rather than silently succeeding or failing.
   hasDeviceLock: boolean;

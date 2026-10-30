@@ -45,7 +45,7 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// --- waking a closed app (src/lib/push.ts, MOBILE.md) ---
+// --- waking a closed app (src/lib/network/push.ts, docs/MOBILE.md) ---
 //
 // A wake from the network's push relay carries nothing: no order, no
 // name. So it shows the same words every time, in the person's language,

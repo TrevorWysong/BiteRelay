@@ -475,7 +475,7 @@ export interface DeliveryOrder {
   /**
    * A wake token for the customer's phone, sealed to the store: its app
    * hands it to the network's push relay when the order changes, so a
-   * closed app hears (MOBILE.md). None without a relay.
+   * closed app hears (docs/MOBILE.md). None without a relay.
    */
   sealed_wake: XSalsa20Poly1305EncryptedData | null;
   max_delivery_fee: number | null;
@@ -752,7 +752,7 @@ export type DispatchLocalSignal =
   | { CollectRequested: ActionHash }
   /**
    * Something changed on an order whose customer's app may be closed:
-   * hand this wake token to the network's push relay (MOBILE.md). Only
+   * hand this wake token to the network's push relay (docs/MOBILE.md). Only
    * the store and the driver hold one, each their own.
    */
   | { Wake: string };
@@ -1058,11 +1058,11 @@ export interface IssuerProfile {
   service_url: string;
   /**
    * How many days a recovered account's old key must stay unused before
-   * this issuer reissues its balance to the new one (see RECOVERY.md).
+   * this issuer reissues its balance to the new one (see docs/RECOVERY.md).
    */
   recovery_wait_days: number;
   /**
-   * The next version of the network, once there is one (MIGRATION.md):
+   * The next version of the network, once there is one (docs/MIGRATION.md):
    * its DNA. Apps offer to move people there, and this issuer carries
    * their balances over.
    */
@@ -1616,7 +1616,7 @@ export interface MerchantCatalog {
    * The sales tax or VAT the store charges, by category of item -- its
    * first rate is the default. Empty: no tax. The store's own, for its
    * own address: it's the seller, and files what it collects
-   * (SALES_TAX.md). Part of the terms an order is placed under.
+   * (docs/SALES_TAX.md). Part of the terms an order is placed under.
    */
   tax_rates: TaxRate[];
   /**
@@ -1633,7 +1633,7 @@ export interface MerchantCatalog {
 
 /**
  * The author moving their account to the next version of the network --
- * `network`, a different DNA (see MIGRATION.md). Written just before the
+ * `network`, a different DNA (see docs/MIGRATION.md). Written just before the
  * author closes their chain (`close_chain`), after which Holochain itself
  * accepts nothing more from it here: whatever the account held stays
  * exactly as it was. `successor` is the key that carries the account on
@@ -2159,7 +2159,7 @@ export interface PickupOrder {
   /**
    * A wake token for the customer's phone, sealed to the store: its app
    * hands it to the network's push relay when the order changes, so a
-   * closed app hears (MOBILE.md). None without a relay.
+   * closed app hears (docs/MOBILE.md). None without a relay.
    */
   sealed_wake: XSalsa20Poly1305EncryptedData | null;
   /**
@@ -2868,7 +2868,7 @@ export interface Standing {
 
 /**
  * A store brought over from the previous version of the network
- * (MIGRATION.md): `to`, the author's own store here, republished from
+ * (docs/MIGRATION.md): `to`, the author's own store here, republished from
  * `from`, a store on `previous_network`. Validation here can't read the
  * previous network, so apps count `from`'s history as `to`'s only once
  * they've checked there that `from`'s owner moved their account to the

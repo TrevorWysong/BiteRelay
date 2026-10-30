@@ -1,6 +1,6 @@
 # Relay push relay
 
-Wakes a customer's closed Relay app when their store or driver changes their order, without learning who they are or what they ordered. MOBILE.md, "Waking a closed app", has the design; this is the service.
+Wakes a customer's closed Relay app when their store or driver changes their order, without learning who they are or what they ordered. docs/MOBILE.md, "Waking a closed app", has the design; this is the service.
 
 ```sh
 cp .env.example .env
@@ -10,7 +10,7 @@ npm start
 npm test
 ```
 
-Then set the network's `services.push_relay_url` to where the app reaches it (DEPLOYMENT.md).
+Then set the network's `services.push_relay_url` to where the app reaches it (docs/DEPLOYMENT.md).
 
 ## What it does
 
@@ -34,7 +34,7 @@ Each is on when its credentials are set (`.env.example`); a relay needs at least
 - **APNs**: a token key (.p8) from the Apple developer account, its key id, the team id and the app's bundle id. `APNS_SANDBOX=1` for development builds.
 - **FCM**: the Firebase project's service account JSON.
 
-APNs and FCM are tested against fakes of Apple's and Google's services, not yet against real devices: there's no phone build yet (MOBILE.md).
+APNs and FCM are tested against fakes of Apple's and Google's services, not yet against real devices: there's no phone build yet (docs/MOBILE.md).
 
 ## Keep safe
 

@@ -7,10 +7,10 @@ import { listMyLedger } from "../../holochain/zomes/ledger";
 import { actionHash, decodeEntry, timestampOf } from "../../holochain/decode";
 import type { ActionHash, LedgerEntry } from "../../holochain/types";
 import { Card, Skeleton } from "../../components/ui";
-import { earned, earningsByPeriod, earningsCsv, type Grouping, type LedgerRow } from "../../lib/earnings";
-import { formatCents, fromMinorUnits } from "../../lib/format";
+import { earned, earningsByPeriod, earningsCsv, type Grouping, type LedgerRow } from "../../lib/driving/earnings";
+import { formatCents, fromMinorUnits } from "../../lib/ui/format";
 import { appLocale, useT } from "../../i18n";
-import { useResource } from "../../lib/useResource";
+import { useResource } from "../../lib/hooks/useResource";
 
 /// Every entry on the caller's ledger, page by page.
 async function wholeLedger(): Promise<LedgerRow[]> {

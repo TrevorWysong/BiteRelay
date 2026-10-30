@@ -1,6 +1,6 @@
 import { callZome } from "../client";
 import type { ActionHash, AgentPubKey, GeoPoint, TaxRate, HcRecord, MenuItem, MerchantCatalog, ModifierGroup, OpeningPeriod, PromoRequirement, PromoReward, GoodieBag, Timestamp } from "../types";
-import { nowMicros } from "../../lib/format";
+import { nowMicros } from "../../lib/ui/format";
 
 // An entry's stable identity (its original action) alongside its latest
 // content -- see the Rust `CatalogView`. Always pass `original_action` on

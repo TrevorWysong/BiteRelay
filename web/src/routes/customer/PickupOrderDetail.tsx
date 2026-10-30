@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useResource } from "../../lib/useResource";
+import { useResource } from "../../lib/hooks/useResource";
 import { useParams } from "react-router-dom";
 import { CheckCircle2, ChefHat } from "lucide-react";
 import { motion } from "framer-motion";
 import { cancelPickupOrder, getOrderPrivateDetails, getPickupOrder, reportPickupProblem, completePickup } from "../../holochain/zomes/dispatch";
-import { fetchOrderItemNames } from "../../lib/menu";
+import { fetchOrderItemNames } from "../../lib/menu/menu";
 import { getMyReviewsForOrder, submitReview, submitItemReview } from "../../holochain/zomes/reputation";
 import { decodeEntry, bytesEqual, bytesToHex, hexToBytes, timestampOf } from "../../holochain/decode";
 import { myAgentPubKey } from "../../holochain/client";
@@ -12,11 +12,11 @@ import { PickupStatusTimeline, PickupStatusBadge } from "../../components/OrderS
 import { Button, Card, Skeleton, StatNumber, Textarea } from "../../components/ui";
 import { StarRatingInput } from "../../components/StarRating";
 import { WaitingForStore } from "../../components/WaitingForStore";
-import { formatCents, formatClockTime } from "../../lib/format";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import { describeError } from "../../lib/errors";
+import { formatCents, formatClockTime } from "../../lib/ui/format";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
+import { describeError } from "../../lib/ui/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
-import { POLL, isOrderSignal } from "../../lib/poll";
+import { POLL, isOrderSignal } from "../../lib/network/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
 import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";

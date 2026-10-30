@@ -5,14 +5,14 @@ import { Check, ChevronDown, MapPin, Pencil, Plus, Trash2, X } from "lucide-reac
 import { useSession } from "../store/session";
 import { saveAddress, deleteSavedAddress, listMyAddresses, updateSavedAddress } from "../holochain/zomes/profiles";
 import { bytesToHex } from "../holochain/decode";
-import { reverseGeocode } from "../lib/geocoding";
+import { reverseGeocode } from "../lib/places/geocoding";
 import { AddressSearch } from "./AddressSearch";
 import { Button, Input } from "./ui";
-import type { AddressComponents } from "../lib/geocoding";
+import type { AddressComponents } from "../lib/places/geocoding";
 import type { GeoPoint, AddressDetails } from "../holochain/types";
 import { MAX_LABEL_CHARS } from "../holochain/types";
 import { useT } from "../i18n";
-import { useResource } from "../lib/useResource";
+import { useResource } from "../lib/hooks/useResource";
 
 interface AddressRow {
   hash: Uint8Array;

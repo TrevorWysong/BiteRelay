@@ -34,7 +34,7 @@ await runScenario(async (scenario) => {
   const merchantGeohash = decodeEntry<{ geohash: string }>(catalogRecord).geohash;
   console.log(`[INFO] merchant's own precision-6 geohash: ${merchantGeohash}`);
 
-  // Mirrors web/src/lib/geohash.ts's encodeGeohash exactly (same algorithm,
+  // Mirrors web/src/lib/places/geohash.ts's encodeGeohash exactly (same algorithm,
   // precision 6) -- this test has to derive the *customer's* geohash the
   // same way the real frontend does, not just reuse the merchant's.
   function encodeGeohash(lat: number, lon: number, precision = 6): string {

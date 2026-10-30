@@ -7,16 +7,16 @@ import { getMyActiveOrders, getMyOrderHistory, listMyRecurringTemplates, setRecu
 import { getCatalog, getMyBagClaims, getGoodieBag } from "../../holochain/zomes/catalog";
 import { decodeEntry, actionHash, bytesToHex } from "../../holochain/decode";
 import { useCart } from "../../store/cart";
-import { useResource } from "../../lib/useResource";
-import { cartLinesFromOrder, fetchMenu } from "../../lib/menu";
-import { customerOrderPath, isFinished, itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orderEntries";
+import { useResource } from "../../lib/hooks/useResource";
+import { cartLinesFromOrder, fetchMenu } from "../../lib/menu/menu";
+import { customerOrderPath, isFinished, itemCount, mergeNewestFirst, toOrderRow, type OrderRow } from "../../lib/orders/orderEntries";
 import { Button, Card, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, timeAgo } from "../../lib/format";
-import { describeRecurrence } from "../../lib/recurrence";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { formatCents, timeAgo } from "../../lib/ui/format";
+import { describeRecurrence } from "../../lib/orders/recurrence";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
 import type { BagClaim, GoodieBag, MerchantCatalog, RecurringOrderTemplate, Timestamp } from "../../holochain/types";
-import { POLL } from "../../lib/poll";
+import { POLL } from "../../lib/network/poll";
 import { t as translate, useT, type MessageKey } from "../../i18n";
 
 

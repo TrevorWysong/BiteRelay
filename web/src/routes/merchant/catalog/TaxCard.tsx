@@ -1,6 +1,6 @@
 // The store's sales tax or VAT. The store is the seller of record: it
 // charges and remits its own tax, as on its counter and phone orders
-// (SALES_TAX.md). Each rate is named for what it applies to; the first is
+// (docs/SALES_TAX.md). Each rate is named for what it applies to; the first is
 // the default, and menu items pick another. Orders placed from here on are
 // taxed at these rates -- and the network checks every one against them.
 import { useState } from "react";
@@ -10,11 +10,11 @@ import { MAX_LABEL_CHARS } from "../../../holochain/types";
 import { setTaxSettings } from "../../../holochain/zomes/catalog";
 import { Button, Card, Checkbox, Input, Skeleton } from "../../../components/ui";
 import { bytesToHex } from "../../../holochain/decode";
-import { formatCents, fromMinorUnits } from "../../../lib/format";
-import { storeTaxReport, taxReportCsv } from "../../../lib/taxReport";
-import { useResource } from "../../../lib/useResource";
-import { describeError } from "../../../lib/errors";
-import { percentLabel } from "../../../lib/tax";
+import { formatCents, fromMinorUnits } from "../../../lib/ui/format";
+import { storeTaxReport, taxReportCsv } from "../../../lib/money/taxReport";
+import { useResource } from "../../../lib/hooks/useResource";
+import { describeError } from "../../../lib/ui/errors";
+import { percentLabel } from "../../../lib/menu/tax";
 import { useT, type MessageKey } from "../../../i18n";
 
 /// The network's own bounds (`catalog_types::MAX_TAX_RATES`, `MAX_TAX_BASIS_POINTS`).

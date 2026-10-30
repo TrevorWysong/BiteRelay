@@ -1,7 +1,7 @@
 // Las políticas en español: las mismas reglas que en.ts, sección por sección
 // y punto por punto (test/policies.test.ts lo comprueba).
 import { HANDOFF_CODE_DIGITS, type NetworkTerms } from "../../holochain/types";
-import { formatCents } from "../format";
+import { formatCents } from "../ui/format";
 import { spoken, type PolicyChange, type PolicyContent, type PolicySection } from "./common";
 
 const changes: PolicyChange[] = [

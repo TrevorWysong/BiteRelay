@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoBidPrice, skipsStore } from "../src/lib/autoBid.ts";
+import { autoBidPrice, skipsStore } from "../src/lib/driving/autoBid.ts";
 
 const terms = { rule: { on: true, perKmCents: 100, skipRefusals: 3 }, minFeeCents: 300 };
 

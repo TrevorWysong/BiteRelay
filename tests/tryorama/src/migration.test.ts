@@ -1,4 +1,4 @@
-// Proves moving an account to the next version of the network (MIGRATION.md),
+// Proves moving an account to the next version of the network (docs/MIGRATION.md),
 // across two real networks: the same DNA under two seeds stands in for the
 // old version and the new. On the old network an account seals its private
 // details to its key on the new one, records the move and closes its chain

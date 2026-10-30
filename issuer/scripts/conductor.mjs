@@ -33,7 +33,7 @@ const adminPort = Number(process.env.CONDUCTOR_ADMIN_PORT ?? 8870);
 // servers are reached over TLS.
 for (const [name, url] of [["BOOTSTRAP_URL", bootstrapUrl], ["RELAY_URL", relayUrl]]) {
   if (!url.startsWith("https://")) {
-    console.error(`${name} must be an https:// URL -- the network's servers behind TLS (DEPLOYMENT.md).`);
+    console.error(`${name} must be an https:// URL -- the network's servers behind TLS (docs/DEPLOYMENT.md).`);
     process.exit(2);
   }
 }

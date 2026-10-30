@@ -4,17 +4,17 @@ import clsx from "clsx";
 import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Sparkles } from "lucide-react";
 import { useSession, type Mode } from "../store/session";
 import { useCart } from "../store/cart";
-import { pageVariants } from "../lib/motion";
+import { pageVariants } from "../lib/ui/motion";
 import { PresenceDot } from "./ui";
 import { BottomNavLink } from "./BottomNavLink";
 import { MerchantNav } from "./MerchantNav";
 import { Notifier } from "./Notifier";
 import { ConnectionBanner } from "./ConnectionBanner";
-import { usePolling, useResource } from "../lib/useResource";
-import { nextNetwork } from "../lib/migration";
-import { POLL } from "../lib/poll";
-import { collectIncoming } from "../lib/wallet";
-import { topUpIfLow } from "../lib/autoTopUp";
+import { usePolling, useResource } from "../lib/hooks/useResource";
+import { nextNetwork } from "../lib/account/migration";
+import { POLL } from "../lib/network/poll";
+import { collectIncoming } from "../lib/money/wallet";
+import { topUpIfLow } from "../lib/money/autoTopUp";
 import { reaffirmRecoveryPlan } from "../holochain/zomes/account";
 import { bytesToHex } from "../holochain/decode";
 import { useCustomerSettings } from "../store/roleSettings";
@@ -129,7 +129,7 @@ export function AppShell() {
 }
 
 /// A line under the header once a new version of Relay is out
-/// (MIGRATION.md): moving there is the person's to start, from Account &
+/// (docs/MIGRATION.md): moving there is the person's to start, from Account &
 /// recovery.
 function NewVersionBanner({ enabled }: { enabled: boolean }) {
   const { data: next } = useResource(enabled ? "next-network" : null, nextNetwork, { pollMs: POLL.slow });

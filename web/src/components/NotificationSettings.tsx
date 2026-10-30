@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Bell } from "lucide-react";
 import { Card, Switch } from "./ui";
-import { unlockChime } from "../lib/chime";
+import { unlockChime } from "../lib/ui/chime";
 import { usePreferences } from "../store/preferences";
-import { canWakeWhileClosed, startWakingWhileClosed, stopWakingWhileClosed, wakesWhileClosed } from "../lib/push";
-import { describeError } from "../lib/errors";
+import { canWakeWhileClosed, startWakingWhileClosed, stopWakingWhileClosed, wakesWhileClosed } from "../lib/network/push";
+import { describeError } from "../lib/ui/errors";
 import { useT } from "../i18n";
 
 const supported = typeof Notification !== "undefined";

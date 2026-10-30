@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: No zome reads its whole chain
         # query() loads the caller's whole chain whatever its filter
-        # (DEVELOPMENT.md, "Writing zome code"): read with chain::mine.
+        # (docs/DEVELOPMENT.md, "Writing zome code"): read with chain::mine.
         run: |
           if git grep -nE '^[^/]*([^_[:alnum:]]|^)query\(' -- ':(glob)dnas/relay/zomes/*/coordinator/**/*.rs' ':(glob)dnas/relay/coordinator_support/**/*.rs'; then
             echo "A coordinator calls query(): read the chain with relay_coordinator_support::chain::mine instead."

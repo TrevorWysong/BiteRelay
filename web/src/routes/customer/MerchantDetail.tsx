@@ -4,26 +4,26 @@ import { ArrowLeft, Clock, Heart, MapPin, PackageOpen, Phone, Plus, ShoppingBag,
 import { motion, AnimatePresence } from "framer-motion";
 import { getCatalog, listGoodieBagsForCatalog, claimGoodieBag, storeSuccessor, type FulfillmentInput } from "../../holochain/zomes/catalog";
 import { averageRating, getRatingSummary, getReputationSummary, getReviewsFor, getItemRatingSummary, type ItemRatingSummary } from "../../holochain/zomes/reputation";
-import { useResource } from "../../lib/useResource";
+import { useResource } from "../../lib/hooks/useResource";
 import { decodeEntry, hexToBytes, bytesToHex } from "../../holochain/decode";
 import { useSession } from "../../store/session";
 import { useCart } from "../../store/cart";
-import { currencySymbol, formatCatalogAddress, formatCents, nowMicros, toMinorUnits } from "../../lib/format";
-import { describeError } from "../../lib/errors";
+import { currencySymbol, formatCatalogAddress, formatCents, nowMicros, toMinorUnits } from "../../lib/ui/format";
+import { describeError } from "../../lib/ui/errors";
 import { Button, Chip, ChipRow, Input, Skeleton, StatNumber } from "../../components/ui";
 import { useTerms } from "../../store/network";
 import { useT } from "../../i18n";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
 import { ItemSheet } from "../../components/ItemSheet";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
-import { fetchMenu, groupByCategory } from "../../lib/menu";
-import { useFavorites } from "../../lib/useFavorites";
-import type { ItemRow } from "../../lib/menu";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
+import { fetchMenu, groupByCategory } from "../../lib/menu/menu";
+import { useFavorites } from "../../lib/hooks/useFavorites";
+import type { ItemRow } from "../../lib/menu/menu";
 import type { GeoPoint, MerchantCatalog, GoodieBag } from "../../holochain/types";
-import { POLL } from "../../lib/poll";
-import { useClock } from "../../lib/useClock";
-import { storeStatus } from "../../lib/storeHours";
+import { POLL } from "../../lib/network/poll";
+import { useClock } from "../../lib/hooks/useClock";
+import { storeStatus } from "../../lib/menu/storeHours";
 import { ReviewList } from "../../components/ReviewList";
 
 interface BagRow {

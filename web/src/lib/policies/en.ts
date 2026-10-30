@@ -3,7 +3,7 @@
 // (test/policies.test.ts holds them to it); keep them in step when a rule
 // changes.
 import { HANDOFF_CODE_DIGITS, type NetworkTerms } from "../../holochain/types";
-import { formatCents } from "../format";
+import { formatCents } from "../ui/format";
 import { spoken, type PolicyChange, type PolicyContent, type PolicySection } from "./common";
 
 const changes: PolicyChange[] = [

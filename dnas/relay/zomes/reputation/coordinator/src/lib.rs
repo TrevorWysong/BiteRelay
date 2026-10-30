@@ -235,7 +235,7 @@ impl ReputationSummary {
 }
 
 /// Who or what `target` was on the previous version of the network, if it
-/// came over in a migration (MIGRATION.md) -- checked there by the account
+/// came over in a migration (docs/MIGRATION.md) -- checked there by the account
 /// and catalog zomes.
 fn previous_target(target: &ReputationTarget) -> ExternResult<Option<ReputationTarget>> {
     Ok(match target {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { estimateTrip } from "../src/lib/eta.ts";
+import { estimateTrip } from "../src/lib/driving/eta.ts";
 
 const HERE = { lat: 27.7676, lon: -82.6403 };
 // Just under 10km north.
@@ -28,7 +28,7 @@ test("an ETA is never under a minute", () => {
 });
 
 test("a restaurant card's estimate: prep, any busy extra, and the trip, rounded, with a driver's spread", async () => {
-  const { deliveryEstimate } = await import("../src/lib/eta");
+  const { deliveryEstimate } = await import("../src/lib/driving/eta");
   const here = { lat: 27.7676, lon: -82.6403 };
   // ~5 km away at 25 km/h is 12 minutes; 15 prep + 12 = 27 -> 25.
   const near = deliveryEstimate({ location: { lat: 27.8126, lon: -82.6403 }, prep_minutes: 15, busy_extra_minutes: 0 }, here);
@@ -39,7 +39,7 @@ test("a restaurant card's estimate: prep, any busy extra, and the trip, rounded,
 });
 
 test("distances read in the local unit", async () => {
-  const { formatDistance } = await import("../src/lib/format");
+  const { formatDistance } = await import("../src/lib/ui/format");
   assert.equal(formatDistance(1.234, "en-US"), "0.8 mi");
   assert.equal(formatDistance(1.234, "en-GB"), "0.8 mi");
   assert.equal(formatDistance(1.234, "de-DE"), "1,2 km");

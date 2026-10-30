@@ -4,7 +4,7 @@ import { useSession } from "./store/session";
 import { HOST } from "./holochain/host";
 import { Spinner } from "./components/ui";
 import { Fingerprint } from "lucide-react";
-import { describeError } from "./lib/errors";
+import { describeError } from "./lib/ui/errors";
 import { AppShell } from "./components/AppShell";
 import { Onboarding } from "./routes/Onboarding";
 import { Browse } from "./routes/customer/Browse";

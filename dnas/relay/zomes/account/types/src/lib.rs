@@ -5,7 +5,7 @@
 //! An account is a line of agent keys: someone's first key, and each key
 //! that took over from the one before (`Succession`). Moving to a new phone
 //! keeps the same key -- the old phone sends it over, and the new one
-//! restores the account from the network (RECOVERY.md), so nothing here
+//! restores the account from the network (docs/RECOVERY.md), so nothing here
 //! changes. But a key is lost with its device, and nothing on a
 //! peer-to-peer network can bring it back, so what carries a *lost*
 //! account on is a new key, with authority to speak for the old one:
@@ -100,7 +100,7 @@ pub struct Parcel {
 }
 
 /// The author moving their account to the next version of the network --
-/// `network`, a different DNA (see MIGRATION.md). Written just before the
+/// `network`, a different DNA (see docs/MIGRATION.md). Written just before the
 /// author closes their chain (`close_chain`), after which Holochain itself
 /// accepts nothing more from it here: whatever the account held stays
 /// exactly as it was. `successor` is the key that carries the account on

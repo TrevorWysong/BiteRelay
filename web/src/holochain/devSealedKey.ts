@@ -2,8 +2,8 @@
 // code's form -- `relay-key:1:`, the account, then 32 + 24 bytes where the
 // sender's key and nonce go -- carrying, in place of the ciphertext, where
 // the identity lives on the dev node. Kept apart, and pure, so it's tested
-// against the reader every code goes through (`lib/deviceMove.ts`).
-import { SEALED_KEY_PREFIX, sealedAccount } from "../lib/deviceMove";
+// against the reader every code goes through (`lib/account/deviceMove.ts`).
+import { SEALED_KEY_PREFIX, sealedAccount } from "../lib/account/deviceMove";
 
 /// Where an identity lives on the dev node.
 export interface DevIdentity {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { storeInsights, type InsightOrder } from "../src/lib/insights";
+import { storeInsights, type InsightOrder } from "../src/lib/money/insights";
 
 const order = (hour: number, status: string, total: number, lines: [string, number][], extra: Partial<InsightOrder> = {}): InsightOrder => ({
   placedAt: new Date(2026, 9, 12, hour, 15),

@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useT, type MessageKey } from "../i18n";
-import { formatClockTime } from "../lib/format";
+import { formatClockTime } from "../lib/ui/format";
 
 /// How long a store has left to accept an order: a bar that drains in real
 /// time and the time the window closes. The bar is a CSS animation started

@@ -119,12 +119,6 @@ where
     })
 }
 
-/// The author of the action `hash` -- for an update or delete, whose entry
-/// it changes.
-pub fn author_of(hash: &ActionHash) -> ExternResult<AgentPubKey> {
-    Ok(must_get_action(hash.clone())?.hashed.content.header.author.clone())
-}
-
 /// Why `uri` isn't an acceptable image, if it isn't. An image is empty or an
 /// inline `data:` URI of a raster format, never a link: a link would have
 /// every viewer's app fetch it from a server that learns who they are and
@@ -153,11 +147,6 @@ pub fn image_problem(uri: &str) -> Option<&'static str> {
 /// may be (`limits::MAX_AMOUNT`).
 pub fn amount_problem(field: &'static str, amount: u64) -> Option<String> {
     (amount > limits::MAX_AMOUNT).then(|| format!("{field} is more than any amount may be"))
-}
-
-/// Why a quantity is out of bounds, if it is: more than `limits::MAX_LINE_QUANTITY`.
-pub fn quantity_problem(field: &'static str, quantity: u32) -> Option<String> {
-    (quantity > limits::MAX_LINE_QUANTITY).then(|| format!("{field} is more than {} units", limits::MAX_LINE_QUANTITY))
 }
 
 /// Why a piece of text is unacceptable, if it is: longer than `max_chars`

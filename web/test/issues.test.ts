@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { claimedValue } from "../src/lib/issues.ts";
-import { decodeHandoverCode, encodeHandoverCode, matchesCommitment } from "../src/lib/handoverCode.ts";
+import { claimedValue } from "../src/lib/orders/issues.ts";
+import { decodeHandoverCode, encodeHandoverCode, matchesCommitment } from "../src/lib/orders/handoverCode.ts";
 
 // The same cases as dispatch_types::issues::tests -- keep them in step.
 const lines = [

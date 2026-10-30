@@ -29,7 +29,7 @@ fn geohash_anchor_path(geohash: &str) -> ExternResult<hdi::hash_path::path::Type
 /// is deliberately *not* time-bucketed. The real scale concern here is
 /// different: a dense city can legitimately have thousands of real
 /// merchants in one cell, and returning all of them in one call doesn't
-/// bound payload size or per-call cost. Fixed with pagination instead (§9.3).
+/// bound payload size or per-call cost. Fixed with pagination instead.
 const CATALOG_PAGE_SIZE: usize = 50;
 const MENU_ITEM_PAGE_SIZE: usize = 50;
 

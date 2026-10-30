@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { DropoffPreference } from "../holochain/types";
-import { TYPICAL_DRIVER_KMH } from "../lib/eta";
+import { TYPICAL_DRIVER_KMH } from "../lib/driving/eta";
 
 /// A customer's checkout as they last left it, offered again next time.
 export interface CheckoutDefaults {

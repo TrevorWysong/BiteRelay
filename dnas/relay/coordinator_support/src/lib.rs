@@ -342,7 +342,7 @@ pub fn ensure_direct_signals(tag: &str) -> ExternResult<bool> {
 ///
 /// A grant's entry is private, so it lives only on the device that wrote
 /// it: an account restored onto a new device from the network
-/// (RECOVERY.md) has the grant's action but not the grant. Each zome's
+/// (docs/RECOVERY.md) has the grant's action but not the grant. Each zome's
 /// `prepare_device` ensures its grants on every start, so a device always
 /// ends up holding its own.
 fn ensure_grant(grant: CapGrantEntry) -> ExternResult<bool> {

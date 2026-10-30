@@ -2,11 +2,11 @@ import { useRef, useState } from "react";
 import { MapPin, Search } from "lucide-react";
 import clsx from "clsx";
 import { Input, Spinner } from "./ui";
-import { searchAddress, reverseGeocode } from "../lib/geocoding";
+import { searchAddress, reverseGeocode } from "../lib/places/geocoding";
 import type { GeoPoint } from "../holochain/types";
-import type { AddressComponents, GeocodeResult } from "../lib/geocoding";
+import type { AddressComponents, GeocodeResult } from "../lib/places/geocoding";
 import { useT } from "../i18n";
-import { useResource } from "../lib/useResource";
+import { useResource } from "../lib/hooks/useResource";
 
 const DEBOUNCE_MS = 500;
 

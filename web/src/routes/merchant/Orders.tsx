@@ -20,31 +20,31 @@ import {
   markNotCollected,
 } from "../../holochain/zomes/dispatch";
 import { QrScanner } from "../../components/QrScanner";
-import { decodeHandoverCode, decodePickupCode } from "../../lib/handoverCode";
-import { isFinished, itemCount, mergeNewestFirst, received } from "../../lib/orderEntries";
+import { decodeHandoverCode, decodePickupCode } from "../../lib/orders/handoverCode";
+import { isFinished, itemCount, mergeNewestFirst, received } from "../../lib/orders/orderEntries";
 import { useMyStores, type StoreRow } from "../../store/merchantStores";
 import { fetchActiveQueue, storesKey, toRow, type QueueRow } from "../../store/merchantQueue";
-import { useResource } from "../../lib/useResource";
-import { describeError } from "../../lib/errors";
-import { useClock } from "../../lib/useClock";
-import { DECLINE_REASONS, declineLabel, responseDeadlineMs } from "../../lib/storeAnswers";
+import { useResource } from "../../lib/hooks/useResource";
+import { describeError } from "../../lib/ui/errors";
+import { useClock } from "../../lib/hooks/useClock";
+import { DECLINE_REASONS, declineLabel, responseDeadlineMs } from "../../lib/orders/storeAnswers";
 import { useTerms } from "../../store/network";
-import { useStoreSteps } from "../../lib/storeSteps";
-import { currentBeacon } from "../../lib/timeSource";
+import { useStoreSteps } from "../../lib/orders/storeSteps";
+import { currentBeacon } from "../../lib/network/timeSource";
 import { ResponseCountdown } from "../../components/ResponseCountdown";
 import { Button, Card, Chip, ChipRow, EmptyState, SegmentedTabs, Skeleton, StatNumber } from "../../components/ui";
 import { StatusBadge, PickupStatusBadge } from "../../components/OrderStatus";
-import { formatCents, formatClockTime, formatDeadline, formatEta, nowMicros, timeAgo } from "../../lib/format";
-import { fadeSlideUp, staggerContainer } from "../../lib/motion";
+import { formatCents, formatClockTime, formatDeadline, formatEta, nowMicros, timeAgo } from "../../lib/ui/format";
+import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
 import type { DeclineReason, Timestamp } from "../../holochain/types";
-import { POLL, isOrderSignal } from "../../lib/poll";
+import { POLL, isOrderSignal } from "../../lib/network/poll";
 import { acknowledgeLeg } from "../../holochain/zomes/attestation";
 import { OrderLines } from "../../components/OrderLines";
 import { CustomerHistory } from "../../components/CustomerHistory";
 import { OrderIssues } from "../../components/OrderIssues";
 import { StoreAppeals } from "../../components/StoreAppeals";
 import { HandoverCode } from "../../components/HandoverCode";
-import { unconfirmedPickup } from "../../lib/handoffs";
+import { unconfirmedPickup } from "../../lib/orders/handoffs";
 import { useT, type MessageKey } from "../../i18n";
 
 

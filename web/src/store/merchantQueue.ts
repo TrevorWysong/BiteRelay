@@ -1,8 +1,8 @@
 // A merchant's in-progress orders across their stores -- read by the order
 // queue screen and by the app shell's "orders waiting" alert.
 import { getActiveOrdersForStore, type OrderEntry } from "../holochain/zomes/dispatch";
-import { toOrderRow, type OrderRow } from "../lib/orderEntries";
-import { responseDeadlineMs } from "../lib/storeAnswers";
+import { toOrderRow, type OrderRow } from "../lib/orders/orderEntries";
+import { responseDeadlineMs } from "../lib/orders/storeAnswers";
 import type { StoreRow } from "./merchantStores";
 
 /// An order, labelled with the store it came in at.

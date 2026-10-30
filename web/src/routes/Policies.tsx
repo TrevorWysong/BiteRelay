@@ -1,7 +1,7 @@
 // How Relay works: the rules for payments, deliveries, missing items,
 // cancellations, disputes, reputation and privacy, what each means for
 // customers, stores and drivers over time, and the risks. Content lives in
-// `lib/policies.ts`; this network's numbers come from its own settings.
+// `lib/policies/`; this network's numbers come from its own settings.
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowUpRight, Bike, ChevronDown, Info, ShoppingBag, Store, TriangleAlert } from "lucide-react";
@@ -9,8 +9,8 @@ import { Link, useNavigate } from "react-router-dom";
 import type { NetworkTerms } from "../holochain/types";
 import { POLICY_UPDATED, POLICY_VERSION, policyChanges, policyRisks, policySections, spoken, type Audience, type PolicySection } from "../lib/policies";
 import { appLocale, useT, type MessageKey } from "../i18n";
-import { formatCents } from "../lib/format";
-import { fadeSlideUp, staggerContainer } from "../lib/motion";
+import { formatCents } from "../lib/ui/format";
+import { fadeSlideUp, staggerContainer } from "../lib/ui/motion";
 import { useTerms } from "../store/network";
 
 const AUDIENCE: Record<Audience, { label: MessageKey; Icon: typeof Bike }> = {

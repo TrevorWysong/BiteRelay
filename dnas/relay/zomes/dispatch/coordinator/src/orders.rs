@@ -72,7 +72,7 @@ pub struct RequestDeliveryInput {
     pub bag_claim_ref: Option<ActionHash>,
     /// Wake tokens from the network's push relay, one for the store and
     /// one for the driver -- two, so the two can't tell they're the same
-    /// person's. Sealed to each (MOBILE.md); None without a relay.
+    /// person's. Sealed to each (docs/MOBILE.md); None without a relay.
     #[serde(default)]
     pub wake_for_store: Option<String>,
     #[serde(default)]
@@ -451,7 +451,7 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
 /// surface, a driver polling their own accepted order). `resolve_latest`
 /// is what makes this reflect the order's real current status rather than
 /// its original `Open` creation record -- see the `get()`-on-`ActionHash`
-/// literalness note in `HOLOCHAIN_ISSUES.md` #4.
+/// literalness note in `docs/HOLOCHAIN_ISSUES.md` #4.
 #[hdk_extern]
 pub fn get_order(order_original_action: ActionHash) -> ExternResult<Record> {
     resolve_latest(order_original_action)

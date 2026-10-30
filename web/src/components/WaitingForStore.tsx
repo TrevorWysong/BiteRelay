@@ -1,7 +1,7 @@
 import { Store } from "lucide-react";
 import { Button, Card } from "./ui";
 import { ResponseCountdown } from "./ResponseCountdown";
-import { responseDeadlineMs } from "../lib/storeAnswers";
+import { responseDeadlineMs } from "../lib/orders/storeAnswers";
 import { useTerms } from "../store/network";
 import { useT } from "../i18n";
 

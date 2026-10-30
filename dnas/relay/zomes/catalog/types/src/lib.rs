@@ -124,7 +124,7 @@ pub struct MerchantCatalog {
     /// The sales tax or VAT the store charges, by category of item -- its
     /// first rate is the default. Empty: no tax. The store's own, for its
     /// own address: it's the seller, and files what it collects
-    /// (SALES_TAX.md). Part of the terms an order is placed under.
+    /// (docs/SALES_TAX.md). Part of the terms an order is placed under.
     #[serde(default)]
     pub tax_rates: Vec<TaxRate>,
     /// Whether menu prices already include the tax (VAT, as in most of the
@@ -460,7 +460,7 @@ pub struct StoreSuccession {
 }
 
 /// A store brought over from the previous version of the network
-/// (MIGRATION.md): `to`, the author's own store here, republished from
+/// (docs/MIGRATION.md): `to`, the author's own store here, republished from
 /// `from`, a store on `previous_network`. Validation here can't read the
 /// previous network, so apps count `from`'s history as `to`'s only once
 /// they've checked there that `from`'s owner moved their account to the

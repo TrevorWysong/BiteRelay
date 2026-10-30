@@ -4,7 +4,7 @@
 //   - From their other phone, which still works: it sends the account's own
 //     key here, sealed, and this device restores the account from the
 //     network -- the same account, nothing to confirm (`FromDevice`).
-//   - From the previous version of the network (MIGRATION.md).
+//   - From the previous version of the network (docs/MIGRATION.md).
 //   - Recovering a lost phone's account onto this device's key, with the
 //     recovery phrase, which signs for this key, or guardians, who scan its
 //     code and vouch. The person then confirms their details.
@@ -21,17 +21,17 @@ import { accountsForPhraseKey, arrive, arrivedFrom, latestActionOf, migrationsTo
 import { hasPreviousNetwork } from "../holochain/client";
 import { listIssuers } from "../holochain/zomes/ledger";
 import { canReceiveAccount, deviceRuntime } from "../holochain/device";
-import { invitationFingerprint, sealedAccount } from "../lib/deviceMove";
+import { invitationFingerprint, sealedAccount } from "../lib/account/deviceMove";
 import { catalogsOf, importStore, moveStore, previousStores } from "../holochain/zomes/catalog";
 import { AccountCode, CodeCard, CodeReader } from "./AccountCode";
 import { Button, Field, Input, Skeleton, Spinner, Textarea } from "./ui";
-import { adoptPredecessor, keyFingerprint, readPredecessor, type AccountPlace } from "../lib/accountMove";
-import { describeError } from "../lib/errors";
-import { phraseKey, phraseMessage, readPhrase } from "../lib/recoveryPhrase";
-import { POLL } from "../lib/poll";
-import { usePolling, useResource } from "../lib/useResource";
+import { adoptPredecessor, keyFingerprint, readPredecessor, type AccountPlace } from "../lib/account/accountMove";
+import { describeError } from "../lib/ui/errors";
+import { phraseKey, phraseMessage, readPhrase } from "../lib/account/recoveryPhrase";
+import { POLL } from "../lib/network/poll";
+import { usePolling, useResource } from "../lib/hooks/useResource";
 import { useSession } from "../store/session";
-import { remember, rememberedMethod, type Method } from "../lib/restoring";
+import { remember, rememberedMethod, type Method } from "../lib/account/restoring";
 import { t as translate, useT } from "../i18n";
 
 
@@ -49,7 +49,7 @@ export function RestoreAccount({ devAdminUrl, onBack, onDone }: { devAdminUrl: s
   // straight to confirming the details.
   const { data: taken } = useResource(agentPubKey && `succession:${bytesToHex(agentPubKey)}`, mySuccession);
   // A release that carries the previous version of the network offers to
-  // bring an account over from it (MIGRATION.md) -- and, after a reload
+  // bring an account over from it (docs/MIGRATION.md) -- and, after a reload
   // mid-way, picks up where it was.
   const { data: hasPrevious } = useResource(agentPubKey && `has-previous:${bytesToHex(agentPubKey)}`, hasPreviousNetwork);
   const { data: arrived } = useResource(agentPubKey && hasPrevious ? `arrived:${bytesToHex(agentPubKey)}` : null, () => arrivedFrom(agentPubKey!));
@@ -148,7 +148,7 @@ function MethodCard({ icon, title, blurb, onClick, disabled }: { icon: React.Rea
 }
 
 /// This phone's side of receiving the account from the person's other one,
-/// with its key (RECOVERY.md): it shows an invitation, scans the key the
+/// with its key (docs/RECOVERY.md): it shows an invitation, scans the key the
 /// other phone seals to it, and restores the account from the network --
 /// the very same account, so there are no details to confirm. The app then
 /// starts again as it.
@@ -218,7 +218,7 @@ function FromDevice() {
 }
 
 /// Waits for the previous version of the app to move the account here, then
-/// records the arrival (MIGRATION.md).
+/// records the arrival (docs/MIGRATION.md).
 function FromPreviousVersion({ me, onTaken }: { me: AgentPubKey; onTaken: (predecessor: AgentPubKey) => void }) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);

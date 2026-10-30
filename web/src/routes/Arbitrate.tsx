@@ -8,10 +8,10 @@ import type { AppealsPage, AppealView } from "../holochain/types";
 import { getMyDocket, ruleOnAppeal } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
 import { Button, Card, Input, Textarea } from "../components/ui";
-import { describeError } from "../lib/errors";
-import { currencySymbol, formatCents, fromMinorUnits, timeAgo, toMinorUnits } from "../lib/format";
-import { POLL } from "../lib/poll";
-import { useResource } from "../lib/useResource";
+import { describeError } from "../lib/ui/errors";
+import { currencySymbol, formatCents, fromMinorUnits, timeAgo, toMinorUnits } from "../lib/ui/format";
+import { POLL } from "../lib/network/poll";
+import { useResource } from "../lib/hooks/useResource";
 import { MAX_NOTE_CHARS } from "../holochain/types";
 import { useT } from "../i18n";
 

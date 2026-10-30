@@ -1,4 +1,4 @@
-// This device sending its account to a new phone (RECOVERY.md): once it
+// This device sending its account to a new phone (docs/RECOVERY.md): once it
 // has, its app is stopped and nothing on it may write again, so the whole
 // app gives way to the code the new phone scans (`Departure`) -- across
 // reloads too, which is why it's kept here.

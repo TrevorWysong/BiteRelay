@@ -1,6 +1,6 @@
 # A Relay network's servers: its bootstrap/relay server, an issuer (its
 # conductor and service), and -- with `--profile push` -- a push relay,
-# behind Caddy for TLS. See DEPLOYMENT.md, "Run the
+# behind Caddy for TLS. See docs/DEPLOYMENT.md, "Run the
 # servers". Fill in deploy/issuer.env from issuer/.env.example (never commit
 # it), and point both domains' DNS at this machine.
 services:

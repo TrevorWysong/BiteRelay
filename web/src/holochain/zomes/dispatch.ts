@@ -36,7 +36,7 @@ export async function requestDelivery(input: {
   /// confirmed goodie-bag claim -- which the customer's conductor does on
   /// its own (`dispatch::claims`).
   bag_claim_ref?: ActionHash | null;
-  /// Wake tokens from the network's push relay (lib/push.ts).
+  /// Wake tokens from the network's push relay (lib/network/push.ts).
   wake_for_store?: string | null;
   wake_for_driver?: string | null;
 }): Promise<HcRecord> {
@@ -97,7 +97,7 @@ export async function getOpenOrdersNear(geohash: string): Promise<HcRecord[]> {
   return callZome("dispatch", "get_open_orders_near", geohash);
 }
 
-/// Added alongside this client (see HOLOCHAIN_ISSUES.md's note on
+/// Added alongside this client (see docs/HOLOCHAIN_ISSUES.md's note on
 /// `get()`-on-`ActionHash` literalness) -- every other order-bearing extern
 /// returns the order it just touched, but nothing previously let a client
 /// re-fetch a *given*, already-known order later (a page reload, a driver
@@ -306,7 +306,7 @@ export async function requestPickupOrder(input: {
   bag_claim_ref?: ActionHash | null;
   /// The customer confirming their age, for age-restricted items.
   age_confirmed?: boolean;
-  /// A wake token from the network's push relay (lib/push.ts).
+  /// A wake token from the network's push relay (lib/network/push.ts).
   wake_for_store?: string | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_pickup_order", {

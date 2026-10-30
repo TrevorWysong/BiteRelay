@@ -14,7 +14,7 @@ export interface Config {
   conductorAdminUrl: string;
   issuerAppId: string;
   /// The issuer's app on the previous version of the network, while people
-  /// are still moving from it (MIGRATION.md) -- unset otherwise.
+  /// are still moving from it (docs/MIGRATION.md) -- unset otherwise.
   previousIssuerAppId: string | null;
   profile: {
     name: string;

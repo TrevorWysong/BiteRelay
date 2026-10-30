@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { notificationFor } from "../src/lib/notifications.ts";
+import { notificationFor } from "../src/lib/orders/notifications.ts";
 
 const order = new Uint8Array(39).fill(7);
 

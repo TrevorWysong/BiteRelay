@@ -1,6 +1,6 @@
 //! Order pricing: what a cart costs and what a promo code takes off it.
 //! One definition, used by the dispatch coordinator to price an order and
-//! by validation to check it. `web/src/lib/promotions.ts` mirrors these
+//! by validation to check it. `web/src/lib/menu/promotions.ts` mirrors these
 //! rules for the cart's live preview; both are tested against the same
 //! cases.
 

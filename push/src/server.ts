@@ -8,7 +8,7 @@
 //   GET    /health
 //
 // A device registers once and gets wake tokens in batches, to hand one to
-// each party that should be able to wake it about an order (MOBILE.md). A
+// each party that should be able to wake it about an order (docs/MOBILE.md). A
 // wake names only a token: the relay learns that some device was woken,
 // not who asked or about what, and answers every wake alike so nobody can
 // use it to test a token. Each device is woken a few times a minute at

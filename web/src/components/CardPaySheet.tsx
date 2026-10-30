@@ -11,12 +11,12 @@ import type { AgentPubKey } from "../holochain/types";
 import { bytesToHex } from "../holochain/decode";
 import { Button, Skeleton } from "./ui";
 import { Sheet } from "./Sheet";
-import { describeError } from "../lib/errors";
-import { formatCents } from "../lib/format";
-import { cardFormSecret, payWithSavedCard, publishableKey, savedCard, type PayableIssuer } from "../lib/issuerService";
-import { POLL } from "../lib/poll";
-import { usePolling, useResource } from "../lib/useResource";
-import { collectIncoming } from "../lib/wallet";
+import { describeError } from "../lib/ui/errors";
+import { formatCents } from "../lib/ui/format";
+import { cardFormSecret, payWithSavedCard, publishableKey, savedCard, type PayableIssuer } from "../lib/money/issuerService";
+import { POLL } from "../lib/network/poll";
+import { usePolling, useResource } from "../lib/hooks/useResource";
+import { collectIncoming } from "../lib/money/wallet";
 import { t as translate, useT } from "../i18n";
 
 /// How long to wait on the funds before saying they'll come shortly.

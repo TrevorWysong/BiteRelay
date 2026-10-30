@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { planRoute } from "../src/lib/route.ts";
+import { planRoute } from "../src/lib/driving/route.ts";
 
 const at = (lat: number, lon: number) => ({ lat, lon });
 const order = (stops: { kind: string; id: string }[]) => stops.map((s) => `${s.kind}:${s.id}`);

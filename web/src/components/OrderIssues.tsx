@@ -9,12 +9,12 @@ import { AlertCircle, CheckCircle2, Clock3, Minus, PackageX, Plus, Repeat2, Shie
 import { getIssueItems, getIssuesForOrder, getOrderDecisions, reportIssue, respondToIssue } from "../holochain/zomes/dispatch";
 import { bytesToHex } from "../holochain/decode";
 import { MAX_NOTE_CHARS, type IssueItems, type IssueKind, type IssueLine, type IssueView, type OrderDecisions } from "../holochain/types";
-import { claimedValue } from "../lib/issues";
-import { describeError } from "../lib/errors";
-import { formatCents, formatDeadline, timeAgo } from "../lib/format";
-import { POLL } from "../lib/poll";
-import { useClock } from "../lib/useClock";
-import { useResource } from "../lib/useResource";
+import { claimedValue } from "../lib/orders/issues";
+import { describeError } from "../lib/ui/errors";
+import { formatCents, formatDeadline, timeAgo } from "../lib/ui/format";
+import { POLL } from "../lib/network/poll";
+import { useClock } from "../lib/hooks/useClock";
+import { useResource } from "../lib/hooks/useResource";
 import { Button, Card, Textarea } from "./ui";
 import { PhotoInput } from "./PhotoInput";
 import { Sheet } from "./Sheet";

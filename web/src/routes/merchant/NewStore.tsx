@@ -8,9 +8,9 @@ import { useSession } from "../../store/session";
 import { useMerchantStores } from "../../store/merchantStores";
 import { Button, Card, Field, Input } from "../../components/ui";
 import { SplitAddressFields } from "../../components/SplitAddressFields";
-import { describeError } from "../../lib/errors";
+import { describeError } from "../../lib/ui/errors";
 import { MAX_NAME_CHARS } from "../../holochain/types";
-import { formatCents } from "../../lib/format";
+import { formatCents } from "../../lib/ui/format";
 import { useTerms } from "../../store/network";
 import { useT } from "../../i18n";
 

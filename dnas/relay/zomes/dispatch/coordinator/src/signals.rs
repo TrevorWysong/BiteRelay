@@ -96,7 +96,7 @@ pub enum LocalSignal {
     /// This agent's store's customer asked to collect this order.
     CollectRequested(ActionHash),
     /// Something changed on an order whose customer's app may be closed:
-    /// hand this wake token to the network's push relay (MOBILE.md). Only
+    /// hand this wake token to the network's push relay (docs/MOBILE.md). Only
     /// the store and the driver hold one, each their own.
     Wake(String),
 }

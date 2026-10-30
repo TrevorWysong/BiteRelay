@@ -10,10 +10,10 @@ import { createModifierGroup, updateModifierGroup } from "../../../holochain/zom
 import { bytesToHex, hexToBytes } from "../../../holochain/decode";
 import type { ModifierGroup, ModifierOption } from "../../../holochain/types";
 import { MAX_GROUP_OPTIONS, MAX_NAME_CHARS, MAX_OPTION_QUANTITY } from "../../../holochain/types";
-import { groupProblem, rangeLabel } from "../../../lib/choices";
-import { describeError } from "../../../lib/errors";
-import { currencySymbol, fromMinorUnits, toMinorUnits } from "../../../lib/format";
-import { fadeSlideUp } from "../../../lib/motion";
+import { groupProblem, rangeLabel } from "../../../lib/menu/choices";
+import { describeError } from "../../../lib/ui/errors";
+import { currencySymbol, fromMinorUnits, toMinorUnits } from "../../../lib/ui/format";
+import { fadeSlideUp } from "../../../lib/ui/motion";
 import { Button, Card, Field, Input, Select, Switch } from "../../../components/ui";
 import { useT } from "../../../i18n";
 

@@ -8,10 +8,10 @@ import { driverVerification, getVerificationTerms } from "../../holochain/zomes/
 import { AccountCode } from "../../components/AccountCode";
 import { Sheet } from "../../components/Sheet";
 import { Button, Card } from "../../components/ui";
-import { formatDate } from "../../lib/format";
-import { POLL } from "../../lib/poll";
-import { useResource } from "../../lib/useResource";
-import { checkLabel } from "../../lib/verification";
+import { formatDate } from "../../lib/ui/format";
+import { POLL } from "../../lib/network/poll";
+import { useResource } from "../../lib/hooks/useResource";
+import { checkLabel } from "../../lib/driving/verification";
 import { useT } from "../../i18n";
 
 export function VerificationCard({ me }: { me: AgentPubKey }) {

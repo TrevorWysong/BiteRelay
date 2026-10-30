@@ -3,7 +3,7 @@
 // In production the app ships inside a Holochain runtime that hosts its UI:
 // a desktop or mobile build with the Tauri plugin (tauri-plugin-holochain),
 // or a launcher that runs a `.webhapp` (Kangaroo, the Holochain Launcher) --
-// see DEPLOYMENT.md. The runtime runs the conductor, installs the hApp for
+// see docs/DEPLOYMENT.md. The runtime runs the conductor, installs the hApp for
 // its one agent, hands the UI that app, and signs zome calls itself. The UI
 // only ever speaks the App API: it never sees the Admin API or a key.
 //

@@ -2,7 +2,7 @@
 // zomes agree on when a store is open.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeWeek, localWeekdayMinute, nextOpening, openAt, storeStatus } from "../src/lib/storeHours.ts";
+import { describeWeek, localWeekdayMinute, nextOpening, openAt, storeStatus } from "../src/lib/menu/storeHours.ts";
 
 const H = 60;
 const period = (weekday: number, opens: number, closes: number) => ({ weekday, opens, closes });

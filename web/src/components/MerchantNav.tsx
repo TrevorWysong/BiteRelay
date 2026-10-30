@@ -3,10 +3,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { BellRing, ClipboardList, Store } from "lucide-react";
 import { useMyStores } from "../store/merchantStores";
 import { awaitsAnswer, fetchActiveQueue, storesKey } from "../store/merchantQueue";
-import { useResource } from "../lib/useResource";
+import { useResource } from "../lib/hooks/useResource";
 import { useTerms } from "../store/network";
 import { BottomNavLink } from "./BottomNavLink";
-import { POLL, isOrderSignal } from "../lib/poll";
+import { POLL, isOrderSignal } from "../lib/network/poll";
 import { useT } from "../i18n";
 
 /// The store side's bottom navigation, and its alert for orders waiting to

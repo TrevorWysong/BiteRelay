@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeError } from "../src/lib/errors";
+import { describeError } from "../src/lib/ui/errors";
 import { useLocale } from "../src/i18n";
 import { en } from "../src/i18n/en";
 import { es } from "../src/i18n/es";

@@ -381,7 +381,7 @@ pub struct DeliveryOrder {
     pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
     /// A wake token for the customer's phone, sealed to the store: its app
     /// hands it to the network's push relay when the order changes, so a
-    /// closed app hears (MOBILE.md). None without a relay.
+    /// closed app hears (docs/MOBILE.md). None without a relay.
     #[serde(default)]
     pub sealed_wake: Option<XSalsa20Poly1305EncryptedData>,
     pub max_delivery_fee: Option<u64>,
@@ -716,7 +716,7 @@ pub struct PickupOrder {
     pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
     /// A wake token for the customer's phone, sealed to the store: its app
     /// hands it to the network's push relay when the order changes, so a
-    /// closed app hears (MOBILE.md). None without a relay.
+    /// closed app hears (docs/MOBILE.md). None without a relay.
     #[serde(default)]
     pub sealed_wake: Option<XSalsa20Poly1305EncryptedData>,
     /// Same trust tier/validation as `DeliveryOrder.promo_code_ref`.

@@ -5,13 +5,13 @@
 // here rather than letting anything fail half-way.
 import { Smartphone } from "lucide-react";
 import { HOST } from "../holochain/host";
-import { keyFingerprint } from "../lib/accountMove";
+import { keyFingerprint } from "../lib/account/accountMove";
 import { useSession } from "../store/session";
 import { Button } from "./ui";
 import { useT } from "../i18n";
 
 /// `to`: the key it moved to -- `null` when it moved to the new version of
-/// Relay (MIGRATION.md).
+/// Relay (docs/MIGRATION.md).
 export function MovedAway({ to }: { to: Uint8Array | null }) {
   const t = useT();
   const signOut = useSession((s) => s.signOut);

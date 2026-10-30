@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { Camera, Loader2 } from "lucide-react";
 import clsx from "clsx";
-import { fileToResizedDataUri } from "../lib/image";
-import { describeError } from "../lib/errors";
+import { fileToResizedDataUri } from "../lib/ui/image";
+import { describeError } from "../lib/ui/errors";
 import { useT } from "../i18n";
 
 interface Props {

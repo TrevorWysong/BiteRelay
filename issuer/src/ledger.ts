@@ -38,7 +38,7 @@ export interface IssuerProfile {
   payout_days: number;
   service_url: string;
   recovery_wait_days: number;
-  /// The next version of the network, once there is one (MIGRATION.md).
+  /// The next version of the network, once there is one (docs/MIGRATION.md).
   next_network?: Uint8Array | null;
 }
 

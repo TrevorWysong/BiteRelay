@@ -1,4 +1,4 @@
-# The network's push relay (push/, MOBILE.md "Waking a closed app"): a small
+# The network's push relay (push/, docs/MOBILE.md "Waking a closed app"): a small
 # Node service with no dependencies beyond Node itself.
 FROM node:24-slim
 WORKDIR /app/push
