@@ -63,7 +63,7 @@ Every other setting is optional, and the defaults suit most networks. Set only t
 | `verification_days` | 365 | The longest a verification lasts. A verifier can withdraw one at any time and customers' apps stop accepting that driver at once. Validation itself can't see a withdrawal, though, so this also bounds how long a modified app could still use it. |
 | `arbiters` | none: no appeals | Keys of the people or organisations who rule on appeals of a store's decision. A customer can appeal a store's settlement (the refund it gave for missing or wrong items) once. Each order's appeal goes to an arbiter chosen by the order's hash, so nobody picks their judge. The store gives its side, and the arbiter awards up to what the store kept. The issuer pays the award to the customer out of the store owner's next cash-outs. Arbiters reach their docket from Account & recovery → Appeals. |
 | `appeal_window_secs` | 14 days | How long after a store settles an order its customer may appeal. |
-| `services` | OpenStreetMap's public servers | The map tiles and address search the app uses: `{ map_tiles_url, map_attribution, geocoder_url }`. The tile URL is a `{z}/{x}/{y}` template; the geocoder is a Nominatim-compatible API (your own Nominatim, or Photon). **Set it for production**: OpenStreetMap's public servers don't allow an app's production traffic, and every lookup tells them where someone is. Packaging warns when it's unset. Never consulted by validation. |
+| `services` | OpenStreetMap's public servers | The map tiles and address search the app uses, and the push relay that wakes closed apps: `{ map_tiles_url, map_attribution, geocoder_url, push_relay_url }` (`push_relay_url` optional). The tile URL is a `{z}/{x}/{y}` template; the geocoder is a Nominatim-compatible API (your own Nominatim, or Photon). **Set it for production**: OpenStreetMap's public servers don't allow an app's production traffic, and every lookup tells them where someone is. Packaging warns when it's unset. Never consulted by validation. |
 | `time_source` | drand quicknet | The public time source deadline claims are proved against: `{ public_key (hex, BLS G2), genesis_secs, period_secs, relays, chain_hash }`. Validation checks a round's signature against the key alone; apps fetch rounds from the relays. |
 | `collection_window_secs` | 3600 | How long a customer collecting a delivery themselves has to come for it, before the store may record it uncollected and keep the food's price. |
 | `max_concurrent_deliveries` | 3 | The most orders a driver may carry at once. Validation refuses a pickup past it, and a priority order is always carried alone. |
@@ -79,11 +79,12 @@ Copy `deploy/properties.example.json` to `deploy/properties.json` (gitignored) a
 
 ## 2. Run the network's servers
 
-A network needs three things running on machines you control. Each is small:
+A network needs three things running on machines you control, and a fourth if it wakes closed apps. Each is small:
 
 1. **Bootstrap and relay** (`kitsune2-bootstrap-srv`) behind TLS. Peers find each other through it, and reach each other through it when NATs are in the way. Holochain refuses a plaintext relay outside development.
 2. **The issuer's conductor**: an always-on Holochain node holding the issuer's agent key, on the same network as everyone else (`issuer/scripts/conductor.mjs`). Its admin interface listens on its own machine only.
 3. **The issuer service** (`issuer/`, see its README): card top-ups, payout accounts, cash-outs, recoveries. It runs beside the issuer's conductor, and it's the only thing that talks to it. It's reached by the app over https: its address is published in the issuer's profile.
+4. **A push relay** (`push/`, see its README), optional: wakes a customer's closed app when their order changes, without learning who they are or what they ordered (MOBILE.md). It needs no conductor. Its address goes in the network's `services.push_relay_url`; without one, apps hear of changes only while open.
 
 The issuer's key has to be on the network's roster (`issuers` in `deploy/properties.json`), which is part of the DNA. So the order is:
 
@@ -112,7 +113,7 @@ cd issuer && npm start                       # the service (issuer/.env, see .en
 
 ### With Docker Compose
 
-`deploy/docker-compose.yml` runs all three behind Caddy, which fetches TLS certificates itself:
+`deploy/docker-compose.yml` runs them behind Caddy, which fetches TLS certificates itself:
 - `deploy/issuer/Dockerfile` builds one image: the pinned Holochain binaries, checked against CI's hashes, and the issuer;
 - `deploy/issuer/start.sh` starts the conductor, then prints the key (`key`) or installs the hApp and serves (`serve`).
 
@@ -124,6 +125,8 @@ docker compose run --rm issuer key         # the issuer's key, for the roster
 #   ...package the network with it, so deploy/relay.happ exists...
 docker compose up -d --build
 ```
+
+For a push relay too: fill in `deploy/push.env` from `push/.env.example` (`npm run keys` in `push/` makes its keys), set `PUSH_DOMAIN`, and start with `docker compose --profile push up -d --build`.
 
 The scripts it runs are tested (a fresh conductor, key, install, admin on localhost only). **The images and Compose file themselves haven't been run yet**: build them once on the target machine and check the logs before relying on them.
 
@@ -160,7 +163,7 @@ Some of Relay's work happens on people's own conductors through Holochain's sche
 
 ## Notifications
 
-Each order change is signalled straight to the order's other parties, conductor to conductor, and the app turns that into a system notification (Profile → Notifications), plus a chime on a store's device for each new order. This works while the app is running, in front or in the background; Kangaroo's Electron shell shows web notifications natively, and a Tauri build needs its notification plugin allowed. A fully quit app receives nothing until it's opened again, when its screens catch up. Notifying a phone whose app is closed needs a push relay (APNs/FCM), which means running a server that learns who to wake; that's a deliberate later decision, not something the network needs to work.
+Each order change is signalled straight to the order's other parties, conductor to conductor, and the app turns that into a system notification (Profile → Notifications), plus a chime on a store's device for each new order. This works while the app is running, in front or in the background; Kangaroo's Electron shell shows web notifications natively, and a Tauri build needs its notification plugin allowed. A fully quit app receives nothing until it's opened again, when its screens catch up -- unless the network runs a push relay (`push/`, `services.push_relay_url`). Then a customer who turns on Profile → Notifications → "Even when Relay is closed" is woken when their store or driver changes their order: through Web Push in a browser, or APNs/FCM from a phone build's runtime (`window.__RELAY_PUSH__`, MOBILE.md). The relay learns only that some device was woken.
 
 ## Upgrades
 

@@ -44,12 +44,12 @@ Every deadline the network enforces is proved with drand time and validated, so 
 To notify a phone whose app is closed, the phone has to be woken through Apple's (APNs) or Google's (FCM) push service. That needs a server holding the device's push token. A naive relay would learn the whole social graph: who orders from which store, when, and where drivers are. Relay's design keeps that server blind.
 
 **Sealed wake tokens.**
-1. The phone registers once with the network's push relay (`services.push_relay_url`, a network setting like the map services). It sends its APNs/FCM token and gets back a *device id* only the relay knows.
-2. For each order, the phone mints a fresh **wake token**: its device id, encrypted to the relay's public key with a random nonce. Two tokens from the same phone look unrelated, so nobody holding them can tell they're the same person.
-3. The wake token travels inside the order, sealed to the parties who should be able to wake this person, in the same way the drop-off address is shared with a committed driver. A store can wake its customer, and the customer's driver can wake them. Nobody else can even see the token.
-4. To wake someone, a party's conductor posts the token to the relay. The relay decrypts it to a device and sends a **content-free** push: "something changed".
+1. The phone registers once with the network's push relay (`services.push_relay_url`, a network setting like the map services). It sends where the relay can reach it (its APNs or FCM token, or a browser's Web Push subscription) and gets back a *device id* and a secret only it holds.
+2. The relay hands the phone **wake tokens**, twenty at a time: its device id and an expiry, encrypted with a key only the relay has (AES-GCM, a fresh nonce each). Two tokens from the same phone look unrelated. The phone fetches a new batch before it runs out, not when it orders, so the relay can't tell when it hands one out.
+3. Each order carries two of them, sealed: one to its store (`sealed_wake`), one for its driver (inside the drop-off details, which reach the driver once they commit, as the address does). Two, so the store and the driver can't tell they're the same person's. Nobody else can even see them.
+4. When the store or the driver changes the order, their conductor hands their app the token (`LocalSignal::Wake`), and the app posts it to the relay. The relay opens it to a device and sends a **content-free** push: "something changed".
    - The push carries no order, name or amount, so Apple and Google learn only that the app was woken.
-   - The phone wakes, its conductor syncs, and it shows a *local* notification built from what actually changed, in the person's language.
+   - The phone wakes, its conductor syncs, and it shows a *local* notification built from what actually changed, in the person's language. A browser, which can't read the order while closed, shows the same words every time ("There's news on your order").
 
 **What each party learns:**
 - **The relay** learns that some device was woken at some time. It doesn't learn who asked, about what, or that two wakes concern the same order or person.
@@ -58,16 +58,21 @@ To notify a phone whose app is closed, the phone has to be woken through Apple's
 
 **Abuse:**
 - The relay rate-limits per device: a few wakes a minute, a ceiling per day.
-- Tokens carry an expiry inside the encryption, the order's lifetime plus its report window, so an old token is useless.
+- Tokens carry an expiry inside the encryption (30 days by default, `TOKEN_TTL_DAYS`), so an old token is useless. The relay answers every wake alike, valid or not, so a token can't be tested.
 - A phone that's being spammed re-registers. That gets a new device id, and every outstanding token stops working.
 
-**What it costs:** one small stateless service per network (device id → push token). It can be run by the network operator, the same party that runs the issuer, or anyone; a network can run more than one. A network without one still works: phones are notified while the app is open, which is today's behaviour.
+**What it costs:** one small service per network, holding only device id → where to reach it (`push/`). It can be run by the network operator, the same party that runs the issuer, or anyone; a network can run more than one. A network without one still works: phones are notified while the app is open, which is today's behaviour.
 
-### What changes in the hApp (not built yet)
+### What's built, and what a phone build adds
 
-- `services.push_relay_url` and the relay's public key, as network settings.
-- A sealed `wake` field where order parties already exchange sealed details: the order (for its store), and the drop-off share (for its driver). The coordinator mints the token, and validation only bounds its size.
-- The coordinator's signal fan-out (`signals.rs`), which already tells the order's other parties of each change, also posts their wake tokens to the relay. This happens from the sender's conductor, best-effort, and in its own call so a relay outage never fails an order step.
+- **The relay** (`push/`): registration, token batches, wakes, per-device limits, and all three channels -- Web Push, APNs and FCM. Web Push works end to end today. APNs and FCM are tested against fakes of Apple's and Google's services; check them on real devices once a phone build exists.
+- **The hApp**: `services.push_relay_url`; the sealed tokens on orders (`sealed_wake`, `DropoffDetails::wake`, bounded and unchangeable like every sealed field); and the `Wake` signal the store's and driver's conductors hand their apps on each change (`signals.rs`). tryorama's `wake` test proves each holds only their own token.
+- **The app** (`web/src/lib/push.ts`): Profile → Notifications → "Even when Relay is closed" registers the device; checkout spends two tokens per order; `Notifier` posts the store's and driver's wakes; the service worker shows a browser's.
+- **A phone build** provides `window.__RELAY_PUSH__ = { register() }`, resolving to `{ channel: "apns" | "fcm", address }` (the platform's push token, after asking permission). On iOS its strings file has `WAKE_TITLE` and `WAKE_BODY`, the words of an APNs wake. On a wake, it opens the conductor long enough to sync, then shows a local notification for what changed.
+
+**Not woken (yet):**
+- A driver's bid on an order: drivers hold no token until they commit. A customer who matches automatically is matched when their app next runs.
+- Orders the customer's conductor places on its own (standing orders, goodie-bag claims): no app is there to give them tokens.
 
 ## Running the spike
 

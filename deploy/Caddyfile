@@ -1,9 +1,14 @@
 # TLS for the network's public servers, with certificates from Let's
-# Encrypt. Set BOOTSTRAP_DOMAIN and ISSUER_DOMAIN (docker-compose.yml).
+# Encrypt. Set BOOTSTRAP_DOMAIN and ISSUER_DOMAIN, and PUSH_DOMAIN for a push
+# relay (docker-compose.yml).
 {$BOOTSTRAP_DOMAIN} {
 	reverse_proxy bootstrap:8888
 }
 
 {$ISSUER_DOMAIN} {
 	reverse_proxy issuer:8890
+}
+
+{$PUSH_DOMAIN} {
+	reverse_proxy push:8892
 }

@@ -35,6 +35,10 @@ pub struct RequestPickupOrderInput {
     /// The customer confirming their age, for age-restricted items.
     #[serde(default)]
     pub age_confirmed: bool,
+    /// A wake token from the network's push relay, sealed to the store --
+    /// see `RequestDeliveryInput::wake_for_store`.
+    #[serde(default)]
+    pub wake_for_store: Option<String>,
 }
 
 /// No matching/signal-fanout step here unlike `orders::request_delivery` --
@@ -69,6 +73,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
 
     let kitchen_note = seal_note(&input.merchant, &input.kitchen_notes)?;
     let sealed_customer_name = seal_note(&input.merchant, &my_name()?)?;
+    let sealed_wake = crate::orders::seal_wake(&input.merchant, input.wake_for_store.as_deref())?;
     let order = PickupOrder {
         requester: requester.clone(),
         merchant: input.merchant,
@@ -82,6 +87,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         requested_at,
         kitchen_note,
         sealed_customer_name,
+        sealed_wake,
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,

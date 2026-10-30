@@ -164,6 +164,10 @@ pub struct Services {
     /// Address search: the base of a Nominatim-compatible API (`/search`,
     /// `/reverse`) -- one's own Nominatim, or Photon's compatible endpoint.
     pub geocoder_url: String,
+    /// The push relay that wakes a closed app (MOBILE.md, `push/`). Unset,
+    /// the network has none: apps hear of changes only while open.
+    #[serde(default)]
+    pub push_relay_url: Option<String>,
 }
 
 /// A drand network (<https://drand.love>): a public randomness beacon run
@@ -267,6 +271,7 @@ pub fn services() -> Services {
         map_tiles_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png".into(),
         map_attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors".into(),
         geocoder_url: "https://nominatim.openstreetmap.org".into(),
+        push_relay_url: None,
     })
 }
 

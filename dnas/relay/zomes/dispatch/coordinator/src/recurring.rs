@@ -210,6 +210,8 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
         // A standing order runs unattended.
         auto_match: true,
         bag_claim_ref: None,
+        wake_for_store: None,
+        wake_for_driver: None,
     })?;
     Ok(())
 }

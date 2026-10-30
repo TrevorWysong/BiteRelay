@@ -3,17 +3,38 @@ import { Bell } from "lucide-react";
 import { Card, Switch } from "./ui";
 import { unlockChime } from "../lib/chime";
 import { usePreferences } from "../store/preferences";
+import { canWakeWhileClosed, startWakingWhileClosed, stopWakingWhileClosed, wakesWhileClosed } from "../lib/push";
+import { describeError } from "../lib/errors";
 import { useT } from "../i18n";
 
 const supported = typeof Notification !== "undefined";
 
 /// This device's notification settings: order updates as system
-/// notifications, and -- on a device running a store -- a chime for each
-/// new order.
+/// notifications, being woken for them while the app is closed (when the
+/// network runs a push relay), and -- on a device running a store -- a
+/// chime for each new order.
 export function NotificationSettings({ runsStore }: { runsStore: boolean }) {
   const t = useT();
   const { notifications, newOrderChime, setNotifications, setNewOrderChime } = usePreferences();
   const [permission, setPermission] = useState(() => (supported ? Notification.permission : "denied"));
+
+  const [wakes, setWakes] = useState(wakesWhileClosed);
+  const [wakeError, setWakeError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+
+  async function toggleWakes(on: boolean) {
+    setSwitching(true);
+    setWakeError(null);
+    try {
+      if (on) await startWakingWhileClosed();
+      else await stopWakingWhileClosed();
+    } catch (err) {
+      setWakeError(describeError(err));
+    } finally {
+      setWakes(wakesWhileClosed());
+      setSwitching(false);
+    }
+  }
 
   async function toggleNotifications(on: boolean) {
     if (!on) return setNotifications(false);
@@ -36,6 +57,15 @@ export function NotificationSettings({ runsStore }: { runsStore: boolean }) {
         </div>
         <Switch checked={notifications && permission === "granted"} onChange={toggleNotifications} disabled={!supported || permission === "denied"} label={t("notifications.ordersLabel")} />
       </div>
+      {canWakeWhileClosed() && (
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{t("notifications.closed")}</p>
+            <p className={wakeError ? "text-xs text-red-600 dark:text-red-400" : "text-xs text-ink-400"}>{wakeError ?? t("notifications.closedDetail")}</p>
+          </div>
+          <Switch checked={wakes} onChange={toggleWakes} disabled={switching} label={t("notifications.closedLabel")} />
+        </div>
+      )}
       {runsStore && (
         <div className="flex items-start justify-between gap-4">
           <div>

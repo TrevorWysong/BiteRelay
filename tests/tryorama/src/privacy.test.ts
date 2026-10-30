@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";
 import type { Record as HcRecord } from "@holochain/client";
-import { actionHash, commitAndCook, decodeEntry, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
+import { actionHash, commitAndCook, decodeEntry, deliveryStatus, retryUntil, ST_PETE, acceptOrder, testApp, retryingCaller } from "./helpers.js";
 
 /// The entry's serialized bytes, as any peer holding the record sees them.
 function publishedBytes(record: HcRecord): Buffer {
@@ -91,7 +91,11 @@ await runScenario(async (scenario) => {
   assert.equal((await detailsFor(driver)).customer_name, null, "or the customer's name");
   await call(customer, "dispatch")("accept_bid", { order_original_action: order, bid_action: bid });
   await sync();
-  assert.equal((await detailsFor(driver)).dropoff, null, "winning the bid reveals nothing yet");
+  // The driver's app commits as soon as it hears it won, so by now it may
+  // have: only a committed driver may hold the address.
+  const won = await detailsFor(driver);
+  const status = await deliveryStatus(customer, order);
+  assert.ok(won.dropoff === null || status !== "BidAccepted", `winning the bid reveals nothing until the driver commits (${status})`);
   // Committing -- collateral set aside -- is what earns the address; the
   // customer's app shares it as soon as it sees that.
   await commitAndCook(driver, merchant, order, all);

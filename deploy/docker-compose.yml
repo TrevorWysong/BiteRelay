@@ -1,5 +1,6 @@
-# A Relay network's servers: its bootstrap/relay server, and an issuer (its
-# conductor and service), behind Caddy for TLS. See DEPLOYMENT.md, "Run the
+# A Relay network's servers: its bootstrap/relay server, an issuer (its
+# conductor and service), and -- with `--profile push` -- a push relay,
+# behind Caddy for TLS. See DEPLOYMENT.md, "Run the
 # servers". Fill in deploy/issuer.env from issuer/.env.example (never commit
 # it), and point both domains' DNS at this machine.
 services:
@@ -10,6 +11,7 @@ services:
     environment:
       BOOTSTRAP_DOMAIN: ${BOOTSTRAP_DOMAIN:?set BOOTSTRAP_DOMAIN}
       ISSUER_DOMAIN: ${ISSUER_DOMAIN:?set ISSUER_DOMAIN}
+      PUSH_DOMAIN: ${PUSH_DOMAIN:-push.localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -30,6 +32,17 @@ services:
     volumes:
       - issuer-data:/var/lib/relay-issuer
 
+  push:
+    profiles: [push]
+    build: { context: .., dockerfile: deploy/push/Dockerfile }
+    restart: unless-stopped
+    env_file: ./push.env
+    environment:
+      TRUST_PROXY: "1"
+    volumes:
+      - push-data:/var/lib/relay-push
+
 volumes:
   caddy-data:
   issuer-data:
+  push-data:

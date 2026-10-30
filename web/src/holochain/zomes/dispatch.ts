@@ -36,6 +36,9 @@ export async function requestDelivery(input: {
   /// confirmed goodie-bag claim -- which the customer's conductor does on
   /// its own (`dispatch::claims`).
   bag_claim_ref?: ActionHash | null;
+  /// Wake tokens from the network's push relay (lib/push.ts).
+  wake_for_store?: string | null;
+  wake_for_driver?: string | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_delivery", {
     kitchen_notes: "",
@@ -303,6 +306,8 @@ export async function requestPickupOrder(input: {
   bag_claim_ref?: ActionHash | null;
   /// The customer confirming their age, for age-restricted items.
   age_confirmed?: boolean;
+  /// A wake token from the network's push relay (lib/push.ts).
+  wake_for_store?: string | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_pickup_order", {
     kitchen_notes: "",

@@ -73,6 +73,12 @@ jobs:
           npm ci
           npm run typecheck
           npm test
+      - name: Push relay typecheck and tests
+        working-directory: push
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
 
   rust-tests:
     name: Rust unit tests

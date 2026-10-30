@@ -11,6 +11,7 @@ import { useCart, cartItems, lineKey, type CartLine } from "../../store/cart";
 import { ItemSheet } from "../../components/ItemSheet";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
+import { wakeTokensForOrder } from "../../lib/push";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
 import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
 import { currencySymbol, formatCents, formatDistance, fromMinorUnits, nowMicros, toMinorUnits } from "../../lib/format";
@@ -384,6 +385,7 @@ export function Cart() {
           kitchen_notes: kitchenNotes.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
           age_confirmed: ageRestricted && ageConfirmed,
+          wake_for_store: wakeTokensForOrder().wake_for_store,
         });
         const orderRef = actionHash(record);
         cart.clear();
@@ -406,6 +408,7 @@ export function Cart() {
         door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
         priority,
         auto_match: autoMatch,
+        ...wakeTokensForOrder(),
       });
       const orderRef = actionHash(record);
       useCustomerSettings.getState().rememberCheckout({ tipPercent, feeCapCents: maxFeeCents, dropoffPreference, priority, autoMatch });

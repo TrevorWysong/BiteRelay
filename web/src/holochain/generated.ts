@@ -472,6 +472,12 @@ export interface DeliveryOrder {
    * for why a customer publishes none.
    */
   sealed_customer_name: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * A wake token for the customer's phone, sealed to the store: its app
+   * hands it to the network's push relay when the order changes, so a
+   * closed app hears (MOBILE.md). None without a relay.
+   */
+  sealed_wake: XSalsa20Poly1305EncryptedData | null;
   max_delivery_fee: number | null;
   status: DeliveryStatus;
   accepted_bid: ActionHash | null;
@@ -743,7 +749,13 @@ export type DispatchLocalSignal =
   /**
    * This agent's store's customer asked to collect this order.
    */
-  | { CollectRequested: ActionHash };
+  | { CollectRequested: ActionHash }
+  /**
+   * Something changed on an order whose customer's app may be closed:
+   * hand this wake token to the network's push relay (MOBILE.md). Only
+   * the store and the driver hold one, each their own.
+   */
+  | { Wake: string };
 
 /**
  * A verifier's word (one of the network's `verifiers`) that a driver
@@ -776,6 +788,11 @@ export interface DropoffDetails {
    * Who it's for, so the driver can hand it over -- the customer's name.
    */
   recipient: string;
+  /**
+   * A wake token for the customer's phone, for the driver: shared with
+   * them with the rest of this, once they commit (see `sealed_wake`).
+   */
+  wake: string | null;
 }
 
 /**
@@ -1860,6 +1877,10 @@ export interface NetworkTerms {
    * A Nominatim-compatible address search API.
    */
   geocoder_url: string;
+  /**
+   * The push relay that wakes a closed app, if the network runs one.
+   */
+  push_relay_url: string | null;
 }
 
 /**
@@ -2135,6 +2156,12 @@ export interface PickupOrder {
    * The customer's name, sealed to the store.
    */
   sealed_customer_name: XSalsa20Poly1305EncryptedData | null;
+  /**
+   * A wake token for the customer's phone, sealed to the store: its app
+   * hands it to the network's push relay when the order changes, so a
+   * closed app hears (MOBILE.md). None without a relay.
+   */
+  sealed_wake: XSalsa20Poly1305EncryptedData | null;
   /**
    * Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
    */

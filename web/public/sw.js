@@ -11,7 +11,7 @@
 // render offline), never zome-call data -- and there's nothing to
 // accidentally cache wrong here anyway, since zome calls go over a
 // WebSocket, which fetch/service-worker interception never sees.
-const CACHE_NAME = "relay-shell-v1";
+const CACHE_NAME = "relay-shell-v2";
 const APP_SHELL = ["/", "/index.html", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -42,5 +42,40 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match("/index.html"))),
+  );
+});
+
+// --- waking a closed app (src/lib/push.ts, MOBILE.md) ---
+//
+// A wake from the network's push relay carries nothing: no order, no
+// name. So it shows the same words every time, in the person's language,
+// which the app hands over while it's open ("wake-words") and this keeps
+// beside the shell. Tapping it opens the app, which reads what changed.
+const WORDS_URL = "/__wake-words";
+const DEFAULT_WORDS = { title: "Relay", body: "There's news on your order." };
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "wake-words") return;
+  const { title, body } = event.data;
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(WORDS_URL, new Response(JSON.stringify({ title, body })))));
+});
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    caches
+      .match(WORDS_URL)
+      .then((cached) => (cached ? cached.json() : DEFAULT_WORDS))
+      .catch(() => DEFAULT_WORDS)
+      .then(({ title, body }) => self.registration.showNotification(title, { body, tag: "relay-wake", icon: "/favicon.svg" })),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((client) => "focus" in client);
+      return open ? open.focus() : self.clients.openWindow("/");
+    }),
   );
 });

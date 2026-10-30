@@ -130,6 +130,7 @@ pub(crate) fn sealed_fields_problem(order: &DeliveryOrder) -> Option<String> {
         ("sealed_dropoff", Some(&order.sealed_dropoff)),
         ("kitchen_note", order.kitchen_note.as_ref()),
         ("sealed_customer_name", order.sealed_customer_name.as_ref()),
+        ("sealed_wake", order.sealed_wake.as_ref()),
         ("sealed_pin", Some(&order.sealed_pin)),
         ("sealed_pickup_code", order.sealed_pickup_code.as_ref()),
     ];
@@ -538,6 +539,7 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
         && prior.sealed_dropoff == order.sealed_dropoff
         && prior.kitchen_note == order.kitchen_note
         && prior.sealed_customer_name == order.sealed_customer_name
+        && prior.sealed_wake == order.sealed_wake
         && prior.dropoff_geohash == order.dropoff_geohash
         && prior.max_delivery_fee == order.max_delivery_fee
         && prior.requested_at == order.requested_at

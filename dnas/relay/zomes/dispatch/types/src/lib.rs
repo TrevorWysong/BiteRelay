@@ -246,6 +246,10 @@ pub struct DropoffDetails {
     /// Who it's for, so the driver can hand it over -- the customer's name.
     #[serde(default)]
     pub recipient: String,
+    /// A wake token for the customer's phone, for the driver: shared with
+    /// them with the rest of this, once they commit (see `sealed_wake`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake: Option<String>,
 }
 
 /// One line of an order: an item, the exact version of it that was priced
@@ -375,6 +379,11 @@ pub struct DeliveryOrder {
     /// for why a customer publishes none.
     #[serde(default)]
     pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
+    /// A wake token for the customer's phone, sealed to the store: its app
+    /// hands it to the network's push relay when the order changes, so a
+    /// closed app hears (MOBILE.md). None without a relay.
+    #[serde(default)]
+    pub sealed_wake: Option<XSalsa20Poly1305EncryptedData>,
     pub max_delivery_fee: Option<u64>,
     pub status: DeliveryStatus,
     pub accepted_bid: Option<ActionHash>,
@@ -705,6 +714,11 @@ pub struct PickupOrder {
     /// The customer's name, sealed to the store.
     #[serde(default)]
     pub sealed_customer_name: Option<XSalsa20Poly1305EncryptedData>,
+    /// A wake token for the customer's phone, sealed to the store: its app
+    /// hands it to the network's push relay when the order changes, so a
+    /// closed app hears (MOBILE.md). None without a relay.
+    #[serde(default)]
+    pub sealed_wake: Option<XSalsa20Poly1305EncryptedData>,
     /// Same trust tier/validation as `DeliveryOrder.promo_code_ref`.
     #[serde(default)]
     pub promo_code_ref: Option<ActionHash>,

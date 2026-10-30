@@ -20,7 +20,7 @@
 
 use crate::upkeep;
 use dispatch_integrity::*;
-use relay_coordinator_support::{decode_or, original_action_of, resolve_latest, resolve_latest_decoded};
+use relay_coordinator_support::{decode_or, open, original_action_of, resolve_latest, resolve_latest_decoded};
 use hdk::prelude::*;
 
 /// `send_remote_signal` reaches `recv_remote_signal` via an actual network
@@ -95,6 +95,10 @@ pub enum LocalSignal {
     HandedOver(ActionHash),
     /// This agent's store's customer asked to collect this order.
     CollectRequested(ActionHash),
+    /// Something changed on an order whose customer's app may be closed:
+    /// hand this wake token to the network's push relay (MOBILE.md). Only
+    /// the store and the driver hold one, each their own.
+    Wake(String),
 }
 
 /// Peer-to-peer signals, only ever between an order's own parties.
@@ -344,9 +348,39 @@ fn announce_order_change(action: &SignedActionHashed) -> ExternResult<()> {
             _ if order.placed => continue,
             _ => RemoteSignal::OrderUpdated { order_hash: order_hash.clone(), version: action.as_hash().clone() },
         };
-        send_remote_signal(signal, vec![party])?;
+        send_remote_signal(signal, vec![party.clone()])?;
+        // A customer's app may be closed: the store or driver telling them
+        // wakes it too.
+        if role == OrderRole::Customer {
+            let _ = wake_customer(&record, &order_hash, &me);
+        }
     }
     Ok(())
+}
+
+/// Hands the caller's UI the order's customer's wake token, if the caller
+/// holds one: the store's sealed copy, or the driver's, in the drop-off
+/// shared with them. Best-effort, like every signal.
+fn wake_customer(record: &Record, order_hash: &ActionHash, me: &AgentPubKey) -> ExternResult<()> {
+    let token = if let Some(order) = decode_or::<DeliveryOrder>(record) {
+        if &order.merchant == me {
+            order.sealed_wake.as_ref().map(|sealed| open::<String>(&order.requester, sealed)).transpose()?.flatten()
+        } else {
+            match crate::deliveries::dropoff_share_for(order_hash, me)? {
+                Some(share) => open::<DropoffDetails>(&order.requester, &share.sealed)?.and_then(|dropoff| dropoff.wake),
+                None => None,
+            }
+        }
+    } else {
+        match decode_or::<PickupOrder>(record) {
+            Some(order) if &order.merchant == me => order.sealed_wake.as_ref().map(|sealed| open::<String>(&order.requester, sealed)).transpose()?.flatten(),
+            _ => None,
+        }
+    };
+    match token {
+        Some(token) => emit_signal(LocalSignal::Wake(token)),
+        None => Ok(()),
+    }
 }
 
 /// Tells an order's customer its driver has recorded handing it over --
@@ -357,5 +391,9 @@ pub fn notify_handoff(order_hash: ActionHash) -> ExternResult<()> {
     if order.driver.as_ref() != Some(&agent_info()?.agent_initial_pubkey) {
         return Ok(());
     }
-    send_remote_signal(RemoteSignal::HandoffRecorded { order_hash }, vec![order.requester])
+    send_remote_signal(RemoteSignal::HandoffRecorded { order_hash: order_hash.clone() }, vec![order.requester])?;
+    if let Ok(record) = resolve_latest(order_hash.clone()) {
+        let _ = wake_customer(&record, &order_hash, &agent_info()?.agent_initial_pubkey);
+    }
+    Ok(())
 }

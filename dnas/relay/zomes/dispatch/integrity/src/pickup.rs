@@ -34,7 +34,7 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
         Ok(store) => store,
         Err(reason) => return Ok(ValidateCallbackResult::Invalid(reason)),
     };
-    let sealed = [("kitchen_note", order.kitchen_note.as_ref()), ("sealed_customer_name", order.sealed_customer_name.as_ref())];
+    let sealed = [("kitchen_note", order.kitchen_note.as_ref()), ("sealed_customer_name", order.sealed_customer_name.as_ref()), ("sealed_wake", order.sealed_wake.as_ref())];
     if let Some(reason) = sealed.into_iter().find_map(|(field, value)| value.and_then(|v| relay_integrity_support::sealed_problem(field, v, relay_integrity_support::limits::MAX_SEALED_BYTES))) {
         return Ok(ValidateCallbackResult::Invalid(reason));
     }
@@ -148,6 +148,7 @@ pub(crate) fn validate_pickup_order_transition(
         && prior.requested_at == order.requested_at
         && prior.kitchen_note == order.kitchen_note
         && prior.sealed_customer_name == order.sealed_customer_name
+        && prior.sealed_wake == order.sealed_wake
         && prior.promo_code_ref == order.promo_code_ref
         && prior.bag_claim_ref == order.bag_claim_ref;
     if !unchanged {

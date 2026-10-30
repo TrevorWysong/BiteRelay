@@ -91,6 +91,7 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 promo_code_ref: None,
                 bag_claim_ref: Some(claim_ref),
                 age_confirmed: false,
+                wake_for_store: None,
             })?;
         }
         BagClaimFulfillment::Delivery { max_delivery_fee, .. } => {
@@ -115,6 +116,8 @@ fn redeem(mine: &MyClaimWire) -> ExternResult<()> {
                 // Nobody is at checkout to choose a driver.
                 auto_match: true,
                 bag_claim_ref: Some(claim_ref),
+                wake_for_store: None,
+                wake_for_driver: None,
             })?;
         }
     }

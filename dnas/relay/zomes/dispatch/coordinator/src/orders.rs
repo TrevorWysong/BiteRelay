@@ -70,6 +70,13 @@ pub struct RequestDeliveryInput {
     /// `validate_new_order`.
     #[serde(default)]
     pub bag_claim_ref: Option<ActionHash>,
+    /// Wake tokens from the network's push relay, one for the store and
+    /// one for the driver -- two, so the two can't tell they're the same
+    /// person's. Sealed to each (MOBILE.md); None without a relay.
+    #[serde(default)]
+    pub wake_for_store: Option<String>,
+    #[serde(default)]
+    pub wake_for_driver: Option<String>,
 }
 
 /// Once the store accepts a delivery, it's listed under its drop-off's cell
@@ -92,6 +99,25 @@ pub(crate) fn my_name() -> ExternResult<String> {
 }
 
 /// A note sealed to `recipient`, or `None` if there's nothing to say.
+/// A wake token sealed to `recipient` -- the store, which hands it to the
+/// push relay when the order changes.
+pub(crate) fn seal_wake(recipient: &AgentPubKey, token: Option<&str>) -> ExternResult<Option<XSalsa20Poly1305EncryptedData>> {
+    match token.map(str::trim).filter(|token| !token.is_empty()) {
+        None => Ok(None),
+        Some(token) => Ok(Some(seal(recipient, &checked_wake(token)?.to_string())?)),
+    }
+}
+
+/// A wake token, if it's the size the relay makes them.
+pub(crate) fn checked_wake(token: &str) -> ExternResult<&str> {
+    if token.len() > MAX_WAKE_CHARS {
+        return Err(guest(format!("a wake token is at most {MAX_WAKE_CHARS} characters")));
+    }
+    Ok(token)
+}
+
+const MAX_WAKE_CHARS: usize = 512;
+
 pub(crate) fn seal_note(recipient: &AgentPubKey, note: &str) -> ExternResult<Option<XSalsa20Poly1305EncryptedData>> {
     let note = note.trim();
     if note.is_empty() {
@@ -147,6 +173,9 @@ pub fn get_order_private_details(order_original_action: ActionHash) -> ExternRes
             None => dropoff.as_ref().map(|d| d.recipient.clone()).filter(|name| !name.is_empty()),
         };
         let kitchen_note = open_for_parties(&me, &order.requester, &order.merchant, order.kitchen_note.as_ref())?;
+        // The wake token is for the driver's conductor to hand on, not a
+        // detail to show.
+        let dropoff = dropoff.map(|dropoff| DropoffDetails { wake: None, ..dropoff });
         return Ok(OrderPrivateDetails { dropoff, kitchen_note, customer_name });
     }
     if let Some(order) = decode_or::<PickupOrder>(&record) {
@@ -278,9 +307,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         order_total: priced.order_total,
         tax_cents: priced.tax_cents,
         dropoff_geohash: dropoff_geohash.clone(),
-        sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes, recipient: customer_name.clone() })?,
+        sealed_dropoff: seal(&requester, &DropoffDetails { point: input.dropoff, notes: input.dropoff_notes, recipient: customer_name.clone(), wake: input.wake_for_driver.as_deref().map(checked_wake).transpose()?.map(str::to_string) })?,
         kitchen_note: seal_note(&merchant, &input.kitchen_notes)?,
         sealed_customer_name: seal_note(&merchant, &customer_name)?,
+        sealed_wake: seal_wake(&merchant, input.wake_for_store.as_deref())?,
         max_delivery_fee: input.max_delivery_fee,
         status,
         accepted_bid: None,
@@ -537,6 +567,8 @@ pub struct NetworkTerms {
     pub map_attribution: String,
     /// A Nominatim-compatible address search API.
     pub geocoder_url: String,
+    /// The push relay that wakes a closed app, if the network runs one.
+    pub push_relay_url: Option<String>,
 }
 
 #[hdk_extern]
@@ -583,6 +615,7 @@ pub fn get_network_terms(_: ()) -> ExternResult<NetworkTerms> {
         map_tiles_url: relay_governance::services().map_tiles_url,
         map_attribution: relay_governance::services().map_attribution,
         geocoder_url: relay_governance::services().geocoder_url,
+        push_relay_url: relay_governance::services().push_relay_url,
     })
 }
 
