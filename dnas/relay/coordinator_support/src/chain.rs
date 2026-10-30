@@ -134,19 +134,30 @@ pub fn chain_head_of(agent: &AgentPubKey) -> ExternResult<Option<ActionHash>> {
     Ok(None)
 }
 
-/// `agent`'s newest action that `matches`, from `from` (an action on their
-/// chain) back -- what most questions about someone else's chain need,
-/// usually a step or two back.
-pub fn latest_on_chain(agent: &AgentPubKey, from: &ActionHash, matches: impl Fn(&Action) -> bool) -> ExternResult<Option<ActionHash>> {
+/// `agent`'s newest action creating an entry of `entry_type`, from `from`
+/// (an action on their chain) back -- what most questions about someone
+/// else's chain need, usually a step or two back.
+///
+/// The network can name a head (`chain_head_of`) a moment before the
+/// actions under it can be fetched, and a walk from it then fails. That's
+/// "not here yet", not an error: it answers instead from the activity the
+/// network's authorities report, as of what they hold -- a read of the
+/// whole chain, but only in that moment.
+pub fn latest_created(agent: &AgentPubKey, from: &ActionHash, entry_type: &EntryType) -> ExternResult<Option<ActionHash>> {
+    let creates = |action: &Action| matches!(&action.data, ActionData::Create(create) if &create.entry_type == entry_type);
     let mut found = None;
-    walk_back(agent, from, |item| {
-        if matches(&item.action.hashed.content) {
+    let walked = walk_back(agent, from, |item| {
+        if creates(&item.action.hashed.content) {
             found = Some(item.action.hashed.hash);
             return Ok(ControlFlow::Break(()));
         }
         Ok(ControlFlow::Continue(()))
-    })?;
-    Ok(found)
+    });
+    if walked.is_ok() {
+        return Ok(found);
+    }
+    let filter = ChainQueryFilter::new().entry_type(entry_type.clone()).action_type(ActionType::Create);
+    Ok(crate::agent_activity(agent.clone(), filter)?.pop().map(|(_, hash)| hash))
 }
 
 /// `original` -- one of the caller's entries -- and each update they've made

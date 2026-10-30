@@ -36,7 +36,7 @@ test("a merchant sees their order queue and manages their menu and promos", asyn
   await expect(page.getByText(cafe.promos![0].code)).toBeVisible();
 });
 
-test("a customer's order waits on the store, which can accept or decline it", async ({ page }) => {
+test("a customer's order waits on the store, which can accept or decline it", async ({ page, browser }) => {
   const tacos = store("tacos");
   await signInAs(page, "ana");
   await page.getByText(tacos.name, { exact: true }).first().click();
@@ -48,13 +48,15 @@ test("a customer's order waits on the store, which can accept or decline it", as
   await expect(page.getByText(/The store has until \d{1,2}:\d{2}/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel order" })).toBeVisible();
 
-  // Mo runs Mo's Tacos; he also orders and drives, so switch to the store side.
-  await signInAs(page, "mo");
-  await page.getByRole("button", { name: "Sell" }).click();
-  await expect(page.getByRole("heading", { name: "Orders" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Accept · \d+ min$/ }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Decline" }).first()).toBeVisible();
-  await expect(page.getByText(/Accept by \d{1,2}:\d{2}/).first()).toBeVisible();
+  // Mo runs Mo's Tacos, on his own device: a signed-in app keeps its person
+  // out of onboarding. He also orders and drives, so switch to the store side.
+  const storeSide = await (await browser.newContext()).newPage();
+  await signInAs(storeSide, "mo");
+  await storeSide.getByRole("button", { name: "Sell" }).click();
+  await expect(storeSide.getByRole("heading", { name: "Orders" })).toBeVisible();
+  await expect(storeSide.getByRole("button", { name: /^Accept · \d+ min$/ }).first()).toBeVisible();
+  await expect(storeSide.getByRole("button", { name: "Decline" }).first()).toBeVisible();
+  await expect(storeSide.getByText(/Accept by \d{1,2}:\d{2}/).first()).toBeVisible();
 });
 
 test("a driver goes online and sees the nearby order feed", async ({ page }) => {

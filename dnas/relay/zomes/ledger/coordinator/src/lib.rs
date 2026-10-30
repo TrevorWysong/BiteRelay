@@ -7,7 +7,7 @@
 use dispatch_types::{hold_amount, hold_terms, Bid, DeliveryOrder, OrderTerms, PickupOrder, Share};
 use hdk::prelude::*;
 use ledger_integrity::*;
-use relay_coordinator_support::chain::{chain_head_of, latest_on_chain, mine};
+use relay_coordinator_support::chain::{chain_head_of, latest_created, mine};
 use relay_coordinator_support::{decode_or, original_action_of};
 
 mod cash_out;
@@ -472,9 +472,7 @@ pub fn get_balance(agent: AgentPubKey) -> ExternResult<i64> {
 
 /// The balance on `agent`'s newest ledger entry from `from` back.
 pub(crate) fn latest_balance(agent: &AgentPubKey, from: &ActionHash) -> ExternResult<i64> {
-    let ledger = EntryType::try_from(UnitEntryTypes::LedgerEntry)?;
-    let creates_ledger = |action: &Action| matches!(&action.data, ActionData::Create(create) if create.entry_type == ledger);
-    let Some(latest) = latest_on_chain(agent, from, creates_ledger)? else { return Ok(0) };
+    let Some(latest) = latest_created(agent, from, &EntryType::try_from(UnitEntryTypes::LedgerEntry)?)? else { return Ok(0) };
     let record = get(latest, GetOptions::default())?.ok_or(guest("couldn't read their latest ledger entry"))?;
     Ok(entry_of(&record).map_or(0, |e| e.balance))
 }
