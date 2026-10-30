@@ -7,7 +7,7 @@
 //
 // How the device is reached is the runtime's: a phone app's runtime hands
 // over its APNs or FCM token as `window.__HANDSHAKE_PUSH__`; in a browser it's
-// a Web Push subscription, through the service worker (public/sw.js).
+// a Web Push subscription, through the service worker (src/sw.ts).
 import { useNetwork } from "../../store/network";
 import { forget, readStoredJson, store } from "../util/storage";
 

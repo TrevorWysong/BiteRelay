@@ -9,9 +9,9 @@
 node_modules
 .claude/
 
-# Persistent local dev conductor data, logs and pid (web/scripts/dev-conductor.mjs)
+# Persistent local dev conductor data, logs and pid (web/scripts/dev-conductor.ts)
 .dev/
-# The dev network's properties, written by the seed (web/scripts/seed.mjs)
+# The dev network's properties, written by the seed (web/scripts/seed.ts)
 web/public/dev-network.json
 
 # Tryorama runner logs
@@ -22,13 +22,13 @@ web/test-results/
 web/playwright-report/
 web/dev-conductor.log
 
-# Production packaging (web/scripts/package.mjs)
+# Production packaging (web/scripts/package.ts)
 deploy/properties.json
 deploy/issuer.env
 deploy/push.env
 deploy/handshake.network.json
 deploy/releases/
 
-# Desktop builds: Kangaroo, fetched and patched by desktop/build.mjs
+# Desktop builds: Kangaroo, fetched and patched by desktop/build.ts
 desktop/.kangaroo/
 desktop/.kangaroo.tar.gz

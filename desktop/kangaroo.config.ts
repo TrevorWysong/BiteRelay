@@ -1,5 +1,5 @@
 // HandShake's desktop app, as Kangaroo (holochain/kangaroo-electron) builds
-// it -- copied over Kangaroo's own config by build.mjs. The network it joins
+// it -- copied over Kangaroo's own config by build.ts. The network it joins
 // (seed and servers) is network.json's, the same file the bundle is
 // packaged from, so the two can't disagree.
 import { defineConfig } from './src/main/defineConfig';
@@ -18,7 +18,7 @@ export default defineConfig({
   windowsEVCodeSigning: false,
   // The UI routes by hash, so a missing file is really missing.
   fallbackToIndexHtml: false,
-  // Checks this repo's GitHub releases on start (build.mjs points it here).
+  // Checks this repo's GitHub releases on start (build.ts points it here).
   autoUpdates: true,
   // Closing the window keeps the node running from the tray: a store's
   // orders still arrive and its upkeep still runs (docs/DEPLOYMENT.md).
@@ -26,7 +26,7 @@ export default defineConfig({
   passwordMode: 'password-optional',
   bootstrapUrl: network.bootstrap_url,
   relayUrl: network.relay_url,
-  // Unused: build.mjs stops Kangaroo overriding the bundle's own seeds, which
+  // Unused: build.ts stops Kangaroo overriding the bundle's own seeds, which
   // would also rename a migration release's `previous` role. Kept equal in
   // case that patch is ever lost.
   networkSeed: network.network_seed,

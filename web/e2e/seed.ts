@@ -1,7 +1,6 @@
 // Who and what `npm run seed` creates, from the same data the seed script
-// plays (scripts/lib/world.mjs), so the tests can't drift from it.
-// @ts-expect-error -- a plain .mjs dev script, no type declarations
-import { WORLD } from "../scripts/lib/world.mjs";
+// plays (scripts/lib/world.ts), so the tests can't drift from it.
+import { WORLD } from "../scripts/lib/world.ts";
 import { expect, type Page } from "@playwright/test";
 
 interface Person {
@@ -19,7 +18,7 @@ interface Store {
 
 export const SEED_PEOPLE: (Person & { appId: string })[] = (WORLD.people as Person[]).map((person) => ({
   ...person,
-  // Mirrors seed.mjs's app id for a person.
+  // Mirrors seed.ts's app id for a person.
   appId: `seed-${person.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
 }));
 export const SEED_STORES = WORLD.stores as Store[];

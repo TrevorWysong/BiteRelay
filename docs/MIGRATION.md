@@ -69,7 +69,7 @@ A release made while people move carries the previous network as a second app ro
    - `npm run package -- --network-seed handshake-2027 --previous deploy/releases/handshake-2026`
    - Every release writes `deploy/handshake.happ` and `deploy/handshake.network.json`. Keep both for each release, in `deploy/releases/<name>/`.
 2. On the issuer's machine:
-   - install the new network for the issuer's key: `node issuer/scripts/provision.mjs install deploy/handshake.happ`, with a new `ISSUER_APP_ID`;
+   - install the new network for the issuer's key: `node issuer/scripts/provision.ts install deploy/handshake.happ`, with a new `ISSUER_APP_ID`;
    - set `PREVIOUS_ISSUER_APP_ID` to the old app's id;
    - restart the service. It announces the new network on the old one and carries balances over.
 3. Ship the new release. People move when they open it.
@@ -82,7 +82,7 @@ A release made while people move carries the previous network as a second app ro
 - `dnas/handshake/zomes/catalog/coordinator/src/moves.rs`: `import_store`, `imported_from` (and the shared store copy).
 - `dnas/handshake/zomes/reputation/coordinator`: adds the previous network's summaries.
 - `issuer/src/migrations.ts`: carries balances over.
-- `web/scripts/package.mjs`: `--previous`.
+- `web/scripts/package.ts`: `--previous`.
 - Web:
   - `routes/Account.tsx`, the move sheet in the old version;
   - `components/RestoreAccount.tsx`, "From the previous version" in the new version;

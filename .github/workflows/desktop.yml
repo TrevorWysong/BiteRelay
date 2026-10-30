@@ -96,7 +96,7 @@ jobs:
           name: webhapp
           path: deploy
       - name: Build and upload
-        run: node desktop/build.mjs ${{ matrix.target }}
+        run: node desktop/build.ts ${{ matrix.target }}
       - name: Linux package fix-ups
         if: matrix.target == 'linux'
         working-directory: desktop/.kangaroo

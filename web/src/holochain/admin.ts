@@ -35,7 +35,7 @@ async function authorizeSigning(adminWs: AdminWebsocket, appInfo: AppInfo): Prom
 
 const HAPP_URL = "/handshake.happ";
 /// The dev network's DNA properties (its issuer), when the dev seed has set
-/// one up -- see web/scripts/seed.mjs. Absent in production, whose bundle
+/// one up -- see web/scripts/seed.ts. Absent in production, whose bundle
 /// carries its properties itself.
 const DEV_NETWORK_URL = "/dev-network.json";
 const ALLOWED_ORIGINS = "*";
@@ -182,7 +182,7 @@ export async function listNodeIdentities(adminUrl: string): Promise<NodeIdentity
   try {
     const apps = await adminWs.listApps({});
     return apps
-      // The dev network's issuer (web/scripts/seed.mjs) is a service, not a
+      // The dev network's issuer (web/scripts/seed.ts) is a service, not a
       // person to sign in as.
       .filter((app) => (app.cell_info[ROLE_NAME] ?? []).length > 0 && app.installed_app_id !== "dev-issuer")
       .sort((a, b) => a.installed_at - b.installed_at)

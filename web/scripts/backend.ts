@@ -14,10 +14,10 @@
 //     it says so and points at `npm run dev:reset`.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync } from "node:fs";
-import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, readDevNetwork, handShakeCells, tryConnectAdmin } from "./lib/devEnv.mjs";
-import { updateCoordinators } from "./lib/coordinators.mjs";
+import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, readDevNetwork, handShakeCells, tryConnectAdmin } from "./lib/devEnv.ts";
+import { updateCoordinators } from "./lib/coordinators.ts";
 
-function step(label, cmd, cmdArgs) {
+function step(label: string, cmd: string, cmdArgs: string[]) {
   console.log(`\n▸ ${label}`);
   execFileSync(cmd, cmdArgs, { cwd: REPO, stdio: "inherit" });
 }
@@ -26,12 +26,12 @@ function step(label, cmd, cmdArgs) {
 /// installs everyone with the network's properties (its issuer roster),
 /// which gives a different hash from the bare build's. Recorded beside it in
 /// web/public/dev-network.json.
-function devNetworkDna(builtDna) {
+function devNetworkDna(builtDna: string): string | null {
   const network = readDevNetwork();
-  return network?.builtDna === builtDna ? network.dnaHash : null;
+  return network?.builtDna === builtDna ? (network.dnaHash ?? null) : null;
 }
 
-function sameBytes(a, b) {
+function sameBytes(a: string, b: string) {
   try {
     return readFileSync(a).equals(readFileSync(b));
   } catch {

@@ -202,7 +202,7 @@ fn setting<T>(read: impl FnOnce(HandShakeDnaProperties) -> Option<T>, default: T
 // --- money ---
 
 /// The development allowance when a DNA doesn't set `credit_limit_cents`:
-/// enough to order freely in a demo. `web/scripts/package.mjs` refuses to
+/// enough to order freely in a demo. `web/scripts/package.ts` refuses to
 /// build a network bundle without an explicit limit.
 const DEVELOPMENT_CREDIT_LIMIT_CENTS: u64 = 1_000_000;
 

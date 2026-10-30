@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AdminWebsocket, CellType, encodeHashToBase64 } from "@holochain/client";
+import { AdminWebsocket, CellType, encodeHashToBase64, type AppWebsocket, type CellId, type HoloHash, type RoleSettingsMap, type WsClient } from "@holochain/client";
 
 export const REPO = fileURLToPath(new URL("../../../", import.meta.url));
 export const DEV_DIR = path.join(REPO, ".dev");
@@ -45,6 +45,17 @@ export async function connectAdmin() {
   return AdminWebsocket.connect({ url: new URL(ADMIN_URL), wsClientOptions: WS_OPTIONS, defaultTimeout: 60_000 });
 }
 
+/// Closes an app connection. In Node it's always a websocket, which the
+/// client's transport type doesn't promise.
+export function closeApp(appWs: AppWebsocket) {
+  return (appWs.client as WsClient).close();
+}
+
+/// What a thrown value says, whatever was thrown.
+export function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /// `null` when no conductor is answering on ADMIN_URL.
 export async function tryConnectAdmin() {
   try {
@@ -54,12 +65,12 @@ export async function tryConnectAdmin() {
   }
 }
 
-export function dnaHashOf(dnaPath) {
+export function dnaHashOf(dnaPath: string): string {
   return execFileSync("hc", ["dna", "hash", dnaPath], { encoding: "utf8" }).trim();
 }
 
 /// Every provisioned `handshake` cell on the conductor, with the app it belongs to.
-export async function handShakeCells(adminWs) {
+export async function handShakeCells(adminWs: AdminWebsocket): Promise<{ appId: string; cellId: CellId }[]> {
   const apps = await adminWs.listApps({});
   return apps.flatMap((app) =>
     (app.cell_info[ROLE_NAME] ?? [])
@@ -71,20 +82,28 @@ export async function handShakeCells(adminWs) {
 /// Reuses an already-attached, app-agnostic interface rather than opening a
 /// new port each run -- interfaces persist across restarts (mirrors
 /// web/src/holochain/admin.ts's appInterfacePort).
-export async function appInterfacePort(adminWs) {
+export async function appInterfacePort(adminWs: AdminWebsocket): Promise<number> {
   const shared = (await adminWs.listAppInterfaces()).find((i) => i.allowed_origins === "*" && !i.installed_app_id);
   if (shared) return shared.port;
   return (await adminWs.attachAppInterface({ allowed_origins: "*" })).port;
 }
 
 /// The same `uhC0k...` form `hc dna hash` prints.
-export function hashB64(hash) {
+export function hashB64(hash: HoloHash): string {
   return encodeHashToBase64(hash);
 }
 
-/// The dev network the seed set up, if any: `{ properties, issuer, dnaHash,
-/// builtDna }` -- see seed.mjs.
-export function readDevNetwork() {
+/// The dev network the seed set up, if any -- see seed.ts.
+export interface DevNetwork {
+  /// Its DNA properties: who its issuer is.
+  properties: { issuers: string[] };
+  /// The DNA hash of the bundle it was set up from, `uhC0k...`.
+  builtDna: string;
+  /// The network's own DNA hash -- the properties change it from builtDna's.
+  dnaHash?: string;
+}
+
+export function readDevNetwork(): DevNetwork | null {
   try {
     return JSON.parse(readFileSync(DEV_NETWORK, "utf8"));
   } catch {
@@ -94,7 +113,7 @@ export function readDevNetwork() {
 
 /// The install-time settings that put an identity on `network` (none
 /// without one): its DNA properties, which name its issuer.
-export function rolesSettingsFor(network) {
+export function rolesSettingsFor(network: DevNetwork | null): RoleSettingsMap | undefined {
   if (!network) return undefined;
   return { [ROLE_NAME]: { type: "provisioned", value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: network.properties } } } };
 }

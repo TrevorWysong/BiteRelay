@@ -2,7 +2,73 @@
 // browser smoke tests (e2e/) so they know who and what to expect.
 // Offsets are in km from the center (east, north) -- everything sits well
 // inside the default 8km delivery radius.
-export const WORLD = {
+/// km east, km north of the center.
+export type Offset = [east: number, north: number];
+
+export interface WorldPerson {
+  /// How the rest of the world names them.
+  slug: string;
+  name: string;
+  roles: ("Requester" | "Merchant" | "Provider")[];
+  bio?: string;
+  addresses?: { label: string; at: Offset }[];
+}
+
+/// A store's choice group; `opens` names a group an option leads on to.
+export interface WorldChoiceGroup {
+  key: string;
+  name: string;
+  min: number;
+  max: number;
+  perOption?: number;
+  free?: number;
+  options: { name: string; price: number; opens?: string }[];
+}
+
+export interface WorldMenuItem {
+  name: string;
+  price: number;
+  category?: string;
+  description?: string;
+  dietary_tags?: string[];
+  /// Its choice groups, by key.
+  groups?: string[];
+}
+
+export interface WorldStore {
+  key: string;
+  /// The owner's slug.
+  owner: string;
+  name: string;
+  at: Offset;
+  /// Catalog details, as `update_catalog_details` takes them.
+  details: { address_street?: string; [field: string]: unknown };
+  /// Every day, `HH:MM`; none means open whenever it's taking orders.
+  hours?: { opens: string; closes: string };
+  groups?: WorldChoiceGroup[];
+  menu: WorldMenuItem[];
+  promos: { code: string; requirement: unknown; reward: unknown; auto_apply?: boolean }[];
+  goodieBag?: { title: string; original: number; price: number; quantity: number };
+}
+
+export type DeliveryStep = "Placed" | "Open" | "BidPlaced" | "BidAccepted" | "MerchantConfirmed" | "PickedUp" | "Delivered";
+export type PickupStep = "Placed" | "MerchantConfirmed" | "ReadyForPickup" | "PickedUp";
+
+interface OrderCommon {
+  /// Slugs and keys of who and where.
+  customer: string;
+  store: string;
+  /// Menu item names, one each.
+  items: string[];
+  instructions?: string;
+  /// What it's there to show, for whoever reads this.
+  note?: string;
+  review?: { store: number; driver?: number; comment: string };
+}
+
+export type WorldOrder = (OrderCommon & { kind: "delivery"; until: DeliveryStep; driver?: string }) | (OrderCommon & { kind: "pickup"; until: PickupStep });
+
+export const WORLD: { people: WorldPerson[]; stores: WorldStore[]; orders: WorldOrder[] } = {
   people: [
     { slug: "mo", name: "Mo Haddad", roles: ["Requester", "Merchant", "Provider"], bio: "Runs Mo's Kitchen and Mo's Tacos, and drives on slow nights." },
     { slug: "cara", name: "Cara Okafor", roles: ["Merchant"], bio: "Owner of Cara's Café." },
@@ -20,7 +86,7 @@ export const WORLD = {
       name: "Mo's Kitchen",
       at: [0.4, 0.3],
       details: { cuisine_type: "American", description: "Burgers, bowls and breakfast all day.", address_street: "120 Central Ave", prep_minutes: 15 },
-      // Every day, in the seed's time zone (see seed.mjs).
+      // Every day, in the seed's time zone (see seed.ts).
       hours: { opens: "08:00", closes: "22:00" },
       // Choice groups, created in order -- a group an option opens comes
       // before it. Items list theirs by key.

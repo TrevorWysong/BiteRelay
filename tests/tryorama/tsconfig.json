@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "bench"]
+  "include": ["src", "bench", "run.ts"]
 }

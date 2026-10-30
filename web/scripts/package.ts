@@ -28,10 +28,10 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { REPO, DNA_PATH } from "./lib/devEnv.mjs";
+import { REPO, DNA_PATH } from "./lib/devEnv.ts";
 
 const args = process.argv.slice(2);
-const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 // Or the whole network from one file -- `--network desktop/network.json`,
 // { network_seed, bootstrap_url, relay_url, properties } -- so whatever
 // else reads that file (the desktop build) can't disagree with the bundle.
@@ -56,7 +56,7 @@ const properties = network.properties ?? JSON.parse(readFileSync(propertiesPath,
 if (!Number.isInteger(properties.credit_limit_cents) || properties.credit_limit_cents < 0) {
   fail("deploy/properties.json needs credit_limit_cents: how far below zero any balance may go (0 = everything prepaid, recommended).");
 }
-if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uhCAk[A-Za-z0-9_-]{48}$/.test(key))) {
+if (!Array.isArray(properties.issuers) || properties.issuers.some((key: unknown) => typeof key !== "string" || !/^uhCAk[A-Za-z0-9_-]{48}$/.test(key))) {
   fail("deploy/properties.json needs issuers: the agent keys (uhCAk...) of whoever credits accounts against real payments.");
 }
 // Collateral -- a driver's stake in the food they carry -- is only real if
@@ -73,12 +73,12 @@ if (properties.credit_limit_cents === 0 && properties.issuers.length === 0) {
   fail("With credit_limit_cents 0 and no issuers, nobody could ever have funds -- name at least one issuer.");
 }
 
-function fail(message) {
+function fail(message: string): never {
   console.error(message);
   process.exit(2);
 }
 
-function step(label, cmd, cmdArgs, cwd = REPO) {
+function step(label: string, cmd: string, cmdArgs: string[], cwd = REPO) {
   console.log(`\n▸ ${label}`);
   execFileSync(cmd, cmdArgs, { cwd, stdio: "inherit", env: { ...process.env, VITE_HANDSHAKE_DEV_HOST: "false" } });
 }
@@ -109,7 +109,7 @@ try {
   const manifest = { manifest_version: "0", name: "handshake", description: "HandShake -- food delivery with no middleman, on Holochain", roles, bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
   writeFileSync(path.join(work, "happ.yaml"), JSON.stringify(manifest, null, 2));
   step("Packing hApp", "hc", ["app", "pack", work]);
-  // The issuer's own conductor installs exactly this (issuer/scripts/provision.mjs).
+  // The issuer's own conductor installs exactly this (issuer/scripts/provision.ts).
   copyFileSync(path.join(work, "handshake.happ"), path.join(REPO, "deploy/handshake.happ"));
   // What a later release needs to carry this network as its previous one.
   writeFileSync(path.join(REPO, "deploy/handshake.network.json"), `${JSON.stringify({ network_seed: networkSeed, properties }, null, 2)}\n`);

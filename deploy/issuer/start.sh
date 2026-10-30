@@ -3,7 +3,7 @@
 #   key    -- prints the issuer's agent key, for the network's roster;
 #   serve  -- installs the network's hApp (once) and runs the issuer service.
 set -eu
-node scripts/conductor.mjs &
+node scripts/conductor.ts &
 conductor=$!
 trap 'kill $conductor 2>/dev/null' EXIT INT TERM
 
@@ -15,10 +15,10 @@ done
 
 case "${1:-serve}" in
   key)
-    node scripts/provision.mjs key
+    node scripts/provision.ts key
     ;;
   serve)
-    node scripts/provision.mjs install /app/handshake.happ
+    node scripts/provision.ts install /app/handshake.happ
     exec npm start
     ;;
   *)

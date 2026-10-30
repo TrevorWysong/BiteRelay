@@ -82,7 +82,7 @@ Copy `deploy/properties.example.json` to `deploy/properties.json` (gitignored) a
 A network needs three things running on machines you control, and a fourth if it wakes closed apps. Each is small:
 
 1. **Bootstrap and relay** (`kitsune2-bootstrap-srv`) behind TLS. Peers find each other through it, and reach each other through it when NATs are in the way. Holochain refuses a plaintext relay outside development.
-2. **The issuer's conductor**: an always-on Holochain node holding the issuer's agent key, on the same network as everyone else (`issuer/scripts/conductor.mjs`). Its admin interface listens on its own machine only.
+2. **The issuer's conductor**: an always-on Holochain node holding the issuer's agent key, on the same network as everyone else (`issuer/scripts/conductor.ts`). Its admin interface listens on its own machine only.
 3. **The issuer service** (`issuer/`, see its README): card top-ups, payout accounts, cash-outs, recoveries. It runs beside the issuer's conductor, and it's the only thing that talks to it. It's reached by the app over https: its address is published in the issuer's profile.
 4. **A push relay** (`push/`, see its README), optional: wakes a customer's closed app when their order changes, without learning who they are or what they ordered (MOBILE.md). It needs no conductor. Its address goes in the network's `services.push_relay_url`; without one, apps hear of changes only while open.
 
@@ -92,13 +92,13 @@ The issuer's key has to be on the network's roster (`issuers` in `deploy/propert
 # On the issuer's machine (ISSUER_DATA_DIR short: the keystore's socket path is limited).
 export ISSUER_DATA_DIR=/var/lib/handshake-issuer ISSUER_LAIR_PASSPHRASE=... \
        BOOTSTRAP_URL=https://bootstrap.example.org RELAY_URL=https://bootstrap.example.org
-node issuer/scripts/conductor.mjs &          # the issuer's node
-node issuer/scripts/provision.mjs key        # prints its key: add it to deploy/properties.json `issuers`
+node issuer/scripts/conductor.ts &          # the issuer's node
+node issuer/scripts/provision.ts key        # prints its key: add it to deploy/properties.json `issuers`
 
 # Anywhere: build the network's bundle with that roster (step 3 below) -> deploy/handshake.happ and handshake.webhapp
 
 # Back on the issuer's machine:
-node issuer/scripts/provision.mjs install deploy/handshake.happ   # same bundle as everyone
+node issuer/scripts/provision.ts install deploy/handshake.happ   # same bundle as everyone
 cd issuer && npm start                       # the service (issuer/.env, see .env.example)
 ```
 

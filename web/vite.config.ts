@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises'
+import tailwindcss from '@tailwindcss/postcss'
 import react from '@vitejs/plugin-react'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, transformWithOxc, type Plugin } from 'vite'
 
 // What a production build may load, and from where. Everything a store,
 // driver or customer publishes is shown in this app -- names, photos,
@@ -29,9 +31,25 @@ function contentSecurityPolicy(): Plugin {
   }
 }
 
+// The service worker (src/sw.ts), compiled on its own to /sw.js: the browser
+// registers it by that URL (src/main.tsx), and it runs as a classic script,
+// outside the app's bundle. Build-only, like its registration.
+function serviceWorker(): Plugin {
+  return {
+    name: 'handshake-service-worker',
+    apply: 'build',
+    async generateBundle() {
+      const source = await readFile(new URL('./src/sw.ts', import.meta.url), 'utf8')
+      const { code } = await transformWithOxc(source, 'sw.ts', { lang: 'ts' })
+      this.emitFile({ type: 'asset', fileName: 'sw.js', source: code })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), contentSecurityPolicy()],
+  plugins: [react(), contentSecurityPolicy(), serviceWorker()],
+  css: { postcss: { plugins: [tailwindcss()] } },
   // Relative asset paths, so a runtime can serve the build from wherever it
   // unpacks it (a `.webhapp` -- see docs/DEPLOYMENT.md).
   base: './',

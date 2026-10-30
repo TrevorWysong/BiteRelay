@@ -2,8 +2,8 @@
 // node, so nobody needs a website or a launcher -- with Kangaroo
 // (holochain/kangaroo-electron), pinned below.
 //
-//   node desktop/build.mjs mac-arm64 | mac-x64 | win | linux
-//   node desktop/build.mjs dev          (runs it, unpackaged)
+//   node desktop/build.ts mac-arm64 | mac-x64 | win | linux
+//   node desktop/build.ts dev          (runs it, unpackaged)
 //
 // It needs deploy/handshake.webhapp built for network.json's network first:
 //
@@ -35,7 +35,7 @@ const [OWNER, NAME] = RELEASES.split("/");
 const PATCHES = [
   {
     // Kangaroo installs the hApp with one network seed for every role. Ours
-    // carries its seeds already (package.mjs), and a migration release has
+    // carries its seeds already (package.ts), and a migration release has
     // two roles on different seeds -- overriding both would put the
     // `previous` role on the wrong network.
     file: "src/main/holochainManager.ts",
@@ -61,9 +61,10 @@ const PATCHES = [
   },
 ];
 
-const TARGETS = { "mac-arm64": "build:mac-arm64", "mac-x64": "build:mac-x64", win: "build:win", linux: "build:linux", dev: "dev" };
-const target = process.argv[2];
-if (!TARGETS[target]) fail(`Pass a target: ${Object.keys(TARGETS).join(", ")}.`);
+const TARGETS: Record<string, string> = { "mac-arm64": "build:mac-arm64", "mac-x64": "build:mac-x64", win: "build:win", linux: "build:linux", dev: "dev" };
+const target = process.argv[2] ?? "";
+const script = TARGETS[target];
+if (!script) fail(`Pass a target: ${Object.keys(TARGETS).join(", ")}.`);
 if (!existsSync(WEBHAPP)) fail("deploy/handshake.webhapp is missing -- run `npm run package -- --network ../desktop/network.json` in web/ first.");
 
 fetchKangaroo();
@@ -71,14 +72,14 @@ copyFileSync(path.join(DESKTOP, "kangaroo.config.ts"), path.join(KANGAROO, "kang
 for (const { file, from, to } of PATCHES) {
   const at = path.join(KANGAROO, file);
   const text = readFileSync(at, "utf8");
-  if (!text.includes(from)) fail(`Kangaroo's ${file} no longer has what desktop/build.mjs patches -- check the patch against KANGAROO_COMMIT.`);
+  if (!text.includes(from)) fail(`Kangaroo's ${file} no longer has what desktop/build.ts patches -- check the patch against KANGAROO_COMMIT.`);
   writeFileSync(at, text.replace(from, to));
 }
 // The one webhapp in its pouch: ours.
 copyFileSync(WEBHAPP, path.join(KANGAROO, "pouch/handshake.webhapp"));
 
 run("yarn", ["setup"]);
-run("yarn", [TARGETS[target]]);
+run("yarn", [script]);
 
 /// A fresh copy of Kangaroo at KANGAROO_COMMIT, every build, so no earlier
 /// build's patches linger -- a tarball, not a clone, so there's no git remote
@@ -92,12 +93,12 @@ function fetchKangaroo() {
   rmSync(tarball);
 }
 
-function run(cmd, args, cwd = KANGAROO) {
+function run(cmd: string, args: string[], cwd = KANGAROO) {
   console.log(`\n▸ ${cmd} ${args.join(" ")}`);
   execFileSync(cmd, args, { cwd, stdio: "inherit", shell: process.platform === "win32" });
 }
 
-function fail(message) {
+function fail(message: string): never {
   console.error(message);
   process.exit(2);
 }

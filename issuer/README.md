@@ -69,7 +69,7 @@ The Rust side and the cross-language signature are covered by `tests/tryorama/sr
 ## Before real money
 
 - **Legal review** of money transmission and prepaid access for the issuer's setup: see `docs/CARD_PAYMENTS.md`. Payouts through Stripe Connect run under Stripe's licences.
-- **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`). `scripts/conductor.mjs` runs it, and `scripts/provision.mjs` makes the key and installs the network's bundle. docs/DEPLOYMENT.md, "Run the network's servers", has the steps and a Docker Compose setup.
+- **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`). `scripts/conductor.ts` runs it, and `scripts/provision.ts` makes the key and installs the network's bundle. docs/DEPLOYMENT.md, "Run the network's servers", has the steps and a Docker Compose setup.
 - **`APP_ORIGINS`**: the origins the HandShake app's requests come from, in its runtime (Kangaroo's or Tauri's). After setting up a payout account, Stripe returns people to this service's own `/payouts/done` page.
 - **Hosting:** the service behind https (`PUBLIC_URL`), with its database backed up.
 - **Stripe Radar rules** on (see *Card risk*), and the limits tuned to the issuer's appetite for loss.

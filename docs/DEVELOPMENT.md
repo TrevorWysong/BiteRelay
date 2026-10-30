@@ -24,6 +24,8 @@ The seed sets up a dev issuer, "HandShake Credits (dev)": it writes the network'
 | `npm run issuer` | The dev network's issuer ("HandShake Credits (dev)"), from the terminal: lists cash-outs waiting; `-- pay 1` (or `pay all`), `-- decline 1 "reason"`, and `-- grant "Sam Patel" 25` to add funds. |
 | `npm run package -- --network-seed <name>` | Builds the production `deploy/handshake.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
 
+These are TypeScript files in `web/scripts/`, run by Node directly (Node 24 strips the types itself, so there's no build step), and type-checked with the rest of the app by `npx tsc -b`. So are `tests/tryorama/run.ts`, the issuer's `scripts/` and `desktop/build.ts`.
+
 ## What `npm run backend` does to a running conductor
 
 It compares the freshly packed DNA's hash with the DNA each installed identity runs:
@@ -84,7 +86,7 @@ Validation can't read sealed fields, so rules that need them (the delivery radiu
 
 ## Tests
 
-**Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/handshake.happ` (which `npm run backend` keeps current), one file at a time. `node run.mjs reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.
+**Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/handshake.happ` (which `npm run backend` keeps current), one file at a time. `node run.ts reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.
 
 **Where a Tryorama file's time goes.** Each player is a conductor of its own, and each conductor compiles every zome: about 10s starting and installing, then about 15s on its first zome call (the coordinators, and every zome's `init`). A three-player file spends over a minute before its first assertion; `dhtSync` waits are a few seconds. Measured in October 2026: faster gossip changes nothing, and two files at a time is barely faster and much flakier, so the suite runs one file at a time. Fewer players per file is the lever that works.
 

@@ -7,13 +7,14 @@
 //   npm run dev:reset              wipe all dev data, start fresh, then seed
 //
 // Flags: --reset (wipe .dev/conductor first, stopping a running instance),
-// --seed (run scripts/seed.mjs once the conductor is ready).
+// --seed (run scripts/seed.ts once the conductor is ready).
 //
 // Conductor/bootstrap logs go to .dev/conductor.log; only what you need is
 // printed here. Ctrl+C stops both processes.
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
   ADMIN_PORT,
@@ -31,7 +32,8 @@ import {
   readDevNetwork,
   DEV_NETWORK,
   tryConnectAdmin,
-} from "./lib/devEnv.mjs";
+  messageOf,
+} from "./lib/devEnv.ts";
 
 const LOG_FILE = path.join(DEV_DIR, "conductor.log");
 const READY_TIMEOUT_MS = 60_000;
@@ -66,10 +68,10 @@ network:
 
 /// Resolves once `pattern` appears in the process's output; rejects if it
 /// exits first or takes longer than READY_TIMEOUT_MS.
-function waitForOutput(child, pattern, label) {
-  return new Promise((resolve, reject) => {
+function waitForOutput(child: ChildProcessByStdio<Writable | null, Readable, Readable>, pattern: RegExp, label: string) {
+  return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} did not become ready within ${READY_TIMEOUT_MS / 1000}s (see ${LOG_FILE})`)), READY_TIMEOUT_MS);
-    const onData = (chunk) => {
+    const onData = (chunk: Buffer) => {
       if (pattern.test(chunk.toString())) {
         clearTimeout(timer);
         child.stdout.off("data", onData);
@@ -77,7 +79,7 @@ function waitForOutput(child, pattern, label) {
       }
     };
     child.stdout.on("data", onData);
-    child.once("exit", (code) => {
+    child.once("exit", (code: number | null) => {
       clearTimeout(timer);
       reject(new Error(`${label} exited (code ${code}) before becoming ready (see ${LOG_FILE})`));
     });
@@ -103,8 +105,8 @@ async function stopRunningInstance() {
   throw new Error(`conductor (pid ${pid}) did not stop; stop it manually and retry`);
 }
 
-function stopChild(child) {
-  return new Promise((resolve) => {
+function stopChild(child: ChildProcess) {
+  return new Promise<void>((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve();
     const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
     child.once("exit", () => {
@@ -163,7 +165,7 @@ async function main() {
   }
 
   let shuttingDown = false;
-  async function shutdown(code) {
+  async function shutdown(code: number) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\nStopping conductor...");
@@ -180,12 +182,12 @@ async function main() {
     holochain.stdin.end(LAIR_PASSPHRASE);
     await waitForOutput(holochain, /Conductor ready\./, "conductor");
   } catch (err) {
-    console.error(err.message);
+    console.error(messageOf(err));
     await shutdown(1);
   }
   // From here on, either process dying takes the other down with it.
-  for (const [child, label] of [[bootstrap, "bootstrap server"], [holochain, "conductor"]]) {
-    child.once("exit", (code) => {
+  for (const [child, label] of [[bootstrap, "bootstrap server"], [holochain, "conductor"]] as const) {
+    child.once("exit", (code: number | null) => {
       if (shuttingDown) return;
       console.error(`${label} exited unexpectedly (code ${code}); see ${LOG_FILE}`);
       shutdown(1);
@@ -201,7 +203,7 @@ async function main() {
   console.log("================================================================");
 
   if (args.has("--seed")) {
-    const seed = spawn(process.execPath, [fileURLToPath(new URL("./seed.mjs", import.meta.url))], { stdio: "inherit" });
+    const seed = spawn(process.execPath, [fileURLToPath(new URL("./seed.ts", import.meta.url))], { stdio: "inherit" });
     seed.once("exit", (code) => code !== 0 && console.error(`seed exited with code ${code}`));
   }
 }

@@ -1,12 +1,12 @@
 // Runs the Tryorama suite: every src/*.test.ts (or just the names given),
 // one file at a time.
 //
-//   node run.mjs                  every test file
-//   node run.mjs reviews chat     just these (file names without .test.ts)
-//   node run.mjs --shard 2/4      the second of four even shares (for CI)
-//   node run.mjs --record         also save each passing file's duration
-//   node run.mjs --shard 2/4 --list   just print which files would run
-//   TEST_TIMEOUT_MIN=15 node run.mjs
+//   node run.ts                  every test file
+//   node run.ts reviews chat     just these (file names without .test.ts)
+//   node run.ts --shard 2/4      the second of four even shares (for CI)
+//   node run.ts --record         also save each passing file's duration
+//   node run.ts --shard 2/4 --list   just print which files would run
+//   TEST_TIMEOUT_MIN=15 node run.ts
 //
 // Shards are balanced by how long each file takes on CI (durations.json),
 // so parallel CI jobs finish together. Those are CI's timings, 2-3 times a
@@ -37,7 +37,7 @@ const FAILURE = /error occurred during test run|AssertionError|Error: Request ti
 
 const args = process.argv.slice(2);
 const record = args.includes("--record");
-const shardArg = args.find((arg, i) => args[i - 1] === "--shard");
+const shardArg = args.find((_arg, i) => args[i - 1] === "--shard");
 const wanted = args.filter((arg, i) => !arg.startsWith("--") && args[i - 1] !== "--shard");
 const all = readdirSync(join(here, "src"))
   .filter((f) => f.endsWith(".test.ts"))
@@ -50,15 +50,16 @@ if (unknown.length) {
 }
 
 const durationsPath = join(here, "durations.json");
-const durations = existsSync(durationsPath) ? JSON.parse(readFileSync(durationsPath, "utf8")) : {};
+/// Seconds each file took when last recorded, by name.
+const durations: Record<string, number> = existsSync(durationsPath) ? JSON.parse(readFileSync(durationsPath, "utf8")) : {};
 /// A file with no recorded duration counts as a typical one.
 const DEFAULT_SECONDS = 60;
 
 /// Splits `names` into `count` shares of about equal total duration: longest
 /// first, each to the share with the least so far. Deterministic, so every
 /// CI job computes the same split.
-function shards(names, count) {
-  const shares = Array.from({ length: count }, () => ({ names: [], seconds: 0 }));
+function shards(names: string[], count: number): string[][] {
+  const shares = Array.from({ length: count }, () => ({ names: [] as string[], seconds: 0 }));
   const longestFirst = [...names].sort((a, b) => (durations[b] ?? DEFAULT_SECONDS) - (durations[a] ?? DEFAULT_SECONDS) || a.localeCompare(b));
   for (const name of longestFirst) {
     const lightest = shares.reduce((min, share) => (share.seconds < min.seconds ? share : min));
@@ -107,7 +108,7 @@ function strayProcesses() {
 }
 
 /// Temp dirs a test run created: ones that didn't exist before it started.
-function tempDirs() {
+function tempDirs(): Set<string> {
   try {
     return new Set(readdirSync(tmpdir()));
   } catch {
@@ -115,7 +116,7 @@ function tempDirs() {
   }
 }
 
-function cleanUp(before) {
+function cleanUp(before: Set<string>) {
   for (const pid of strayProcesses()) {
     try {
       process.kill(pid, "SIGKILL");
@@ -136,8 +137,18 @@ function cleanUp(before) {
   }
 }
 
-function runOnce(name, attempt) {
-  return new Promise((resolve) => {
+/// One run of one test file.
+interface Result {
+  passes: number;
+  failed: boolean;
+  /// What went wrong, on one line, if it failed.
+  reason: string | null;
+  seconds: number;
+  log: string;
+}
+
+function runOnce(name: string, attempt: number) {
+  return new Promise<Result>((resolve) => {
     const log = join(logDir, `${name}${attempt ? `.retry${attempt}` : ""}.log`);
     const out = createWriteStream(log);
     const before = tempDirs();
@@ -147,8 +158,8 @@ function runOnce(name, attempt) {
     // `runScenario` can report a failure and then leave its conductors
     // running; once it has, give it a moment to finish logging, then stop it
     // instead of waiting out the whole timeout.
-    let reported = null;
-    const collect = (chunk) => {
+    let reported: NodeJS.Timeout | undefined;
+    const collect = (chunk: Buffer) => {
       output += chunk;
       out.write(chunk);
       if (!reported && FAILURE.test(output)) reported = setTimeout(() => child.kill("SIGKILL"), 15_000);
@@ -176,7 +187,7 @@ function runOnce(name, attempt) {
   });
 }
 
-const results = [];
+const results: (Result & { name: string; status: string })[] = [];
 for (const name of files) {
   let result = await runOnce(name, 0);
   let attempt = 0;

@@ -10,15 +10,15 @@ Closing the window keeps HandShake running from the menu bar or system tray, so 
 | --- | --- |
 | `network.json` | The network the app joins: its seed, its bootstrap and relay server, and its DNA properties. The bundle is packaged from this file (`npm run package -- --network ../desktop/network.json`) and the app's config reads it too, so the two can't disagree. |
 | `kangaroo.config.ts` | The app's identity (`appId`, name, version), its Holochain version and the binaries' SHA-256 hashes. |
-| `build.mjs` | Lays those over a fresh copy of Kangaroo at a pinned commit, applies three fixes, and builds. |
+| `build.ts` | Lays those over a fresh copy of Kangaroo at a pinned commit, applies three fixes, and builds. |
 
-Kangaroo is meant to be forked. Keeping only HandShake's own files here, with Kangaroo fetched at a pinned commit, keeps the repo small and makes updating Kangaroo a one-line change. The fixes `build.mjs` applies:
+Kangaroo is meant to be forked. Keeping only HandShake's own files here, with Kangaroo fetched at a pinned commit, keeps the repo small and makes updating Kangaroo a one-line change. The fixes `build.ts` applies:
 
 - **The network seed.** Kangaroo installs the hApp with one seed for every role. HandShake's bundle carries its own seeds, and an upgrade release has two roles on different seeds (docs/MIGRATION.md), so the override is removed.
 - **Updates.** Releases and the app's update checks point at this repo's GitHub, not Kangaroo's.
 - **The macOS update manifest**, which Kangaroo's script merges for Holochain's own launcher repo.
 
-If a Kangaroo update changes what a fix touches, `build.mjs` stops and says which one.
+If a Kangaroo update changes what a fix touches, `build.ts` stops and says which one.
 
 ## Releasing
 
@@ -26,7 +26,7 @@ If a Kangaroo update changes what a fix touches, `build.mjs` stops and says whic
 2. **Build.** In GitHub, Actions, **Desktop**, Run workflow. It packages the bundle once, drafts release `v<version>`, and builds the four installers into it.
 3. **Publish** the draft once you've tried an installer. Installed apps find it on their next start and offer to update.
 
-To try a build on your own machine, package the bundle, then `node desktop/build.mjs dev` (or `mac-arm64`, `mac-x64`, `win`, `linux`). It needs Yarn 1 (`npm i -g yarn`).
+To try a build on your own machine, package the bundle, then `node desktop/build.ts dev` (or `mac-arm64`, `mac-x64`, `win`, `linux`). It needs Yarn 1 (`npm i -g yarn`).
 
 ## Before real users
 

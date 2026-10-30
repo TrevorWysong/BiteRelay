@@ -46,7 +46,7 @@ jobs:
             exit 1
           fi
       - name: Every refusal people can meet is in the catalogs
-        run: node web/scripts/refusals.mjs --check
+        run: node web/scripts/refusals.ts --check
       - name: Web typecheck, lint and build
         working-directory: web
         run: |

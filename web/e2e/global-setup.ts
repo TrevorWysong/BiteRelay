@@ -1,7 +1,6 @@
 // Fails fast, with the fix, when the dev conductor isn't ready -- rather
 // than every test timing out on a blank onboarding screen.
-// @ts-expect-error -- a plain .mjs dev script, no type declarations
-import { tryConnectAdmin } from "../scripts/lib/devEnv.mjs";
+import { tryConnectAdmin } from "../scripts/lib/devEnv.ts";
 import { SEED_PEOPLE } from "./seed.ts";
 
 export default async function globalSetup() {

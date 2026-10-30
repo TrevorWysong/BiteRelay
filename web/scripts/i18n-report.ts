@@ -1,14 +1,14 @@
 // Lists the app's screens by how much copy they still carry inline rather
 // than through `t()` (src/i18n) -- JSX text and quoted props a person
 // reads -- most first. A rough count, for working through extraction.
-//   node scripts/i18n-report.mjs [--limit 20]
+//   node scripts/i18n-report.ts [--limit 20]
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "../src");
 const limit = Number(process.argv[process.argv.indexOf("--limit") + 1]) || 30;
-const files = [];
-const walk = (dir) => {
+const files: string[] = [];
+const walk = (dir: string) => {
   for (const name of readdirSync(dir)) {
     const full = path.join(dir, name);
     if (statSync(full).isDirectory()) walk(full);

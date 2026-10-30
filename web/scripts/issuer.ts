@@ -6,29 +6,50 @@
 //   npm run issuer -- pay 1                pay the first (or: pay all)
 //   npm run issuer -- decline 1 "reason"   decline it; its funds go back
 //   npm run issuer -- grant "Sam Patel" 25 add $25 to someone's balance
-import { AppWebsocket, encodeHashToBase64 } from "@holochain/client";
-import { ISSUER_APP_ID, ROLE_NAME, WS_OPTIONS, appInterfacePort, connectAdmin } from "./lib/devEnv.mjs";
+import { AppWebsocket, encodeHashToBase64, type ActionHash, type AdminWebsocket, type AgentPubKey } from "@holochain/client";
+import { ISSUER_APP_ID, ROLE_NAME, WS_OPTIONS, appInterfacePort, closeApp, connectAdmin, messageOf } from "./lib/devEnv.ts";
+
+/// A cash-out as `get_cash_out_requests` lists it.
+interface CashOutRequest {
+  redemption: ActionHash;
+  redeemer: AgentPubKey;
+  amount: number;
+  requested_at: number;
+  instructions: string;
+  outcome: unknown;
+}
+
+interface CashOutPage {
+  requests: CashOutRequest[];
+  more: boolean;
+  cursor: unknown;
+}
 
 const [command = "list", ...rest] = process.argv.slice(2);
-const cents = (amount) => `$${(amount / 100).toFixed(2)}`;
+const cents = (amount: number) => `$${(amount / 100).toFixed(2)}`;
 
 /// A call as one of the conductor's apps.
-async function connectAs(adminWs, appId) {
+async function connectAs(adminWs: AdminWebsocket, appId: string) {
   const app = (await adminWs.listApps({})).find((a) => a.installed_app_id === appId);
   if (!app) return null;
-  const cellId = app.cell_info[ROLE_NAME][0].value.cell_id;
+  const cell = app.cell_info[ROLE_NAME][0];
+  if (cell.type !== "provisioned") return null;
+  const cellId = cell.value.cell_id;
   await adminWs.authorizeSigningCredentials(cellId);
   const { token } = await adminWs.issueAppAuthenticationToken({ installed_app_id: appId });
   const appWs = await AppWebsocket.connect({ url: new URL(`ws://localhost:${await appInterfacePort(adminWs)}`), token, wsClientOptions: WS_OPTIONS, defaultTimeout: 60_000 });
-  return { cellId, call: (zome, fn, payload = null) => appWs.callZome({ cell_id: cellId, zome_name: zome, fn_name: fn, payload }), close: () => appWs.client.close() };
+  const call = <T>(zome: string, fn: string, payload: unknown = null) => appWs.callZome<T>({ cell_id: cellId, zome_name: zome, fn_name: fn, payload });
+  return { cellId, call, close: () => closeApp(appWs) };
 }
 
+type Issuer = NonNullable<Awaited<ReturnType<typeof connectAs>>>;
+
 /// Every cash-out the issuer has been asked for, oldest first.
-async function allRequests(issuer) {
-  const requests = [];
-  let after = null;
+async function allRequests(issuer: Issuer): Promise<CashOutRequest[]> {
+  const requests: CashOutRequest[] = [];
+  let after: unknown = null;
   for (;;) {
-    const page = await issuer.call("ledger", "get_cash_out_requests", { after });
+    const page = await issuer.call<CashOutPage>("ledger", "get_cash_out_requests", { after });
     requests.push(...page.requests);
     if (!page.more) return requests;
     after = page.cursor;
@@ -36,8 +57,8 @@ async function allRequests(issuer) {
 }
 
 /// Seeded people by app, for names.
-async function names(adminWs) {
-  const byKey = new Map();
+async function names(adminWs: AdminWebsocket): Promise<Map<string, string>> {
+  const byKey = new Map<string, string>();
   for (const app of await adminWs.listApps({})) {
     if (!app.installed_app_id.startsWith("seed-")) continue;
     const name = app.installed_app_id.slice(5).split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
@@ -55,7 +76,7 @@ async function main() {
   }
   try {
     const people = await names(adminWs);
-    const who = (key) => people.get(encodeHashToBase64(key)) ?? "a new identity";
+    const who = (key: AgentPubKey) => people.get(encodeHashToBase64(key)) ?? "a new identity";
     const waiting = (await allRequests(issuer)).filter((r) => !r.outcome);
 
     if (command === "list") {
@@ -78,6 +99,7 @@ async function main() {
       const to = [...people.entries()].find(([, n]) => n.toLowerCase() === (name ?? "").toLowerCase());
       if (!to || !(Number(amount) > 0)) throw new Error('grant takes a seeded person\'s name and dollars: grant "Sam Patel" 25');
       const app = (await adminWs.listApps({})).find((a) => encodeHashToBase64(a.agent_pub_key) === to[0]);
+      if (!app) throw new Error(`${to[1]} is no longer on this conductor`);
       await issuer.call("ledger", "issue_grant", { to: app.agent_pub_key, amount: Math.round(Number(amount) * 100), reference: `dev-grant-${Date.now().toString(36)}` });
       console.log(`  ✓ Added ${cents(Math.round(Number(amount) * 100))} for ${to[1]}; their app collects it shortly.`);
       return;
@@ -90,6 +112,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`✗ ${err.message ?? err}`);
+  console.error(`✗ ${messageOf(err)}`);
   process.exit(1);
 });

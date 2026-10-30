@@ -6,7 +6,7 @@
 //   ISSUER_DATA_DIR=/var/lib/handshake-issuer \
 //   ISSUER_LAIR_PASSPHRASE=... \
 //   BOOTSTRAP_URL=https://bootstrap.example.org RELAY_URL=https://relay.example.org \
-//   node scripts/conductor.mjs
+//   node scripts/conductor.ts
 //
 // The passphrase unlocks the keystore holding the issuer's key: keep it in
 // a secret store, never in the repo. The data directory holds the key and
@@ -15,10 +15,10 @@ import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-function required(name) {
+function required(name: string): string {
   const value = process.env[name];
   if (!value) {
-    console.error(`${name} isn't set -- see the comment at the top of scripts/conductor.mjs`);
+    console.error(`${name} isn't set -- see the comment at the top of scripts/conductor.ts`);
     process.exit(2);
   }
   return value;
@@ -69,5 +69,5 @@ network:
 
 const holochain = spawn("holochain", ["--piped", "-c", configPath], { stdio: ["pipe", "inherit", "inherit"] });
 holochain.stdin.end(passphrase);
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => holochain.kill(signal));
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => holochain.kill(signal));
 holochain.on("exit", (code) => process.exit(code ?? 1));

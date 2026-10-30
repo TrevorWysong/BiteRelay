@@ -3,11 +3,12 @@
 // zomes aren't part of a DNA's hash, so the conductor can swap them for a
 // running cell without re-genesis. Only valid for cells whose *integrity*
 // matches the new build: callers must check the cell's DNA hash against the
-// freshly packed DNA first (see backend.mjs), or new coordinator code would
+// freshly packed DNA first (see backend.ts), or new coordinator code would
 // run against entry/link types it wasn't compiled for.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { REPO } from "./devEnv.mjs";
+import type { AdminWebsocket, CellId, CoordinatorBundle } from "@holochain/client";
+import { REPO } from "./devEnv.ts";
 
 const DNA_MANIFEST = path.join(REPO, "dnas/handshake/workdir/dna.yaml");
 const WASM_DIR = path.join(REPO, "target/wasm32-unknown-unknown/release");
@@ -30,13 +31,13 @@ export async function coordinatorZomes() {
 /// (`ClientClosedWithPendingRequests`), while one zome (a few MB) goes
 /// through reliably. `updateCoordinators` merges by zome name, so sending
 /// them one at a time is equivalent.
-async function singleZomeBundle({ name, integrity }) {
+async function singleZomeBundle({ name, integrity }: { name: string; integrity: string }): Promise<CoordinatorBundle> {
   const file = `${name}.wasm`;
   const bytes = await readFile(path.join(WASM_DIR, file));
-  return { manifest: { zomes: [{ name, hash: null, path: file, dependencies: [{ name: integrity }] }] }, resources: { [file]: new Uint8Array(bytes) } };
+  return { manifest: { zomes: [{ name, path: file, dependencies: [{ name: integrity }] }] }, resources: { [file]: new Uint8Array(bytes) } };
 }
 
-export async function updateCoordinators(adminWs, cellIds) {
+export async function updateCoordinators(adminWs: AdminWebsocket, cellIds: CellId[]): Promise<number> {
   const zomes = await coordinatorZomes();
   const bundles = await Promise.all(zomes.map(singleZomeBundle));
   for (const cellId of cellIds) {

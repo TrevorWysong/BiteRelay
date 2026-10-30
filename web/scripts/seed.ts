@@ -6,17 +6,45 @@
 //
 // Everything is created through the same zome calls the UI makes, so the
 // data is real (validated, signed, linked) -- not fixtures. The world is
-// declared as plain data (WORLD, in lib/world.mjs); this script just plays it.
+// declared as plain data (WORLD, in lib/world.ts); this script just plays it.
 //
 // Every identity's installed app id starts with "seed-"; the onboarding
 // screen's dev identity picker lists them so you can sign in as anyone.
 import { readFileSync, writeFileSync } from "node:fs";
-import { AppWebsocket, encodeHashToBase64 } from "@holochain/client";
+import { AppWebsocket, encodeHashToBase64, type ActionHash, type AdminWebsocket, type AgentPubKey, type CellId, type Record as HcRecord } from "@holochain/client";
 import { decode } from "@msgpack/msgpack";
-import { DEV_NETWORK, DNA_PATH, ISSUER_APP_ID, SERVED_HAPP, WS_OPTIONS, appInterfacePort, connectAdmin, dnaHashOf, rolesSettingsFor } from "./lib/devEnv.mjs";
-import { WORLD } from "./lib/world.mjs";
+import { DEV_NETWORK, DNA_PATH, ISSUER_APP_ID, SERVED_HAPP, WS_OPTIONS, appInterfacePort, closeApp, connectAdmin, dnaHashOf, messageOf, rolesSettingsFor, type DevNetwork } from "./lib/devEnv.ts";
+import { WORLD, type DeliveryStep, type Offset, type PickupStep, type WorldOrder, type WorldPerson, type WorldStore } from "./lib/world.ts";
 
-const DEFAULT_CENTER = { lat: 27.7676, lon: -82.6403 }; // matches session.ts's default browse location
+interface Point {
+  lat: number;
+  lon: number;
+}
+
+/// A zome call as one person, answering with `T` (a record, unless said).
+type Call = <T = HcRecord>(zome: string, fn: string, payload?: unknown) => Promise<T>;
+
+/// Someone the seed created, signed in.
+interface Agent {
+  name: string;
+  appId: string;
+  key: AgentPubKey;
+  cellId: CellId;
+  call: Call;
+  close: () => Promise<unknown>;
+  /// Where their deliveries go: their first address, or the center.
+  home?: Point;
+}
+
+/// A store as seeded: where it is, and its menu's records by item name.
+interface SeededStore extends Omit<WorldStore, "owner"> {
+  ref: ActionHash;
+  owner: Agent;
+  location: Point;
+  items: Map<string, { ref: ActionHash; price: number }>;
+}
+
+const DEFAULT_CENTER: Point = { lat: 27.7676, lon: -82.6403 }; // matches session.ts's default browse location
 
 const ROLE = "handshake";
 /// The seeded stores' time zone -- the default location is St. Petersburg, FL.
@@ -24,7 +52,7 @@ const SEED_TIME_ZONE = "America/New_York";
 const SEED_PREFIX = "seed-";
 
 // ----------------------------------------------------------------- engine
-function parseCenter() {
+function parseCenter(): Point {
   const i = process.argv.indexOf("--at");
   if (i === -1) return DEFAULT_CENTER;
   const [lat, lon] = (process.argv[i + 1] ?? "").split(",").map(Number);
@@ -33,69 +61,86 @@ function parseCenter() {
 }
 
 /// km offsets (east, north) -> a point near `center`.
-function near(center, [eastKm, northKm]) {
+function near(center: Point, [eastKm, northKm]: Offset): Point {
   const lat = center.lat + northKm / 110.574;
   const lon = center.lon + eastKm / (111.32 * Math.cos((center.lat * Math.PI) / 180));
   return { lat, lon };
 }
 
 const now = () => Date.now() * 1000;
-const hash = (record) => record.signed_action.hashed.hash;
+const hash = (record: HcRecord): ActionHash => record.signed_action.hashed.hash;
 
 /// Retries until a call stops failing -- for reads/validations that depend
 /// on another agent's just-written data having gossiped over.
-async function eventually(label, fn, attempts = 40, delayMs = 500) {
+async function eventually<T>(label: string, fn: () => Promise<T>, attempts = 40, delayMs = 500): Promise<T> {
   for (let i = 1; ; i++) {
     try {
       return await fn();
     } catch (err) {
-      if (i >= attempts) throw new Error(`${label}: ${err?.message ?? err}`);
+      if (i >= attempts) throw new Error(`${label}: ${messageOf(err)}`);
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
 }
 
 /// A delivery's status as `agent` reads it.
-async function statusOf(agent, orderRef) {
+async function statusOf(agent: Agent, orderRef: ActionHash): Promise<string> {
   const record = await agent.call("dispatch", "get_order", orderRef);
-  return decode(record.entry.Present.entry).status;
+  const entry = record.entry as { Present: { entry: Uint8Array } };
+  return (decode(entry.Present.entry) as { status: string }).status;
 }
 
 /// A step each party's own app also takes as soon as it can -- the driver
 /// committing, the store cooking, the driver picking up: done here too, and
 /// done if their app already did it.
-async function stepOrDone(label, fn, alreadyDone) {
+async function stepOrDone(label: string, fn: () => Promise<unknown>, alreadyDone: RegExp) {
   return eventually(label, async () => {
     try {
       return await fn();
     } catch (err) {
-      if (!alreadyDone.test(String(err?.message ?? err))) throw err;
+      if (!alreadyDone.test(messageOf(err))) throw err;
     }
   });
 }
 
-/// A ledger amount: dollars, as cents.
-const dollars = (n) => Math.round(n * 100);
+/// The seeded person `slug` names.
+function personOf(people: Map<string, Agent>, slug: string): Agent {
+  const person = people.get(slug);
+  if (!person) throw new Error(`The world names "${slug}", who isn't in it`);
+  return person;
+}
 
-async function createAgent(adminWs, appPort, happBytes, person, network, agentKey = null, appIdOverride = null) {
+/// A seeded store's menu item, by name.
+function itemOf(store: SeededStore, name: string) {
+  const item = store.items.get(name);
+  if (!item) throw new Error(`${store.name} has no "${name}"`);
+  return item;
+}
+
+/// A ledger amount: dollars, as cents.
+const dollars = (n: number) => Math.round(n * 100);
+
+async function createAgent(adminWs: AdminWebsocket, appPort: number, happBytes: Uint8Array, person: Pick<WorldPerson, "name">, network: DevNetwork, agentKey: AgentPubKey | null = null, appIdOverride: string | null = null): Promise<Agent> {
   agentKey ??= await adminWs.generateAgentPubKey();
   // The onboarding picker turns "seed-mo-haddad" back into "Mo Haddad".
   const appId = appIdOverride ?? `${SEED_PREFIX}${person.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   await adminWs.installApp({ source: { type: "bytes", value: happBytes }, agent_key: agentKey, installed_app_id: appId, roles_settings: rolesSettingsFor(network) });
   const appInfo = await adminWs.enableApp({ installed_app_id: appId });
-  const cellId = appInfo.cell_info[ROLE][0].value.cell_id;
+  const cell = appInfo.cell_info[ROLE][0];
+  if (cell.type !== "provisioned") throw new Error(`${appId} has no provisioned ${ROLE} cell`);
+  const cellId = cell.value.cell_id;
   await adminWs.authorizeSigningCredentials(cellId);
   const { token } = await adminWs.issueAppAuthenticationToken({ installed_app_id: appId });
   const appWs = await AppWebsocket.connect({ url: new URL(`ws://localhost:${appPort}`), token, wsClientOptions: WS_OPTIONS, defaultTimeout: 60_000 });
-  const call = (zome, fn, payload = null) => appWs.callZome({ cell_id: cellId, zome_name: zome, fn_name: fn, payload });
-  return { ...person, appId, key: agentKey, cellId, call, close: () => appWs.client.close() };
+  const call: Call = (zome, fn, payload = null) => appWs.callZome({ cell_id: cellId, zome_name: zome, fn_name: fn, payload });
+  return { ...person, appId, key: agentKey, cellId, call, close: () => closeApp(appWs) };
 }
 
 /// `HH:MM` as minutes after midnight.
-const minutes = (clock) => Number(clock.split(":")[0]) * 60 + Number(clock.split(":")[1]);
+const minutes = (clock: string) => Number(clock.split(":")[0]) * 60 + Number(clock.split(":")[1]);
 
 /// A store's full details, with `weeklyHours` for its schedule.
-function storeDetails(ref, store, weeklyHours) {
+function storeDetails(ref: ActionHash, store: Pick<WorldStore, "details">, weeklyHours: { weekday: number; opens: number; closes: number }[]) {
   return {
     original_action: ref,
     description: "",
@@ -114,12 +159,12 @@ function storeDetails(ref, store, weeklyHours) {
   };
 }
 
-async function seedStore(store, owner, center) {
+async function seedStore(store: WorldStore, owner: Agent, center: Point): Promise<SeededStore> {
   const location = near(center, store.at);
   const ref = hash(await owner.call("catalog", "publish_catalog", { business_name: store.name, location, address_street: store.details.address_street ?? "" }));
   await owner.call("catalog", "update_catalog_details", storeDetails(ref, store, []));
   // Its choice groups, by key: each group's options numbered from 1.
-  const groups = new Map();
+  const groups = new Map<string, ActionHash>();
   for (const group of store.groups ?? []) {
     const record = await owner.call("catalog", "create_modifier_group", {
       catalog_ref: ref,
@@ -132,7 +177,7 @@ async function seedStore(store, owner, center) {
     });
     groups.set(group.key, hash(record));
   }
-  const items = new Map();
+  const items = new Map<string, { ref: ActionHash; price: number }>();
   for (const item of store.menu) {
     const record = await owner.call("catalog", "add_menu_item", {
       catalog_ref: ref,
@@ -173,21 +218,21 @@ async function seedStore(store, owner, center) {
 /// One handoff of a delivery: the driver records it, the other party
 /// acknowledges it -- what the driver's, store's and customer's screens do.
 /// At the store, acknowledging checks the driver in, too.
-async function attestLeg(driver, orderRef, sequence, kind, to, location) {
+async function attestLeg(driver: Agent, orderRef: ActionHash, sequence: number, kind: "MerchantHandoff" | "CustomerHandoff", to: Agent, location: Point) {
   const leg = hash(await eventually(`record ${kind}`, () => driver.call("attestation", "record_leg", { order_ref: orderRef, sequence, kind, to: to.key, geo_at_completion: location })));
   await eventually(`acknowledge ${kind}`, () => to.call("attestation", "acknowledge_leg", leg));
 }
 
 /// The deliveries each seeded driver has taken on so far.
-const driverOrders = new Map();
+const driverOrders = new Map<Agent, ActionHash[]>();
 
-const DELIVERY_STEPS = ["Placed", "Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];
-const PICKUP_STEPS = ["Placed", "MerchantConfirmed", "ReadyForPickup", "PickedUp"];
-const reached = (steps, until, step) => steps.indexOf(until) >= steps.indexOf(step);
+const DELIVERY_STEPS: DeliveryStep[] = ["Placed", "Open", "BidPlaced", "BidAccepted", "MerchantConfirmed", "PickedUp", "Delivered"];
+const PICKUP_STEPS: PickupStep[] = ["Placed", "MerchantConfirmed", "ReadyForPickup", "PickedUp"];
+const reached = <Step extends string>(steps: Step[], until: Step, step: Step) => steps.indexOf(until) >= steps.indexOf(step);
 
-async function seedDelivery(order, customer, store, driver) {
-  const items = order.items.map((name) => store.items.get(name));
-  const dropoff = customer.home;
+async function seedDelivery(order: WorldOrder & { kind: "delivery" }, customer: Agent, store: SeededStore, assigned: Agent | undefined) {
+  const items = order.items.map((name) => itemOf(store, name));
+  const dropoff = customer.home!;
   const orderRef = hash(
     await eventually("request delivery", () =>
       customer.call("dispatch", "request_delivery", {
@@ -205,6 +250,8 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "Open")) return orderRef;
   await eventually("store accepts", () => store.owner.call("dispatch", "accept_delivery_order", { order_original_action: orderRef }));
   if (!reached(DELIVERY_STEPS, order.until, "BidPlaced")) return orderRef;
+  if (!assigned) throw new Error(`A delivery seeded as far as ${order.until} needs a driver`);
+  const driver = assigned;
   const bidRef = hash(
     await eventually("submit bid", () =>
       driver.call("dispatch", "submit_bid", { order_ref: orderRef, eta_seconds: 1200, price_offer: 650 }),
@@ -221,7 +268,7 @@ async function seedDelivery(order, customer, store, driver) {
     async () => {
       for (const earlier of driverOrders.get(driver) ?? []) await driver.call("dispatch", "settle_order", earlier).catch(() => 0);
       await driver.call("dispatch", "commit_to_order", orderRef).catch((err) => {
-        if (!/already committed/.test(String(err?.message ?? err))) throw err;
+        if (!/already committed/.test(messageOf(err))) throw err;
       });
     },
     240,
@@ -237,15 +284,16 @@ async function seedDelivery(order, customer, store, driver) {
   if (!reached(DELIVERY_STEPS, order.until, "Delivered")) return orderRef;
   await attestLeg(driver, orderRef, 1, "CustomerHandoff", customer, dropoff);
   await eventually("complete delivery", () => customer.call("dispatch", "complete_delivery", { order_original_action: orderRef }));
-  if (order.review) {
-    await eventually("review store", () => customer.call("reputation", "submit_review", { target: { Store: store.ref }, order_original_action: orderRef, rating: order.review.store, comment: order.review.comment }));
-    await eventually("review driver", () => customer.call("reputation", "submit_review", { target: { Driver: driver.key }, order_original_action: orderRef, rating: order.review.driver, comment: "" }));
+  const review = order.review;
+  if (review) {
+    await eventually("review store", () => customer.call("reputation", "submit_review", { target: { Store: store.ref }, order_original_action: orderRef, rating: review.store, comment: review.comment }));
+    await eventually("review driver", () => customer.call("reputation", "submit_review", { target: { Driver: driver.key }, order_original_action: orderRef, rating: review.driver, comment: "" }));
   }
   return orderRef;
 }
 
-async function seedPickup(order, customer, store) {
-  const items = order.items.map((name) => store.items.get(name));
+async function seedPickup(order: WorldOrder & { kind: "pickup" }, customer: Agent, store: SeededStore) {
+  const items = order.items.map((name) => itemOf(store, name));
   const orderRef = hash(
     await eventually("request pickup", () =>
       customer.call("dispatch", "request_pickup_order", {
@@ -262,8 +310,9 @@ async function seedPickup(order, customer, store) {
   await eventually("mark ready", () => store.owner.call("dispatch", "mark_ready_for_pickup", orderRef));
   if (!reached(PICKUP_STEPS, order.until, "PickedUp")) return orderRef;
   await eventually("complete pickup", () => customer.call("dispatch", "complete_pickup", orderRef));
-  if (order.review) {
-    await eventually("review store", () => customer.call("reputation", "submit_review", { target: { Store: store.ref }, order_original_action: orderRef, rating: order.review.store, comment: order.review.comment }));
+  const review = order.review;
+  if (review) {
+    await eventually("review store", () => customer.call("reputation", "submit_review", { target: { Store: store.ref }, order_original_action: orderRef, rating: review.store, comment: review.comment }));
   }
   return orderRef;
 }
@@ -271,7 +320,7 @@ async function seedPickup(order, customer, store) {
 async function main() {
   const center = parseCenter();
   const adminWs = await connectAdmin();
-  const agents = [];
+  const agents: Agent[] = [];
   try {
     const existing = (await adminWs.listApps({})).filter((app) => app.installed_app_id.startsWith(SEED_PREFIX));
     if (existing.length > 0) {
@@ -285,7 +334,7 @@ async function main() {
     // The issuer comes first: the network's properties name it, and every
     // identity -- seeded here or created in the app -- joins that network.
     const issuerKey = await adminWs.generateAgentPubKey();
-    const network = { properties: { issuers: [encodeHashToBase64(issuerKey)] }, builtDna: dnaHashOf(DNA_PATH) };
+    const network: DevNetwork = { properties: { issuers: [encodeHashToBase64(issuerKey)] }, builtDna: dnaHashOf(DNA_PATH) };
     const issuer = await createAgent(adminWs, appPort, happBytes, { name: "HandShake Credits" }, network, issuerKey, ISSUER_APP_ID);
     agents.push(issuer);
     network.dnaHash = encodeHashToBase64(issuer.cellId[0]);
@@ -302,7 +351,7 @@ async function main() {
     });
     console.log("  ✓ HandShake Credits, the network's issuer");
 
-    const people = new Map();
+    const people = new Map<string, Agent>();
     for (const person of WORLD.people) {
       const agent = await createAgent(adminWs, appPort, happBytes, person, network);
       agents.push(agent);
@@ -318,22 +367,22 @@ async function main() {
       if (person.roles.includes("Requester")) {
         await issuer.call("ledger", "issue_grant", { to: agent.key, amount: dollars(100), reference: `seed-topup-${person.slug}` });
         await eventually(`${person.name} collecting their funds`, async () => {
-          if ((await agent.call("ledger", "collect_grants", null)) === 0) throw new Error("not there yet");
+          if ((await agent.call<number>("ledger", "collect_grants", null)) === 0) throw new Error("not there yet");
         });
       }
       console.log(`  ✓ ${person.name} (${person.roles.join(", ")})`);
     }
 
-    const stores = new Map();
+    const stores = new Map<string, SeededStore>();
     for (const store of WORLD.stores) {
-      stores.set(store.key, await seedStore(store, people.get(store.owner), center));
+      stores.set(store.key, await seedStore(store, personOf(people, store.owner), center));
       console.log(`  ✓ ${store.name} -- ${store.menu.length} menu items`);
     }
 
     for (const order of WORLD.orders) {
-      const customer = people.get(order.customer);
-      const store = stores.get(order.store);
-      if (order.kind === "delivery") await seedDelivery(order, customer, store, people.get(order.driver));
+      const customer = personOf(people, order.customer);
+      const store = stores.get(order.store)!;
+      if (order.kind === "delivery") await seedDelivery(order, customer, store, order.driver ? personOf(people, order.driver) : undefined);
       else await seedPickup(order, customer, store);
       console.log(`  ✓ ${order.kind} ${customer.name.split(" ")[0]} -> ${store.name}: ${order.until}`);
     }
@@ -341,17 +390,18 @@ async function main() {
     // Hours go on last: a store only takes orders while it's open, and the
     // seeded orders are placed now, whatever time it is.
     for (const store of stores.values()) {
-      if (!store.hours) continue;
-      const everyDay = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, opens: minutes(store.hours.opens), closes: minutes(store.hours.closes) }));
+      const hours = store.hours;
+      if (!hours) continue;
+      const everyDay = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, opens: minutes(hours.opens), closes: minutes(hours.closes) }));
       await store.owner.call("catalog", "update_catalog_details", storeDetails(store.ref, store, everyDay));
-      console.log(`  ✓ ${store.name} -- open ${store.hours.opens}-${store.hours.closes} daily`);
+      console.log(`  ✓ ${store.name} -- open ${hours.opens}-${hours.closes} daily`);
     }
 
     // A driver who's cashed out some of their earnings, paid.
-    const driver = people.get("dana");
-    const earned = await driver.call("ledger", "get_balance", driver.key);
+    const driver = personOf(people, "dana");
+    const earned = await driver.call<number>("ledger", "get_balance", driver.key);
     if (earned >= dollars(5)) {
-      const cashOut = await driver.call("ledger", "cash_out", { issuer: issuerKey, amount: dollars(5), instructions: "" });
+      const cashOut = await driver.call<{ redemption: ActionHash }>("ledger", "cash_out", { issuer: issuerKey, amount: dollars(5), instructions: "" });
       await eventually("the issuer paying Dana's cash-out", () => issuer.call("ledger", "decide_cash_out", { redemption: cashOut.redemption, outcome: { Paid: { reference: "po_seed_1" } } }));
       console.log("  ✓ Dana cashed out $5.00, paid");
     }
@@ -365,6 +415,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`\n✗ Seeding failed: ${err.message ?? err}`);
+  console.error(`\n✗ Seeding failed: ${messageOf(err)}`);
   process.exit(1);
 });

@@ -1,6 +1,8 @@
 // Minimal, hand-rolled service worker -- deliberately not a full Workbox/
 // vite-plugin-pwa setup, matching this project's existing dependency-light
-// approach. Only registered in production builds (see main.tsx) -- running
+// approach. The build compiles it to /sw.js on its own, outside the app's
+// bundle (vite.config.ts), and its types are a worker's (tsconfig.sw.json).
+// Only registered in production builds (see main.tsx) -- running
 // it under `vite dev` would intercept and stale-cache the dev server's own
 // module graph, a well-known footgun.
 //
@@ -11,6 +13,8 @@
 // render offline), never zome-call data -- and there's nothing to
 // accidentally cache wrong here anyway, since zome calls go over a
 // WebSocket, which fetch/service-worker interception never sees.
+declare const self: ServiceWorkerGlobalScope;
+
 const CACHE_NAME = "handshake-shell-v2";
 const APP_SHELL = ["/", "/index.html", "/favicon.svg", "/manifest.webmanifest"];
 
@@ -41,7 +45,13 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match("/index.html"))),
+      .catch(() =>
+        caches
+          .match(event.request)
+          .then((cached) => cached ?? caches.match("/index.html"))
+          // Offline with nothing cached: the network error it really is.
+          .then((shell) => shell ?? Response.error()),
+      ),
   );
 });
 
@@ -52,11 +62,15 @@ self.addEventListener("fetch", (event) => {
 // which the app hands over while it's open ("wake-words") and this keeps
 // beside the shell. Tapping it opens the app, which reads what changed.
 const WORDS_URL = "/__wake-words";
-const DEFAULT_WORDS = { title: "HandShake", body: "There's news on your order." };
+interface WakeWords {
+  title: string;
+  body: string;
+}
+const DEFAULT_WORDS: WakeWords = { title: "HandShake", body: "There's news on your order." };
 
 self.addEventListener("message", (event) => {
   if (event.data?.type !== "wake-words") return;
-  const { title, body } = event.data;
+  const { title, body } = event.data as WakeWords;
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(WORDS_URL, new Response(JSON.stringify({ title, body })))));
 });
 
@@ -64,7 +78,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     caches
       .match(WORDS_URL)
-      .then((cached) => (cached ? cached.json() : DEFAULT_WORDS))
+      .then((cached): Promise<WakeWords> | WakeWords => (cached ? cached.json() : DEFAULT_WORDS))
       .catch(() => DEFAULT_WORDS)
       .then(({ title, body }) => self.registration.showNotification(title, { body, tag: "handshake-wake", icon: "/favicon.svg" })),
   );
