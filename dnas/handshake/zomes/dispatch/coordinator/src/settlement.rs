@@ -623,11 +623,23 @@ use crate::order_queues::QueueOwnerExt;
 const SWEEP_DAYS: i64 = 2;
 const SIGNALLED_SWEEP_DAYS: i64 = 30;
 
+/// Whether this device's account has moved on to a new key -- an old
+/// device turning up after its owner recovered. What it was owed is the
+/// issuer's to reissue to the new key now (docs/RECOVERY.md); collecting it
+/// here too would pay it twice. So its sweeps skip -- but stay scheduled: a
+/// recovery the owner voids (by replacing the plan it rested on, if it
+/// wasn't theirs) moves the account back here, and its sweeps carry on.
+fn moved_on() -> bool {
+    agent_info().and_then(|info| crate::accounts::has_moved(&info.agent_initial_pubkey)).unwrap_or(false)
+}
+
 /// Every five minutes, for as long as the conductor runs: what's owed is
 /// collected without anyone having the app open. Scheduled at `init`.
 #[hdk_extern(infallible)]
 pub fn settle_periodically(_: Option<Schedule>) -> Option<Schedule> {
-    let _ = sweep(SWEEP_DAYS);
+    if !moved_on() {
+        let _ = sweep(SWEEP_DAYS);
+    }
     Some(Schedule::Persisted(SWEEP_CRON.into()))
 }
 
@@ -644,6 +656,10 @@ const LAST_RETRY: core::time::Duration = core::time::Duration::from_secs(160);
 /// The regular sweep covers anything later.
 #[hdk_extern(infallible)]
 pub fn settle_soon(previous: Option<Schedule>) -> Option<Schedule> {
+    // Ends this burst; the regular sweep checks again every five minutes.
+    if moved_on() {
+        return None;
+    }
     let settled = sweep(SIGNALLED_SWEEP_DAYS) > 0;
     let next = match previous {
         Some(Schedule::Ephemeral(after)) if !settled => after * 2,
