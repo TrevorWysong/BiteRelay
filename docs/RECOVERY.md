@@ -48,6 +48,7 @@ So a recovered account's balance is **reissued by an issuer**, the party that al
 - **Once per account.** The grant reference is `recovery:<old key>`, and a second recovery of the same account is marked contested and left to a person to review.
 - **After a wait.** The old key must stay quiet for the issuer's published `recovery_wait_days` (default 7) from when the issuer first saw the request. Any activity on the old key restarts the wait.
 - **For what the old key holds then, never more.**
+- **Then what it was owed, a part at a time.** For 30 days after, the issuer also reissues what the old key was owed on its orders and never collected: a store's payment for food in flight, a driver's pay, a refund. See *Money owed to a lost key*.
 
 Around that, honest apps treat a key whose account has moved on as finished:
 
@@ -77,11 +78,24 @@ A store is authored by its merchant's key, and no key can change another's entri
 - Customers opening the old store are sent on to the new one, and Browse lists only the new one.
 - The old listing's stake stays with the lost key.
 
+### Money owed to a lost key
+
+Money for an order sits in holds until each party collects their part, from their own device. A lost key never will, so its parts would sit there for good. The new key can't collect them in its place: the network allows each part once *per chain*, so a found or stolen old phone could collect the same part again, and the money would exist twice. So the issuer reissues them, part by part, with the same caution as the balance:
+
+- **Read the way validation reads.** `dispatch::uncollected_by` reads the old key's history from the head the balance was reissued at, every action back, or fails (`ledger::decisions_of`). A read that misses a part the old key collected would pay it twice, so an incomplete read pays nothing.
+- **Priced as collecting it would pay**, a store's settlement splitting food between store and refund as `ledger::collect` does. Only parts the old key would *collect*, on a valid hold and a valid basis; never ones it would give back or forfeit.
+- **Only while the old key stays lost.** Before each grant, the issuer checks the old key has done nothing since that head. If it has, the watch stops and the recovery is left for a person: the key could collect what it's owed itself.
+- **Once per part.** The grant's reference is `recovery:<old key>:<hold>:<part>`, recorded before it's granted, so a retry can't grant twice.
+- **Review counts the whole account.** The balance and every part add up against the issuer's review limit, so an account can't come through in small parts; once a part is left for review, so is everything after it.
+- **Bounded.** 60 days of orders, at most 500 of them, 20,000 actions of history; past that, a person looks.
+
 ## What doesn't move yet
 
 Moving to a new phone keeps the key, so everything stays. On a recovery:
 
-- **Money owed to the lost key mid-order** (a refund, a store's payment for food in flight) stays with it. A recovered key's uncollected parts aren't reissued.
+- **Money owed to the lost key that comes due more than 30 days after its balance was reissued.** The watch ends then.
+- **Refunds that wait on the lost key.** A part its recipient must give back (an order a store cancelled) moves only when the recipient waives it, and a lost key never will. Letting the new key waive in its place is safe on its own, since giving money back can't create any, but not alongside the reissue above: the same part could then reach the payer *and* be reissued. Doing both needs the issuer to skip any part that's been waived, by either key.
+- **A store's decisions.** Everyone's pay on a delivered order rests on the store's decision about it (`dispatch_types::issues`). If the store's key is lost before it decides, nothing on that order can settle.
 - **Goodie bags** are short-lived and aren't copied.
 
 ## Where it lives
@@ -93,7 +107,8 @@ Moving to a new phone keeps the key, so everything stays. On a recovery:
 - `dnas/handshake/zomes/ledger/`: `standing_at`.
 - `dnas/handshake/zomes/dispatch/coordinator/src/accounts.rs`: honest apps refuse moved keys.
 - `dnas/handshake/zomes/reputation/coordinator`: reputation follows the account's lineage.
-- `issuer/src/recovery.ts`: the reissue sweep; `payouts.ts` declines recovered keys' cash-outs.
+- `issuer/src/recovery.ts`: the reissue sweep, the balance then what was owed; `payouts.ts` declines recovered keys' cash-outs.
+- `dnas/handshake/zomes/dispatch/coordinator/src/settlement.rs`: `uncollected_by`; `ledger`'s `decisions_of`.
 - `web/src/routes/Account.tsx`: Account & recovery.
 - `web/src/components/RestoreAccount.tsx`: "I already have an account".
 - `web/src/lib/account/recoveryPhrase.ts`: BIP-39 words in ten languages, and HKDF under HandShake's own label to Ed25519.
@@ -105,5 +120,6 @@ Moving to a new phone keeps the key, so everything stays. On a recovery:
   - `web/test/deviceMove.test.ts`: the codes, as the runtime writes them;
   - `tests/tryorama/src/account.test.ts`: every authority, and the forgeries a modified app would try;
   - `tests/tryorama/src/store-move.test.ts`: a faithful copy, the move's forgeries;
-  - `issuer/test/service.test.ts`: reissue rules;
+  - `issuer/test/service.test.ts`: reissue rules, and what was owed: once per part, stopped by the old key acting, reviewed as a whole, never from a partial read;
+  - `tests/tryorama/src/uncollected.test.ts`: what a lost key was owed, from its own history: what it collected isn't owed, what it couldn't is, priced right, read only from its own chain;
   - `web/test/recoveryPhrase.test.ts`.

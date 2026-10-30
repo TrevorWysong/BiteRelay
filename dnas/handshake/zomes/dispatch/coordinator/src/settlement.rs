@@ -442,6 +442,143 @@ pub fn settle_order(order_original_action: ActionHash) -> ExternResult<u32> {
     settle(&order_original_action)
 }
 
+// --- what a lost key was owed ---
+
+/// How much of an account's history `uncollected_by` reads, and how many
+/// orders it checks, at most. Past either it answers with an error -- an
+/// account that's for a person to look at, not for the issuer's sweep.
+const MAX_OWED_ACTIONS: usize = 20_000;
+const MAX_OWED_ORDERS: usize = 500;
+/// How far back it looks. A part is owed only on an order its holds are on,
+/// and an order older than this was long since settled by its parties.
+const MAX_OWED_DAYS: i64 = 60;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UncollectedInput {
+    pub agent: AgentPubKey,
+    /// An action on `agent`'s chain: what they'd collected by then.
+    pub head: ActionHash,
+    /// How many days of their orders to look through.
+    pub days: i64,
+}
+
+/// A part of a hold that `agent` was entitled to collect and hadn't.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct Uncollected {
+    pub order: ActionHash,
+    pub hold: ActionHash,
+    pub portion: Portion,
+    /// What collecting it would have paid -- priced as `ledger::collect`
+    /// prices it.
+    pub amount: u64,
+    /// The record that entitles them.
+    pub basis: ActionHash,
+}
+
+/// What `agent` was owed on their orders by `head` and never collected:
+/// what an issuer reissues when the account was recovered onto a new key,
+/// since the lost one never will. The rules are `settle`'s, from `agent`'s
+/// side, and only parts they'd collect -- not ones they'd give back.
+///
+/// Read so it can't overstate what's owed: their history the way
+/// validation reads it, from `head` back, or an error (`ledger::decisions_of`);
+/// each part's hold and basis only if valid; nothing owed on a part they'd
+/// already decided. The issuer still checks, before each grant, that the
+/// old key has done nothing since `head`.
+#[hdk_extern]
+pub fn uncollected_by(input: UncollectedInput) -> ExternResult<Vec<Uncollected>> {
+    let days = input.days.clamp(1, MAX_OWED_DAYS);
+    let since = Timestamp::from_micros(sys_time()?.as_micros() - days * 86_400_000_000);
+    let history = handshake_integrity_support::chain::activity_since(&input.agent, &input.head, since)?;
+    if history.len() > MAX_OWED_ACTIONS {
+        return Err(guest("that account's history is too long to check here"));
+    }
+    let types = [EntryType::try_from(UnitEntryTypes::DeliveryOrder)?, EntryType::try_from(UnitEntryTypes::PickupOrder)?];
+    let bid = EntryType::try_from(UnitEntryTypes::Bid)?;
+    let mut orders: Vec<ActionHash> = Vec::new();
+    for item in &history {
+        let action = &item.action.hashed.content;
+        let order = match &action.data {
+            ActionData::Create(create) if types.contains(&create.entry_type) => Some(item.action.hashed.hash.clone()),
+            ActionData::Update(update) if types.contains(&update.entry_type) => original_action_of(update.original_action_address.clone()).ok(),
+            ActionData::Create(create) if create.entry_type == bid => {
+                let entry = must_get_entry(create.entry_hash.clone())?;
+                Bid::try_from(entry.as_content().clone()).ok().and_then(|b| original_action_of(b.order_ref).ok())
+            }
+            _ => None,
+        };
+        orders.extend(order);
+    }
+    orders.sort();
+    orders.dedup();
+    if orders.len() > MAX_OWED_ORDERS {
+        return Err(guest("that account has too many orders to check here"));
+    }
+
+    let agent = &input.agent;
+    let theirs = |h: &HoldWire, s: &ShareWire| (&s.recipient == agent || &h.payer == agent) && s.recipient != h.payer;
+    let mut held: Vec<(ActionHash, HoldWire)> = Vec::new();
+    for order in &orders {
+        for hold in holds_for_order(order)? {
+            if hold.shares.iter().any(|s| theirs(&hold, s)) {
+                held.push((order.clone(), hold));
+            }
+        }
+    }
+    if held.is_empty() {
+        return Ok(Vec::new());
+    }
+    let decided: Vec<DecideWire> = ledger("decisions_of", DecisionsOfWire { agent: agent.clone(), head: input.head.clone(), holds: held.iter().map(|(_, h)| h.hold.clone()).collect() })?;
+
+    let mut owed = Vec::new();
+    let mut known: Vec<(ActionHash, Option<Facts>)> = Vec::new();
+    for (order, hold) in &held {
+        // A hold this node won't vouch for owes nothing here.
+        if must_get_valid_record(hold.hold.clone()).is_err() {
+            continue;
+        }
+        for share in &hold.shares {
+            if !theirs(hold, share) || decided.contains(&DecideWire { hold: hold.hold.clone(), portion: share.portion }) {
+                continue;
+            }
+            if !known.iter().any(|(o, _)| o == order) {
+                known.push((order.clone(), facts(order)?));
+            }
+            let Some(Some(facts)) = known.iter().find(|(o, _)| o == order).map(|(_, f)| f) else { continue };
+            let decision = match decide(agent, hold, share, facts) {
+                None if &hold.payer == agent => waived(hold, share)?,
+                decided => decided,
+            };
+            let Some(Decision::Collect(basis)) = decision else { continue };
+            let Ok(basis_record) = must_get_valid_record(basis.clone()) else { continue };
+            // As `ledger::collect` prices it: a store's settlement splits
+            // the food between the store and the customer's refund.
+            let refund = basis_record.entry().to_app_option::<ItemSettlement>().ok().flatten().map(|s| s.refund);
+            let amount = match refund {
+                Some(refund) if share.portion == Portion::Food => {
+                    if &hold.payer == agent {
+                        refund
+                    } else {
+                        share.amount.saturating_sub(refund)
+                    }
+                }
+                _ => share.amount,
+            };
+            if amount > 0 {
+                owed.push(Uncollected { order: order.clone(), hold: hold.hold.clone(), portion: share.portion, amount, basis });
+            }
+        }
+    }
+    Ok(owed)
+}
+
+#[derive(Serialize, Debug)]
+struct DecisionsOfWire {
+    agent: AgentPubKey,
+    head: ActionHash,
+    holds: Vec<ActionHash>,
+}
+
 // --- the sweep ---
 
 /// Orders the caller might have money to settle on, from the last `days`:

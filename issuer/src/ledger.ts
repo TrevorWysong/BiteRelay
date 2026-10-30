@@ -90,6 +90,17 @@ export interface Standing {
   balance: number;
 }
 
+/// A part of a hold a recovered account's old key was owed and never
+/// collected.
+export interface Uncollected {
+  order: Uint8Array;
+  hold: Uint8Array;
+  /// `Food`, `Fee`, `Collateral`, ...
+  portion: string;
+  amount: number;
+  basis: Uint8Array;
+}
+
 export interface IssuerLedger {
   /// The issuer's own agent key.
   readonly issuer: AgentPubKey;
@@ -105,6 +116,10 @@ export interface IssuerLedger {
   /// The latest action the network has seen on `agent`'s chain.
   latestActionOf(agent: AgentPubKey): Promise<Uint8Array | null>;
   standingAt(agent: AgentPubKey, head: Uint8Array): Promise<Standing>;
+  /// What `agent` was owed on its orders by `head` and never collected,
+  /// from the last `days` (`dispatch::uncollected_by`). Fails rather than
+  /// answer from a history it couldn't read in full.
+  uncollectedBy(agent: AgentPubKey, head: Uint8Array, days: number): Promise<Uncollected[]>;
   /// How long `agent`'s account has existed and how much it has done.
   standingOf(agent: AgentPubKey): Promise<AccountStanding>;
   /// The network's currency, an ISO 4217 code.
@@ -187,6 +202,7 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
     reissueRequests: (after) => call<ReissueRequestsPage>("get_reissue_requests", { after }, "account"),
     latestActionOf: (agent) => call<Uint8Array | null>("latest_action_of", agent, "account"),
     standingAt: (agent, head) => call<Standing>("standing_at", { agent, head }),
+    uncollectedBy: (agent, head, days) => call<Uncollected[]>("uncollected_by", { agent, head, days }, "dispatch"),
     async standingOf(agent) {
       const completed = (target: unknown) => call<{ completed_count: number }>("get_reputation_summary", target, "reputation").then((s) => s.completed_count);
       const [since, asCustomer, asDriver] = await Promise.all([call<number | null>("account_since", agent, "account"), completed({ Customer: agent }), completed({ Driver: agent })]);

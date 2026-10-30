@@ -433,6 +433,39 @@ pub fn my_decisions(input: MyDecisionsInput) -> ExternResult<Vec<WaiveInput>> {
     Ok(decided)
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DecisionsOfInput {
+    pub agent: AgentPubKey,
+    /// An action on `agent`'s chain: what they'd decided by then.
+    pub head: ActionHash,
+    pub holds: Vec<ActionHash>,
+}
+
+/// The parts of `holds` that `agent` had decided by `head` --
+/// `my_decisions` for someone else's chain. What an issuer checks before
+/// reissuing what a recovered account was owed (`dispatch::uncollected_by`),
+/// so it's read the way validation reads a chain: every action from `head`
+/// back to the earliest hold, or an error. A part missed here would be paid
+/// twice, so a chain that can't be read in full answers nothing.
+#[hdk_extern]
+pub fn decisions_of(input: DecisionsOfInput) -> ExternResult<Vec<WaiveInput>> {
+    let Some(since) = input.holds.iter().map(held_at).collect::<ExternResult<Vec<_>>>()?.into_iter().min() else { return Ok(Vec::new()) };
+    let ledger_entry = EntryType::try_from(UnitEntryTypes::LedgerEntry)?;
+    let mut decided = Vec::new();
+    for item in handshake_integrity_support::chain::activity_since(&input.agent, &input.head, since)? {
+        let ActionData::Create(create) = &item.action.hashed.content.data else { continue };
+        if create.entry_type != ledger_entry {
+            continue;
+        }
+        let entry = must_get_entry(create.entry_hash.clone())?;
+        let Ok(entry) = LedgerEntry::try_from(entry.as_content().clone()) else { continue };
+        if let Some((hold, portion)) = decided_by(&entry.kind).filter(|(hold, _)| input.holds.contains(hold)) {
+            decided.push(WaiveInput { hold: hold.clone(), portion });
+        }
+    }
+    Ok(decided)
+}
+
 /// A part waived back to its payer.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WaiverView {

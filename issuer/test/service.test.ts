@@ -9,7 +9,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
-import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type RulingDue, type Standing, type Succession } from "../src/ledger.ts";
+import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type RulingDue, type Standing, type Succession, type Uncollected } from "../src/ledger.ts";
 import { migrationSweep } from "../src/migrations.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
 import { decide, sweep, type PayoutDeps } from "../src/payouts.ts";
@@ -50,6 +50,10 @@ interface Accounts {
   migrations?: MigrationRequest[];
   /// Arbiters' awards against each store owner.
   rulings?: RulingDue[];
+  /// What each account was owed and never collected; `unreadable`, those
+  /// whose history can't be read in full yet.
+  owed?: Map<string, Uncollected[]>;
+  unreadable?: Set<string>;
 }
 
 function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
@@ -83,6 +87,10 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
     },
     latestActionOf: async (agent) => accounts.latest.get(agentId(agent)) ?? null,
     standingAt: async (agent) => accounts.standing.get(agentId(agent)) ?? { balance: 0 },
+    async uncollectedBy(agent) {
+      if (accounts.unreadable?.has(agentId(agent))) throw new Error("That account's history isn't reachable yet.");
+      return accounts.owed?.get(agentId(agent)) ?? [];
+    },
     standingOf: async (agent) => accounts.standingOf?.get(agentId(agent)) ?? SEASONED,
     currency: async () => "USD",
     network: async () => accounts.network ?? new Uint8Array(39).fill(7),
@@ -329,6 +337,82 @@ test("an account recovered onto two keys is left for review", async () => {
   const { ledger, grants } = fakeLedger([], accounts);
   for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
   assert.equal(grants.length, 0, "nobody is paid twice");
+});
+
+/// A part of a hold, owed to an account on an order.
+const owedPart = (n: number, amount: number, portion = "Food"): Uncollected => ({ order: new Uint8Array(39).fill(50 + n), hold: new Uint8Array(39).fill(60 + n), portion, amount, basis: new Uint8Array(39).fill(70 + n) });
+const partRef = (lost: Uint8Array, part: Uncollected) => `recovery:${agentId(lost)}:${Buffer.from(part.hold).toString("hex")}:${part.portion}`;
+
+test("what a recovered account was owed and never collected is reissued too, a part at a time, once each", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), owed: new Map<string, Uncollected[]>() };
+  const { lost, found } = recovered(accounts, "Phrase", 1000, 9);
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 1, "the balance first");
+  // A store's payment for food in flight, decided after the phone was lost.
+  const food = owedPart(1, 2400);
+  accounts.owed.set(agentId(lost), [food]);
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 1);
+  assert.deepEqual(grants[1], { to: agentId(found), amount: 2400, reference: partRef(lost, food) }, "to the new key, keyed by the part");
+  // Later, a driver's fee on another order comes due too.
+  const fee = owedPart(2, 650, "Fee");
+  accounts.owed.set(agentId(lost), [food, fee]);
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 1, "only what's new");
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
+  assert.deepEqual(grants.map((g) => g.amount), [1000, 2400, 650], "each part once");
+});
+
+test("once the old key acts again, nothing more it was owed is reissued", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), owed: new Map<string, Uncollected[]>() };
+  const { lost } = recovered(accounts, "Guardians", 1000, 10);
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  // The phone turned up -- or someone else has it -- and it could collect
+  // what it's owed itself.
+  accounts.latest.set(agentId(lost), new Uint8Array(39).fill(98));
+  accounts.owed.set(agentId(lost), [owedPart(3, 2400)]);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 1, "only the balance, reissued while it was quiet");
+  // Quiet again later doesn't restart it: a person looks at it now.
+  accounts.latest.set(agentId(lost), new Uint8Array(39).fill(10));
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 1);
+});
+
+test("everything reissued for an account counts toward review, so it can't come through in small parts", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), owed: new Map<string, Uncollected[]>() };
+  const { lost } = recovered(accounts, "Phrase", 4000, 11);
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 9_000);
+  await reissueSweep(store, ledger, 0, 9_000);
+  accounts.owed.set(agentId(lost), [owedPart(4, 3000), owedPart(5, 3000), owedPart(6, 1500)]);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 9_000);
+  assert.deepEqual(grants.map((g) => g.amount), [4000, 3000], "the next 3000 would pass 9000: left for a person, with what's after it");
+});
+
+test("what's owed is reissued only from a history read in full, and a grant that didn't go through is retried", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), owed: new Map<string, Uncollected[]>(), unreadable: new Set<string>() };
+  const { lost } = recovered(accounts, "Phrase", 0, 12);
+  const { ledger, grants, failGrant } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  accounts.owed.set(agentId(lost), [owedPart(7, 1200)]);
+  accounts.unreadable.add(agentId(lost));
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 0, "not on a partial read");
+  accounts.unreadable.clear();
+  failGrant();
+  await assert.rejects(reissueSweep(store, ledger, 0, 100_000));
+  assert.equal(grants.length, 0);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.deepEqual(grants.map((g) => g.amount), [1200], "retried, and granted once");
 });
 
 test("a recovery whose plan the person replaced reissues nothing", async () => {

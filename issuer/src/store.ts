@@ -19,9 +19,13 @@ export interface Recovery {
   /// Since when the old key has been seen doing nothing.
   quietSince: number;
   /// `void`: the person replaced the plan it rested on.
+  /// `contested`: recovered onto more than one key, or the old key acted
+  /// after its balance was reissued -- for a person, either way.
   /// `review`: more than the service reissues on its own -- for a person.
   status: "waiting" | "reissued" | "contested" | "nothing" | "void" | "review";
   amount: number | null;
+  /// When its balance was settled -- reissued, or found to be nothing.
+  settledAt: number | null;
 }
 
 /// Unused nonces one agent may hold at once: an app asks for one just
@@ -46,7 +50,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS award_payments (ruling TEXT NOT NULL, redemption TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (ruling, redemption));
       CREATE TABLE IF NOT EXISTS migrations (account TEXT PRIMARY KEY, successor TEXT NOT NULL, amount INTEGER NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recoveries (succession TEXT PRIMARY KEY, predecessor TEXT NOT NULL, successor TEXT NOT NULL, head TEXT, quiet_since INTEGER NOT NULL, status TEXT NOT NULL, amount INTEGER);
+      CREATE TABLE IF NOT EXISTS recovery_parts (reference TEXT PRIMARY KEY, succession TEXT NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL, at INTEGER NOT NULL);
     `);
+    // Added after the table: when a recovery's balance was settled, which
+    // starts the watch for what the old key was owed (recovery.ts).
+    if (!(this.db.prepare("SELECT 1 FROM pragma_table_info('recoveries') WHERE name = 'settled_at'").get())) {
+      this.db.exec("ALTER TABLE recoveries ADD COLUMN settled_at INTEGER");
+    }
   }
 
   /// Records a payment as granted -- `false` if it already was, so a
@@ -194,7 +204,7 @@ export class Store {
 
   /// The recoveries still waiting to be reissued.
   waitingRecoveries(): Recovery[] {
-    return this.db.prepare("SELECT succession, predecessor, successor, head, quiet_since AS quietSince, status, amount FROM recoveries WHERE status = 'waiting'").all() as unknown as Recovery[];
+    return this.db.prepare("SELECT succession, predecessor, successor, head, quiet_since AS quietSince, status, amount, settled_at AS settledAt FROM recoveries WHERE status = 'waiting'").all() as unknown as Recovery[];
   }
 
   /// Whether an account's balance has already been reissued to anyone.
@@ -208,7 +218,42 @@ export class Store {
   }
 
   settleRecovery(succession: string, status: Exclude<Recovery["status"], "waiting">, amount: number | null = null): void {
-    this.db.prepare("UPDATE recoveries SET status = ?, amount = ? WHERE succession = ?").run(status, amount, succession);
+    this.db.prepare("UPDATE recoveries SET status = ?, amount = ?, settled_at = ? WHERE succession = ?").run(status, amount, Date.now(), succession);
+  }
+
+  /// Recoveries whose balance was settled since `since`, and that still
+  /// stand: watched for what their old key was owed.
+  watchedRecoveries(since: number): Recovery[] {
+    return this.db.prepare("SELECT succession, predecessor, successor, head, quiet_since AS quietSince, status, amount, settled_at AS settledAt FROM recoveries WHERE status IN ('reissued', 'nothing') AND settled_at >= ?").all(since) as unknown as Recovery[];
+  }
+
+  /// Stops watching a recovery, leaving its balance as it was settled.
+  stopWatching(succession: string, status: "contested" | "void"): void {
+    this.db.prepare("UPDATE recoveries SET status = ? WHERE succession = ?").run(status, succession);
+  }
+
+  /// A part of what the old key was owed, by its grant reference -- `null`
+  /// if it hasn't been looked at.
+  recoveryPart(reference: string): "granted" | "review" | null {
+    const row = this.db.prepare("SELECT status FROM recovery_parts WHERE reference = ?").get(reference) as { status: "granted" | "review" } | undefined;
+    return row?.status ?? null;
+  }
+
+  /// Records a part, before it's granted: a crash between the two retries
+  /// the grant, which is idempotent by the same reference.
+  recordRecoveryPart(reference: string, succession: string, amount: number, status: "granted" | "review"): void {
+    this.db.prepare("INSERT OR IGNORE INTO recovery_parts (reference, succession, amount, status, at) VALUES (?, ?, ?, ?, ?)").run(reference, succession, amount, status, Date.now());
+  }
+
+  /// Whether any of a recovery's parts is left for a person.
+  recoveryUnderReview(succession: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM recovery_parts WHERE succession = ? AND status = 'review'").get(succession);
+  }
+
+  /// What's been granted for a recovery's parts, all told.
+  recoveryPartsGranted(succession: string): number {
+    const row = this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM recovery_parts WHERE succession = ? AND status = 'granted'").get(succession) as { total: number };
+    return row.total;
   }
 
   get(key: string): string | null {
