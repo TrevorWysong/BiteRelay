@@ -180,7 +180,7 @@ function GroupPicker({
                   {label}
                   <span
                     className={`grid h-6 w-6 shrink-0 place-items-center border-2 transition ${single ? "rounded-full" : "rounded-md"} ${
-                      units > 0 ? "border-relay-500 bg-relay-500 text-white" : "border-ink-300 dark:border-ink-600"
+                      units > 0 ? "border-handshake-500 bg-handshake-500 text-white" : "border-ink-300 dark:border-ink-600"
                     }`}
                   >
                     {units > 0 && (single ? <span className="h-2.5 w-2.5 rounded-full bg-white" /> : <Check size={14} strokeWidth={3} />)}

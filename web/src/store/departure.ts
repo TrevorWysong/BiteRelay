@@ -20,6 +20,6 @@ export const useDeparture = create<DepartureState>()(
       depart: (sealed) => set({ sealed }),
       clear: () => set({ sealed: null }),
     }),
-    { name: "relay.departure.v1" },
+    { name: "handshake.departure.v1" },
   ),
 );

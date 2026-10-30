@@ -27,7 +27,7 @@ export function InsightsCard({ catalogRef, items }: { catalogRef: Uint8Array; it
       </p>
       <div className="mb-3 flex gap-1.5">
         {PERIODS.map((p) => (
-          <button key={p} type="button" onClick={() => setDays(p)} className={`rounded-full px-3 py-1 text-xs font-semibold ${days === p ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}>
+          <button key={p} type="button" onClick={() => setDays(p)} className={`rounded-full px-3 py-1 text-xs font-semibold ${days === p ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}>
             {t("insights.lastDays", { count: p })}
           </button>
         ))}
@@ -74,7 +74,7 @@ export function InsightsCard({ catalogRef, items }: { catalogRef: Uint8Array; it
               <p className="mb-1 text-xs font-semibold text-ink-500">{t("insights.byHour")}</p>
               <div className="flex h-16 items-end gap-px" aria-label={t("insights.byHourLabel")}>
                 {insights.byHour.map((n, hour) => (
-                  <div key={hour} title={`${hour}:00 · ${n}`} className="flex-1 rounded-t bg-relay-400" style={{ height: `${Math.max(2, (n / busiest) * 100)}%`, opacity: n ? 1 : 0.2 }} />
+                  <div key={hour} title={`${hour}:00 · ${n}`} className="flex-1 rounded-t bg-handshake-400" style={{ height: `${Math.max(2, (n / busiest) * 100)}%`, opacity: n ? 1 : 0.2 }} />
                 ))}
               </div>
               <div className="mt-0.5 flex justify-between text-[10px] text-ink-400">

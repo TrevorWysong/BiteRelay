@@ -46,7 +46,7 @@ export function Departure({ sealed }: { sealed: string }) {
 
   return (
     <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-6 py-10 text-center text-white">
-      <div className="grid h-14 w-14 place-items-center rounded-3xl bg-white text-relay-600 shadow-xl">
+      <div className="grid h-14 w-14 place-items-center rounded-3xl bg-white text-handshake-600 shadow-xl">
         <Smartphone size={26} />
       </div>
       {step === "removed" ? (
@@ -66,7 +66,7 @@ export function Departure({ sealed }: { sealed: string }) {
           </div>
           {step === "show" ? (
             <div className="flex w-full max-w-sm flex-col gap-2">
-              <Button className="w-full bg-white text-relay-600" variant="ghost" onClick={() => setStep("done")}>
+              <Button className="w-full bg-white text-handshake-600" variant="ghost" onClick={() => setStep("done")}>
                 {t("departure.done")}
               </Button>
               <button type="button" onClick={() => setStep("stay")} className="text-xs text-white/70 underline underline-offset-2">
@@ -75,7 +75,7 @@ export function Departure({ sealed }: { sealed: string }) {
             </div>
           ) : (
             <div className="flex w-full max-w-sm flex-col gap-2">
-              <Button className="w-full bg-white text-relay-600" variant="ghost" loading={busy} onClick={() => act(step === "done" ? "retire" : "stay")}>
+              <Button className="w-full bg-white text-handshake-600" variant="ghost" loading={busy} onClick={() => act(step === "done" ? "retire" : "stay")}>
                 {step === "done" ? t("departure.remove") : t("departure.stayConfirm")}
               </Button>
               <button type="button" disabled={busy} onClick={() => setStep("show")} className="text-xs text-white/70 underline underline-offset-2">

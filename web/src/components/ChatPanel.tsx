@@ -69,7 +69,7 @@ export function ChatPanel({ orderRef, title }: { orderRef: ActionHash; title?: s
           const mine = bytesEqual(line.from, me);
           return (
             <div key={i} className={clsx("flex", mine ? "justify-end" : "justify-start")}>
-              <div className={clsx("max-w-[80%] rounded-xl px-3 py-1.5 text-xs", mine ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200")}>
+              <div className={clsx("max-w-[80%] rounded-xl px-3 py-1.5 text-xs", mine ? "bg-handshake-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200")}>
                 {!mine && <p className="mb-0.5 text-[10px] opacity-70">{shortAgentId(line.from)}</p>}
                 {line.text}
               </div>

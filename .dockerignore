@@ -7,4 +7,4 @@ tests
 issuer/issuer.db
 issuer/.env
 deploy/issuer.env
-!deploy/relay.happ
+!deploy/handshake.happ

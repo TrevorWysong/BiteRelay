@@ -3,7 +3,7 @@
 // admin interface listens on this machine only -- the issuer service beside
 // it is the one thing that talks to it.
 //
-//   ISSUER_DATA_DIR=/var/lib/relay-issuer \
+//   ISSUER_DATA_DIR=/var/lib/handshake-issuer \
 //   ISSUER_LAIR_PASSPHRASE=... \
 //   BOOTSTRAP_URL=https://bootstrap.example.org RELAY_URL=https://relay.example.org \
 //   node scripts/conductor.mjs
@@ -43,7 +43,7 @@ const conductorDir = path.join(dataDir, "conductor");
 // a hard length limit (104 bytes on macOS, 108 on Linux).
 const socketPath = path.join(conductorDir, "ks", "socket");
 if (Buffer.byteLength(socketPath) > 100) {
-  console.error(`ISSUER_DATA_DIR is too long a path for the keystore's socket (${socketPath}). Use a shorter one, such as /var/lib/relay-issuer.`);
+  console.error(`ISSUER_DATA_DIR is too long a path for the keystore's socket (${socketPath}). Use a shorter one, such as /var/lib/handshake-issuer.`);
   process.exit(2);
 }
 mkdirSync(conductorDir, { recursive: true });

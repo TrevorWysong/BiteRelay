@@ -30,7 +30,7 @@ export const devDevice: DeviceRuntime = {
   invite: async () => `${INVITATION_PREFIX}${base64Url(crypto.getRandomValues(new Uint8Array(32)))}`,
 
   send: async (invitation) => {
-    if (!isInvitation(invitation)) throw new Error("That isn't a code from Relay's move to a new phone.");
+    if (!isInvitation(invitation)) throw new Error("That isn't a code from HandShake's move to a new phone.");
     const identity = stored();
     await setIdentityRunning(identity.adminUrl, identity.installedAppId, false);
     // The browser keeps the key as plain base64 (`devIdentityStorage`).
@@ -47,10 +47,10 @@ export const devDevice: DeviceRuntime = {
 
   receive: async (sealed) => {
     const read = readDevSealedKey(sealed);
-    if (!read) throw new Error("That isn't a code from Relay's move to a new phone.");
+    if (!read) throw new Error("That isn't a code from HandShake's move to a new phone.");
     const { account, where } = read;
     await setIdentityRunning(where.adminUrl, where.installedAppId, true);
     // The app reloads next, and signs in as this.
-    await rememberIdentity(where.adminUrl, where.installedAppId, account, "Relay");
+    await rememberIdentity(where.adminUrl, where.installedAppId, account, "HandShake");
   },
 };

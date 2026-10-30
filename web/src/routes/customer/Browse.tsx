@@ -141,7 +141,7 @@ export function Browse() {
     <div className="px-4 pt-4">
       <AddressSwitcher />
 
-      <div className="mb-4 flex items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 transition focus-within:border-relay-400 focus-within:ring-2 focus-within:ring-relay-100">
+      <div className="mb-4 flex items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 transition focus-within:border-handshake-400 focus-within:ring-2 focus-within:ring-handshake-100">
         <Search size={16} className="text-ink-400" />
         <input
           value={query}
@@ -154,7 +154,7 @@ export function Browse() {
       {bags.length > 0 && (
         <div className="mb-5">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-            <PackageOpen size={13} className="text-relay-500" /> {t("browse.bagsNearMe")}
+            <PackageOpen size={13} className="text-handshake-500" /> {t("browse.bagsNearMe")}
           </p>
           <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
             {bags.map((row) => (
@@ -166,13 +166,13 @@ export function Browse() {
                 {row.bag.photo_data_uri ? (
                   <img src={row.bag.photo_data_uri} alt="" className="h-20 w-full object-cover" />
                 ) : (
-                  <div className="flex h-20 w-full items-center justify-center bg-gradient-to-br from-amber-300 to-relay-500 text-2xl">🎁</div>
+                  <div className="flex h-20 w-full items-center justify-center bg-gradient-to-br from-amber-300 to-handshake-500 text-2xl">🎁</div>
                 )}
                 <div className="p-2.5">
                   <p className="truncate text-xs font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
                   <p className="truncate text-[11px] text-ink-400">{catalogNameByHex.get(bytesToHex(row.bag.catalog_ref)) ?? t("browse.nearbyRestaurant")}</p>
                   <div className="mt-1 flex items-center gap-1.5">
-                    <span className="text-sm font-black text-relay-600 dark:text-relay-400">{formatCents(row.bag.price_cents)}</span>
+                    <span className="text-sm font-black text-handshake-600 dark:text-handshake-400">{formatCents(row.bag.price_cents)}</span>
                     <span className="text-[11px] text-ink-400 line-through">{formatCents(row.bag.original_value_cents)}</span>
                   </div>
                 </div>

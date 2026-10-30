@@ -1,9 +1,9 @@
 {
-  "name": "relay-push",
+  "name": "handshake-push",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A Relay network's push relay: wakes a closed app without learning who asked, or about what.",
+  "description": "A HandShake network's push relay: wakes a closed app without learning who asked, or about what.",
   "scripts": {
     "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
     "keys": "node --import tsx scripts/keys.ts",

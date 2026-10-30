@@ -58,7 +58,7 @@ export function Transparency() {
     <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="px-4 pb-10 pt-4">
       <motion.div
         variants={fadeSlideUp}
-        className="relative mb-5 flex flex-col items-center gap-2 overflow-hidden rounded-3xl bg-gradient-to-br from-relay-500 to-presence-500 p-6 text-center text-white shadow-[var(--shadow-float)]"
+        className="relative mb-5 flex flex-col items-center gap-2 overflow-hidden rounded-3xl bg-gradient-to-br from-handshake-500 to-presence-500 p-6 text-center text-white shadow-[var(--shadow-float)]"
       >
         <div
           className="pointer-events-none absolute inset-0 opacity-50"

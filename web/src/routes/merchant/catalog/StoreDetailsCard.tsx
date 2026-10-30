@@ -22,7 +22,7 @@ export function StoreDetailsCard({ catalog, catalogRef, startEditing, onSaved }:
     <Card className="my-4 p-4">
       <div className="mb-2 flex items-center justify-between">
         <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{t("storeSettings.details")}</p>
-        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-relay-600" aria-label={t("storeSettings.editDetails")}>
+        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-handshake-600" aria-label={t("storeSettings.editDetails")}>
           <Pencil size={14} />
         </button>
       </div>
@@ -126,7 +126,7 @@ export function DeliverySubsidyCard({ catalog, catalogRef, onSaved }: { catalog:
     <Card className="mb-4 p-4">
       <div className="mb-1 flex items-center justify-between">
         <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{t("storeSettings.sharing")}</p>
-        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-relay-600" aria-label={t("storeSettings.editSharing")}>
+        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-handshake-600" aria-label={t("storeSettings.editSharing")}>
           <Pencil size={14} />
         </button>
       </div>

@@ -59,7 +59,7 @@ export const useLocale = create<LocaleState>()(
       },
     }),
     // Only the choice is kept: the catalog loads fresh each start.
-    { name: "relay.locale", partialize: (s) => ({ chosen: s.chosen }) },
+    { name: "handshake.locale", partialize: (s) => ({ chosen: s.chosen }) },
   ),
 );
 

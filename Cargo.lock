@@ -7,9 +7,9 @@ name = "account_coordinator"
 version = "0.1.0"
 dependencies = [
  "account_integrity",
+ "handshake_coordinator_support",
+ "handshake_governance",
  "hdk",
- "relay_coordinator_support",
- "relay_governance",
  "serde",
 ]
 
@@ -18,10 +18,10 @@ name = "account_integrity"
 version = "0.1.0"
 dependencies = [
  "account_types",
+ "handshake_governance",
+ "handshake_integrity_support",
  "hdi",
  "holochain_serialized_bytes",
- "relay_governance",
- "relay_integrity_support",
  "serde",
 ]
 
@@ -29,9 +29,9 @@ dependencies = [
 name = "account_types"
 version = "0.1.0"
 dependencies = [
+ "handshake_integrity_support",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
  "serde",
 ]
 
@@ -56,12 +56,12 @@ version = "0.1.0"
 dependencies = [
  "attestation_integrity",
  "dispatch_types",
+ "handshake_coordinator_support",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "hdk",
- "relay_coordinator_support",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -71,10 +71,10 @@ version = "0.1.0"
 dependencies = [
  "attestation_types",
  "dispatch_types",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -82,10 +82,10 @@ dependencies = [
 name = "attestation_types"
 version = "0.1.0"
 dependencies = [
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -172,12 +172,12 @@ name = "catalog_coordinator"
 version = "0.1.0"
 dependencies = [
  "catalog_integrity",
+ "handshake_coordinator_support",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "hdk",
- "relay_coordinator_support",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -187,12 +187,12 @@ version = "0.1.0"
 dependencies = [
  "account_types",
  "catalog_types",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -200,10 +200,10 @@ dependencies = [
 name = "catalog_types"
 version = "0.1.0"
 dependencies = [
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -380,12 +380,12 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dispatch_integrity",
+ "handshake_coordinator_support",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "hdk",
- "relay_coordinator_support",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
  "serde_json",
 ]
@@ -397,12 +397,12 @@ dependencies = [
  "attestation_types",
  "catalog_types",
  "dispatch_types",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -411,11 +411,11 @@ name = "dispatch_types"
 version = "0.1.0"
 dependencies = [
  "catalog_types",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -590,6 +590,43 @@ dependencies = [
  "ff",
  "rand_core",
  "subtle",
+]
+
+[[package]]
+name = "handshake_coordinator_support"
+version = "0.1.0"
+dependencies = [
+ "handshake_integrity_support",
+ "hdk",
+]
+
+[[package]]
+name = "handshake_governance"
+version = "0.1.0"
+dependencies = [
+ "hdi",
+ "holochain_serialized_bytes",
+ "serde",
+]
+
+[[package]]
+name = "handshake_integrity_support"
+version = "0.1.0"
+dependencies = [
+ "drand-verify",
+ "handshake_governance",
+ "handshake_types",
+ "hdi",
+ "holochain_serialized_bytes",
+ "serde",
+]
+
+[[package]]
+name = "handshake_types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -875,11 +912,11 @@ name = "ledger_coordinator"
 version = "0.1.0"
 dependencies = [
  "dispatch_types",
+ "handshake_coordinator_support",
+ "handshake_governance",
+ "handshake_integrity_support",
  "hdk",
  "ledger_integrity",
- "relay_coordinator_support",
- "relay_governance",
- "relay_integrity_support",
  "serde",
 ]
 
@@ -889,12 +926,12 @@ version = "0.1.0"
 dependencies = [
  "catalog_types",
  "dispatch_types",
+ "handshake_governance",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
- "relay_governance",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -1039,9 +1076,9 @@ dependencies = [
 name = "profiles_coordinator"
 version = "0.1.0"
 dependencies = [
+ "handshake_coordinator_support",
  "hdk",
  "profiles_integrity",
- "relay_coordinator_support",
  "serde",
 ]
 
@@ -1050,10 +1087,10 @@ name = "profiles_integrity"
 version = "0.1.0"
 dependencies = [
  "catalog_types",
+ "handshake_integrity_support",
+ "handshake_types",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
- "relay_types",
  "serde",
 ]
 
@@ -1085,49 +1122,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
-name = "relay_coordinator_support"
-version = "0.1.0"
-dependencies = [
- "hdk",
- "relay_integrity_support",
-]
-
-[[package]]
-name = "relay_governance"
-version = "0.1.0"
-dependencies = [
- "hdi",
- "holochain_serialized_bytes",
- "serde",
-]
-
-[[package]]
-name = "relay_integrity_support"
-version = "0.1.0"
-dependencies = [
- "drand-verify",
- "hdi",
- "holochain_serialized_bytes",
- "relay_governance",
- "relay_types",
- "serde",
-]
-
-[[package]]
-name = "relay_types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "reputation_coordinator"
 version = "0.1.0"
 dependencies = [
+ "handshake_coordinator_support",
+ "handshake_governance",
  "hdk",
- "relay_coordinator_support",
- "relay_governance",
  "reputation_integrity",
  "serde",
 ]
@@ -1137,9 +1137,9 @@ name = "reputation_integrity"
 version = "0.1.0"
 dependencies = [
  "dispatch_types",
+ "handshake_integrity_support",
  "hdi",
  "holochain_serialized_bytes",
- "relay_integrity_support",
  "serde",
 ]
 

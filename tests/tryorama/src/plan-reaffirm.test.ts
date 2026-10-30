@@ -48,7 +48,7 @@ await runScenario(async (scenario) => {
 
   const recover = async (successor: typeof owner, plan: Uint8Array) => {
     const head = (await retryUntil(() => call(successor, "account")<Uint8Array | null>("latest_action_of", account.agentPubKey), (h) => !!h, 60, 1000))!;
-    const message = new Uint8Array([...new TextEncoder().encode("relay-recovery:v1:"), ...account.agentPubKey, 58, ...successor.agentPubKey, 58, ...head]);
+    const message = new Uint8Array([...new TextEncoder().encode("handshake-recovery:v1:"), ...account.agentPubKey, 58, ...successor.agentPubKey, 58, ...head]);
     return call(successor, "account")("take_over", { predecessor: account.agentPubKey, authority: { Phrase: { plan, head, signature: phrase.sign(message) } } });
   };
   await assert.rejects(recover(early, first.plan), /latest recovery plan/, "the plan it replaced no longer recovers it");

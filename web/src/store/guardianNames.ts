@@ -16,6 +16,6 @@ export const useGuardianNames = create<GuardianNames>()(
       names: {},
       setName: (key, name) => set((state) => ({ names: { ...state.names, [key]: name.trim() } })),
     }),
-    { name: "relay.guardian-names.v1" },
+    { name: "handshake.guardian-names.v1" },
   ),
 );

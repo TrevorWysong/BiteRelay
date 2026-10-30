@@ -13,7 +13,7 @@
 import { AdminWebsocket, CellType, encodeHashToBase64 } from "@holochain/client";
 import type { AgentPubKey, AppAuthenticationToken, AppInfo, CellId, InstalledAppId, WsClientOptions } from "@holochain/client";
 
-const ROLE_NAME = "relay";
+const ROLE_NAME = "handshake";
 
 /// A zome call needs to be *signed*, and a browser has no direct access to
 /// lair-keystore to do that -- `authorizeSigningCredentials` is what makes
@@ -33,7 +33,7 @@ async function authorizeSigning(adminWs: AdminWebsocket, appInfo: AppInfo): Prom
   await adminWs.authorizeSigningCredentials(cellId);
 }
 
-const HAPP_URL = "/relay.happ";
+const HAPP_URL = "/handshake.happ";
 /// The dev network's DNA properties (its issuer), when the dev seed has set
 /// one up -- see web/scripts/seed.mjs. Absent in production, whose bundle
 /// carries its properties itself.
@@ -60,7 +60,7 @@ async function fetchDevNetworkProperties(): Promise<Record<string, unknown> | nu
 async function fetchHappBundle(): Promise<Uint8Array> {
   if (happBundleBytes) return happBundleBytes;
   const res = await fetch(HAPP_URL);
-  if (!res.ok) throw new Error(`could not fetch ${HAPP_URL} (${res.status}) -- is the dev server running from web/ with public/relay.happ present?`);
+  if (!res.ok) throw new Error(`could not fetch ${HAPP_URL} (${res.status}) -- is the dev server running from web/ with public/handshake.happ present?`);
   happBundleBytes = new Uint8Array(await res.arrayBuffer());
   return happBundleBytes;
 }
@@ -96,7 +96,7 @@ async function attachInterfaceAndIssueToken(adminWs: AdminWebsocket, adminUrl: s
   };
 }
 
-/// Creates a brand new agent identity and installs a fresh `relay` cell for
+/// Creates a brand new agent identity and installs a fresh `handshake` cell for
 /// it. `installedAppId` should be unique per browser-tab-identity (the
 /// caller persists it in localStorage to reconnect the *same* identity on
 /// reload, rather than accidentally provisioning a new one every time).
@@ -115,7 +115,7 @@ export async function provisionNewIdentity(adminUrl: string, installedAppId: Ins
       source: { type: "bytes", value: bundleBytes },
       agent_key: agentPubKey,
       installed_app_id: installedAppId,
-      ...(devProperties && { roles_settings: { relay: { type: "provisioned", value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: devProperties } } } } }),
+      ...(devProperties && { roles_settings: { handshake: { type: "provisioned", value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: devProperties } } } } }),
     } as Parameters<AdminWebsocket["installApp"]>[0]);
     const appInfo = await adminWs.enableApp({ installed_app_id: installedAppId });
     await authorizeSigning(adminWs, appInfo);
@@ -174,7 +174,7 @@ export interface NodeIdentity {
   agentPubKey: AgentPubKey;
 }
 
-/// Every `relay` identity installed on a node, oldest first -- for the
+/// Every `handshake` identity installed on a node, oldest first -- for the
 /// dev-only "use an existing identity" picker on the onboarding screen
 /// (e.g. the people `npm run seed` creates).
 export async function listNodeIdentities(adminUrl: string): Promise<NodeIdentity[]> {

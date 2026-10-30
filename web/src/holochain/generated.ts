@@ -179,7 +179,7 @@ export type BagClaimStatus =
   | "Redeemed";
 
 /**
- * A round of the network's public time source (`relay_governance::TimeSource`):
+ * A round of the network's public time source (`handshake_governance::TimeSource`):
  * its number and the signature published for it. A record carrying one
  * wasn't made before that round was published -- the proof a deadline
  * claim makes that its deadline has passed.
@@ -198,7 +198,7 @@ export interface Bid {
   eta_seconds: number;
   /**
    * How long until they'd reach the store -- with the store's ready time,
-   * when they're due there (see `relay_governance::pickup_grace`). At most
+   * when they're due there (see `handshake_governance::pickup_grace`). At most
    * `eta_seconds`.
    */
   to_store_seconds: number;
@@ -234,7 +234,7 @@ export type Cancellation =
   | { ByStore: DeclineReason }
   /**
    * The store didn't accept it within the DNA's response window
-   * (`relay_governance::store_response_window`). Written by the
+   * (`handshake_governance::store_response_window`). Written by the
    * customer's conductor, and only once the window has passed.
    */
   | "StoreDidNotRespond"
@@ -246,14 +246,14 @@ export type Cancellation =
   | "NotCollected"
   /**
    * The store kept a checked-in driver waiting past the network's wait
-   * (`relay_governance::store_wait`) after its ready time. Written by the
+   * (`handshake_governance::store_wait`) after its ready time. Written by the
    * driver, with proof of the time: the customer is refunded, and the
    * store pays the driver's fee.
    */
   | "StoreLate"
   /**
    * A driver left after the store had started cooking, and no other came
-   * within the network's window (`relay_governance::replacement_window`).
+   * within the network's window (`handshake_governance::replacement_window`).
    * Written by the store: the customer is refunded, and that driver's
    * collateral pays for the food.
    */
@@ -692,7 +692,7 @@ export type DeliveryStatus =
   | "Disputed"
   /**
    * No driver brought it, so the customer is collecting it from the store
-   * themselves -- at the same food price, since Relay's fees are the same
+   * themselves -- at the same food price, since HandShake's fees are the same
    * for both.
    */
   | "Collecting"
@@ -1007,7 +1007,7 @@ export interface IssueView {
 
 /**
  * Funds issued to an agent by an issuer on the DNA's roster
- * (`relay_governance::is_issuer`) -- the stand-in for a payment processor
+ * (`handshake_governance::is_issuer`) -- the stand-in for a payment processor
  * crediting an account against a real payment. The agent collects it into
  * their balance with a `Deposit`.
  */
@@ -1502,7 +1502,7 @@ export interface MenuItem {
   /**
    * Sold only to adults (alcohol, tobacco): collected in person, where
    * the store checks ID, and only on a network that sets the age
-   * (`relay_governance::restricted_min_age`).
+   * (`handshake_governance::restricted_min_age`).
    */
   age_restricted: boolean;
 }
@@ -1547,7 +1547,7 @@ export interface MerchantCatalog {
   /**
    * What share (0-100) of a winning bid's delivery fee this merchant
    * covers. A new store starts at the network's default
-   * (`relay_governance::default_delivery_subsidy_percent`).
+   * (`handshake_governance::default_delivery_subsidy_percent`).
    */
   delivery_subsidy_percent: number;
   /**
@@ -1580,7 +1580,7 @@ export interface MerchantCatalog {
    * by the store, while the order goes to another driver and its
    * customer may cancel for a full refund. Part of the terms an order is
    * placed under; customers see it at checkout. `None`: the network's
-   * (`relay_governance::store_wait`), within its bounds.
+   * (`handshake_governance::store_wait`), within its bounds.
    */
   store_wait_minutes: number | null;
   /**
@@ -1592,7 +1592,7 @@ export interface MerchantCatalog {
    * everyone. Enforced by `dispatch_integrity::validate_new_order`
    * against the order's public drop-off cell (deterministic, so every
    * peer agrees), and bounded by the network
-   * (`relay_governance::max_delivery_radius_km`). A new store starts at
+   * (`handshake_governance::max_delivery_radius_km`). A new store starts at
    * the network's default.
    */
   max_delivery_radius_km: number;
@@ -2286,7 +2286,7 @@ export interface Profile {
   /**
    * A data URI (`data:image/...;base64,...`), not a hosted URL -- there's
    * no image host in this system, so a photo lives in the entry itself,
-   * within the network's image limit (`relay_governance::max_image_bytes`).
+   * within the network's image limit (`handshake_governance::max_image_bytes`).
    */
   avatar_data_uri: string;
   /**
@@ -2818,7 +2818,7 @@ export interface SavedAddress {
 /**
  * A value sealed between two agents in order, a box per
  * `SEAL_CHUNK_BYTES` of it -- for anything that may be larger than one box
- * holds (a photo). Sealed with `relay_coordinator_support::seal_chunked`.
+ * holds (a photo). Sealed with `handshake_coordinator_support::seal_chunked`.
  */
 export type SealedChunks = XSalsa20Poly1305EncryptedData[];
 

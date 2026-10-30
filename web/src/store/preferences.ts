@@ -21,6 +21,6 @@ export const usePreferences = create<Preferences>()(
       setNotifications: (notifications) => set({ notifications }),
       setNewOrderChime: (newOrderChime) => set({ newOrderChime }),
     }),
-    { name: "relay.preferences.v1" },
+    { name: "handshake.preferences.v1" },
   ),
 );

@@ -18,7 +18,7 @@ import { WORLD } from "./lib/world.mjs";
 
 const DEFAULT_CENTER = { lat: 27.7676, lon: -82.6403 }; // matches session.ts's default browse location
 
-const ROLE = "relay";
+const ROLE = "handshake";
 /// The seeded stores' time zone -- the default location is St. Petersburg, FL.
 const SEED_TIME_ZONE = "America/New_York";
 const SEED_PREFIX = "seed-";
@@ -286,12 +286,12 @@ async function main() {
     // identity -- seeded here or created in the app -- joins that network.
     const issuerKey = await adminWs.generateAgentPubKey();
     const network = { properties: { issuers: [encodeHashToBase64(issuerKey)] }, builtDna: dnaHashOf(DNA_PATH) };
-    const issuer = await createAgent(adminWs, appPort, happBytes, { name: "Relay Credits" }, network, issuerKey, ISSUER_APP_ID);
+    const issuer = await createAgent(adminWs, appPort, happBytes, { name: "HandShake Credits" }, network, issuerKey, ISSUER_APP_ID);
     agents.push(issuer);
     network.dnaHash = encodeHashToBase64(issuer.cellId[0]);
     writeFileSync(DEV_NETWORK, `${JSON.stringify(network, null, 2)}\n`);
     await issuer.call("ledger", "set_issuer_profile", {
-      name: "Relay Credits (dev)",
+      name: "HandShake Credits (dev)",
       description: "The dev network's issuer. Approve or decline cash-outs with `npm run issuer` in web/.",
       contact: "",
       payout_fee_cents: 25,
@@ -300,7 +300,7 @@ async function main() {
       payout_days: 1,
       recovery_wait_days: 7,
     });
-    console.log("  ✓ Relay Credits, the network's issuer");
+    console.log("  ✓ HandShake Credits, the network's issuer");
 
     const people = new Map();
     for (const person of WORLD.people) {

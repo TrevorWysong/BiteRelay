@@ -157,7 +157,7 @@ export function TaxReportCard({ catalogRef }: { catalogRef: Uint8Array }) {
             key={p.value}
             type="button"
             onClick={() => setPeriod(p.value)}
-            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${period === p.value ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${period === p.value ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
           >
             {t(p.label)}
           </button>

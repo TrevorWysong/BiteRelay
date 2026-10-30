@@ -8,21 +8,21 @@ Needs Holochain 0.7.1 (`holochain`, `hc`, `lair-keystore`, `kitsune2-bootstrap-s
 
 Money: the dev conductor's DNA sets no `credit_limit_cents`, so every account may go $10,000 into debt and orders work without funding anyone. A production network sets the limit (0 recommended) and names issuers who fund accounts; see DEPLOYMENT.md and SECURITY.md.
 
-Signing in, in dev: the browser remembers one identity on the dev node. **Profile → Switch to another identity** jumps to anyone on the node (the seeded people, or accounts you made). An account made through onboarding is behind a device passkey; reopening the app shows **Unlock Relay** and only prompts for Touch ID or Windows Hello when you tap it, since Safari refuses or stalls a prompt that fires on page load. After `npm run dev:reset`, an identity the browser remembers is gone: the app notices, forgets it, and asks you to sign in. If the connection to the node drops (a sleeping laptop, a background tab, a conductor restart), the app reconnects with a fresh token by itself and shows "Reconnecting to your node..." meanwhile.
+Signing in, in dev: the browser remembers one identity on the dev node. **Profile → Switch to another identity** jumps to anyone on the node (the seeded people, or accounts you made). An account made through onboarding is behind a device passkey; reopening the app shows **Unlock HandShake** and only prompts for Touch ID or Windows Hello when you tap it, since Safari refuses or stalls a prompt that fires on page load. After `npm run dev:reset`, an identity the browser remembers is gone: the app notices, forgets it, and asks you to sign in. If the connection to the node drops (a sleeping laptop, a background tab, a conductor restart), the app reconnects with a fresh token by itself and shows "Reconnecting to your node..." meanwhile.
 
-The seed sets up a dev issuer, "Relay Credits (dev)": it writes the network's properties, naming that issuer, to `web/public/dev-network.json`, and every identity -- seeded, or created in the app's onboarding -- joins that network. Customers start with $100 added through it. Cash-outs wait until you approve or decline them with `npm run issuer`.
+The seed sets up a dev issuer, "HandShake Credits (dev)": it writes the network's properties, naming that issuer, to `web/public/dev-network.json`, and every identity -- seeded, or created in the app's onboarding -- joins that network. Customers start with $100 added through it. Cash-outs wait until you approve or decline them with `npm run issuer`.
 
 | Command | What it does |
 | --- | --- |
 | `npm run dev:conductor` | Starts the persistent dev conductor at `ws://localhost:8870`. Its data lives in `.dev/conductor/` and **survives restarts**. Logs: `.dev/conductor.log`. |
 | `npm run dev` | Starts the UI. Onboarding is prefilled with the dev conductor's address, and lists every identity already on it under "Use an existing identity". |
-| `npm run backend` | After any Rust change: builds the zomes, regenerates the TS wire types, packs the DNA and hApp, publishes the bundle to `web/public/relay.happ`, and updates the running conductor (see below). |
+| `npm run backend` | After any Rust change: builds the zomes, regenerates the TS wire types, packs the DNA and hApp, publishes the bundle to `web/public/handshake.happ`, and updates the running conductor (see below). |
 | `npm run typegen` | Regenerates `src/holochain/generated.ts` from the Rust types (`tools/typegen`). `npm run backend` runs it for you; CI fails if it's stale. |
 | `npm run seed` | Creates a demo world on an empty conductor: three stores (two with the same owner), a driver, customers, and orders in every state. `-- --at lat,lon` seeds around any location. |
 | `npm run dev:reset` | Wipes all dev data, restarts the conductor on the current build, and seeds it. |
 | `npm start` in `issuer/` | The real issuer service against Stripe's test mode: card top-ups and bank payouts for the dev issuer. Setup in `issuer/README.md`. |
-| `npm run issuer` | The dev network's issuer ("Relay Credits (dev)"), from the terminal: lists cash-outs waiting; `-- pay 1` (or `pay all`), `-- decline 1 "reason"`, and `-- grant "Sam Patel" 25` to add funds. |
-| `npm run package -- --network-seed <name>` | Builds the production `deploy/relay.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
+| `npm run issuer` | The dev network's issuer ("HandShake Credits (dev)"), from the terminal: lists cash-outs waiting; `-- pay 1` (or `pay all`), `-- decline 1 "reason"`, and `-- grant "Sam Patel" 25` to add funds. |
+| `npm run package -- --network-seed <name>` | Builds the production `deploy/handshake.webhapp` for a network -- see [DEPLOYMENT.md](DEPLOYMENT.md). |
 
 ## What `npm run backend` does to a running conductor
 
@@ -52,17 +52,17 @@ Accepting is also the store's price check (`ensure_priced_from_current_menu`). V
 
 ## Writing zome code
 
-- **A zome call commits all its writes, or none.** One write that doesn't validate (yet) undoes every other write in the same call. Work that writes for many items, such as the scheduled sweeps over a person's orders, decides in the sweep and writes each item in a call of its own: `relay_coordinator_support::isolated`. Settlement, upkeep, recurring orders and goodie-bag claims all work this way.
-- **A refusal is a sentence for people.** Refuse with `guest("…")` (`relay_coordinator_support::guest`), a whole capitalised sentence; a lowercase one is a diagnostic the app shows as something having gone wrong. A value in it is a named format argument, and an amount is named `..._cents`, so the app can show it in the network's currency. Every refusal is translated: run `npm run refusals` in web/, then add the translation to `src/i18n/refusals.es.ts` (I18N.md).
-- **Never `query()` the caller's chain.** In Holochain 0.7 it loads the whole chain from the database -- every entry, when entries are asked for -- before applying any filter. Read with `relay_coordinator_support::chain::mine(&[types])`, which walks back from the chain head through the index: `.latest()`, `.find(..)`, or `.since(t).records()` cost what they visit. A "once" rule is told first by reading back as far as validation reads (`.since` the moment the thing it's about came to be); a list of the caller's own things is read from a link from their own key.
+- **A zome call commits all its writes, or none.** One write that doesn't validate (yet) undoes every other write in the same call. Work that writes for many items, such as the scheduled sweeps over a person's orders, decides in the sweep and writes each item in a call of its own: `handshake_coordinator_support::isolated`. Settlement, upkeep, recurring orders and goodie-bag claims all work this way.
+- **A refusal is a sentence for people.** Refuse with `guest("…")` (`handshake_coordinator_support::guest`), a whole capitalised sentence; a lowercase one is a diagnostic the app shows as something having gone wrong. A value in it is a named format argument, and an amount is named `..._cents`, so the app can show it in the network's currency. Every refusal is translated: run `npm run refusals` in web/, then add the translation to `src/i18n/refusals.es.ts` (I18N.md).
+- **Never `query()` the caller's chain.** In Holochain 0.7 it loads the whole chain from the database -- every entry, when entries are asked for -- before applying any filter. Read with `handshake_coordinator_support::chain::mine(&[types])`, which walks back from the chain head through the index: `.latest()`, `.find(..)`, or `.since(t).records()` cost what they visit. A "once" rule is told first by reading back as far as validation reads (`.since` the moment the thing it's about came to be); a list of the caller's own things is read from a link from their own key.
 - **Update through `update_version`.** Read the current version with `resolve_version` (or `resolve_version_decoded`) and write the next with `update_version(&current, entry, LinkTypes::Version)`: each update is linked from its entry's original, tagged with its depth, so `resolve_latest` finds the current version in one read. Every integrity zome's first link type is `Version` (each asserts it at compile time).
-- **Filter links where they're held.** `LinkQuery::try_new(..)?.author(..)`, `.tag_prefix(..)`, `.after(..)`/`.before(..)`: the authority filters, so only what's asked for crosses the network. A list that grows for good is read a page at a time with `relay_coordinator_support::links::newest_first_page`.
-- **A write's own record is `written(hash)`.** An extern that answers with the record it just wrote reads it back with `relay_coordinator_support::written`, which reads this device's own chain: a network `get` can miss a write that hasn't been published yet.
+- **Filter links where they're held.** `LinkQuery::try_new(..)?.author(..)`, `.tag_prefix(..)`, `.after(..)`/`.before(..)`: the authority filters, so only what's asked for crosses the network. A list that grows for good is read a page at a time with `handshake_coordinator_support::links::newest_first_page`.
+- **A write's own record is `written(hash)`.** An extern that answers with the record it just wrote reads it back with `handshake_coordinator_support::written`, which reads this device's own chain: a network `get` can miss a write that hasn't been published yet.
 - **What's private to a device doesn't move with an account.** An account restored onto a new phone arrives without its capability grants or scheduled work, so anything a device needs to take part is set up in a zome's `prepare_device`, which init and every app start call (RECOVERY.md).
 
 ## Personal data
 
-Every entry on the DHT is readable by every peer, forever. So anything personal is stored **sealed**: encrypted with `relay_coordinator_support::seal` (libsodium box between two agents' own keys; no key exchange needed) and opened with `open`. Box is symmetric, so whoever seals can always re-open, and sealing to yourself keeps a value private to you.
+Every entry on the DHT is readable by every peer, forever. So anything personal is stored **sealed**: encrypted with `handshake_coordinator_support::seal` (libsodium box between two agents' own keys; no key exchange needed) and opened with `open`. Box is symmetric, so whoever seals can always re-open, and sealing to yourself keeps a value private to you.
 
 | Data | Readable by |
 | --- | --- |
@@ -84,7 +84,7 @@ Validation can't read sealed fields, so rules that need them (the delivery radiu
 
 ## Tests
 
-**Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/relay.happ` (which `npm run backend` keeps current), one file at a time. `node run.mjs reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.
+**Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/handshake.happ` (which `npm run backend` keeps current), one file at a time. `node run.mjs reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.
 
 **Where a Tryorama file's time goes.** Each player is a conductor of its own, and each conductor compiles every zome: about 10s starting and installing, then about 15s on its first zome call (the coordinators, and every zome's `init`). A three-player file spends over a minute before its first assertion; `dhtSync` waits are a few seconds. Measured in October 2026: faster gossip changes nothing, and two files at a time is barely faster and much flakier, so the suite runs one file at a time. Fewer players per file is the lever that works.
 
@@ -100,4 +100,4 @@ A longer timeout is right only when the step is genuinely slow, never to make a 
 
 CI (`.github/workflows/ci.yml`) runs all of these, plus the zome build, the generated-types check, and the web typecheck, lint and build.
 
-Ports can be changed with `RELAY_ADMIN_PORT` / `RELAY_BOOTSTRAP_PORT` (and `VITE_RELAY_ADMIN_URL` for the UI's default).
+Ports can be changed with `HANDSHAKE_ADMIN_PORT` / `HANDSHAKE_BOOTSTRAP_PORT` (and `VITE_HANDSHAKE_ADMIN_URL` for the UI's default).

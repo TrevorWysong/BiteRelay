@@ -25,7 +25,7 @@ export interface StoreRow {
 /// Per identity, so two identities used in the same browser don't share a
 /// selection -- same localStorage posture as the session's own location.
 function activeKey(): string {
-  return `relay.merchant.activeStore.v1.${bytesToHex(myAgentPubKey())}`;
+  return `handshake.merchant.activeStore.v1.${bytesToHex(myAgentPubKey())}`;
 }
 
 function loadActive(): string | null {

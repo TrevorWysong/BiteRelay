@@ -1,9 +1,9 @@
 {
-  "name": "relay-issuer",
+  "name": "handshake-issuer",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A Relay network's issuer service: card top-ups and bank payouts through Stripe.",
+  "description": "A HandShake network's issuer service: card top-ups and bank payouts through Stripe.",
   "scripts": {
     "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
     "test": "node --import tsx --test test/*.test.ts",

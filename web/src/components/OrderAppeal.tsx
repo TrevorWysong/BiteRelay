@@ -62,7 +62,7 @@ function AppealStatus({ appeal, role, onAnswer }: { appeal: AppealView; role: "c
   const t = useT();
   return (
     <div className="flex items-start gap-3">
-      <Gavel size={18} className="mt-0.5 shrink-0 text-relay-500" />
+      <Gavel size={18} className="mt-0.5 shrink-0 text-handshake-500" />
       <div className="min-w-0 flex-1 text-sm">
         {ruling ? (
           <>

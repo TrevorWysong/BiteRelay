@@ -1,0 +1,24 @@
+[package]
+name = "attestation_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "attestation"
+
+[dependencies]
+hdk.workspace = true
+hdi.workspace = true
+serde.workspace = true
+handshake_coordinator_support.workspace = true
+handshake_types.workspace = true
+handshake_governance.workspace = true
+attestation_integrity = { path = "../integrity" }
+handshake_integrity_support.workspace = true
+dispatch_types.workspace = true
+
+[features]
+# Raw link externs for validation tests; only ever hot-swapped into test
+# conductors, never packed into the hApp (see raw_link_test_externs!).
+test-utils = []

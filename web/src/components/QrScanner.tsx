@@ -104,7 +104,7 @@ export function QrScanner({ onScan, prompt }: { onScan: (text: string) => void; 
         {["top-0 left-0 border-t-4 border-l-4 rounded-tl-2xl", "top-0 right-0 border-t-4 border-r-4 rounded-tr-2xl", "bottom-0 left-0 border-b-4 border-l-4 rounded-bl-2xl", "bottom-0 right-0 border-b-4 border-r-4 rounded-br-2xl"].map((corner) => (
           <span key={corner} className={`absolute h-10 w-10 border-white ${corner}`} />
         ))}
-        <span className="absolute inset-x-3 top-1/2 h-0.5 animate-[scanline_2s_ease-in-out_infinite] rounded-full bg-relay-400 shadow-[0_0_12px_2px] shadow-relay-400/70" />
+        <span className="absolute inset-x-3 top-1/2 h-0.5 animate-[scanline_2s_ease-in-out_infinite] rounded-full bg-handshake-400 shadow-[0_0_12px_2px] shadow-handshake-400/70" />
       </div>
       <p className="absolute inset-x-0 bottom-4 text-center text-xs font-semibold text-white/90 drop-shadow">{prompt ?? translate("scanner.customerCode")}</p>
     </div>

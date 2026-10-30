@@ -35,7 +35,7 @@ test("the same words always give the same key, as an agent key that verifies its
 
 test("what a phrase signs is the label, then each key and the head, colon-separated", () => {
   const message = phraseMessage(new Uint8Array(39).fill(1), new Uint8Array(39).fill(2), new Uint8Array(39).fill(3));
-  const label = new TextEncoder().encode("relay-recovery:v1:");
+  const label = new TextEncoder().encode("handshake-recovery:v1:");
   assert.equal(message.length, label.length + 39 * 3 + 2);
   assert.deepEqual(message.slice(0, label.length), label);
   assert.equal(message[label.length + 39], 58);

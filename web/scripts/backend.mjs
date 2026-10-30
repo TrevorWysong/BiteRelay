@@ -14,7 +14,7 @@
 //     it says so and points at `npm run dev:reset`.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync } from "node:fs";
-import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, readDevNetwork, relayCells, tryConnectAdmin } from "./lib/devEnv.mjs";
+import { BUILT_HAPP, DNA_PATH, REPO, SERVED_HAPP, dnaHashOf, hashB64, readDevNetwork, handShakeCells, tryConnectAdmin } from "./lib/devEnv.mjs";
 import { updateCoordinators } from "./lib/coordinators.mjs";
 
 function step(label, cmd, cmdArgs) {
@@ -42,15 +42,15 @@ function sameBytes(a, b) {
 async function main() {
   step("Building zomes", "cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"]);
   step("Generating TS types", "cargo", ["run", "--quiet", "--manifest-path", "tools/typegen/Cargo.toml"]);
-  step("Packing DNA", "hc", ["dna", "pack", "dnas/relay/workdir"]);
+  step("Packing DNA", "hc", ["dna", "pack", "dnas/handshake/workdir"]);
   step("Packing hApp", "hc", ["app", "pack", "workdir"]);
 
   const dnaHash = dnaHashOf(DNA_PATH);
   if (sameBytes(BUILT_HAPP, SERVED_HAPP)) {
-    console.log("\n▸ web/public/relay.happ already up to date");
+    console.log("\n▸ web/public/handshake.happ already up to date");
   } else {
     copyFileSync(BUILT_HAPP, SERVED_HAPP);
-    console.log("\n▸ Published workdir/relay.happ -> web/public/relay.happ (new identities install this)");
+    console.log("\n▸ Published workdir/handshake.happ -> web/public/handshake.happ (new identities install this)");
   }
   console.log(`  DNA hash: ${dnaHash}`);
 
@@ -60,7 +60,7 @@ async function main() {
     return;
   }
   try {
-    const cells = await relayCells(adminWs);
+    const cells = await handShakeCells(adminWs);
     const runnable = new Set([dnaHash, devNetworkDna(dnaHash)].filter(Boolean));
     const current = cells.filter((c) => runnable.has(hashB64(c.cellId[0])));
     const stale = cells.filter((c) => !runnable.has(hashB64(c.cellId[0])));

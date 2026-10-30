@@ -11,14 +11,14 @@ export function BottomNavLink({ to, icon: Icon, label, badge }: { to: string; ic
       className={({ isActive }) =>
         clsx(
           "relative flex flex-1 flex-col items-center justify-center gap-1 py-2 text-xs font-medium transition",
-          isActive ? "text-relay-600 dark:text-relay-400" : "text-ink-400 dark:text-ink-500"
+          isActive ? "text-handshake-600 dark:text-handshake-400" : "text-ink-400 dark:text-ink-500"
         )
       }
     >
       <div className="relative">
         <Icon size={22} strokeWidth={2.25} />
         {!!badge && (
-          <span className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-relay-500 px-1 text-[10px] font-bold text-white">
+          <span className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-handshake-500 px-1 text-[10px] font-bold text-white">
             {badge}
           </span>
         )}

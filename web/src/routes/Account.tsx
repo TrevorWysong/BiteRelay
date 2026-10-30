@@ -559,7 +559,7 @@ function MoveSheet({ onClose }: { onClose: () => void }) {
           </ul>
         </div>
       ) : (
-        <CodeReader accepts={isInvitation} onCode={setInvitation} prompt={t("move.point")} refusal={t("move.notInvitation")} placeholder="relay-move:1:…" />
+        <CodeReader accepts={isInvitation} onCode={setInvitation} prompt={t("move.point")} refusal={t("move.notInvitation")} placeholder="handshake-move:1:…" />
       )}
     </Sheet>
   );
@@ -652,7 +652,7 @@ function WardOption({ ward }: { ward: PlanView }) {
   return <option value={bytesToHex(ward.account)}>{useDisplayName(ward.account)}</option>;
 }
 
-/// Moving the account to the new version of Relay (docs/MIGRATION.md): the new
+/// Moving the account to the new version of HandShake (docs/MIGRATION.md): the new
 /// version, installed on this device or another, shows its code; this one
 /// seals what's private to it, records the move and closes its chain here.
 /// The issuer carries the balance over.

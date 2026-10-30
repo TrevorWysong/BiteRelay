@@ -9,7 +9,7 @@ export interface Config {
   publicUrl: string;
   port: number;
   /// The origins the app runs at, allowed to call this from inside it: a
-  /// browser dev server, or the Relay app's own (Kangaroo, Tauri).
+  /// browser dev server, or the HandShake app's own (Kangaroo, Tauri).
   appOrigins: string[];
   conductorAdminUrl: string;
   issuerAppId: string;
@@ -73,7 +73,7 @@ export function loadConfig(): Config {
     issuerAppId: process.env.ISSUER_APP_ID ?? "dev-issuer",
     previousIssuerAppId: process.env.PREVIOUS_ISSUER_APP_ID || null,
     profile: {
-      name: process.env.ISSUER_NAME ?? "Relay Credits",
+      name: process.env.ISSUER_NAME ?? "HandShake Credits",
       contact: process.env.ISSUER_CONTACT ?? "",
       payoutFeeCents: number("PAYOUT_FEE_CENTS", 55),
       payoutFeeBasisPoints: number("PAYOUT_FEE_BASIS_POINTS", 325),

@@ -137,8 +137,8 @@ export function Onboarding() {
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         className="mb-8 flex flex-col items-center gap-3"
       >
-        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-relay-600 font-black text-3xl shadow-xl">R</div>
-        <h1 className="text-3xl font-black tracking-tight">Relay</h1>
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-handshake-600 font-black text-3xl shadow-xl">R</div>
+        <h1 className="text-3xl font-black tracking-tight">HandShake</h1>
         <p className="text-white/80 text-sm text-center max-w-xs">
           {t("onboarding.tagline")}
         </p>
@@ -182,13 +182,13 @@ export function Onboarding() {
                         whileTap={{ scale: 0.98 }}
                         className={clsx(
                           "flex items-center gap-3 rounded-xl border-2 p-3 text-left transition",
-                          active ? "border-relay-500 bg-relay-50" : "border-ink-100 hover:border-ink-200"
+                          active ? "border-handshake-500 bg-handshake-50" : "border-ink-100 hover:border-ink-200"
                         )}
                       >
                         <motion.div
                           animate={{ scale: active ? 1.06 : 1 }}
                           transition={{ duration: 0.2 }}
-                          className={clsx("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", active ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-400")}
+                          className={clsx("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", active ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-400")}
                         >
                           <Icon size={18} />
                         </motion.div>
@@ -203,7 +203,7 @@ export function Onboarding() {
                 <Button className="w-full" disabled={roles.length === 0} onClick={() => setStep("details")}>
                   {t("common.continue")}
                 </Button>
-                <button type="button" onClick={() => setStep("restore")} className="mt-3 w-full text-center text-sm font-semibold text-relay-600 hover:underline">
+                <button type="button" onClick={() => setStep("restore")} className="mt-3 w-full text-center text-sm font-semibold text-handshake-600 hover:underline">
                   {t("onboarding.haveAccount")}
                 </button>
               </motion.div>
@@ -291,7 +291,7 @@ export function Onboarding() {
                       onClick={() => setVehicleType(type)}
                       className={clsx(
                         "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-                        vehicleType === type ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-500 hover:bg-ink-200"
+                        vehicleType === type ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-500 hover:bg-ink-200"
                       )}
                     >
                       {t(type)}
@@ -332,7 +332,7 @@ export function Onboarding() {
 
           {devHost && hasStoredIdentity() && step === "roles" && (
             <div className="mt-4">
-              <button onClick={handleReconnect} disabled={connecting} className="w-full text-center text-xs font-semibold text-relay-600 hover:underline">
+              <button onClick={handleReconnect} disabled={connecting} className="w-full text-center text-xs font-semibold text-handshake-600 hover:underline">
                 {connecting ? "Reconnecting..." : "Continue as your existing identity"}
               </button>
               {showError && (

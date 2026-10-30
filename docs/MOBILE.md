@@ -1,26 +1,26 @@
-# Relay on phones
+# HandShake on phones
 
-What running Relay on a phone takes, what it changes, and how a closed app still gets woken for an order. This is a design and spike plan. The phone builds themselves need Xcode and the Android SDK, which the development machine doesn't have yet (see "Running the spike").
+What running HandShake on a phone takes, what it changes, and how a closed app still gets woken for an order. This is a design and spike plan. The phone builds themselves need Xcode and the Android SDK, which the development machine doesn't have yet (see "Running the spike").
 
 ## The build
 
-The UI needs no changes. It speaks only the App API, and `@holochain/client` detects a Tauri runtime on its own (`web/src/holochain/host.ts`). A phone build is a Tauri 2 app with `tauri-plugin-holochain`, from the Holochain ecosystem's p2p-shipyard tooling. It embeds the conductor and keystore in the app, installs `relay.happ` for the phone's one agent, and serves this same UI.
+The UI needs no changes. It speaks only the App API, and `@holochain/client` detects a Tauri runtime on its own (`web/src/holochain/host.ts`). A phone build is a Tauri 2 app with `tauri-plugin-holochain`, from the Holochain ecosystem's p2p-shipyard tooling. It embeds the conductor and keystore in the app, installs `handshake.happ` for the phone's one agent, and serves this same UI.
 
 Check these against the plugin's current release before committing to dates:
 
-- **The plugin's Holochain version.** Relay needs Holochain 0.7.1 (DEPLOYMENT.md). As of October 2026 the plugin's newest branch (`develop`) is on Holochain 0.6. A phone build waits for a 0.7 release of the plugin, or builds it against 0.7.1 ourselves.
-- **Moving to a new phone.** The shell links `relay_device` (`runtime/device`): its first launch makes the account's key with `Device::start_account`, and it exposes the six commands as `window.__RELAY_DEVICE__` (an initialization script calling Tauri commands). See DEPLOYMENT.md.
+- **The plugin's Holochain version.** HandShake needs Holochain 0.7.1 (DEPLOYMENT.md). As of October 2026 the plugin's newest branch (`develop`) is on Holochain 0.6. A phone build waits for a 0.7 release of the plugin, or builds it against 0.7.1 ourselves.
+- **Moving to a new phone.** The shell links `handshake_device` (`runtime/device`): its first launch makes the account's key with `Device::start_account`, and it exposes the six commands as `window.__HANDSHAKE_DEVICE__` (an initialization script calling Tauri commands). See DEPLOYMENT.md.
 
 - **Android** is the plugin's best-supported mobile target. The conductor runs in-process, and zome WASM compiles on the device.
 - **iOS forbids JIT compilation.** Holochain's default WASM engine compiles at runtime, so iOS needs an interpreter build. Holochain has been adding one (a `wasmer_wamr` feature); confirm it ships in the 0.7 line the plugin uses.
-  - Interpreted zomes are slower. Relay's validation walks chains and recomputes prices, so measure a busy store's validation on an older iPhone before launch.
+  - Interpreted zomes are slower. HandShake's validation walks chains and recomputes prices, so measure a busy store's validation on an older iPhone before launch.
 - **Size:** the conductor adds tens of megabytes to the app. That's fine for stores, but worth measuring against people's tolerance for a food app's download.
 
 ## What a phone changes: the conductor sleeps
 
-On a desktop the conductor runs while the app is open, and Relay's duties run then: the store's app settles orders, the customer's redeems claimed bags, the driver's picks up. A phone suspends apps in the background:
+On a desktop the conductor runs while the app is open, and HandShake's duties run then: the store's app settles orders, the customer's redeems claimed bags, the driver's picks up. A phone suspends apps in the background:
 
-- **Android** keeps a conductor running only as a *foreground service*, with a persistent notification ("Relay is online"). It's right for drivers on shift and stores during opening hours. It's wrong for customers: nobody wants a permanent notification for a food app.
+- **Android** keeps a conductor running only as a *foreground service*, with a persistent notification ("HandShake is online"). It's right for drivers on shift and stores during opening hours. It's wrong for customers: nobody wants a permanent notification for a food app.
 - **iOS** gives no equivalent. A backgrounded app is suspended within seconds (minutes at best, with background tasks), so a conductor on iOS is effectively up only while the app is open.
 
 ### Who needs to be awake, and when
@@ -41,7 +41,7 @@ Every deadline the network enforces is proved with drand time and validated, so 
 
 ## Waking a closed app: a push relay that learns nothing
 
-To notify a phone whose app is closed, the phone has to be woken through Apple's (APNs) or Google's (FCM) push service. That needs a server holding the device's push token. A naive relay would learn the whole social graph: who orders from which store, when, and where drivers are. Relay's design keeps that server blind.
+To notify a phone whose app is closed, the phone has to be woken through Apple's (APNs) or Google's (FCM) push service. That needs a server holding the device's push token. A naive relay would learn the whole social graph: who orders from which store, when, and where drivers are. HandShake's design keeps that server blind.
 
 **Sealed wake tokens.**
 1. The phone registers once with the network's push relay (`services.push_relay_url`, a network setting like the map services). It sends where the relay can reach it (its APNs or FCM token, or a browser's Web Push subscription) and gets back a *device id* and a secret only it holds.
@@ -67,8 +67,8 @@ To notify a phone whose app is closed, the phone has to be woken through Apple's
 
 - **The relay** (`push/`): registration, token batches, wakes, per-device limits, and all three channels -- Web Push, APNs and FCM. Web Push works end to end today. APNs and FCM are tested against fakes of Apple's and Google's services; check them on real devices once a phone build exists.
 - **The hApp**: `services.push_relay_url`; the sealed tokens on orders (`sealed_wake`, `DropoffDetails::wake`, bounded and unchangeable like every sealed field); and the `Wake` signal the store's and driver's conductors hand their apps on each change (`signals.rs`). tryorama's `wake` test proves each holds only their own token.
-- **The app** (`web/src/lib/network/push.ts`): Profile → Notifications → "Even when Relay is closed" registers the device; checkout spends two tokens per order; `Notifier` posts the store's and driver's wakes; the service worker shows a browser's.
-- **A phone build** provides `window.__RELAY_PUSH__ = { register() }`, resolving to `{ channel: "apns" | "fcm", address }` (the platform's push token, after asking permission). On iOS its strings file has `WAKE_TITLE` and `WAKE_BODY`, the words of an APNs wake. On a wake, it opens the conductor long enough to sync, then shows a local notification for what changed.
+- **The app** (`web/src/lib/network/push.ts`): Profile → Notifications → "Even when HandShake is closed" registers the device; checkout spends two tokens per order; `Notifier` posts the store's and driver's wakes; the service worker shows a browser's.
+- **A phone build** provides `window.__HANDSHAKE_PUSH__ = { register() }`, resolving to `{ channel: "apns" | "fcm", address }` (the platform's push token, after asking permission). On iOS its strings file has `WAKE_TITLE` and `WAKE_BODY`, the words of an APNs wake. On a wake, it opens the conductor long enough to sync, then shows a local notification for what changed.
 
 **Not woken (yet):**
 - A driver's bid on an order: drivers hold no token until they commit. A customer who matches automatically is matched when their app next runs.
@@ -78,7 +78,7 @@ To notify a phone whose app is closed, the phone has to be woken through Apple's
 
 On a machine with Xcode (for iOS) and Android Studio (SDK, NDK, and a JDK 17 or later; this one has JDK 16):
 
-1. Scaffold a Tauri 2 app with the plugin (p2p-shipyard's `scaffold-tauri-happ`). Point it at `deploy/relay.happ` and serve `web/dist`.
+1. Scaffold a Tauri 2 app with the plugin (p2p-shipyard's `scaffold-tauri-happ`). Point it at `deploy/handshake.happ` and serve `web/dist`.
 2. `cargo tauri android dev` on a mid-range Android phone, then measure:
    - the conductor's startup time;
    - a store's validation time for a twenty-item order;

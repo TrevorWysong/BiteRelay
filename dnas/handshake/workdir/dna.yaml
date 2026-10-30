@@ -1,0 +1,50 @@
+manifest_version: "0"
+name: handshake
+integrity:
+  network_seed: ~
+  properties: ~
+  zomes:
+    - name: profiles_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/profiles_integrity.wasm
+    - name: catalog_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/catalog_integrity.wasm
+    - name: dispatch_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/dispatch_integrity.wasm
+    - name: attestation_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/attestation_integrity.wasm
+    - name: ledger_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/ledger_integrity.wasm
+    - name: reputation_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/reputation_integrity.wasm
+    - name: account_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/account_integrity.wasm
+coordinator:
+  zomes:
+    - name: profiles
+      path: ../../../target/wasm32-unknown-unknown/release/profiles.wasm
+      dependencies:
+        - name: profiles_integrity
+    - name: catalog
+      path: ../../../target/wasm32-unknown-unknown/release/catalog.wasm
+      dependencies:
+        - name: catalog_integrity
+    - name: dispatch
+      path: ../../../target/wasm32-unknown-unknown/release/dispatch.wasm
+      dependencies:
+        - name: dispatch_integrity
+    - name: attestation
+      path: ../../../target/wasm32-unknown-unknown/release/attestation.wasm
+      dependencies:
+        - name: attestation_integrity
+    - name: ledger
+      path: ../../../target/wasm32-unknown-unknown/release/ledger.wasm
+      dependencies:
+        - name: ledger_integrity
+    - name: reputation
+      path: ../../../target/wasm32-unknown-unknown/release/reputation.wasm
+      dependencies:
+        - name: reputation_integrity
+    - name: account
+      path: ../../../target/wasm32-unknown-unknown/release/account.wasm
+      dependencies:
+        - name: account_integrity

@@ -45,7 +45,7 @@ export const useSentBids = create<SentBidsState>()(
         }),
       forgetBid: (bidHex) => set((state) => ({ sent: Object.fromEntries(Object.entries(state.sent).filter(([, b]) => b.bid !== bidHex)) })),
     }),
-    { name: "relay.sent-bids.v1" },
+    { name: "handshake.sent-bids.v1" },
   ),
 );
 

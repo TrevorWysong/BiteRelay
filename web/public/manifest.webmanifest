@@ -1,6 +1,6 @@
 {
-  "name": "Relay",
-  "short_name": "Relay",
+  "name": "HandShake",
+  "short_name": "HandShake",
   "description": "A peer-to-peer delivery marketplace on Holochain -- no central server.",
   "start_url": "/",
   "scope": "/",

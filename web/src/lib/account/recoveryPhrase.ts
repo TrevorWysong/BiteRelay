@@ -6,7 +6,7 @@
 //
 // The words are BIP-39's, in the person's language where BIP-39 has a list
 // for it; a phrase in any of those lists is recognised on entry. The key is
-// derived from the phrase's BIP-39 seed through HKDF, under Relay's own
+// derived from the phrase's BIP-39 seed through HKDF, under HandShake's own
 // label, so the same words used anywhere else never give the same key.
 import { ed25519 } from "@noble/curves/ed25519";
 import { hkdf } from "@noble/hashes/hkdf";
@@ -40,8 +40,8 @@ const LISTS: Record<string, string[]> = {
 
 /// 128 bits: twelve words.
 const STRENGTH = 128;
-const KEY_LABEL = new TextEncoder().encode("relay-recovery-key:v1");
-const PHRASE_LABEL = new TextEncoder().encode("relay-recovery:v1:");
+const KEY_LABEL = new TextEncoder().encode("handshake-recovery-key:v1");
+const PHRASE_LABEL = new TextEncoder().encode("handshake-recovery:v1:");
 /// Holochain's prefix for an agent key.
 const AGENT_PREFIX = [0x84, 0x20, 0x24];
 

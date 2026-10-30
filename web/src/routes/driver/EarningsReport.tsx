@@ -37,7 +37,7 @@ export function EarningsReport({ meHex }: { meHex: string }) {
   function download() {
     if (!periods) return;
     const url = URL.createObjectURL(new Blob([earningsCsv(periods, grouping, (c) => fromMinorUnits(c).toFixed(2))], { type: "text/csv" }));
-    Object.assign(document.createElement("a"), { href: url, download: `relay-earnings-by-${grouping}.csv` }).click();
+    Object.assign(document.createElement("a"), { href: url, download: `handshake-earnings-by-${grouping}.csv` }).click();
     URL.revokeObjectURL(url);
   }
 
@@ -75,7 +75,7 @@ export function EarningsReport({ meHex }: { meHex: string }) {
               </li>
             ))}
           </ul>
-          <button onClick={download} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-relay-600 dark:text-relay-400">
+          <button onClick={download} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-handshake-600 dark:text-handshake-400">
             <Download size={13} /> {t("earnings.csv")}
           </button>
         </>

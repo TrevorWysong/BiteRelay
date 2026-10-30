@@ -26,5 +26,5 @@ web/dev-conductor.log
 deploy/properties.json
 deploy/issuer.env
 deploy/push.env
-deploy/relay.network.json
+deploy/handshake.network.json
 deploy/releases/

@@ -29,17 +29,17 @@
   --color-cream: #fbf8f4;
   --color-cream-deep: #f2ecE3;
 
-  /* Relay brand accent -- warm, appetite-forward, distinct from DoorDash red / Uber Eats green */
-  --color-relay-50: #fff3ee;
-  --color-relay-100: #ffe1d3;
-  --color-relay-200: #ffc0a3;
-  --color-relay-300: #ff9a6e;
-  --color-relay-400: #ff7a47;
-  --color-relay-500: #ff5a2b;
-  --color-relay-600: #f0431a;
-  --color-relay-700: #c73312;
-  --color-relay-800: #9e2913;
-  --color-relay-900: #7d2413;
+  /* HandShake brand accent -- warm, appetite-forward, distinct from DoorDash red / Uber Eats green */
+  --color-handshake-50: #fff3ee;
+  --color-handshake-100: #ffe1d3;
+  --color-handshake-200: #ffc0a3;
+  --color-handshake-300: #ff9a6e;
+  --color-handshake-400: #ff7a47;
+  --color-handshake-500: #ff5a2b;
+  --color-handshake-600: #f0431a;
+  --color-handshake-700: #c73312;
+  --color-handshake-800: #9e2913;
+  --color-handshake-900: #7d2413;
 
   /* Presence green -- reserved specifically for "online" / p2p-live semantics,
      never used as a generic brand color, so it stays meaningful. */
@@ -195,9 +195,9 @@
      Transparency) -- an alternative to a flat color fill that still reads
      as calm/premium rather than "loud gradient." */
   .mesh-hero {
-    background-image: radial-gradient(circle at 15% 20%, color-mix(in srgb, var(--color-relay-400) 55%, transparent) 0%, transparent 45%),
+    background-image: radial-gradient(circle at 15% 20%, color-mix(in srgb, var(--color-handshake-400) 55%, transparent) 0%, transparent 45%),
       radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--color-presence-400) 35%, transparent) 0%, transparent 40%),
-      linear-gradient(180deg, var(--color-relay-500), var(--color-relay-700));
+      linear-gradient(180deg, var(--color-handshake-500), var(--color-handshake-700));
   }
 }
 

@@ -161,7 +161,7 @@ test("Web Push: an empty push, authorised by the relay's VAPID key for the push 
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
   const { fetch, requests } = fakeFetch((url) => ({ status: url.includes("gone") ? 410 : 201 }));
-  const sender = webPushSender({ privateKey: pem, subject: "mailto:ops@relay.test" }, fetch);
+  const sender = webPushSender({ privateKey: pem, subject: "mailto:ops@handshake.test" }, fetch);
   const subscription = JSON.stringify({ endpoint: "https://push.example.net/send/abc", keys: { p256dh: "x", auth: "y" } });
 
   assert.equal(await sender.send(subscription), "sent");
@@ -173,7 +173,7 @@ test("Web Push: an empty push, authorised by the relay's VAPID key for the push 
   const jwt = readJwt(token, publicKey, "ES256");
   assert.ok(jwt.signed);
   assert.equal(jwt.claims.aud, "https://push.example.net");
-  assert.equal(jwt.claims.sub, "mailto:ops@relay.test");
+  assert.equal(jwt.claims.sub, "mailto:ops@handshake.test");
 
   assert.equal(await sender.send(JSON.stringify({ endpoint: "https://push.example.net/gone" })), "gone");
   assert.equal(await sender.send("not json"), "gone");
@@ -183,14 +183,14 @@ test("APNs: a wake in the app's own words, authorised by the relay's token key",
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const requests: { path: string; headers: Record<string, string>; body: string }[] = [];
   const sender = apnsSender(
-    { teamId: "TEAM123", keyId: "KEY456", privateKey: privateKey.export({ format: "pem", type: "pkcs8" }).toString(), bundleId: "app.relay", sandbox: true },
+    { teamId: "TEAM123", keyId: "KEY456", privateKey: privateKey.export({ format: "pem", type: "pkcs8" }).toString(), bundleId: "app.handshake", sandbox: true },
     async (path, headers, body) => (requests.push({ path, headers, body }), path.includes("dead") ? { status: 410 } : { status: 200 }),
   );
   const deviceToken = "a".repeat(64);
   assert.equal(await sender.send(deviceToken), "sent");
   const [request] = requests;
   assert.equal(request.path, `/3/device/${deviceToken}`);
-  assert.equal(request.headers["apns-topic"], "app.relay");
+  assert.equal(request.headers["apns-topic"], "app.handshake");
   assert.equal(request.headers["apns-push-type"], "alert");
   assert.equal(request.body, WAKE_PAYLOAD);
   assert.doesNotMatch(request.body, /order|\$/i, "nothing about any order");
@@ -209,7 +209,7 @@ test("FCM: a data-only wake, with an access token traded once for the service ac
     if (url.startsWith("https://oauth2.googleapis.com/token")) return { status: 200, body: JSON.stringify({ access_token: "access-1", expires_in: 3600 }) };
     return { status: 200 };
   });
-  const sender = fcmSender({ project_id: "relay-test", client_email: "relay@relay-test.iam", private_key: privateKey.export({ format: "pem", type: "pkcs8" }).toString() }, fetch);
+  const sender = fcmSender({ project_id: "handshake-test", client_email: "relay@handshake-test.iam", private_key: privateKey.export({ format: "pem", type: "pkcs8" }).toString() }, fetch);
   assert.equal(await sender.send("registration-1"), "sent");
   assert.equal(await sender.send("registration-2"), "sent");
   const exchanges = requests.filter((r) => r.url.startsWith("https://oauth2"));
@@ -217,9 +217,9 @@ test("FCM: a data-only wake, with an access token traded once for the service ac
   const assertion = new URLSearchParams(exchanges[0].body).get("assertion")!;
   const jwt = readJwt(assertion, publicKey, "RS256");
   assert.ok(jwt.signed);
-  assert.equal(jwt.claims.iss, "relay@relay-test.iam");
+  assert.equal(jwt.claims.iss, "relay@handshake-test.iam");
   const send = requests.find((r) => r.url.includes("messages:send"))!;
-  assert.equal(send.url, "https://fcm.googleapis.com/v1/projects/relay-test/messages:send");
+  assert.equal(send.url, "https://fcm.googleapis.com/v1/projects/handshake-test/messages:send");
   assert.equal(send.headers.Authorization, "Bearer access-1");
   assert.deepEqual(JSON.parse(send.body!).message, { token: "registration-1", data: { wake: "1" }, android: { priority: "HIGH", ttl: "3600s" } });
 

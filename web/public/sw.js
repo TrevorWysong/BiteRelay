@@ -11,7 +11,7 @@
 // render offline), never zome-call data -- and there's nothing to
 // accidentally cache wrong here anyway, since zome calls go over a
 // WebSocket, which fetch/service-worker interception never sees.
-const CACHE_NAME = "relay-shell-v2";
+const CACHE_NAME = "handshake-shell-v2";
 const APP_SHELL = ["/", "/index.html", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -52,7 +52,7 @@ self.addEventListener("fetch", (event) => {
 // which the app hands over while it's open ("wake-words") and this keeps
 // beside the shell. Tapping it opens the app, which reads what changed.
 const WORDS_URL = "/__wake-words";
-const DEFAULT_WORDS = { title: "Relay", body: "There's news on your order." };
+const DEFAULT_WORDS = { title: "HandShake", body: "There's news on your order." };
 
 self.addEventListener("message", (event) => {
   if (event.data?.type !== "wake-words") return;
@@ -66,7 +66,7 @@ self.addEventListener("push", (event) => {
       .match(WORDS_URL)
       .then((cached) => (cached ? cached.json() : DEFAULT_WORDS))
       .catch(() => DEFAULT_WORDS)
-      .then(({ title, body }) => self.registration.showNotification(title, { body, tag: "relay-wake", icon: "/favicon.svg" })),
+      .then(({ title, body }) => self.registration.showNotification(title, { body, tag: "handshake-wake", icon: "/favicon.svg" })),
   );
 });
 

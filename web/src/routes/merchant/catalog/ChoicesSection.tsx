@@ -69,7 +69,7 @@ export function ChoicesSection({ catalogRef, groups, onChanged }: { catalogRef: 
                   {row.group.min_selections > 0 ? t("item.required") : t("choicesEditor.optional")} · {rangeLabel(row.group)} · {row.group.options.map((o) => o.name).join(", ")}
                 </p>
               </div>
-              <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={t("choicesEditor.edit", { name: row.group.name })}>
+              <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-handshake-600" aria-label={t("choicesEditor.edit", { name: row.group.name })}>
                 <Pencil size={14} />
               </button>
             </div>

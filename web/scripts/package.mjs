@@ -1,9 +1,9 @@
-// Builds the app as Holochain runtimes install it -- deploy/relay.webhapp,
+// Builds the app as Holochain runtimes install it -- deploy/handshake.webhapp,
 // the production hApp plus its production UI -- for a network whose DNA
 // properties are in deploy/properties.json (see deploy/properties.example.json
 // and docs/DEPLOYMENT.md).
 //
-//   npm run package -- --network-seed relay-2026 \
+//   npm run package -- --network-seed handshake-2026 \
 //     [--bootstrap-url https://bootstrap.example.org --relay-url https://relay.example.org]
 //
 // The bootstrap and relay URLs are the network's own servers (see
@@ -14,7 +14,7 @@
 //
 //     --previous deploy/releases/<previous version>
 //
-// a directory holding that release's relay.happ and relay.network.json
+// a directory holding that release's handshake.happ and handshake.network.json
 // (both written by this script into deploy/: keep a copy of each release).
 //
 // Everyone on a network must install the same bundle: the properties and
@@ -43,7 +43,7 @@ const properties = JSON.parse(readFileSync(propertiesPath, "utf8"));
 // Money: a network states how far into debt anyone may go (0 recommended:
 // everything prepaid, so a fresh identity can't order on credit), and who
 // may issue funds -- without an issuer, nobody with a 0 limit could ever
-// have any. See relay_governance.
+// have any. See handshake_governance.
 if (!Number.isInteger(properties.credit_limit_cents) || properties.credit_limit_cents < 0) {
   fail("deploy/properties.json needs credit_limit_cents: how far below zero any balance may go (0 = everything prepaid, recommended).");
 }
@@ -57,8 +57,8 @@ if (!Array.isArray(properties.issuers) || properties.issuers.some((key) => !/^uh
 if (!properties.services) {
   console.warn("deploy/properties.json sets no `services`: apps will use OpenStreetMap's public tile and search servers, whose usage policies don't allow production traffic. Set your own (docs/DEPLOYMENT.md).");
 }
-if (properties.credit_limit_cents > 0 && process.env.RELAY_ALLOW_CREDIT !== "1") {
-  fail("credit_limit_cents is above 0: drivers could post collateral on credit and walk away from it. Set it to 0, or build with RELAY_ALLOW_CREDIT=1 if you mean to extend credit.");
+if (properties.credit_limit_cents > 0 && process.env.HANDSHAKE_ALLOW_CREDIT !== "1") {
+  fail("credit_limit_cents is above 0: drivers could post collateral on credit and walk away from it. Set it to 0, or build with HANDSHAKE_ALLOW_CREDIT=1 if you mean to extend credit.");
 }
 if (properties.credit_limit_cents === 0 && properties.issuers.length === 0) {
   fail("With credit_limit_cents 0 and no issuers, nobody could ever have funds -- name at least one issuer.");
@@ -71,17 +71,17 @@ function fail(message) {
 
 function step(label, cmd, cmdArgs, cwd = REPO) {
   console.log(`\n▸ ${label}`);
-  execFileSync(cmd, cmdArgs, { cwd, stdio: "inherit", env: { ...process.env, VITE_RELAY_DEV_HOST: "false" } });
+  execFileSync(cmd, cmdArgs, { cwd, stdio: "inherit", env: { ...process.env, VITE_HANDSHAKE_DEV_HOST: "false" } });
 }
 
-const work = mkdtempSync(path.join(tmpdir(), "relay-package-"));
+const work = mkdtempSync(path.join(tmpdir(), "handshake-package-"));
 try {
   step("Building zomes", "cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"]);
-  step("Packing DNA", "hc", ["dna", "pack", "dnas/relay/workdir"]);
+  step("Packing DNA", "hc", ["dna", "pack", "dnas/handshake/workdir"]);
 
   // The hApp, with this network's properties and seed. JSON is YAML.
   const role = {
-    name: "relay",
+    name: "handshake",
     provisioning: { strategy: "create", deferred: false },
     dna: { path: DNA_PATH, modifiers: { properties, network_seed: networkSeed }, clone_limit: 0 },
   };
@@ -89,31 +89,31 @@ try {
   if (previousDir) {
     // The previous network, exactly: its own DNA file and the same seed and
     // properties, so it's the network people are moving from.
-    const previousNetwork = JSON.parse(readFileSync(path.join(previousDir, "relay.network.json"), "utf8"));
-    step("Unpacking the previous release", "hc", ["app", "unpack", path.join(previousDir, "relay.happ"), "-o", path.join(work, "previous")]);
+    const previousNetwork = JSON.parse(readFileSync(path.join(previousDir, "handshake.network.json"), "utf8"));
+    step("Unpacking the previous release", "hc", ["app", "unpack", path.join(previousDir, "handshake.happ"), "-o", path.join(work, "previous")]);
     roles.push({
       name: "previous",
       provisioning: { strategy: "create", deferred: false },
-      dna: { path: path.join(work, "previous", "relay.dna"), modifiers: { properties: previousNetwork.properties, network_seed: previousNetwork.network_seed }, clone_limit: 0 },
+      dna: { path: path.join(work, "previous", "handshake.dna"), modifiers: { properties: previousNetwork.properties, network_seed: previousNetwork.network_seed }, clone_limit: 0 },
     });
   }
-  const manifest = { manifest_version: "0", name: "relay", description: "Relay -- food delivery with no middleman, on Holochain", roles, bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
+  const manifest = { manifest_version: "0", name: "handshake", description: "HandShake -- food delivery with no middleman, on Holochain", roles, bootstrap_url: bootstrapUrl ?? null, relay_url: relayUrl ?? null };
   writeFileSync(path.join(work, "happ.yaml"), JSON.stringify(manifest, null, 2));
   step("Packing hApp", "hc", ["app", "pack", work]);
   // The issuer's own conductor installs exactly this (issuer/scripts/provision.mjs).
-  copyFileSync(path.join(work, "relay.happ"), path.join(REPO, "deploy/relay.happ"));
+  copyFileSync(path.join(work, "handshake.happ"), path.join(REPO, "deploy/handshake.happ"));
   // What a later release needs to carry this network as its previous one.
-  writeFileSync(path.join(REPO, "deploy/relay.network.json"), `${JSON.stringify({ network_seed: networkSeed, properties }, null, 2)}\n`);
+  writeFileSync(path.join(REPO, "deploy/handshake.network.json"), `${JSON.stringify({ network_seed: networkSeed, properties }, null, 2)}\n`);
 
   // The production UI: no dev host, so no Admin API code (see
   // src/holochain/host.ts), and none of the dev-only public files.
   step("Building the UI", "npm", ["run", "build"], path.join(REPO, "web"));
   const dist = path.join(REPO, "web/dist");
-  for (const devOnly of ["relay.happ", "sw.js"]) rmSync(path.join(dist, devOnly), { force: true });
+  for (const devOnly of ["handshake.happ", "sw.js"]) rmSync(path.join(dist, devOnly), { force: true });
   step("Zipping the UI", "zip", ["-q", "-r", path.join(work, "ui.zip"), "."], dist);
 
-  writeFileSync(path.join(work, "web-happ.yaml"), JSON.stringify({ manifest_version: "0", name: "relay", ui: { path: "./ui.zip" }, happ: { path: "./relay.happ" } }, null, 2));
-  const out = path.join(REPO, "deploy/relay.webhapp");
+  writeFileSync(path.join(work, "web-happ.yaml"), JSON.stringify({ manifest_version: "0", name: "handshake", ui: { path: "./ui.zip" }, happ: { path: "./handshake.happ" } }, null, 2));
+  const out = path.join(REPO, "deploy/handshake.webhapp");
   step("Packing the web hApp", "hc", ["web-app", "pack", work, "-o", out]);
 
   console.log(`\n✓ ${path.relative(REPO, out)} (${Math.round(statSync(out).size / 1024)} KB)`);

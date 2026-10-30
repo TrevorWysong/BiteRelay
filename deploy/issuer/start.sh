@@ -18,7 +18,7 @@ case "${1:-serve}" in
     node scripts/provision.mjs key
     ;;
   serve)
-    node scripts/provision.mjs install /app/relay.happ
+    node scripts/provision.mjs install /app/handshake.happ
     exec npm start
     ;;
   *)

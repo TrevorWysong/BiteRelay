@@ -21,7 +21,7 @@ export async function topUpIfLow(agent: AgentPubKey): Promise<boolean> {
   const setting = useCustomerSettings.getState().autoTopUps[hex];
   if (!setting) return false;
   // Kept per tab, and in storage across tabs and reloads.
-  const storeKey = `relay.auto-top-up.last.${encodeHashToBase64(agent)}`;
+  const storeKey = `handshake.auto-top-up.last.${encodeHashToBase64(agent)}`;
   const last = Math.max(lastTry.get(hex) ?? 0, Number(readStored(storeKey)) || 0);
   if (Date.now() - last < RETRY_AFTER_MS) return false;
   if ((await getBalance(agent)) >= setting.belowCents) return false;

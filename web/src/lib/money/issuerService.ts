@@ -1,7 +1,7 @@
 // Talking to an issuer's own service (its profile's `service_url`): paying
 // by card -- an embedded Stripe form, or the card saved last time -- and
 // setting up a payout account. Card and bank details only ever reach the
-// processor's own forms; never Relay.
+// processor's own forms; never HandShake.
 //
 // Each request that touches someone's money is signed by them for its
 // purpose (the ledger zome's `sign_issuer_link`, over the service's

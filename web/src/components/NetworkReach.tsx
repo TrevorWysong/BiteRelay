@@ -23,7 +23,7 @@ export function NetworkReach({ action }: { action: ActionHash }) {
   const text = reach.complete ? t("reach.confirmed") : reach.peers > 0 ? t("reach.peers", { count: reach.peers }) : t("reach.deviceOnly");
   return (
     <p className="mt-3 flex items-center gap-1.5 border-t border-ink-100 dark:border-ink-800 pt-3 text-xs text-ink-500">
-      <Icon size={13} className={reach.peers > 0 ? "text-relay-600" : "text-ink-400"} />
+      <Icon size={13} className={reach.peers > 0 ? "text-handshake-600" : "text-ink-400"} />
       {text}
     </p>
   );

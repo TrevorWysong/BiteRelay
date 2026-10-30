@@ -68,8 +68,8 @@ export function AppShell() {
     <div className="mx-auto flex min-h-svh max-w-md flex-col bg-ink-50 dark:bg-ink-950">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-ink-100 dark:border-ink-800 bg-white/90 dark:bg-ink-900/80 backdrop-blur px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-relay-500 text-white font-black text-sm">R</div>
-          <span className="font-black text-lg tracking-tight">Relay</span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-handshake-500 text-white font-black text-sm">R</div>
+          <span className="font-black text-lg tracking-tight">HandShake</span>
         </div>
         <div className="flex items-center gap-2">
           {availableModes.length > 1 && (
@@ -128,7 +128,7 @@ export function AppShell() {
   );
 }
 
-/// A line under the header once a new version of Relay is out
+/// A line under the header once a new version of HandShake is out
 /// (docs/MIGRATION.md): moving there is the person's to start, from Account &
 /// recovery.
 function NewVersionBanner({ enabled }: { enabled: boolean }) {
@@ -136,7 +136,7 @@ function NewVersionBanner({ enabled }: { enabled: boolean }) {
   const t = useT();
   if (!next) return null;
   return (
-    <NavLink to="/account" className="flex items-center justify-center gap-2 bg-relay-500 px-4 py-2 text-xs font-semibold text-white">
+    <NavLink to="/account" className="flex items-center justify-center gap-2 bg-handshake-500 px-4 py-2 text-xs font-semibold text-white">
       <Sparkles size={13} /> {t("shell.newVersion")}
     </NavLink>
   );

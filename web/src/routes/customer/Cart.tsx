@@ -93,7 +93,7 @@ function ToggleChip({ active, onClick, children, className }: { active: boolean;
       onClick={onClick}
       className={clsx(
         "rounded-full px-3 py-1.5 text-xs font-semibold transition",
-        active ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500 hover:bg-ink-200 dark:hover:bg-ink-700",
+        active ? "bg-handshake-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500 hover:bg-ink-200 dark:hover:bg-ink-700",
         className
       )}
     >
@@ -498,7 +498,7 @@ export function Cart() {
                   <p className="text-xs text-ink-400">
                     {t("cart.each", { price: formatCents(line.priceCents) })}
                     {row && (
-                      <button type="button" onClick={() => setEditing({ key, line, row })} className="ml-2 font-semibold text-relay-600 hover:underline dark:text-relay-400">
+                      <button type="button" onClick={() => setEditing({ key, line, row })} className="ml-2 font-semibold text-handshake-600 hover:underline dark:text-handshake-400">
                         {t("common.edit")}
                       </button>
                     )}
@@ -622,7 +622,7 @@ export function Cart() {
         <Section
           title={t("cart.repeat.title")}
           right={
-            <button onClick={() => setShowRecurring((v) => !v)} className="text-xs font-semibold text-relay-600">
+            <button onClick={() => setShowRecurring((v) => !v)} className="text-xs font-semibold text-handshake-600">
               {showRecurring ? t("common.cancel") : recurringSaved ? t("common.edit") : t("cart.repeat.setUp")}
             </button>
           }

@@ -11,7 +11,7 @@ What stores, drivers and customers need at tax time, and what forms anyone may o
   - DoorDash issues these to Dashers through Stripe Express.
 - **Below every threshold, income is still taxable.** Drivers and stores must report all of it, which is why their records matter more than the forms.
 
-## Who files what in Relay
+## Who files what in HandShake
 
 There's no platform paying anyone, so the platform-shaped obligations land differently:
 
@@ -20,7 +20,7 @@ There's no platform paying anyone, so the platform-shaped obligations land diffe
 | Customer → driver (fee share, tip) | A person buying a delivery for themselves | None: personal payments aren't reportable by the payer | Nobody; the driver reports the income |
 | Customer → store (food) | A person buying food | None | Nobody; the store reports its sales |
 | **Store → driver (store's fee share, late-store pay)** | **A business paying a contractor for delivery** | **1099-NEC if ≥ $2,000 to one driver in the year** | **The store** |
-| Issuer payouts to stores and drivers | The issuer, through its payment processor | 1099-K if over $20,000 and 200 payments | The processor (e.g. Stripe, under Connect), not Relay |
+| Issuer payouts to stores and drivers | The issuer, through its payment processor | 1099-K if over $20,000 and 200 payments | The processor (e.g. Stripe, under Connect), not HandShake |
 
 The store-to-driver row is the new one. A store that subsidises deliveries is paying drivers for a service. Paying any one driver $2,000 or more in a year would make it the 1099-NEC filer. Most stores won't cross that with any single driver, but the app should tell them when they do.
 
@@ -47,7 +47,7 @@ All of it is computed **on each person's own device, from their own ledger chain
 
 ## Collecting a driver's tax details, if a store needs them
 
-A 1099-NEC needs the driver's legal name, address and taxpayer ID (from a W-9). Relay should never publish these.
+A 1099-NEC needs the driver's legal name, address and taxpayer ID (from a W-9). HandShake should never publish these.
 1. When a store's payments to one driver approach the threshold, the store's app asks that driver's app.
 2. The driver fills in a W-9 form in their app. It's **sealed to that store only**, the same way addresses are sealed to a driver today.
 3. The store's report includes it. Nothing goes on the public network beyond the sealed copy.

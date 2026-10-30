@@ -55,7 +55,7 @@ const isSentence = (text) => /^[A-Z]/.test(text);
 
 function collect() {
   const texts = [];
-  for (const file of [...files("dnas/relay/zomes", ".rs").filter((f) => f.includes("/coordinator/")), ...files("dnas/relay/coordinator_support/src", ".rs")]) {
+  for (const file of [...files("dnas/handshake/zomes", ".rs").filter((f) => f.includes("/coordinator/")), ...files("dnas/handshake/coordinator_support/src", ".rs")]) {
     const source = readFileSync(join(repo, file), "utf8");
     for (const m of source.matchAll(/guest\(\s*"((?:[^"\\]|\\.)*)"/g)) texts.push(unescapeRust(m[1]));
     for (const m of source.matchAll(/guest\(\s*format!\(\s*"((?:[^"\\]|\\.)*)"/g)) texts.push(fromRustFormat(m[1]));

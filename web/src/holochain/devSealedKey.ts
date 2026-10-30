@@ -1,5 +1,5 @@
 // The dev host's stand-in for a sealed key (`devDevice.ts`): the real
-// code's form -- `relay-key:1:`, the account, then 32 + 24 bytes where the
+// code's form -- `handshake-key:1:`, the account, then 32 + 24 bytes where the
 // sender's key and nonce go -- carrying, in place of the ciphertext, where
 // the identity lives on the dev node. Kept apart, and pure, so it's tested
 // against the reader every code goes through (`lib/account/deviceMove.ts`).

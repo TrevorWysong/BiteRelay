@@ -1,5 +1,5 @@
-//! What a Relay runtime -- the desktop or phone app that embeds the
-//! conductor and its keystore and shows Relay's UI -- does natively to move
+//! What a HandShake runtime -- the desktop or phone app that embeds the
+//! conductor and its keystore and shows HandShake's UI -- does natively to move
 //! an account to a new phone with the same key. The UI can't: it speaks
 //! only the conductor's App API, and never sees a key. See docs/RECOVERY.md for
 //! the whole flow, and `web/src/holochain/device.ts` for the UI's side of
@@ -36,7 +36,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("That isn't a code from Relay's move to a new phone.")]
+    #[error("That isn't a code from HandShake's move to a new phone.")]
     BadCode,
     #[error("This device's keystore doesn't hold that key.")]
     NoSuchKey,
@@ -46,7 +46,7 @@ pub enum Error {
     WrongAccount,
     #[error("Show the code from this phone again: the one it was sealed to is gone.")]
     NoInvitation,
-    #[error("Your account's history hasn't arrived yet: it comes from other people's apps on the network. Keep Relay open and online; it carries on where it left off.")]
+    #[error("Your account's history hasn't arrived yet: it comes from other people's apps on the network. Keep HandShake open and online; it carries on where it left off.")]
     StillRestoring,
     #[error("This account was used on two phones at once, and the network has locked it. Recover it with your recovery phrase or guardians: {0}")]
     Unrecoverable(String),

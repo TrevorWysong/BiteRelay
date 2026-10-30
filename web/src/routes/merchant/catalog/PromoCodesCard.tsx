@@ -170,7 +170,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
 
       <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
         <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
-          <ListChecks size={13} className="text-relay-500" /> {t("promoEditor.requirement")}
+          <ListChecks size={13} className="text-handshake-500" /> {t("promoEditor.requirement")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={form.requirementKind} onChange={(e) => set({ requirementKind: e.target.value as RequirementKind })} className="flex-1 min-w-[11rem]">
@@ -202,7 +202,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
 
       <div className="rounded-xl bg-ink-50 dark:bg-ink-800/50 p-3">
         <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-400">
-          <Gift size={13} className="text-relay-500" /> {t("promoEditor.reward")}
+          <Gift size={13} className="text-handshake-500" /> {t("promoEditor.reward")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={form.rewardKind} onChange={(e) => set({ rewardKind: e.target.value as RewardKind })} className="flex-1 min-w-[11rem]">
@@ -234,7 +234,7 @@ function NewPromoForm({ catalogRef, items, itemName, onCreated }: { catalogRef: 
       </div>
 
       {requirement && reward && (
-        <div className="flex items-start gap-2 rounded-xl bg-relay-50 dark:bg-relay-900/20 px-3 py-2.5 text-xs text-relay-700 dark:text-relay-300">
+        <div className="flex items-start gap-2 rounded-xl bg-handshake-50 dark:bg-handshake-900/20 px-3 py-2.5 text-xs text-handshake-700 dark:text-handshake-300">
           <Sparkles size={14} className="mt-0.5 shrink-0" />
           <span>
             {describeRequirement(requirement, itemName)} · {describeReward(reward, itemName)}

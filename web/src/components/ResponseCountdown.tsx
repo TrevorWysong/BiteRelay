@@ -16,7 +16,7 @@ export function ResponseCountdown({ deadlineMs, windowSecs, now, label }: { dead
       <div className="h-1 w-full overflow-hidden rounded-full bg-ink-100 dark:bg-ink-800">
         <div
           key={now}
-          className={clsx("h-full rounded-full", remainingSecs < 60 ? "bg-amber-500" : "bg-relay-500")}
+          className={clsx("h-full rounded-full", remainingSecs < 60 ? "bg-amber-500" : "bg-handshake-500")}
           style={{ width: `${startPercent}%`, animation: `drain ${remainingSecs}s linear forwards` }}
         />
       </div>

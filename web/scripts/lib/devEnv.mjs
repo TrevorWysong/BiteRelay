@@ -1,7 +1,7 @@
 // The local dev environment's fixed facts -- where the persistent conductor
 // keeps its data, which ports it listens on, where the built bundle lives --
 // shared by every dev script so they can't drift apart. Override the ports
-// with RELAY_ADMIN_PORT / RELAY_BOOTSTRAP_PORT if they clash locally.
+// with HANDSHAKE_ADMIN_PORT / HANDSHAKE_BOOTSTRAP_PORT if they clash locally.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,15 +14,15 @@ export const CONDUCTOR_DIR = path.join(DEV_DIR, "conductor");
 export const CONDUCTOR_CONFIG = path.join(CONDUCTOR_DIR, "conductor-config.yaml");
 export const PID_FILE = path.join(DEV_DIR, "conductor.pid");
 
-export const ADMIN_PORT = Number(process.env.RELAY_ADMIN_PORT ?? 8870);
-export const BOOTSTRAP_PORT = Number(process.env.RELAY_BOOTSTRAP_PORT ?? 8871);
+export const ADMIN_PORT = Number(process.env.HANDSHAKE_ADMIN_PORT ?? 8870);
+export const BOOTSTRAP_PORT = Number(process.env.HANDSHAKE_BOOTSTRAP_PORT ?? 8871);
 export const ADMIN_URL = `ws://localhost:${ADMIN_PORT}`;
 
 /// Built by `npm run backend`; the UI installs new identities from the copy
 /// in web/public, and the seed script installs from that same copy.
-export const DNA_PATH = path.join(REPO, "dnas/relay/workdir/relay.dna");
-export const BUILT_HAPP = path.join(REPO, "workdir/relay.happ");
-export const SERVED_HAPP = path.join(REPO, "web/public/relay.happ");
+export const DNA_PATH = path.join(REPO, "dnas/handshake/workdir/handshake.dna");
+export const BUILT_HAPP = path.join(REPO, "workdir/handshake.happ");
+export const SERVED_HAPP = path.join(REPO, "web/public/handshake.happ");
 /// The dev network's DNA properties -- its issuer -- written by the seed and
 /// read by everything that installs an identity on it (the seed, the app's
 /// own onboarding), so they all join the same network. Absent outside dev.
@@ -32,10 +32,10 @@ export const DEV_NETWORK = path.join(REPO, "web/public/dev-network.json");
 export const ISSUER_APP_ID = "dev-issuer";
 
 /// Mirrors web/src/holochain/admin.ts's ROLE_NAME.
-export const ROLE_NAME = "relay";
+export const ROLE_NAME = "handshake";
 
 /// A dev-only keystore passphrase -- this conductor never holds real keys.
-export const LAIR_PASSPHRASE = "relay-dev";
+export const LAIR_PASSPHRASE = "handshake-dev";
 
 /// Node's `ws` sends no Origin header unless told to, and the admin
 /// interface's `allowed_origins: "*"` still requires one to be present.
@@ -58,8 +58,8 @@ export function dnaHashOf(dnaPath) {
   return execFileSync("hc", ["dna", "hash", dnaPath], { encoding: "utf8" }).trim();
 }
 
-/// Every provisioned `relay` cell on the conductor, with the app it belongs to.
-export async function relayCells(adminWs) {
+/// Every provisioned `handshake` cell on the conductor, with the app it belongs to.
+export async function handShakeCells(adminWs) {
   const apps = await adminWs.listApps({});
   return apps.flatMap((app) =>
     (app.cell_info[ROLE_NAME] ?? [])

@@ -6,7 +6,7 @@
 // sends a push with nothing in it; what the person sees is built here.
 //
 // How the device is reached is the runtime's: a phone app's runtime hands
-// over its APNs or FCM token as `window.__RELAY_PUSH__`; in a browser it's
+// over its APNs or FCM token as `window.__HANDSHAKE_PUSH__`; in a browser it's
 // a Web Push subscription, through the service worker (public/sw.js).
 import { useNetwork } from "../../store/network";
 import { forget, readStoredJson, store } from "../util/storage";
@@ -19,7 +19,7 @@ export interface PushRuntime {
 
 declare global {
   interface Window {
-    __RELAY_PUSH__?: PushRuntime;
+    __HANDSHAKE_PUSH__?: PushRuntime;
   }
 }
 
@@ -30,7 +30,7 @@ interface Registration {
   tokens: string[];
 }
 
-const KEY = "relay.push";
+const KEY = "handshake.push";
 /// Fetch a new batch before the last few are handed out.
 const REFILL_BELOW = 8;
 
@@ -48,7 +48,7 @@ function webPushSupported(): boolean {
 /// Whether this device can be woken while closed: the network runs a relay,
 /// and the runtime or browser can receive its pushes.
 export function canWakeWhileClosed(): boolean {
-  return !!relayUrl() && (!!window.__RELAY_PUSH__ || webPushSupported());
+  return !!relayUrl() && (!!window.__HANDSHAKE_PUSH__ || webPushSupported());
 }
 
 /// Whether this device is set up to be woken through the network's relay.
@@ -70,8 +70,8 @@ export async function startWakingWhileClosed(): Promise<void> {
   const relay = relayUrl();
   if (!relay) throw new Error("This network doesn't run a push relay.");
   let target: { channel: string; address: string };
-  if (window.__RELAY_PUSH__) {
-    target = await window.__RELAY_PUSH__.register();
+  if (window.__HANDSHAKE_PUSH__) {
+    target = await window.__HANDSHAKE_PUSH__.register();
   } else {
     const { vapidPublicKey } = (await (await fetch(`${relay}/config`)).json()) as { vapidPublicKey: string | null };
     if (!vapidPublicKey) throw new Error("This network's push relay doesn't reach browsers.");
@@ -90,7 +90,7 @@ export async function stopWakingWhileClosed(): Promise<void> {
   forget(KEY);
   if (!current) return;
   await post(`${current.relay}/devices`, { device: current.device, secret: current.secret }, "DELETE").catch(() => {});
-  if (!window.__RELAY_PUSH__ && webPushSupported()) {
+  if (!window.__HANDSHAKE_PUSH__ && webPushSupported()) {
     await (await navigator.serviceWorker.ready).pushManager.getSubscription().then((s) => s?.unsubscribe()).catch(() => {});
   }
 }

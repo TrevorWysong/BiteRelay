@@ -34,7 +34,7 @@ DoorDash's menu builder, like Square's item modifiers, uses **modifier groups** 
 
 ([DoorDash: editing modifier settings](https://help.doordash.com/en-au/merchants/article/editing-modifier-settings-on-your-menu), [DoorDash: adding modifiers](https://merchants.doordash.com/en-ca/learning-center/modifiers), [Square: item modifiers](https://squareup.com/help/us/en/article/5119-item-modifiers))
 
-## Where Relay is today
+## Where HandShake is today
 
 - **Menu items:** a `MenuItem` has a name, price, availability, description, photo, category and dietary tags. There are no options.
 - **Order lines:** an `OrderLine` is `{ item_ref, priced_version, quantity }`. Validation recomputes the order total from each line's priced version, and promotions, refunds for missing items, loyalty and receipts all build on that.

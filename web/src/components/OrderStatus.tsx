@@ -115,7 +115,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
                 transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 className={clsx(
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                  done || active ? "bg-relay-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600",
+                  done || active ? "bg-handshake-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600",
                 )}
               >
                 <Icon size={16} />
@@ -123,7 +123,7 @@ export function OrderStatusTimeline({ status, cancellation = null }: { status: D
               {i < steps.length - 1 && (
                 <div className="relative mt-1 w-0.5 flex-1 overflow-hidden bg-ink-100 dark:bg-ink-800" style={{ minHeight: 24 }}>
                   <motion.div
-                    className="absolute inset-x-0 top-0 bg-relay-400"
+                    className="absolute inset-x-0 top-0 bg-handshake-400"
                     initial={false}
                     animate={{ height: done ? "100%" : "0%" }}
                     transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
@@ -210,7 +210,7 @@ export function PickupStatusTimeline({ status, cancellation = null }: { status: 
                 transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 className={clsx(
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                  done || active ? "bg-relay-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600",
+                  done || active ? "bg-handshake-500 text-white shadow-[var(--shadow-glow)]" : "bg-ink-100 dark:bg-ink-800 text-ink-300 dark:text-ink-600",
                 )}
               >
                 <Icon size={16} />
@@ -218,7 +218,7 @@ export function PickupStatusTimeline({ status, cancellation = null }: { status: 
               {i < PICKUP_STEPS.length - 1 && (
                 <div className="relative mt-1 w-0.5 flex-1 overflow-hidden bg-ink-100 dark:bg-ink-800" style={{ minHeight: 24 }}>
                   <motion.div
-                    className="absolute inset-x-0 top-0 bg-relay-400"
+                    className="absolute inset-x-0 top-0 bg-handshake-400"
                     initial={false}
                     animate={{ height: done ? "100%" : "0%" }}
                     transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}

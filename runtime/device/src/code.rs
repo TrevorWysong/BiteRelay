@@ -4,10 +4,10 @@
 //! agree with this).
 //!
 //! - An **invitation**, shown by the new phone: the public half of a
-//!   one-time encryption key in its keystore. `relay-move:1:` and the key.
+//!   one-time encryption key in its keystore. `handshake-move:1:` and the key.
 //! - A **sealed key**, shown by the old phone: the account's key encrypted
 //!   to that invitation, so only the phone that showed it can open it.
-//!   `relay-key:1:` and the account, the sender's encryption key, the nonce
+//!   `handshake-key:1:` and the account, the sender's encryption key, the nonce
 //!   and the ciphertext, together.
 //!
 //! Both are base64url without padding.
@@ -17,8 +17,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use holochain_types::prelude::AgentPubKey;
 
-pub const INVITATION_PREFIX: &str = "relay-move:1:";
-pub const SEALED_KEY_PREFIX: &str = "relay-key:1:";
+pub const INVITATION_PREFIX: &str = "handshake-move:1:";
+pub const SEALED_KEY_PREFIX: &str = "handshake-key:1:";
 
 /// Holochain's prefix for an agent key.
 const AGENT_PREFIX: [u8; 3] = [0x84, 0x20, 0x24];
@@ -100,8 +100,8 @@ mod tests {
 
     /// The same codes `web/test/deviceMove.test.ts` reads: the app and the
     /// runtime agree on the form.
-    pub const SEALED_FIXTURE: &str = "relay-key:1:hCAkCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQldqCMwAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgIFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU";
-    pub const INVITATION_FIXTURE: &str = "relay-move:1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+    pub const SEALED_FIXTURE: &str = "handshake-key:1:hCAkCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQldqCMwAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgIFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU";
+    pub const INVITATION_FIXTURE: &str = "handshake-move:1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 
     #[test]
     fn the_app_reads_the_same_codes() {
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn anything_else_is_refused() {
         let sealed = SealedKey { account: account(), sender: [1; 32], nonce: [2; 24], cipher: vec![5; 48] }.encode();
-        for code in ["", "relay-move:1:", "relay-move:1:AAAA", "relay-move:2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "relay-account:uhCAk", &sealed[..40]] {
+        for code in ["", "handshake-move:1:", "handshake-move:1:AAAA", "handshake-move:2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "handshake-account:uhCAk", &sealed[..40]] {
             assert!(Invitation::decode(code).is_err() && SealedKey::decode(code).is_err(), "{code}");
         }
         assert!(Invitation::decode(&sealed).is_err(), "one code isn't the other");

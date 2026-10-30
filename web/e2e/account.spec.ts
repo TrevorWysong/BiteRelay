@@ -23,7 +23,7 @@ async function signUp(page: Page, name: string) {
   await page.goto("/#/onboarding");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByPlaceholder("Alex Rivera").fill(name);
-  await page.getByRole("button", { name: "Enter Relay" }).click();
+  await page.getByRole("button", { name: "Enter HandShake" }).click();
   await expect(page).toHaveURL(/#\/customer/);
 }
 
@@ -62,7 +62,7 @@ test("moving to a new phone brings the same account over, and the old phone lets
   await openAccount(oldPhone);
   await oldPhone.getByRole("button", { name: /Move to a new phone/ }).click();
   await oldPhone.getByRole("button", { name: "Paste the code instead" }).click();
-  await oldPhone.getByPlaceholder("relay-move:1:…").fill(invitation);
+  await oldPhone.getByPlaceholder("handshake-move:1:…").fill(invitation);
   await oldPhone.getByRole("button", { name: "Continue" }).click();
   await oldPhone.getByRole("button", { name: "Move my account" }).click();
   await expect(oldPhone.getByRole("heading", { name: "Scan this with your new phone" })).toBeVisible({ timeout: 90_000 });
@@ -73,9 +73,9 @@ test("moving to a new phone brings the same account over, and the old phone lets
   // own passkey).
   await newPhone.getByRole("button", { name: "My old phone scanned it" }).click();
   await newPhone.getByRole("button", { name: "Paste the code instead" }).click();
-  await newPhone.getByPlaceholder("relay-key:1:…").fill(sealed);
+  await newPhone.getByPlaceholder("handshake-key:1:…").fill(sealed);
   await newPhone.getByRole("button", { name: "Continue" }).click();
-  await newPhone.getByRole("button", { name: "Unlock Relay" }).click({ timeout: 150_000 });
+  await newPhone.getByRole("button", { name: "Unlock HandShake" }).click({ timeout: 150_000 });
   await expect(newPhone).toHaveURL(/#\/customer/);
   await newPhone.goto("/#/profile");
   await expect(newPhone.getByText(name).first()).toBeVisible();
@@ -110,10 +110,10 @@ test("a recovery phrase brings an account back on a new device", async ({ browse
   await expect(found.getByRole("heading", { name: "Your account is here" })).toBeVisible({ timeout: 60_000 });
   // A customer's name was sealed to the lost key: they type it again.
   await found.getByPlaceholder("Alex Rivera").fill("Forgetful again");
-  await found.getByRole("button", { name: "Enter Relay" }).click();
+  await found.getByRole("button", { name: "Enter HandShake" }).click();
   await expect(found).toHaveURL(/#\/customer/);
 
   await lost.reload();
-  await lost.getByRole("button", { name: "Unlock Relay" }).click();
+  await lost.getByRole("button", { name: "Unlock HandShake" }).click();
   await expect(lost.getByRole("heading", { name: "Your account has moved" })).toBeVisible({ timeout: 30_000 });
 });

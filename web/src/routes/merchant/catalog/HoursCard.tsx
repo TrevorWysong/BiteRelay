@@ -24,7 +24,7 @@ export function HoursCard({ catalog, catalogRef, onSaved }: { catalog: MerchantC
         <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
           <Clock size={12} /> {t("hoursEditor.title")}
         </p>
-        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-relay-600" aria-label={t("hoursEditor.edit")}>
+        <button onClick={() => setEditing((v) => !v)} className="text-ink-400 hover:text-handshake-600" aria-label={t("hoursEditor.edit")}>
           <Pencil size={14} />
         </button>
       </div>
@@ -120,11 +120,11 @@ function HoursEditor({ catalog, onSave }: { catalog: MerchantCatalog; onSave: (w
                 <span className="text-xs font-semibold text-ink-700 dark:text-ink-200">{weekdayName(day)}</span>
                 <div className="flex items-center gap-3 text-[11px] font-semibold">
                   {week[day].length > 0 && (
-                    <button onClick={() => copyToAll(day)} className="text-ink-400 hover:text-relay-600">
+                    <button onClick={() => copyToAll(day)} className="text-ink-400 hover:text-handshake-600">
                       {t("hoursEditor.copyAll")}
                     </button>
                   )}
-                  <button onClick={() => update(day, [...week[day], week[day].length ? { opens: 17 * 60, closes: 22 * 60 } : DEFAULT_PERIOD])} className="flex items-center gap-0.5 text-relay-600">
+                  <button onClick={() => update(day, [...week[day], week[day].length ? { opens: 17 * 60, closes: 22 * 60 } : DEFAULT_PERIOD])} className="flex items-center gap-0.5 text-handshake-600">
                     <Plus size={12} /> {week[day].length ? t("hoursEditor.addHours") : t("hoursEditor.open")}
                   </button>
                 </div>

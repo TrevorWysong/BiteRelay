@@ -14,9 +14,9 @@ use lair_keystore_api::prelude::*;
 use std::sync::Arc;
 
 /// Every account key's tag starts so; the rest keeps tags unique.
-pub const ACCOUNT_TAG_PREFIX: &str = "relay-account:";
+pub const ACCOUNT_TAG_PREFIX: &str = "handshake-account:";
 /// And every invitation key's.
-pub const INVITATION_TAG_PREFIX: &str = "relay-invitation:";
+pub const INVITATION_TAG_PREFIX: &str = "handshake-invitation:";
 
 fn fresh_tag(prefix: &str) -> Arc<str> {
     format!("{prefix}{}", uuid::Uuid::new_v4()).into()

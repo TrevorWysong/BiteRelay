@@ -38,7 +38,7 @@ function sections(t: NetworkTerms): PolicySection[] {
     {
       id: "payments",
       title: "Payments and escrow",
-      summary: "Money is set aside at each step and moves only on proof or on the store's decision about the order. Relay takes no fee.",
+      summary: "Money is set aside at each step and moves only on proof or on the store's decision about the order. HandShake takes no fee.",
       points: [
         "When a store accepts your order, the price of the food is set aside from your balance. When you accept a driver's bid, their fee and your tip are set aside too.",
         "The driver sets aside the value of the food when they commit to the order, before the store starts cooking it. That's their collateral: it's theirs again once the order is delivered.",
@@ -59,10 +59,10 @@ function sections(t: NetworkTerms): PolicySection[] {
         "You add funds by paying one of the network's issuers, by card, which adds exactly that amount to your balance: adding funds is free. Your balance works like a gift card for the whole network.",
         "Each store sets its own sales tax or VAT, as the seller. Checkout and your receipt show it: added to the price, or already included in it.",
         "How much you can add by card grows with your account: a new account can add a little a day, and more as it orders. A card's first payment may ask your bank to confirm it's you.",
-        "If your balance is short at checkout, you pay the difference by card right there, and your order is placed as soon as it's paid. The card is saved with the issuer, never with Relay, so next time it's one tap; you can also have your balance topped up automatically when it runs low.",
+        "If your balance is short at checkout, you pay the difference by card right there, and your order is placed as soon as it's paid. The card is saved with the issuer, never with HandShake, so next time it's one tap; you can also have your balance topped up automatically when it runs low.",
         `To cash out, you ask an issuer to pay part of your balance to you outside the network. You can cash out ${formatCents(t.min_redemption_cents)} or more, up to what's in your balance; money held for orders and credit never can be.`,
         "Each issuer publishes its cash-out fee, which covers its card and transfer costs, and how long payouts take; the app shows what you'll receive before you confirm.",
-        "You set up your payout account on your issuer's processor once, proving with your own key that it's yours. Your bank details never touch Relay. A cash-out goes back to the cards you paid with first, and only what's left beyond that -- what you earned -- to your bank. A new account's first bank payout waits about a week.",
+        "You set up your payout account on your issuer's processor once, proving with your own key that it's yours. Your bank details never touch HandShake. A cash-out goes back to the cards you paid with first, and only what's left beyond that -- what you earned -- to your bank. A new account's first bank payout waits about a week.",
         "If you dispute a card payment with your bank, the issuer pauses adding funds and cashing out on your account until the dispute is settled.",
         "Your issuer records what it did with each cash-out, once: paid, with its payout reference, or declined. A declined cash-out comes back to your balance automatically.",
         "Payout details you add are sealed so only that issuer can read them.",
@@ -249,7 +249,7 @@ function sections(t: NetworkTerms): PolicySection[] {
         "Moving to a new phone: your old phone hands the account to the new one, with your balance, ratings and history. Your old phone can't spend after that.",
         "Losing your phone: your recovery phrase (twelve words you write down) or enough of your guardians (people you choose, who vouch for your new phone) bring your account back.",
         "After a recovery, your balance is reissued to your new phone by the network's issuer, once your old phone has gone unused for the issuer's waiting period. That's so nobody holding your old phone can spend the same money twice.",
-        "Anyone with your recovery phrase can take over your account. Keep it on paper, never share it, and no one from Relay will ever ask for it.",
+        "Anyone with your recovery phrase can take over your account. Keep it on paper, never share it, and no one from HandShake will ever ask for it.",
         "Guardians can't touch your account on their own: only enough of them together, for a phone you're recovering onto. Your plan publishes their keys, never their names.",
         "When the network moves to a new version, you move your account to it from the old app: your balance is carried over by the issuer, and your details, stores and ratings come with you. The old version stops working for your account once you move.",
       ],
@@ -271,12 +271,12 @@ function sections(t: NetworkTerms): PolicySection[] {
 /// What could go wrong, plainly.
 function risks(t: NetworkTerms): string[] {
   return [
-    "Relay is software run by its users, not a company that stands behind your orders. No one can reverse a payment the network has settled, and there's no customer service desk.",
+    "HandShake is software run by its users, not a company that stands behind your orders. No one can reverse a payment the network has settled, and there's no customer service desk.",
     "When a customer and driver disagree about a delivery, the store decides. A store could side with a customer against a driver who did deliver; it gains nothing by it, and its decision is public, but the network can't overturn it. Drivers are protected by handing over against the customer's code.",
     "An order left at the door is delivered once it's left. If it's taken after that, the customer bears the loss, as with a parcel left without a signature.",
     "Nothing forces a store to answer a report about missing items before it settles the order; a store that settles early, or declines unfairly, answers to its reviews.",
     `A store could refuse to check a driver in, then collect that driver's collateral if they leave and no one else comes. The network can't tell a store that won't check drivers in from a driver who never arrived, so it sides with the store, the party with the most to lose. Drivers can report it; reports from drivers who've delivered for at least ${t.min_reporter_stores} different stores show on the store's record, and drivers' apps can skip reported stores.`,
-    "Balances are credits issued by this network's issuers. What a balance is worth outside Relay depends on those issuers, not on Relay.",
+    "Balances are credits issued by this network's issuers. What a balance is worth outside HandShake depends on those issuers, not on HandShake.",
     "If you lose your phone with no recovery phrase or guardians set up, your account and its balance can't be recovered by anyone. A phone found by someone else can still spend until you recover the account.",
     "Everything you publish is permanent and copied across the network. Reviews, ratings and order records can't be deleted.",
     "Which store a customer key ordered from, and roughly where, is public. Using one identity for everything links those orders together.",

@@ -70,7 +70,7 @@ export function NewStoreForm({ firstStore }: { firstStore: boolean }) {
         </button>
       )}
       <div className="mb-5 flex flex-col items-center gap-2 text-center">
-        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-relay-100 dark:bg-relay-900/30 text-relay-600">
+        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-handshake-100 dark:bg-handshake-900/30 text-handshake-600">
           <Store size={22} />
         </div>
         <h1 className="text-lg font-black text-ink-900 dark:text-ink-50">{firstStore ? t("newStore.first") : t("newStore.another")}</h1>

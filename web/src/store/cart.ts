@@ -103,7 +103,7 @@ export const useCart = create<CartState>()(
       total: () => get().lines.reduce((sum, l) => sum + l.priceCents * l.quantity, 0),
     }),
     {
-      name: "relay.cart.v1",
+      name: "handshake.cart.v1",
       storage: createJSONStorage(() => localStorage, { replacer, reviver }),
       partialize: ({ catalogRef, merchant, merchantName, lines }) => ({ catalogRef, merchant, merchantName, lines }),
     },

@@ -14,7 +14,7 @@ export function WaitingForStore({ writtenAt, now, cancelling, onCancel }: { writ
   return (
     <Card className="mt-3 p-4">
       <div className="flex items-center gap-3">
-        <Store size={20} className="shrink-0 text-relay-600" />
+        <Store size={20} className="shrink-0 text-handshake-600" />
         <p className="text-sm text-ink-700 dark:text-ink-200">{t("waiting.store")}</p>
       </div>
       <ResponseCountdown deadlineMs={responseDeadlineMs(writtenAt, windowSecs)} windowSecs={windowSecs} now={now} label="waiting.until" />

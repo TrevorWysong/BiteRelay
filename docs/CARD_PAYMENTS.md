@@ -29,7 +29,7 @@ See the issuer README's *Card risk*.
 - **Reconciliation.** The service grants any payment whose webhook went missing.
 
 **Why credits, not per-order card holds.** We weighed charging a card per order with holds, as DoorDash does, and kept credits:
-- **It would put a company in every order.** Whoever captures each charge becomes merchant of record, with sales tax, disputes and payout control. That is the middleman Relay removes.
+- **It would put a company in every order.** Whoever captures each charge becomes merchant of record, with sales tax, disputes and payout control. That is the middleman HandShake removes.
 - **Card fees would multiply.** An order needs up to three holds (customer, driver collateral, store's fee share); several small captures cost far more than one top-up.
 - **Card holds are poor escrow.** They expire after about 7 days, capture once, and tie up a driver's debit card. Every rule the ledger enforces peer to peer would have to be redone as captures and refunds in one central service.
 
@@ -37,7 +37,7 @@ Credits are best understood as **decentralized gift cards**: closed-loop prepaid
 
 **Fees, as decided:** adding funds is free. The issuer recovers Stripe's costs (2.9% + 30¢ in, 0.25% + 25¢ out, and $2 a month per account paid) through its cash-out fee, 3.25% + 55¢ by default. The Wallet shows that fee before anyone confirms.
 
-## Where Relay was before
+## Where HandShake was before
 
 - **Ledger.** Every balance is the arithmetic of its owner's signed ledger chain (`ledger_integrity`). Money moves only by validated holds, collects and waives on orders.
 - **Money in.** Money enters only through an `IssuerGrant`, written by an agent on the network's issuer roster (`issuers` in the DNA properties). The grant carries the issuer's own reference, which is unique, and its recipient collects it with a `Deposit`.
@@ -60,16 +60,16 @@ Stripe Connect is built for exactly this split:
 
 ## Options
 
-| Option | How it works | Fits Relay? |
+| Option | How it works | Fits HandShake? |
 |---|---|---|
 | **A. Issuer-backed prepaid credits** (recommended) | Customers top up by card with an issuer; the issuer grants credits on the ledger; stores and drivers redeem credits for bank payouts through the issuer | Yes: the ledger stays peer-to-peer; only top-ups and payouts touch a payment company |
-| B. Per-order card charges | A platform charges each order by card and splits it with Connect | No: puts a company in the middle of every order, which is exactly what Relay removes, and makes that company the marketplace facilitator and payment intermediary |
+| B. Per-order card charges | A platform charges each order by card and splits it with Connect | No: puts a company in the middle of every order, which is exactly what HandShake removes, and makes that company the marketplace facilitator and payment intermediary |
 | C. Stablecoin rails (e.g. USDC) | Balances are tokens; on- and off-ramps by exchanges | Possible later: no chargebacks and global reach, but needs a wallet and ramps per user and has its own regulation; out of scope for a card-first launch |
 
 ## Recommended design: issuer-backed credits
 
 ### Money in (top-up)
-1. In the app, the customer picks an amount and pays on **Stripe Checkout**, Stripe's hosted page, or Stripe Elements, whose card fields are Stripe-hosted iframes. Card data never touches Relay's code, which keeps the PCI burden at the lowest level, SAQ A ([PCI with Stripe](https://cside.com/blog/can-you-use-stripe-for-pci-dss)).
+1. In the app, the customer picks an amount and pays on **Stripe Checkout**, Stripe's hosted page, or Stripe Elements, whose card fields are Stripe-hosted iframes. Card data never touches HandShake's code, which keeps the PCI burden at the lowest level, SAQ A ([PCI with Stripe](https://cside.com/blog/can-you-use-stripe-for-pci-dss)).
 2. Stripe sends a webhook to the **issuer service**: a small server owned by the issuer, with its own Holochain conductor and an agent key on the roster.
 3. The issuer writes an `IssuerGrant` to the customer's agent key, with the Stripe payment id as `reference`. Validation already makes each grant unique and collectable once.
 4. The customer's app collects the grant (`Deposit`) and the balance is spendable.
@@ -95,7 +95,7 @@ This is new on the ledger.
 - **Paying out to others is money transmission.** Turning one user's card money into another user's bank payout generally needs a state money transmitter licence. Running payouts through Stripe Connect, under Stripe's licences, is the standard way platforms avoid needing their own. Confirm this with counsel for the issuer's setup.
 - **Fees.** Card top-ups cost the issuer about 2.9% + 30¢, and payouts may cost a small fee.
   - Choose who bears them: a top-up fee shown to the customer, or a redemption fee.
-  - Either way, publish it in the network terms. Relay itself takes nothing.
+  - Either way, publish it in the network terms. HandShake itself takes nothing.
 - **Several issuers.** The roster allows more than one issuer, so communities can compete or co-operate. A redemption names its issuer. Credits are fungible across issuers, so an issuer redeems whatever it's presented. Settling between issuers is an off-ledger agreement, so start with a single issuer.
 
 ## What to build

@@ -11,7 +11,7 @@
 // conductor, provisioning identities through its Admin API so several
 // people can share one node (`holochain/admin.ts`). That path exists only
 // when `DEV_HOST` is true -- `vite dev`, or a build made with
-// VITE_RELAY_DEV_HOST=true for testing -- and is compiled out of every
+// VITE_HANDSHAKE_DEV_HOST=true for testing -- and is compiled out of every
 // other build.
 import { isTauriHolochain } from "@holochain/client";
 

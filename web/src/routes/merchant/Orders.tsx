@@ -413,7 +413,7 @@ function OrderCard({ row, storeLabel, showTime, children }: { row: QueueRow; sto
   return (
     <Card className="p-4">
       <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
-        <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-relay-600" : "text-presence-600")}>
+        <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-handshake-600" : "text-presence-600")}>
           {row.kind === "Delivery" ? <Bike size={11} /> : <ShoppingBag size={11} />}
           {t(row.kind === "Delivery" ? "cart.delivery" : "cart.pickup")}
         </span>

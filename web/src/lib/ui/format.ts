@@ -23,7 +23,7 @@ function minorUnitsPerUnit(): number {
   return 10 ** (currencyFormat()?.resolvedOptions().maximumFractionDigits ?? 2);
 }
 
-/// An amount given in minor units -- as every amount in Relay is -- written
+/// An amount given in minor units -- as every amount in HandShake is -- written
 /// in the network's currency: "$12.50".
 export function formatCents(minorUnits: number): string {
   const formatter = currencyFormat();

@@ -5,7 +5,7 @@ WORKDIR /app/push
 COPY push/package.json push/package-lock.json ./
 RUN npm ci
 COPY push/ ./
-ENV DB_PATH=/var/lib/relay-push/push.db
-VOLUME /var/lib/relay-push
+ENV DB_PATH=/var/lib/handshake-push/push.db
+VOLUME /var/lib/handshake-push
 EXPOSE 8892
 CMD ["npm", "start"]

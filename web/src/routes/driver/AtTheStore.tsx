@@ -63,7 +63,7 @@ export function StoreCheckIn({ orderRef, onDone }: Props) {
   const onScan = useCallback(
     (text: string) => {
       const parsed = decodeHandoverCode(text);
-      if (!parsed) return setProblem(translate("scan.notRelay"));
+      if (!parsed) return setProblem(translate("scan.notHandShake"));
       if (parsed.orderHex !== orderHex) return setProblem(translate("scan.otherOrder"));
       navigator.vibrate?.(40);
       setProblem(null);

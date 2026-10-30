@@ -6,7 +6,7 @@ import { sealedAccount } from "../src/lib/account/deviceMove";
 
 /// An agent key's 39 bytes: Holochain's prefix, 32 of key, 4 of location.
 const agent = new Uint8Array([0x84, 0x20, 0x24, ...new Array(32).fill(7), 1, 2, 3, 4]);
-const where = { adminUrl: "ws://localhost:8888", installedAppId: "relay-abc" };
+const where = { adminUrl: "ws://localhost:8888", installedAppId: "handshake-abc" };
 
 test("the dev host's code reads back as the account, wherever it lives", () => {
   // As the browser keeps the key: plain base64 (devIdentityStorage).
@@ -18,6 +18,6 @@ test("the dev host's code reads back as the account, wherever it lives", () => {
 });
 
 test("anything else isn't one", () => {
-  assert.equal(readDevSealedKey("relay-key:1:AAAA"), null);
+  assert.equal(readDevSealedKey("handshake-key:1:AAAA"), null);
   assert.equal(readDevSealedKey(devSealedKey(agent, where).slice(0, 80)), null);
 });

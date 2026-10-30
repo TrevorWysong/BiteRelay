@@ -185,19 +185,19 @@ export function PickupOrderDetail() {
       )}
 
       {order.status === "MerchantConfirmed" && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
-          <ChefHat size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-handshake-50 dark:bg-handshake-900/20 p-4">
+          <ChefHat size={20} className="text-handshake-600" />
+          <p className="text-sm text-handshake-700 dark:text-handshake-300">
             {order.ready_by !== null ? t("pickup.preparingBy", { time: formatClockTime(order.ready_by) }) : t("pickup.preparing")}
           </p>
         </motion.div>
       )}
 
       {(order.status === "ReadyForPickup" || order.status === "Disputed") && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-handshake-50 dark:bg-handshake-900/20 p-4">
           <div className="flex items-center gap-3">
-            <ChefHat size={20} className="text-relay-600" />
-            <p className="text-sm text-relay-700 dark:text-relay-300">
+            <ChefHat size={20} className="text-handshake-600" />
+            <p className="text-sm text-handshake-700 dark:text-handshake-300">
               {order.status === "Disputed" ? t("pickup.disputed") : t("pickup.ready")}
             </p>
           </div>
@@ -205,7 +205,7 @@ export function PickupOrderDetail() {
             {t("pickup.pickedUp")}
           </Button>
           {order.status === "ReadyForPickup" && (
-            <button onClick={fileDispute} disabled={disputing} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline disabled:opacity-50 dark:text-relay-300">
+            <button onClick={fileDispute} disabled={disputing} className="text-xs font-semibold text-handshake-700 underline-offset-4 hover:underline disabled:opacity-50 dark:text-handshake-300">
               {t("pickup.cantGet")}
             </button>
           )}

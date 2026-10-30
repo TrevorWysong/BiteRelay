@@ -17,18 +17,18 @@ import { dhtSync, enableAndGetAgentApp, runScenario, type CallableCell, type Con
 import { encodeHashToBase64, type AgentPubKey, type Record as HcRecord } from "@holochain/client";
 import { EMPTY_HANDS, HAPP_PATH, shareAgentsOn, ST_PETE, TEST_PROPERTIES, actionHash, decodeEntry, latestLedgerEntry, retryUntil, retryUntilOk, useTestCoordinators, retryingCaller } from "./helpers.js";
 
-const DNA_PATH = fileURLToPath(new URL("../../../dnas/relay/workdir/relay.dna", import.meta.url));
-const OLD = "relay-v1";
-const NEW = "relay-v2";
+const DNA_PATH = fileURLToPath(new URL("../../../dnas/handshake/workdir/handshake.dna", import.meta.url));
+const OLD = "handshake-v1";
+const NEW = "handshake-v2";
 
 /// The next version's app: its own network, and the previous one as its
 /// `previous` role.
 function twoNetworkHapp(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "relay-next-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "handshake-next-"));
   const role = (name: string) => ({ name, provisioning: { strategy: "create", deferred: false }, dna: { path: DNA_PATH, modifiers: { network_seed: null, properties: null }, clone_limit: 0 } });
-  writeFileSync(path.join(dir, "happ.yaml"), JSON.stringify({ manifest_version: "0", name: "relay-next", description: null, roles: [role("relay"), role("previous")] }));
-  execFileSync("hc", ["app", "pack", dir, "-o", path.join(dir, "relay-next.happ")]);
-  return path.join(dir, "relay-next.happ");
+  writeFileSync(path.join(dir, "happ.yaml"), JSON.stringify({ manifest_version: "0", name: "handshake-next", description: null, roles: [role("handshake"), role("previous")] }));
+  execFileSync("hc", ["app", "pack", dir, "-o", path.join(dir, "handshake-next.happ")]);
+  return path.join(dir, "handshake-next.happ");
 }
 
 const settings = (seed: string, properties: Record<string, unknown>) => ({ type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: seed, properties: { ...TEST_PROPERTIES, ...properties } } } });
@@ -53,14 +53,14 @@ await runScenario(async (scenario) => {
   // The old network: the issuer and Alice. The new: the issuer, and Bob --
   // Alice's account on the new version, whose app carries the old network
   // too.
-  const issuerOld = await install(issuerHost, issuerKey, HAPP_PATH, { relay: settings(OLD, properties) }, "issuer-old");
-  const alice = await install(aliceHost, aliceKey, HAPP_PATH, { relay: settings(OLD, properties) }, "alice-old");
-  const issuerNew = await install(issuerHost, issuerKey, HAPP_PATH, { relay: settings(NEW, properties) }, "issuer-new");
-  const bob = await install(bobHost, bobKey, next, { relay: settings(NEW, properties), previous: settings(OLD, properties) }, "bob-next");
+  const issuerOld = await install(issuerHost, issuerKey, HAPP_PATH, { handshake: settings(OLD, properties) }, "issuer-old");
+  const alice = await install(aliceHost, aliceKey, HAPP_PATH, { handshake: settings(OLD, properties) }, "alice-old");
+  const issuerNew = await install(issuerHost, issuerKey, HAPP_PATH, { handshake: settings(NEW, properties) }, "issuer-new");
+  const bob = await install(bobHost, bobKey, next, { handshake: settings(NEW, properties), previous: settings(OLD, properties) }, "bob-next");
 
   const oldNetwork = issuerOld.cells[0].cell_id[0];
   const newNetwork = issuerNew.cells[0].cell_id[0];
-  const bobHere = bob.namedCells.get("relay")!;
+  const bobHere = bob.namedCells.get("handshake")!;
   const bobPrevious = bob.namedCells.get("previous")!;
   assert.ok(Buffer.from(bobHere.cell_id[0]).equals(Buffer.from(newNetwork)) && Buffer.from(bobPrevious.cell_id[0]).equals(Buffer.from(oldNetwork)), "two networks, as the versions would be");
   await shareAgentsOn([issuerHost, aliceHost, bobHost], oldNetwork);

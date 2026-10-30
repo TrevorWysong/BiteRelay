@@ -33,7 +33,7 @@ test("in Spanish, a refusal is translated, its values filled back in", () => {
 test("the issuer's and the runtime's refusals are translated too, not only the zomes'", () => {
   inSpanish(() => {
     assert.equal(describeError(new Error("Too many requests from here. Try again later.")), "Demasiadas solicitudes desde aquí. Inténtalo más tarde.");
-    assert.equal(describeError(new Error("That isn't a code from Relay's move to a new phone.")), "Ese no es un código del traslado de Relay a un teléfono nuevo.");
+    assert.equal(describeError(new Error("That isn't a code from HandShake's move to a new phone.")), "Ese no es un código del traslado de HandShake a un teléfono nuevo.");
   });
 });
 

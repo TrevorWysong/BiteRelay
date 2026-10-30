@@ -1,5 +1,5 @@
 {
-  "name": "relay-tryorama-tests",
+  "name": "handshake-tryorama-tests",
   "private": true,
   "type": "module",
   "scripts": {

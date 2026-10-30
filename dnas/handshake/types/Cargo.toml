@@ -1,0 +1,11 @@
+[package]
+name = "handshake_types"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }
+serde.workspace = true

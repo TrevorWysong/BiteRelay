@@ -32,7 +32,7 @@ export function currentTerms(): NetworkTerms {
 /// The map and address-search services the network chose (its `services`
 /// setting). Before the network's terms have loaded -- address search on the
 /// sign-up screen, in development -- OpenStreetMap's public servers, the
-/// network's own default (`relay_governance::services`).
+/// network's own default (`handshake_governance::services`).
 export function networkServices(): Pick<NetworkTerms, "map_tiles_url" | "map_attribution" | "geocoder_url"> {
   return (
     useNetwork.getState().terms ?? {

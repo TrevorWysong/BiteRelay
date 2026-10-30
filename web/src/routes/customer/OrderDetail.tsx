@@ -453,7 +453,7 @@ export function OrderDetail() {
                       <div>
                         <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">
                           {stats?.displayName || t("order.driverNamed", { id: shortAgentId(bid.bidder) })} · {formatEta(bid.eta_seconds)}
-                          {bestMatch && bytesEqual(bestMatch.bid, bidHash) && <span className="ml-2 rounded-full bg-relay-100 px-2 py-0.5 text-[10px] font-bold text-relay-700 dark:bg-relay-900/30 dark:text-relay-300">{t("order.bestMatch")}</span>}
+                          {bestMatch && bytesEqual(bestMatch.bid, bidHash) && <span className="ml-2 rounded-full bg-handshake-100 px-2 py-0.5 text-[10px] font-bold text-handshake-700 dark:bg-handshake-900/30 dark:text-handshake-300">{t("order.bestMatch")}</span>}
                         </p>
                         <p className="text-xs text-ink-400">{t("order.bidFee", { amount: formatCents(bid.price_offer) })}</p>
                         {stats && (
@@ -497,9 +497,9 @@ export function OrderDetail() {
       )}
 
       {["BidAccepted", "DriverEnRouteToMerchant", "MerchantConfirmed", "DriverAtStore"].includes(order.status) && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
-          <Bike size={20} className="text-relay-600" />
-          <p className="text-sm text-relay-700 dark:text-relay-300">{DRIVER_PROGRESS[order.status] && t(DRIVER_PROGRESS[order.status]!)}</p>
+        <motion.div variants={fadeSlideUp} className="mt-5 flex items-center gap-3 rounded-2xl bg-handshake-50 dark:bg-handshake-900/20 p-4">
+          <Bike size={20} className="text-handshake-600" />
+          <p className="text-sm text-handshake-700 dark:text-handshake-300">{DRIVER_PROGRESS[order.status] && t(DRIVER_PROGRESS[order.status]!)}</p>
         </motion.div>
       )}
 
@@ -519,21 +519,21 @@ export function OrderDetail() {
       )}
 
       {order.status === "PickedUp" && (
-        <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-relay-50 dark:bg-relay-900/20 p-4">
+        <motion.div variants={fadeSlideUp} className="mt-5 flex flex-col gap-3 rounded-2xl bg-handshake-50 dark:bg-handshake-900/20 p-4">
           <div className="flex items-center gap-3">
-            <Bike size={20} className="text-relay-600" />
-            <p className="text-sm text-relay-700 dark:text-relay-300">{t("order.pickedUp")}</p>
+            <Bike size={20} className="text-handshake-600" />
+            <p className="text-sm text-handshake-700 dark:text-handshake-300">{t("order.pickedUp")}</p>
           </div>
           {order.collateral_hold && (
-            <p className="flex items-start gap-2 text-xs text-relay-700 dark:text-relay-300">
+            <p className="flex items-start gap-2 text-xs text-handshake-700 dark:text-handshake-300">
               <ShieldCheck size={14} className="mt-0.5 shrink-0" />
               {t("order.collateral", { amount: formatCents(order.order_total) })}
             </p>
           )}
           {dropoff ? (
-            <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">{t("order.handedAt", { time: formatClockTime(dropoff.at) })}</p>
+            <p className="text-xs font-semibold text-handshake-700 dark:text-handshake-300">{t("order.handedAt", { time: formatClockTime(dropoff.at) })}</p>
           ) : handedOver ? (
-            <p className="text-xs text-relay-700 dark:text-relay-300">
+            <p className="text-xs text-handshake-700 dark:text-handshake-300">
               {t("order.confirmHint")}
             </p>
           ) : null}
@@ -558,7 +558,7 @@ export function OrderDetail() {
                 </div>
               </motion.div>
             ) : (
-              <motion.button key="ask" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setConfirmingClaim(true)} className="text-xs font-semibold text-relay-700 underline-offset-4 hover:underline dark:text-relay-300">
+              <motion.button key="ask" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setConfirmingClaim(true)} className="text-xs font-semibold text-handshake-700 underline-offset-4 hover:underline dark:text-handshake-300">
                 {t("order.claim.ask")}
               </motion.button>
             )}

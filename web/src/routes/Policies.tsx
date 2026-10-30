@@ -1,4 +1,4 @@
-// How Relay works: the rules for payments, deliveries, missing items,
+// How HandShake works: the rules for payments, deliveries, missing items,
 // cancellations, disputes, reputation and privacy, what each means for
 // customers, stores and drivers over time, and the risks. Content lives in
 // `lib/policies/`; this network's numbers come from its own settings.

@@ -6,15 +6,15 @@
 //! head at least two peers agree on (`restore_chain_quorum`).
 //!
 //! Needs Holochain 0.7.1's binaries on PATH and the packed bundle
-//! (workdir/relay.happ, `npm run backend`). Run with
+//! (workdir/handshake.happ, `npm run backend`). Run with
 //! `cargo test --manifest-path runtime/device/Cargo.toml -- --ignored`.
 
 use holochain_client::{AdminWebsocket, AllowedOrigins, AppWebsocket, AuthorizeSigningCredentialsPayload, CellInfo, ClientAgentSigner, ExternIO, IssueAppAuthenticationTokenPayload, ZomeCallTarget};
 use holochain_types::app::{AppBundleSource, AppStatus};
 use lair_keystore_api::dependencies::{sodoken, url::Url};
 use lair_keystore_api::ipc_keystore::ipc_keystore_connect;
-use relay_device::node::{app_info, App};
-use relay_device::{Device, Error};
+use handshake_device::node::{app_info, App};
+use handshake_device::{Device, Error};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -25,9 +25,9 @@ use tokio::process::{Child, Command};
 const PASSPHRASE: &str = "lair-password";
 
 fn app() -> App {
-    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workdir/relay.happ");
+    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workdir/handshake.happ");
     assert!(bundle.exists(), "pack the bundle first: npm run backend (in web/)");
-    App { installed_app_id: "relay".into(), bundle: AppBundleSource::Path(bundle), roles_settings: None }
+    App { installed_app_id: "handshake".into(), bundle: AppBundleSource::Path(bundle), roles_settings: None }
 }
 
 /// The first line of `child`'s stdout containing `marker`, from there on.
@@ -114,7 +114,7 @@ async fn wait_until_ready(node: &Node) {
         ready: bool,
     }
     let info = app_info(&node.admin, &app()).await.unwrap().unwrap();
-    let Some(CellInfo::Provisioned(cell)) = info.cell_info["relay"].first() else { panic!("no relay cell") };
+    let Some(CellInfo::Provisioned(cell)) = info.cell_info["handshake"].first() else { panic!("no relay cell") };
     let signer = ClientAgentSigner::default();
     let credentials = node.admin.authorize_signing_credentials(AuthorizeSigningCredentialsPayload { cell_id: cell.cell_id.clone(), functions: None }).await.unwrap();
     signer.add_credentials(cell.cell_id.clone(), credentials);
@@ -122,7 +122,7 @@ async fn wait_until_ready(node: &Node) {
     let token = node.admin.issue_app_auth_token(IssueAppAuthenticationTokenPayload::for_installed_app_id(info.installed_app_id.clone())).await.unwrap().token;
     let app_ws = AppWebsocket::connect(("127.0.0.1", port), token, signer.into(), None).await.unwrap();
     for _ in 0..120 {
-        let answer = app_ws.call_zome(ZomeCallTarget::RoleName("relay".into()), "account".into(), "ready_to_move".into(), ExternIO::encode(()).unwrap()).await.unwrap();
+        let answer = app_ws.call_zome(ZomeCallTarget::RoleName("handshake".into()), "account".into(), "ready_to_move".into(), ExternIO::encode(()).unwrap()).await.unwrap();
         if answer.decode::<Readiness>().unwrap().ready {
             return;
         }
@@ -144,7 +144,7 @@ async fn an_account_moves_to_a_new_device_with_its_key() {
     assert_eq!(old.device.start_account().await.unwrap(), account, "a second start is the same account");
     witness.device.start_account().await.unwrap();
     second_witness.device.start_account().await.unwrap();
-    // The new phone opens Relay for the first time: an account of its own,
+    // The new phone opens HandShake for the first time: an account of its own,
     // which the move replaces.
     let throwaway = new.device.start_account().await.unwrap();
     assert!(old.device.can_move().await.unwrap());
@@ -152,7 +152,7 @@ async fn an_account_moves_to_a_new_device_with_its_key() {
     wait_until_ready(&old).await;
 
     let invitation = new.device.invite().await.unwrap();
-    assert!(matches!(old.device.send("relay-move:1:nonsense").await, Err(Error::BadCode)));
+    assert!(matches!(old.device.send("handshake-move:1:nonsense").await, Err(Error::BadCode)));
     assert_eq!(status(&old).await, Some(AppStatus::Enabled), "a bad code changes nothing");
     let sealed = old.device.send(&invitation).await.unwrap();
     assert!(matches!(status(&old).await, Some(AppStatus::Disabled(_))), "the old device stops writing");

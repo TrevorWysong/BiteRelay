@@ -26,15 +26,15 @@ RUN npm ci --omit=dev || npm ci
 COPY issuer/ ./
 # The network's bundle, built with `npm run package` (in web/) -- the issuer
 # installs exactly what everyone else runs.
-COPY deploy/relay.happ /app/relay.happ
+COPY deploy/handshake.happ /app/handshake.happ
 COPY deploy/issuer/start.sh /app/start.sh
 
-ENV ISSUER_DATA_DIR=/var/lib/relay-issuer \
+ENV ISSUER_DATA_DIR=/var/lib/handshake-issuer \
     CONDUCTOR_ADMIN_URL=ws://localhost:8870 \
-    ISSUER_APP_ID=relay-issuer \
-    DB_PATH=/var/lib/relay-issuer/issuer.db \
+    ISSUER_APP_ID=handshake-issuer \
+    DB_PATH=/var/lib/handshake-issuer/issuer.db \
     PORT=8890
-VOLUME /var/lib/relay-issuer
+VOLUME /var/lib/handshake-issuer
 EXPOSE 8890
 ENTRYPOINT ["/app/start.sh"]
 CMD ["serve"]

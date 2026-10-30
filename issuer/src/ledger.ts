@@ -1,4 +1,4 @@
-// The issuer's side of the Relay ledger -- the zome functions this service
+// The issuer's side of the HandShake ledger -- the zome functions this service
 // calls, as the issuer's own identity on its own conductor (the ledger
 // zome's `cash_out` module, and the account zome's recoveries). An interface, so the service's logic is tested
 // without a conductor.
@@ -141,7 +141,7 @@ async function open(adminUrl: string, appId: string): Promise<{ agent: AgentPubK
   try {
     const app = (await admin.listApps({})).find((a) => a.installed_app_id === appId);
     if (!app) throw new Error(`No app "${appId}" on ${adminUrl} -- install the issuer's identity first.`);
-    const cellId = (app.cell_info.relay[0] as { value: { cell_id: CellId } }).value.cell_id;
+    const cellId = (app.cell_info.handshake[0] as { value: { cell_id: CellId } }).value.cell_id;
     await admin.authorizeSigningCredentials(cellId);
     const shared = (await admin.listAppInterfaces()).find((i) => i.allowed_origins === "*" && !i.installed_app_id);
     const port = shared?.port ?? (await admin.attachAppInterface({ allowed_origins: "*" })).port;

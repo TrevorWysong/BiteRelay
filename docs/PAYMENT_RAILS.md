@@ -1,12 +1,12 @@
 # Payment rails: cards and HoloFuel, a plan
 
-How customers can pay, and stores and drivers can get paid out, by card **and** by HoloFuel in a Relay network with no company in the middle. Research and a proposed design to build from. This complements `CARD_PAYMENTS.md`, which covers the card rail in depth.
+How customers can pay, and stores and drivers can get paid out, by card **and** by HoloFuel in a HandShake network with no company in the middle. Research and a proposed design to build from. This complements `CARD_PAYMENTS.md`, which covers the card rail in depth.
 
 This is not legal or tax advice. Card money, crypto assets and exchanging between them each carry their own regulation, which counsel should review per country before launch.
 
 ## Short answer
 
-**Yes, both are possible, side by side.** Relay's ledger doesn't move cards or tokens. It moves *credits* in the network's currency, and those enter only through **issuers** on the network's roster (`IssuerGrant`). A payment rail is simply an issuer that:
+**Yes, both are possible, side by side.** HandShake's ledger doesn't move cards or tokens. It moves *credits* in the network's currency, and those enter only through **issuers** on the network's roster (`IssuerGrant`). A payment rail is simply an issuer that:
 - turns a payment on that rail into credits (a top-up);
 - turns credits back into a payment on that rail (a cash-out).
 
@@ -14,7 +14,7 @@ A card issuer and a HoloFuel issuer are two rows on the same roster. Orders, esc
 
 ## What exists today
 
-- **Relay**
+- **HandShake**
   - Every balance is its owner's own signed ledger. Credits enter by `IssuerGrant` from an issuer on the network's roster, and the customer collects them with a `Deposit`.
   - Each network names its currency (`currency` in the DNA properties, USD by default) and is prepaid (`credit_limit_cents` 0).
   - There is no cash-out yet: `CARD_PAYMENTS.md` plans a `Redeem` entry.
@@ -34,9 +34,9 @@ A card issuer and a HoloFuel issuer are two rows on the same roster. Orders, esc
 - someone at Unyt can answer the questions under "What to ask Unyt".
 
 **What to ask Unyt:**
-1. **Checking payments:** can a Relay conductor read and check a HoloFuel payment directly, by calling Unyt's app on the same conductor? If so, adding funds in HoloFuel needs no trusted issuer, the one way to make the money as decentralized as the rest of Relay.
-2. **Relay's money as a Unyt currency:** could Relay's dollar credits be a currency in Unyt, convertible to HoloFuel, instead of our own ledger plus an issuer?
-3. **Linking identities:** how a HoloFuel payment names a Relay account (a payment note, or a signed link between the two keys).
+1. **Checking payments:** can a HandShake conductor read and check a HoloFuel payment directly, by calling Unyt's app on the same conductor? If so, adding funds in HoloFuel needs no trusted issuer, the one way to make the money as decentralized as the rest of HandShake.
+2. **HandShake's money as a Unyt currency:** could HandShake's dollar credits be a currency in Unyt, convertible to HoloFuel, instead of our own ledger plus an issuer?
+3. **Linking identities:** how a HoloFuel payment names a HandShake account (a payment note, or a signed link between the two keys).
 4. **Value:** whether HoloFuel has a reference rate, and how closely it tracks hosting costs.
 5. **Legal:** whether Unyt or Holo handles identity checks and exchange to dollars.
 6. **Availability:** when third-party apps can use it, and at what cost.
@@ -60,7 +60,7 @@ When to revisit: once live migration has begun *and* Unyt publishes integration 
 HoloFuel is mutual credit, not a fixed-supply token: credit is created when someone spends it and settled when they deliver value back, and it's backed by hosting capacity. That changes the picture:
 - **Steadier value.** It's meant to track hosting costs, not swing with speculation, though it isn't pegged to the dollar.
 - **Lighter tax burden.** If its value holds, spending it gives about zero gain each time. It might also be treated like barter-exchange units rather than property. That's unsettled, so ask a tax adviser.
-- **The same kind of system as Relay's ledger.** Each person keeps their own signed ledger, and `credit_limit_cents` lets a balance go below zero: that's mutual credit, which is why networks default to prepaid. Connecting the two is a closer fit than bridging to a blockchain.
+- **The same kind of system as HandShake's ledger.** Each person keeps their own signed ledger, and `credit_limit_cents` lets a balance go below zero: that's mutual credit, which is why networks default to prepaid. Connecting the two is a closer fit than bridging to a blockchain.
 - **Credit for trusted drivers, later.** Mutual credit sets limits by contribution. Drivers with long, clean records could post collateral partly on credit, which makes driving cheaper to start.
 
 Unchanged: customers and drivers pay rent and groceries in dollars, so a swap between HoloFuel and dollars is still needed, along with its legal questions.
@@ -78,7 +78,7 @@ Unchanged: customers and drivers pay rent and groceries in dollars, so a swap be
 ## Card rail, in brief
 
 Covered in `CARD_PAYMENTS.md`:
-- **Top-up:** the customer pays on Stripe's hosted checkout, so card data never touches Relay (PCI SAQ A). The card issuer's service grants credits on a confirmed payment.
+- **Top-up:** the customer pays on Stripe's hosted checkout, so card data never touches HandShake (PCI SAQ A). The card issuer's service grants credits on a confirmed payment.
 - **Cash-out:** stores and drivers cash out through Stripe Connect, under Stripe's licences.
 - **Chargebacks:** the issuer bears them, with fraud tools and top-up limits.
 
@@ -90,8 +90,8 @@ Covered in `CARD_PAYMENTS.md`:
 
 ### Money in (HoloFuel)
 1. The customer chooses "Add funds with HoloFuel" and sees the issuer's rate, e.g. "1,000 HF = $9.70".
-2. Their HoloFuel app (Unyt) pays the issuer's HoloFuel account, with their Relay agent key in the payment's reference or note. That needs confirming with Unyt; the alternative is a one-time signed link between their Relay key and their HoloFuel identity.
-3. The **HoloFuel issuer service** (a conductor running both Relay and Unyt) sees the incoming payment and writes an `IssuerGrant` to that Relay key at the quoted rate. The reference is the HoloFuel transaction id, unique and collectable once, as for cards.
+2. Their HoloFuel app (Unyt) pays the issuer's HoloFuel account, with their HandShake agent key in the payment's reference or note. That needs confirming with Unyt; the alternative is a one-time signed link between their HandShake key and their HoloFuel identity.
+3. The **HoloFuel issuer service** (a conductor running both HandShake and Unyt) sees the incoming payment and writes an `IssuerGrant` to that HandShake key at the quoted rate. The reference is the HoloFuel transaction id, unique and collectable once, as for cards.
 4. The customer's app collects it.
 
 Unlike a card, a HoloFuel payment can't be charged back. Mutual credit settles between parties, so the card rail's chargeback risk doesn't apply.
@@ -106,7 +106,7 @@ Credits are fungible. If customers top up by card and drivers cash out in HoloFu
 - **For launch:** run **one operator with both rails**, so there's nothing to settle.
 - **With several operators:** each issuer publishes its outstanding credits (grants less redemptions, both readable from the ledger) and its reserves, so anyone can check it's solvent.
 
-### What changes in Relay
+### What changes in HandShake
 1. **Ledger:** `Redeem` and `RedemptionPaid` (shared with the card plan), with validation:
    - the redeemer owns the balance;
    - the issuer is on the roster;
@@ -120,7 +120,7 @@ Credits are fungible. If customers top up by card and drivers cash out in HoloFu
 5. **Policies:** each rail's terms, and that HoloFuel conversions use the issuer's published rate.
 
 ## Regulation to check
-- **Cards:** see `CARD_PAYMENTS.md`: money transmission (payouts through Stripe Connect's licences) and PCI. Also check FinCEN's closed-loop prepaid access rules, which exempt closed-loop prepaid access of up to $2,000 per person per day from some obligations; Relay credits are spendable only inside the network.
+- **Cards:** see `CARD_PAYMENTS.md`: money transmission (payouts through Stripe Connect's licences) and PCI. Also check FinCEN's closed-loop prepaid access rules, which exempt closed-loop prepaid access of up to $2,000 per person per day from some obligations; HandShake credits are spendable only inside the network.
 - **HoloFuel exchange:** exchanging a crypto asset for dollar-denominated credits, and back, can make the issuer a *virtual currency exchanger* or money transmitter under FinCEN's guidance and state law. Option C (a HoloFuel-native network with no conversion) avoids exchange entirely.
 - **Tax:** receiving crypto assets as payment is income at its fair market value when received. Brokers of digital assets have new reporting duties (Form 1099-DA) for recent tax years. Whether a HoloFuel issuer counts as a broker needs advice. `TAX_REPORTING.md`'s statements would show each payout's rail and value.
 

@@ -3,7 +3,7 @@
 // (`connectLauncher`); development, with a token the dev host issued
 // (`connect`) -- see `host.ts`. This module owns exactly one AppWebsocket at
 // a time; every zome call in the app goes through `callZome` below, which
-// resolves against the "relay" DNA role by name rather than a
+// resolves against the "handshake" DNA role by name rather than a
 // manually-tracked cell_id, since a browser client has no admin-level cell
 // enumeration of its own.
 //
@@ -20,7 +20,7 @@ import { AppWebsocket } from "@holochain/client";
 import type { AgentPubKey, AppAuthenticationToken, CellId, DirectSignal, Signal, WsClientOptions } from "@holochain/client";
 import type { LocalSignal } from "./types";
 
-const ROLE_NAME = "relay";
+const ROLE_NAME = "handshake";
 
 export type ConnectParams = {
   url: string; // e.g. "ws://localhost:8888"
@@ -241,11 +241,11 @@ export function onDirectSignal(handler: (signal: DirectSignal) => void): () => v
   return () => directListeners.delete(handler);
 }
 
-let relayCell: Promise<CellId> | null = null;
+let handShakeCell: Promise<CellId> | null = null;
 
-/// The "relay" cell's id -- which network a direct signal goes out on.
-function relayCellId(): Promise<CellId> {
-  relayCell ??= getAppWs()
+/// The "handshake" cell's id -- which network a direct signal goes out on.
+function handShakeCellId(): Promise<CellId> {
+  handShakeCell ??= getAppWs()
     .appInfo()
     .then((info) => {
       const cell = info?.cell_info[ROLE_NAME]?.find((c) => c.type === "provisioned");
@@ -253,10 +253,10 @@ function relayCellId(): Promise<CellId> {
       return cell.value.cell_id;
     })
     .catch((err) => {
-      relayCell = null;
+      handShakeCell = null;
       throw err;
     });
-  return relayCell;
+  return handShakeCell;
 }
 
 /// Sends `bytes` straight to `agents`' apps, best effort: it resolves once
@@ -264,6 +264,6 @@ function relayCellId(): Promise<CellId> {
 /// device grants direct signals in `dispatch`'s `prepare_device`.
 export async function sendDirectSignal(agents: AgentPubKey[], bytes: Uint8Array): Promise<void> {
   if (restoring) await restoring.catch(() => {});
-  const [dnaHash] = await relayCellId();
+  const [dnaHash] = await handShakeCellId();
   await getAppWs().sendDirectSignal({ dna_hash: dnaHash, agents, signal: bytes });
 }

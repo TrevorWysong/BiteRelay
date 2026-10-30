@@ -1,5 +1,5 @@
 // Cards and banks through Stripe: an embedded card form for adding funds
-// (card data never touches Relay; Apple Pay and Google Pay appear where the
+// (card data never touches HandShake; Apple Pay and Google Pay appear where the
 // device and domain support them), saved cards for one-tap top-ups, refunds
 // back to those cards, Connect Express for payout accounts -- Stripe does
 // the identity checks and holds the bank details -- and transfers from the
@@ -45,7 +45,7 @@ export function stripeRail(secretKey: string, webhookSecret: string, publicUrl: 
         ui_mode: "embedded",
         mode: "payment",
         customer,
-        line_items: [{ quantity: 1, price_data: { currency, unit_amount: amount, product_data: { name: "Relay balance" } } }],
+        line_items: [{ quantity: 1, price_data: { currency, unit_amount: amount, product_data: { name: "HandShake balance" } } }],
         metadata: { agent },
         // The agent travels with the payment itself, so reconciliation finds
         // it; the card is kept for the next top-up.

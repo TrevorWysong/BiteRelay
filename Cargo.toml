@@ -1,29 +1,29 @@
 [workspace]
 resolver = "2"
 members = [
-    "dnas/relay/types",
-    "dnas/relay/coordinator_support",
-    "dnas/relay/governance",
-    "dnas/relay/integrity_support",
-    "dnas/relay/zomes/profiles/integrity",
-    "dnas/relay/zomes/profiles/coordinator",
-    "dnas/relay/zomes/catalog/types",
-    "dnas/relay/zomes/catalog/integrity",
-    "dnas/relay/zomes/catalog/coordinator",
-    "dnas/relay/zomes/dispatch/types",
-    "dnas/relay/zomes/dispatch/integrity",
-    "dnas/relay/zomes/dispatch/coordinator",
-    "dnas/relay/zomes/attestation/types",
-    "dnas/relay/zomes/attestation/integrity",
-    "dnas/relay/zomes/attestation/coordinator",
-    "dnas/relay/zomes/ledger/types",
-    "dnas/relay/zomes/ledger/integrity",
-    "dnas/relay/zomes/ledger/coordinator",
-    "dnas/relay/zomes/reputation/integrity",
-    "dnas/relay/zomes/reputation/coordinator",
-    "dnas/relay/zomes/account/types",
-    "dnas/relay/zomes/account/integrity",
-    "dnas/relay/zomes/account/coordinator",
+    "dnas/handshake/types",
+    "dnas/handshake/coordinator_support",
+    "dnas/handshake/governance",
+    "dnas/handshake/integrity_support",
+    "dnas/handshake/zomes/profiles/integrity",
+    "dnas/handshake/zomes/profiles/coordinator",
+    "dnas/handshake/zomes/catalog/types",
+    "dnas/handshake/zomes/catalog/integrity",
+    "dnas/handshake/zomes/catalog/coordinator",
+    "dnas/handshake/zomes/dispatch/types",
+    "dnas/handshake/zomes/dispatch/integrity",
+    "dnas/handshake/zomes/dispatch/coordinator",
+    "dnas/handshake/zomes/attestation/types",
+    "dnas/handshake/zomes/attestation/integrity",
+    "dnas/handshake/zomes/attestation/coordinator",
+    "dnas/handshake/zomes/ledger/types",
+    "dnas/handshake/zomes/ledger/integrity",
+    "dnas/handshake/zomes/ledger/coordinator",
+    "dnas/handshake/zomes/reputation/integrity",
+    "dnas/handshake/zomes/reputation/coordinator",
+    "dnas/handshake/zomes/account/types",
+    "dnas/handshake/zomes/account/integrity",
+    "dnas/handshake/zomes/account/coordinator",
 ]
 
 [workspace.package]
@@ -40,15 +40,15 @@ hdi = "=0.8.1"
 hdk = "=0.7.1"
 serde = { version = "1", features = ["derive"] }
 holochain_serialized_bytes = "0.0.57"
-relay_types = { path = "dnas/relay/types" }
-relay_coordinator_support = { path = "dnas/relay/coordinator_support" }
-attestation_types = { path = "dnas/relay/zomes/attestation/types" }
-relay_governance = { path = "dnas/relay/governance" }
-relay_integrity_support = { path = "dnas/relay/integrity_support" }
-dispatch_types = { path = "dnas/relay/zomes/dispatch/types" }
-catalog_types = { path = "dnas/relay/zomes/catalog/types" }
-ledger_types = { path = "dnas/relay/zomes/ledger/types" }
-account_types = { path = "dnas/relay/zomes/account/types" }
+handshake_types = { path = "dnas/handshake/types" }
+handshake_coordinator_support = { path = "dnas/handshake/coordinator_support" }
+attestation_types = { path = "dnas/handshake/zomes/attestation/types" }
+handshake_governance = { path = "dnas/handshake/governance" }
+handshake_integrity_support = { path = "dnas/handshake/integrity_support" }
+dispatch_types = { path = "dnas/handshake/zomes/dispatch/types" }
+catalog_types = { path = "dnas/handshake/zomes/catalog/types" }
+ledger_types = { path = "dnas/handshake/zomes/ledger/types" }
+account_types = { path = "dnas/handshake/zomes/account/types" }
 
 [profile.release]
 opt-level = "z"

@@ -200,7 +200,7 @@ function FromDevice() {
       <h2 className="mb-1 text-lg font-bold">{scanning ? t("receive.scan") : t("receive.title")}</h2>
       <p className="mb-4 text-sm text-ink-500">{scanning ? t("receive.scanHow") : t("receive.how")}</p>
       {scanning ? (
-        <CodeReader accepts={(code) => sealedAccount(code) !== null} onCode={receive} prompt={t("receive.point")} refusal={t("receive.notSealed")} placeholder="relay-key:1:…" />
+        <CodeReader accepts={(code) => sealedAccount(code) !== null} onCode={receive} prompt={t("receive.point")} refusal={t("receive.notSealed")} placeholder="handshake-key:1:…" />
       ) : invitation ? (
         <>
           <CodeCard code={invitation} fingerprint={invitationFingerprint(invitation)} note={t("receive.note")} />
@@ -433,7 +433,7 @@ function ConfirmDetails({ predecessor, place, recovered, onDone }: { predecessor
         </p>
       )}
       {place === "previous" && (
-        <p className="mb-3 rounded-lg bg-relay-50 px-3 py-2 text-xs text-relay-800">{t("restore.carried")}</p>
+        <p className="mb-3 rounded-lg bg-handshake-50 px-3 py-2 text-xs text-handshake-800">{t("restore.carried")}</p>
       )}
       {known.profile?.roles.includes("Merchant") && (
         <p className="mb-3 text-xs text-ink-500">{t("restore.stores")}</p>

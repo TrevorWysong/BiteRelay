@@ -26,7 +26,7 @@ export function Button({
 }: Omit<HTMLMotionProps<"button">, "children"> & { children?: ReactNode; variant?: ButtonVariant; loading?: boolean }) {
   const base = "inline-flex items-center justify-center gap-2 rounded-full font-semibold text-sm px-5 py-3 transition disabled:opacity-40 disabled:pointer-events-none";
   const variants: Record<ButtonVariant, string> = {
-    primary: "bg-relay-500 text-white hover:bg-relay-600 shadow-[var(--shadow-glow)]",
+    primary: "bg-handshake-500 text-white hover:bg-handshake-600 shadow-[var(--shadow-glow)]",
     secondary: "bg-ink dark:bg-ink-100 text-white dark:text-ink-900 hover:opacity-90",
     ghost: "bg-transparent text-ink dark:text-ink-100 hover:bg-ink-100 dark:hover:bg-ink-800 border border-ink-200 dark:border-ink-700",
     danger: "bg-red-600 text-white hover:bg-red-700",
@@ -48,7 +48,7 @@ export function Button({
 export function Badge({ tone = "neutral", children }: { tone?: "neutral" | "brand" | "success" | "warn" | "danger"; children: ReactNode }) {
   const tones: Record<string, string> = {
     neutral: "bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200",
-    brand: "bg-relay-100 text-relay-700 dark:bg-relay-900/40 dark:text-relay-300",
+    brand: "bg-handshake-100 text-handshake-700 dark:bg-handshake-900/40 dark:text-handshake-300",
     success: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
     warn: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
     danger: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
@@ -141,7 +141,7 @@ export function Skeleton({ className }: { className?: string }) {
 export function StatNumber({ children, className, tone = "default" }: { children: ReactNode; className?: string; tone?: "default" | "brand" | "success" | "danger" }) {
   const tones: Record<string, string> = {
     default: "text-ink-900 dark:text-ink-50",
-    brand: "text-relay-600 dark:text-relay-400",
+    brand: "text-handshake-600 dark:text-handshake-400",
     success: "text-presence-600 dark:text-presence-400",
     danger: "text-red-600 dark:text-red-400",
   };
@@ -155,7 +155,7 @@ export function StatNumber({ children, className, tone = "default" }: { children
 /// every form field in the app reads as the same, deliberately designed
 /// control rather than each screen's raw browser default.
 const fieldBase =
-  "w-full rounded-xl border border-ink-200/70 dark:border-ink-700/70 bg-ink-50/80 dark:bg-ink-800/50 px-3.5 py-2.5 text-sm text-ink-900 dark:text-ink-50 placeholder:text-ink-400 dark:placeholder:text-ink-500 outline-none transition focus:border-relay-400 focus:bg-white dark:focus:bg-ink-900 focus:ring-2 focus:ring-relay-100 dark:focus:ring-relay-900/40";
+  "w-full rounded-xl border border-ink-200/70 dark:border-ink-700/70 bg-ink-50/80 dark:bg-ink-800/50 px-3.5 py-2.5 text-sm text-ink-900 dark:text-ink-50 placeholder:text-ink-400 dark:placeholder:text-ink-500 outline-none transition focus:border-handshake-400 focus:bg-white dark:focus:bg-ink-900 focus:ring-2 focus:ring-handshake-100 dark:focus:ring-handshake-900/40";
 
 type Adornment = { prefix?: ReactNode; suffix?: ReactNode };
 
@@ -198,7 +198,7 @@ export function Checkbox({ className, ...rest }: InputHTMLAttributes<HTMLInputEl
     <input
       type="checkbox"
       className={clsx(
-        "h-4 w-4 shrink-0 rounded-md border-ink-300 dark:border-ink-600 text-relay-500 accent-relay-500 focus:ring-2 focus:ring-relay-100 dark:focus:ring-relay-900/40",
+        "h-4 w-4 shrink-0 rounded-md border-ink-300 dark:border-ink-600 text-handshake-500 accent-handshake-500 focus:ring-2 focus:ring-handshake-100 dark:focus:ring-handshake-900/40",
         className
       )}
       {...rest}
@@ -223,7 +223,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={clsx("relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-40", checked ? "bg-relay-500" : "bg-ink-200 dark:bg-ink-700")}
+      className={clsx("relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-40", checked ? "bg-handshake-500" : "bg-ink-200 dark:bg-ink-700")}
     >
       <span className={clsx("inline-block h-5 w-5 rounded-full bg-white shadow transition-transform", checked ? "translate-x-5" : "translate-x-0.5")} />
     </button>

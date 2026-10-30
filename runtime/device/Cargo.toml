@@ -1,9 +1,9 @@
 [package]
-name = "relay_device"
+name = "handshake_device"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "What a Relay runtime does natively to move an account to a new phone with the same key"
+description = "What a HandShake runtime does natively to move an account to a new phone with the same key"
 
 # Standalone: native code a runtime shell links, never part of the wasm zome
 # workspace. Its Holochain crates are the ones conductor 0.7.1 ships with.

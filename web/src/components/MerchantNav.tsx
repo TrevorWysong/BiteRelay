@@ -36,7 +36,7 @@ export function MerchantNav() {
             exit={{ opacity: 0, y: 12 }}
             className="absolute inset-x-2 bottom-full mb-2"
           >
-            <NavLink to="/merchant" className="flex items-center gap-3 rounded-2xl bg-relay-500 px-4 py-3 text-sm font-semibold text-white shadow-[var(--shadow-glow)]">
+            <NavLink to="/merchant" className="flex items-center gap-3 rounded-2xl bg-handshake-500 px-4 py-3 text-sm font-semibold text-white shadow-[var(--shadow-glow)]">
               <BellRing size={18} className="animate-pulse" />
               {t("merchantNav.waiting", { count: waiting })}
               <span className="ml-auto text-xs font-bold uppercase tracking-wide">{t("merchantNav.review")}</span>

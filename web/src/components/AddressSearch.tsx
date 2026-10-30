@@ -163,14 +163,14 @@ export function AddressSearch({
                     i > 0 && "border-t border-ink-100 dark:border-ink-800",
                   )}
                 >
-                  <MapPin size={14} className="mt-0.5 shrink-0 text-relay-500" />
+                  <MapPin size={14} className="mt-0.5 shrink-0 text-handshake-500" />
                   <span>{result.label}</span>
                 </button>
               ))}
             </div>
           )}
           {allowManualCoordinates && (
-            <button type="button" onClick={() => setManual(true)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-relay-600 hover:underline">
+            <button type="button" onClick={() => setManual(true)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-handshake-600 hover:underline">
               {t("address.manual")}
             </button>
           )}
@@ -187,7 +187,7 @@ export function AddressSearch({
               <Input type="number" step="any" value={value.lon} onChange={(e) => onChange({ ...value, lon: Number(e.target.value) })} className="mt-1" />
             </label>
           </div>
-          <button type="button" onClick={() => setManual(false)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-relay-600 hover:underline">
+          <button type="button" onClick={() => setManual(false)} className="mt-1.5 text-[11px] font-medium text-ink-400 underline-offset-2 hover:text-handshake-600 hover:underline">
             {t("address.byAddress")}
           </button>
         </div>

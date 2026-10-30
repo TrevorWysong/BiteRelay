@@ -30,7 +30,7 @@ jobs:
       - name: Build and pack the hApp
         run: |
           cargo build --release --target wasm32-unknown-unknown
-          hc dna pack dnas/relay/workdir
+          hc dna pack dnas/handshake/workdir
           hc app pack workdir
       - name: Measure
         working-directory: tests/tryorama

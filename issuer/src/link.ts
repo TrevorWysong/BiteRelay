@@ -15,7 +15,7 @@ type AgentPubKey = Uint8Array;
 export type Purpose = "TopUp" | "SavedCard" | "PayoutAccount";
 const PURPOSE_LABEL: Record<Purpose, string> = { TopUp: "top-up", SavedCard: "saved-card", PayoutAccount: "payout-account" };
 
-const LABEL = Buffer.from("relay-issuer-link:v2:");
+const LABEL = Buffer.from("handshake-issuer-link:v2:");
 /// DER prefix of an Ed25519 public key (SubjectPublicKeyInfo), before its 32 bytes.
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 

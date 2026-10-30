@@ -6,7 +6,7 @@
 // after the platform authenticator (Touch ID / Windows Hello / device PIN)
 // confirms the device owner's presence against a credential scoped to this
 // origin. That's a real, hardware-backed gate against "someone else picks
-// up my unlocked device and opens Relay" -- which a bare localStorage-based
+// up my unlocked device and opens HandShake" -- which a bare localStorage-based
 // identity (this app's actual private key material lives in lair-keystore,
 // never in the browser at all -- see admin.ts) has zero protection against
 // today. It does NOT encrypt the stored identity at rest, and does NOT
@@ -15,7 +15,7 @@
 // name "WebAuthn" imply more than this actually buys.
 import { bytesToBase64, base64ToBytes } from "../util/base64";
 
-const RP_NAME = "Relay";
+const RP_NAME = "HandShake";
 
 export function isWebAuthnAvailable(): boolean {
   return typeof window !== "undefined" && !!window.PublicKeyCredential && !!navigator.credentials;

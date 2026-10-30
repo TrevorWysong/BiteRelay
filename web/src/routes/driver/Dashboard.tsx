@@ -276,7 +276,7 @@ export function DriverDashboard() {
       <AnimatePresence initial={false}>
         {activeOrders.length > 0 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mb-5 flex flex-col gap-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-relay-600">
+            <p className="text-xs font-bold uppercase tracking-wide text-handshake-600">
               {t("drive.active", { count: activeOrders.length })}
             </p>
             {activeOrders.length > 1 && <SuggestedRoute orders={activeOrders} location={location} />}
@@ -292,7 +292,7 @@ export function DriverDashboard() {
       {online && refusal === null && (
         <>
           <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-ink-400">
-            <MapPin size={14} className="text-relay-500" />
+            <MapPin size={14} className="text-handshake-500" />
             {activeOrders.length === 0 ? t("drive.nearby") : t("drive.addOns")}
           </div>
           {sortedNearby === null && (
@@ -379,7 +379,7 @@ function SuggestedRoute({ orders, location }: { orders: OrderRow[]; location: Ge
           const label = stop.kind === "pickup" ? t("drive.pickUpAt", { store: stores[bytesToHex(order.catalog_ref)]?.name ?? t("order.theStore") }) : t("drive.dropOffAs", { how: t(DROPOFF_PREFERENCE_LABEL[order.dropoff_preference]) });
           return (
             <li key={`${stop.id}-${stop.kind}`} className="flex items-center gap-2 text-sm">
-              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-relay-500/15 text-[11px] font-bold text-relay-600">{i + 1}</span>
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-handshake-500/15 text-[11px] font-bold text-handshake-600">{i + 1}</span>
               <span className="flex-1 text-ink-800 dark:text-ink-100">{label}</span>
               <span className="text-xs text-ink-400">{formatDistance(stop.legKm)}</span>
             </li>
@@ -423,12 +423,12 @@ function ActiveDeliveryCard({ row, location, onAdvanced }: { row: OrderRow; loca
   const commit = () => run(() => commitToOrder(row.hash));
 
   return (
-    <Card className="border-2 border-relay-400 p-4">
+    <Card className="border-2 border-handshake-400 p-4">
       <OrderStatusTimeline status={row.order.status} />
       {row.order.ready_by !== null && BEFORE_PICKUP.includes(row.order.status) && <p className="mt-2 text-xs text-ink-500">{t("drive.readyBy", { time: formatClockTime(row.order.ready_by) })}</p>}
       {row.dropoff?.recipient && <p className="mt-2 text-sm font-semibold text-ink-900 dark:text-ink-50">{t("drive.deliverTo", { name: row.dropoff.recipient })}</p>}
       {!row.dropoff && row.order.status === "BidAccepted" && <p className="mt-2 text-xs text-ink-400">{t("drive.addressAfterCommit")}</p>}
-      <p className="mt-2 text-xs font-semibold text-relay-600">{t("order.dropoffLabel")} {t(DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference])}</p>
+      <p className="mt-2 text-xs font-semibold text-handshake-600">{t("order.dropoffLabel")} {t(DROPOFF_PREFERENCE_LABEL[row.order.dropoff_preference])}</p>
       {row.dropoff?.notes && (
         <p className="mt-3 rounded-lg bg-ink-100/60 dark:bg-ink-800/60 p-2.5 text-xs text-ink-500">
           <span className="font-semibold text-ink-900 dark:text-ink-50">{t("order.dropoffNotesLabel")} </span>
@@ -554,7 +554,7 @@ function BidCard({
         {eta !== null && <span className="text-xs text-ink-400">{formatEta(eta * 60)}</span>}
       </div>
       {sameMerchant ? (
-        <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-relay-600">
+        <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-handshake-600">
           <Link2 size={12} /> {t("drive.sameStore")}
         </p>
       ) : (
@@ -587,8 +587,8 @@ function BidCard({
         <ShieldCheck size={12} /> {t("drive.collateral", { amount: formatCents(order.order_total) })}
       </p>
       {sent ? (
-        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl bg-relay-50 px-3 py-2 dark:bg-relay-900/30">
-          <p className="text-xs font-semibold text-relay-700 dark:text-relay-300">{t("drive.offerSent", { fee: formatCents(sent.feeCents), eta: formatEta(sent.etaMinutes * 60) })}</p>
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl bg-handshake-50 px-3 py-2 dark:bg-handshake-900/30">
+          <p className="text-xs font-semibold text-handshake-700 dark:text-handshake-300">{t("drive.offerSent", { fee: formatCents(sent.feeCents), eta: formatEta(sent.etaMinutes * 60) })}</p>
           <Button variant="ghost" className="px-3 py-1.5 text-xs" loading={loading} onClick={onWithdraw}>
             {t("drive.withdraw")}
           </Button>

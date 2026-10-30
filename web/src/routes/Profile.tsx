@@ -144,7 +144,7 @@ export function ProfilePage() {
           ) : profile?.avatar_data_uri ? (
             <img src={profile.avatar_data_uri} alt="" className="h-20 w-20 rounded-3xl object-cover shadow-xl" />
           ) : (
-            <div className="grid h-20 w-20 place-items-center rounded-3xl bg-ink-900 dark:bg-white text-relay-400 dark:text-relay-600 shadow-xl">
+            <div className="grid h-20 w-20 place-items-center rounded-3xl bg-ink-900 dark:bg-white text-handshake-400 dark:text-handshake-600 shadow-xl">
               <Radio size={28} />
             </div>
           )}
@@ -168,7 +168,7 @@ export function ProfilePage() {
       <Card className="mb-4 p-4">
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-wide text-ink-400">{t("profile.about")}</p>
-          <button onClick={toggleEditing} className="text-ink-400 hover:text-relay-600">
+          <button onClick={toggleEditing} className="text-ink-400 hover:text-handshake-600">
             <Pencil size={14} />
           </button>
         </div>
@@ -203,7 +203,7 @@ export function ProfilePage() {
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
               <Truck size={13} /> {t("profile.vehicle")}
             </p>
-            <button onClick={toggleEditingVehicle} className="text-ink-400 hover:text-relay-600">
+            <button onClick={toggleEditingVehicle} className="text-ink-400 hover:text-handshake-600">
               <Pencil size={14} />
             </button>
           </div>
@@ -322,7 +322,7 @@ export function ProfilePage() {
 
       <motion.div variants={fadeSlideUp} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
       <Link to="/transparency" className="mb-4 flex items-center gap-3 rounded-2xl border border-ink-100 dark:border-ink-800 bg-white dark:bg-ink-900 p-4 shadow-[var(--shadow-card)]">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-relay-500 to-presence-500 text-white">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-handshake-500 to-presence-500 text-white">
           <ShieldCheck size={18} />
         </div>
         <div className="min-w-0 flex-1">

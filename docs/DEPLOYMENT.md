@@ -1,6 +1,6 @@
-# Deploying Relay
+# Deploying HandShake
 
-Relay has no application servers. Every customer, store and driver runs their own Holochain conductor inside the Relay app, which keeps their keys and data on their own device. A network needs only two small pieces of shared infrastructure: a **bootstrap server** (how peers find each other) and a **relay server** (how peers behind NATs reach each other).
+HandShake has no application servers. Every customer, store and driver runs their own Holochain conductor inside the HandShake app, which keeps their keys and data on their own device. A network needs only two small pieces of shared infrastructure: a **bootstrap server** (how peers find each other) and a **relay server** (how peers behind NATs reach each other).
 
 ## How the app runs in production
 
@@ -11,19 +11,19 @@ The UI ships inside a Holochain runtime that hosts it:
 
 The runtime runs the conductor, installs the hApp for its one agent, hands the UI that app, and signs every zome call itself. The UI speaks only the App API (`AppWebsocket.connect()` with no arguments, in `web/src/holochain/client.ts`); it never touches the Admin API or a private key.
 
-Development is different on purpose. `npm run dev` runs the UI in a browser against the dev conductor and provisions identities through its Admin API, so several people can share one node (`web/src/holochain/devHost.ts`). That code is compiled out of every production build: `__DEV_HOST__` is a build-time literal (`web/vite.config.ts`), and a production bundle contains no Admin API calls. A production build opened in a plain browser shows "Open Relay in the Relay app" and does nothing else.
+Development is different on purpose. `npm run dev` runs the UI in a browser against the dev conductor and provisions identities through its Admin API, so several people can share one node (`web/src/holochain/devHost.ts`). That code is compiled out of every production build: `__DEV_HOST__` is a build-time literal (`web/vite.config.ts`), and a production bundle contains no Admin API calls. A production build opened in a plain browser shows "Open HandShake in the HandShake app" and does nothing else.
 
 **Any release runtime on Holochain 0.7.1 or a later 0.7 works.** The hApp uses no unstable Holochain features, so it runs on the official binaries a runtime downloads. It needs 0.7.1, not 0.7.0: 0.7.1 changed how capability grants are stored, and the zomes write theirs at init. Kangaroo pins the conductor in `kangaroo.config.ts` (`bins.holochainVersion` and the binaries' hashes), so set it to 0.7.1 there; its own default is still 0.7.0 as of October 2026.
 
-**A runtime that moves accounts between phones.** Moving to a new phone keeps the account's key (RECOVERY.md), which needs two things from the runtime that a stock one doesn't do. It must create the account's agent key itself, exportable, and install the app with it, because the conductor's own keys can't be exported. And it must give the UI six commands, as `window.__RELAY_DEVICE__` (`web/src/holochain/device.ts`). The `relay_device` crate (`runtime/device`) does both: a shell links it, connects it to its keystore and admin interface, and maps each `Device` method to a command. A runtime without it still runs Relay, and people moving phones recover their account instead. Delivery handoffs are two plain entries (the driver's record, the other party's acknowledgment), not a countersigned one; countersigning is still unstable and no release build ships it. It's worth revisiting for ledger transfers, where both balances must move atomically, once it's stable.
+**A runtime that moves accounts between phones.** Moving to a new phone keeps the account's key (RECOVERY.md), which needs two things from the runtime that a stock one doesn't do. It must create the account's agent key itself, exportable, and install the app with it, because the conductor's own keys can't be exported. And it must give the UI six commands, as `window.__HANDSHAKE_DEVICE__` (`web/src/holochain/device.ts`). The `handshake_device` crate (`runtime/device`) does both: a shell links it, connects it to its keystore and admin interface, and maps each `Device` method to a command. A runtime without it still runs HandShake, and people moving phones recover their account instead. Delivery handoffs are two plain entries (the driver's record, the other party's acknowledgment), not a countersigned one; countersigning is still unstable and no release build ships it. It's worth revisiting for ledger transfers, where both balances must move atomically, once it's stable.
 
 ## 1. Decide the network
 
 These values are part of the DNA hash. Everyone on a network must install a bundle built with exactly the same values; a different value is a separate network that can't see this one.
 
-- **Network seed.** A name for the network, such as `relay-2026`. Change it to start a fresh network.
+- **Network seed.** A name for the network, such as `handshake-2026`. Change it to start a fresh network.
 - **Store response window** (`store_response_secs`, default 300). How long a store has to accept an order before the customer's conductor cancels it.
-- **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order -- or post a driver's collateral -- on credit and walk away. Packaging refuses to run without it, and refuses anything above 0 unless built with `RELAY_ALLOW_CREDIT=1`.
+- **Credit limit** (`credit_limit_cents`, required). How far below zero any balance may go. Use 0: every order is then paid from money already in the account, so a fresh identity can't order -- or post a driver's collateral -- on credit and walk away. Packaging refuses to run without it, and refuses anything above 0 unless built with `HANDSHAKE_ALLOW_CREDIT=1`.
 - **Report window** (`report_window_secs`, default 7200). How long a customer has, once they have their order, to report missing or wrong items. The store's payment for the food waits until it ends; the driver is paid as soon as the store's app records the delivery. The store has the final say on each report: its app refunds those it accepts or never answers and settles the rest. Nobody else reviews them.
 - **Issuers** (`issuers`). The agent keys allowed to put money into the network: the stand-in for a payment processor crediting an account against a real card payment. With a credit limit of 0, nobody can pay for anything until an issuer credits them, so packaging requires at least one. They need keys generated on a conductor you operate before the bundle is built. An issuer calls `ledger::issue_grant` once a payment clears; the recipient's app collects it.
 
@@ -90,15 +90,15 @@ The issuer's key has to be on the network's roster (`issuers` in `deploy/propert
 
 ```sh
 # On the issuer's machine (ISSUER_DATA_DIR short: the keystore's socket path is limited).
-export ISSUER_DATA_DIR=/var/lib/relay-issuer ISSUER_LAIR_PASSPHRASE=... \
+export ISSUER_DATA_DIR=/var/lib/handshake-issuer ISSUER_LAIR_PASSPHRASE=... \
        BOOTSTRAP_URL=https://bootstrap.example.org RELAY_URL=https://bootstrap.example.org
 node issuer/scripts/conductor.mjs &          # the issuer's node
 node issuer/scripts/provision.mjs key        # prints its key: add it to deploy/properties.json `issuers`
 
-# Anywhere: build the network's bundle with that roster (step 3 below) -> deploy/relay.happ and relay.webhapp
+# Anywhere: build the network's bundle with that roster (step 3 below) -> deploy/handshake.happ and handshake.webhapp
 
 # Back on the issuer's machine:
-node issuer/scripts/provision.mjs install deploy/relay.happ   # same bundle as everyone
+node issuer/scripts/provision.mjs install deploy/handshake.happ   # same bundle as everyone
 cd issuer && npm start                       # the service (issuer/.env, see .env.example)
 ```
 
@@ -122,7 +122,7 @@ cd deploy
 cp ../issuer/.env.example issuer.env       # fill in; never commit it (gitignored)
 export BOOTSTRAP_DOMAIN=bootstrap.example.org ISSUER_DOMAIN=issuer.example.org
 docker compose run --rm issuer key         # the issuer's key, for the roster
-#   ...package the network with it, so deploy/relay.happ exists...
+#   ...package the network with it, so deploy/handshake.happ exists...
 docker compose up -d --build
 ```
 
@@ -142,28 +142,28 @@ Inside the desktop app (Kangaroo's Electron), they don't appear, and cards still
 
 ```sh
 cd web
-npm run package -- --network-seed relay-2026 \
+npm run package -- --network-seed handshake-2026 \
   --bootstrap-url https://bootstrap.example.org --relay-url https://relay.example.org
 ```
 
-This builds the zomes and the production UI and writes `deploy/relay.webhapp`: the hApp with your properties, seed and server URLs, plus the UI. Every installer of your network uses this one file.
+This builds the zomes and the production UI and writes `deploy/handshake.webhapp`: the hApp with your properties, seed and server URLs, plus the UI. Every installer of your network uses this one file.
 
 ## 4. Ship it
 
-- **Desktop installers:** [Kangaroo](https://github.com/holochain/kangaroo-electron). Put `relay.webhapp` in its `pouch/`, set the app id, name and version in `kangaroo.config.ts`, and build signed installers for macOS, Windows and Linux. Kangaroo runs the conductor and keystore and handles auto-updates.
+- **Desktop installers:** [Kangaroo](https://github.com/holochain/kangaroo-electron). Put `handshake.webhapp` in its `pouch/`, set the app id, name and version in `kangaroo.config.ts`, and build signed installers for macOS, Windows and Linux. Kangaroo runs the conductor and keystore and handles auto-updates.
 - **Desktop and mobile from one codebase:** a Tauri app with `tauri-plugin-holochain`. It embeds the conductor and serves this same UI; `@holochain/client` detects the Tauri runtime on its own, so the UI needs no changes.
-- **Holochain Launcher:** users can install `relay.webhapp` directly.
+- **Holochain Launcher:** users can install `handshake.webhapp` directly.
 
 ## Running it
 
-Some of Relay's work happens on people's own conductors through Holochain's scheduler, without the UI open (`dispatch::upkeep`, `dispatch::settlement`). It only happens while the app is running:
+Some of HandShake's work happens on people's own conductors through Holochain's scheduler, without the UI open (`dispatch::upkeep`, `dispatch::settlement`). It only happens while the app is running:
 
 - **Stores** should keep the app running while they're open, the way a store keeps its order tablet on. Their conductor accepts orders automatically (if auto-accept is on) and pays its share of delivery fees. A store whose app is closed doesn't answer orders; once the response window passes, validation won't let it accept them.
 - **Customers'** conductors place scheduled orders when they're due and cancel orders a store never answered. If a customer's app is closed, this happens the next time it runs. Their unanswered orders can't be accepted in the meantime either.
 
 ## Notifications
 
-Each order change is signalled straight to the order's other parties, conductor to conductor, and the app turns that into a system notification (Profile → Notifications), plus a chime on a store's device for each new order. This works while the app is running, in front or in the background; Kangaroo's Electron shell shows web notifications natively, and a Tauri build needs its notification plugin allowed. A fully quit app receives nothing until it's opened again, when its screens catch up -- unless the network runs a push relay (`push/`, `services.push_relay_url`). Then a customer who turns on Profile → Notifications → "Even when Relay is closed" is woken when their store or driver changes their order: through Web Push in a browser, or APNs/FCM from a phone build's runtime (`window.__RELAY_PUSH__`, MOBILE.md). The relay learns only that some device was woken.
+Each order change is signalled straight to the order's other parties, conductor to conductor, and the app turns that into a system notification (Profile → Notifications), plus a chime on a store's device for each new order. This works while the app is running, in front or in the background; Kangaroo's Electron shell shows web notifications natively, and a Tauri build needs its notification plugin allowed. A fully quit app receives nothing until it's opened again, when its screens catch up -- unless the network runs a push relay (`push/`, `services.push_relay_url`). Then a customer who turns on Profile → Notifications → "Even when HandShake is closed" is woken when their store or driver changes their order: through Web Push in a browser, or APNs/FCM from a phone build's runtime (`window.__HANDSHAKE_PUSH__`, MOBILE.md). The relay learns only that some device was woken.
 
 ## Upgrades
 

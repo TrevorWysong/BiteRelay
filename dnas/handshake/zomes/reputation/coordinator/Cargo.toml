@@ -1,0 +1,20 @@
+[package]
+name = "reputation_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "reputation"
+
+[dependencies]
+hdk.workspace = true
+serde.workspace = true
+reputation_integrity = { path = "../integrity" }
+handshake_coordinator_support.workspace = true
+handshake_governance.workspace = true
+
+[features]
+# Raw link externs for validation tests; only ever hot-swapped into test
+# conductors, never packed into the hApp (see raw_link_test_externs!).
+test-utils = []

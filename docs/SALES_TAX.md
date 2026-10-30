@@ -30,9 +30,9 @@ Tests:
 - **Delivery fees vary.** Missouri excludes customary, separately stated delivery charges. Indiana taxes delivery of prepared food. In New York, delivery follows the taxability of what's delivered. Florida depends on whether the restaurant also offers pickup. Texas has taxed some app fees. ([Missouri ruling](https://dor.mo.gov/rulings/show/8244), [CPA Practice Advisor on Texas](https://www.cpapracticeadvisor.com/2022/04/10/texas-says-mobile-delivery-app-fees-are-taxable/49032/))
 - **Tips are generally not taxable** when voluntary, separately stated and paid in full to the worker (California, Mississippi, New York). A *mandatory* tip is taxable in New York. ([Mississippi notice](https://www.dor.ms.gov/sites/default/files/News/72-20-09%20Notice%20of%20Food%20Delivery%20Services.pdf))
 
-## Who collects in Relay
+## Who collects in HandShake
 
-A marketplace facilitator is usually defined as someone who facilitates a sale *and* collects payment from the buyer and passes it to the seller. That definition is exactly what Relay doesn't have:
+A marketplace facilitator is usually defined as someone who facilitates a sale *and* collects payment from the buyer and passes it to the seller. That definition is exactly what HandShake doesn't have:
 - the customer's money moves to the store on the customer's and store's own ledgers;
 - no company handles it in between.
 
@@ -40,7 +40,7 @@ States split on software that never touches the payment:
 - **Missouri** ruled that a software platform whose users pick their own payment processor, and which never controls the funds, is not a marketplace facilitator ([Missouri LR 8393](https://dor.mo.gov/rulings/show/8393)).
 - **Illinois** reads "facilitates" broadly enough to reach platforms with payment functionality even if they don't control the funds ([Bloomberg Tax](https://news.bloombergtax.com/daily-tax-report/illinois-dor-clarifies-marketplace-facilitator-rules-for-software-providers)).
 
-**Recommended stance: the store is the seller of record.** It charges and remits its own sales tax, as a restaurant does for its own phone and counter orders. Relay's job is to make that correct and effortless:
+**Recommended stance: the store is the seller of record.** It charges and remits its own sales tax, as a restaurant does for its own phone and counter orders. HandShake's job is to make that correct and effortless:
 - compute the tax;
 - validate it;
 - put it on every receipt;

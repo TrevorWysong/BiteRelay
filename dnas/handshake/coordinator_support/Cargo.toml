@@ -1,0 +1,11 @@
+[package]
+name = "handshake_coordinator_support"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+hdk.workspace = true
+handshake_integrity_support.workspace = true

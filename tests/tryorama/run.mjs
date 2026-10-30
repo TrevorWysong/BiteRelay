@@ -84,8 +84,8 @@ if (args.includes("--list")) {
   process.exit(0);
 }
 
-if (!existsSync(join(repo, "workdir/relay.happ"))) {
-  console.error("workdir/relay.happ is missing -- run `npm run backend` in web/ (or hc dna pack / hc app pack) first.");
+if (!existsSync(join(repo, "workdir/handshake.happ"))) {
+  console.error("workdir/handshake.happ is missing -- run `npm run backend` in web/ (or hc dna pack / hc app pack) first.");
   process.exit(2);
 }
 // Files that hot-swap in the test-only coordinator build (useTestCoordinators).

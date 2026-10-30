@@ -1,8 +1,8 @@
 // Moving this account to a new phone with its key (docs/RECOVERY.md) needs the
 // device's keystore and its conductor's admin side, which the UI never
 // touches. The runtime hosting the app does that work (runtime/device, the
-// `relay_device` crate) and hands the UI six commands, as
-// `window.__RELAY_DEVICE__` -- one object whatever the runtime, each command
+// `handshake_device` crate) and hands the UI six commands, as
+// `window.__HANDSHAKE_DEVICE__` -- one object whatever the runtime, each command
 // taking and returning strings:
 //
 //   canMove()        whether this device's account can move by its key
@@ -37,13 +37,13 @@ export interface DeviceRuntime {
 
 declare global {
   interface Window {
-    __RELAY_DEVICE__?: DeviceRuntime;
+    __HANDSHAKE_DEVICE__?: DeviceRuntime;
   }
 }
 
 /// The runtime's commands, where there are any.
 export async function deviceRuntime(): Promise<DeviceRuntime | null> {
-  if (HOST === "launcher") return window.__RELAY_DEVICE__ ?? null;
+  if (HOST === "launcher") return window.__HANDSHAKE_DEVICE__ ?? null;
   if (__DEV_HOST__ && HOST === "dev") return (await import("./devDevice")).devDevice;
   return null;
 }

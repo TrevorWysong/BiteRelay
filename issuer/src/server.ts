@@ -250,15 +250,15 @@ export function handler(deps: Deps) {
   /// The pages Stripe sends someone to after setting up their payout
   /// account -- the app itself has no web address to return to.
   const pages: Record<string, string> = {
-    "GET /payouts/done": "Your payout account is set up. Go back to Relay: your cash-outs are paid to it from now on.",
-    "GET /payouts/expired": "That link has expired. Go back to Relay and open Wallet → Payout account again.",
+    "GET /payouts/done": "Your payout account is set up. Go back to HandShake: your cash-outs are paid to it from now on.",
+    "GET /payouts/expired": "That link has expired. Go back to HandShake and open Wallet → Payout account again.",
   };
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     const page = pages[`${req.method} ${(req.url ?? "").split("?")[0]}`];
     if (page) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(
-        `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relay</title><body style="font:16px system-ui;max-width:28rem;margin:4rem auto;padding:0 1rem;text-align:center"><h1>Relay</h1><p>${page}</p></body>`,
+        `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>HandShake</title><body style="font:16px system-ui;max-width:28rem;margin:4rem auto;padding:0 1rem;text-align:center"><h1>HandShake</h1><p>${page}</p></body>`,
       );
       return;
     }

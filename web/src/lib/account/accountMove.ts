@@ -12,7 +12,7 @@ import { addFavorite, createProfile, getMyName, getMyPhone, listFavorites, listM
 import { actionHash, decodeEntry } from "../../holochain/decode";
 import { nowMicros } from "../ui/format";
 
-const CODE_PREFIX = "relay-account:";
+const CODE_PREFIX = "handshake-account:";
 /// Holochain's prefix for an agent key.
 const AGENT_PREFIX = [0x84, 0x20, 0x24];
 

@@ -7,7 +7,7 @@
 // directly in matching.rs::tests, which is the right tool for a pure,
 // deterministic Vec::truncate check). The bucket-boundary math itself
 // (two timestamps far enough apart land in different buckets) is unit-
-// tested in relay_types::tests::time_bucket_* -- also not something a live
+// tested in handshake_types::tests::time_bucket_* -- also not something a live
 // Tryorama test should try to prove via clock manipulation.
 import assert from "node:assert/strict";
 import { runScenario, dhtSync } from "@holochain-open-dev/tryorama";

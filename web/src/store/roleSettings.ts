@@ -52,7 +52,7 @@ export const useCustomerSettings = create<CustomerSettings>()(
     }),
     // Checkout defaults saved before a field existed take its default.
     {
-      name: "relay.customer-settings.v1",
+      name: "handshake.customer-settings.v1",
       merge: (saved, current) => {
         const stored = saved as Partial<CustomerSettings> | undefined;
         return { ...current, checkout: { ...current.checkout, ...stored?.checkout }, autoTopUps: stored?.autoTopUps ?? {} };
@@ -105,6 +105,6 @@ export const useDriverSettings = create<DriverSettings>()(
       setTravelSpeed: (travelSpeedKmh) => set({ travelSpeedKmh }),
     }),
     // Settings saved before a field existed take its default.
-    { name: "relay.driver-settings.v1", merge: (saved, current) => ({ ...current, ...(saved as Partial<DriverSettings> | undefined), autoBid: { ...current.autoBid, ...(saved as Partial<DriverSettings> | undefined)?.autoBid } }) },
+    { name: "handshake.driver-settings.v1", merge: (saved, current) => ({ ...current, ...(saved as Partial<DriverSettings> | undefined), autoBid: { ...current.autoBid, ...(saved as Partial<DriverSettings> | undefined)?.autoBid } }) },
   ),
 );

@@ -5,7 +5,7 @@
 //      Makes the issuer's agent key (or shows the one it has). Put it in the
 //      network's deploy/properties.json `issuers` -- the roster is part of
 //      the DNA, so it comes before the bundle is built.
-//   2. node scripts/provision.mjs install ../deploy/relay.happ
+//   2. node scripts/provision.mjs install ../deploy/handshake.happ
 //      After `npm run package` (in web/), installs that exact hApp for the
 //      issuer's key, so the issuer is on the same network as everyone else.
 //
@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const adminUrl = process.env.CONDUCTOR_ADMIN_URL ?? "ws://localhost:8870";
-const appId = process.env.ISSUER_APP_ID ?? "relay-issuer";
+const appId = process.env.ISSUER_APP_ID ?? "handshake-issuer";
 const dataDir = process.env.ISSUER_DATA_DIR;
 if (!dataDir) {
   console.error("ISSUER_DATA_DIR isn't set: where the issuer's conductor keeps its data (scripts/conductor.mjs).");
@@ -37,7 +37,7 @@ try {
     }
     console.error("Add it to deploy/properties.json `issuers`, then `npm run package` in web/.");
   } else if (command === "install") {
-    if (!happPath) throw new Error("Which hApp? node scripts/provision.mjs install ../deploy/relay.happ");
+    if (!happPath) throw new Error("Which hApp? node scripts/provision.mjs install ../deploy/handshake.happ");
     if (installed) {
       console.log(`${appId} is already installed for ${encodeHashToBase64(installed.agent_pub_key)}.`);
     } else {
@@ -48,7 +48,7 @@ try {
       console.log(`Installed ${appId} for ${encodeHashToBase64(agent)}. Start the service: npm start`);
     }
   } else {
-    throw new Error("Usage: node scripts/provision.mjs key | install <relay.happ>");
+    throw new Error("Usage: node scripts/provision.mjs key | install <handshake.happ>");
   }
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));

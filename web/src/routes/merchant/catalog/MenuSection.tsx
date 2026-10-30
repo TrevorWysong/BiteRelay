@@ -87,7 +87,7 @@ export function MenuSection({ catalogRef, items, groups, taxRates, onChanged }: 
                   >
                     {row.item.available ? t("menuEditor.available") : t("item.soldOut")}
                   </motion.button>
-                  <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-relay-600" aria-label={t("choicesEditor.edit", { name: row.item.name })}>
+                  <button onClick={() => setEditing({ kind: "edit", row })} className="text-ink-400 hover:text-handshake-600" aria-label={t("choicesEditor.edit", { name: row.item.name })}>
                     <Pencil size={14} />
                   </button>
                 </div>
@@ -188,7 +188,7 @@ function ItemForm({ catalogRef, row, groups, taxRates, onSaved }: { catalogRef: 
                   type="button"
                   disabled={full}
                   onClick={() => set({ groups: position < 0 ? [...form.groups, hex] : form.groups.filter((h) => h !== hex) })}
-                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-40 ${position >= 0 ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-40 ${position >= 0 ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
                 >
                   {position >= 0 ? <span className="tabular-nums">{position + 1}.</span> : <Check size={12} className="opacity-0" />}
                   {g.group.name}

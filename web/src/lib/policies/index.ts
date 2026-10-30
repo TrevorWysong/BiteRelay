@@ -1,5 +1,5 @@
 // The policies page's content: how money, deliveries, problems and
-// disputes work on Relay, and what each can mean for you over time -- in
+// disputes work on HandShake, and what each can mean for you over time -- in
 // the app's language (policies/en.ts is the source).
 //
 // Keep it true. Every statement describes a rule the network's validation

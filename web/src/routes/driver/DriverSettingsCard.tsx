@@ -49,7 +49,7 @@ export function DriverSettingsCard() {
                     <button
                       key={count}
                       onClick={() => setLimits({ maxAtOnce: count === networkMax ? null : count })}
-                      className={`h-9 w-9 rounded-full text-sm font-semibold transition ${count === atOnce ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
+                      className={`h-9 w-9 rounded-full text-sm font-semibold transition ${count === atOnce ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300"}`}
                     >
                       {count}
                     </button>

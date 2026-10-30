@@ -9,7 +9,7 @@ import { dhtSync, enableAndGetAgentApp, getZomeCaller } from "@holochain-open-de
 import { dhtLocationFrom32, encodeHashToBase64 } from "@holochain/client";
 import type { AppBundleSource, Record as HcRecord, Signal } from "@holochain/client";
 
-export const HAPP_PATH = fileURLToPath(new URL("../../../workdir/relay.happ", import.meta.url));
+export const HAPP_PATH = fileURLToPath(new URL("../../../workdir/handshake.happ", import.meta.url));
 export const appSource: AppBundleSource = { type: "path", value: HAPP_PATH };
 
 /// The protocol's limits, generated from the Rust (`integrity_support::limits`)
@@ -102,11 +102,11 @@ export const TEST_PROPERTIES = { report_window_secs: 2, store_listing_stake: 0 }
 /// request's encoder.
 export function rolesSettingsWith(properties: Record<string, unknown> = {}) {
   return {
-    relay: { type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: { ...TEST_PROPERTIES, ...properties } } } },
+    handshake: { type: "provisioned" as const, value: { membrane_proof: undefined, modifiers: { network_seed: undefined, properties: { ...TEST_PROPERTIES, ...properties } } } },
   };
 }
 
-/// An app to install with custom DNA properties (see `RelayDnaProperties`),
+/// An app to install with custom DNA properties (see `HandShakeDnaProperties`),
 /// for `scenario.addPlayersWithApps`. Properties are part of the DNA hash,
 /// so every player that should share a network needs the same ones.
 export function appWithProperties(properties: Record<string, unknown>) {
@@ -414,7 +414,7 @@ export function phraseKey() {
 
 /// What a phrase's key signs -- `account_types::phrase_message`.
 export const phraseMessage = (predecessor: Uint8Array, successor: Uint8Array, head: Uint8Array) =>
-  new Uint8Array([...new TextEncoder().encode("relay-recovery:v1:"), ...predecessor, 58, ...successor, 58, ...head]);
+  new Uint8Array([...new TextEncoder().encode("handshake-recovery:v1:"), ...predecessor, 58, ...successor, 58, ...head]);
 
 /// `player`'s account on a new install, as a new phone would get it: their
 /// app -- with everything only their device held -- uninstalled, then

@@ -48,13 +48,13 @@ await runScenario(async (scenario) => {
   assert.equal(await balance(earner), 5000);
 
   // ===== Issuers say who they are =====
-  const profile = { name: "Relay Credits", description: "Bank transfer.", contact: "payouts@example.org", payout_fee_cents: 25, payout_fee_basis_points: 25, min_payout_cents: 1000, payout_days: 2 };
+  const profile = { name: "HandShake Credits", description: "Bank transfer.", contact: "payouts@example.org", payout_fee_cents: 25, payout_fee_basis_points: 25, min_payout_cents: 1000, payout_days: 2 };
   await ledger(issuer)("set_issuer_profile", profile);
   await assert.rejects(ledger(stranger)("set_issuer_profile", { ...profile, name: "Totally Legit" }), /Only an issuer/, "only an issuer has an issuer profile");
   await ledger(issuer)("set_issuer_profile", { ...profile, payout_days: 1 });
   await sync();
   const issuers = await retryUntil(() => ledger(earner)<{ profile: { name: string; payout_days: number } | null }[]>("list_issuers", null), (list) => list[0]?.profile?.payout_days === 1);
-  assert.deepEqual(issuers.map((i) => i.profile?.name), ["Relay Credits"], "the roster's issuers, with their latest profile");
+  assert.deepEqual(issuers.map((i) => i.profile?.name), ["HandShake Credits"], "the roster's issuers, with their latest profile");
   console.log("[PASS] an issuer publishes its terms; nobody else can pose as one");
 
   // ===== Only money that's there leaves =====

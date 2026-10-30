@@ -31,14 +31,14 @@ export function Earnings() {
 
       <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 flex items-center gap-3 p-5">
-          <div className="grid h-11 w-11 place-items-center rounded-full bg-relay-100 dark:bg-relay-900/30 text-relay-600">
+          <div className="grid h-11 w-11 place-items-center rounded-full bg-handshake-100 dark:bg-handshake-900/30 text-handshake-600">
             <Wallet size={20} />
           </div>
           <div className="flex-1">
             <p className="text-xs text-ink-400">{t("wallet.balance")}</p>
             {balance === undefined ? <Skeleton className="mt-1 h-7 w-24" /> : <StatNumber className="text-2xl">{formatCents(balance)}</StatNumber>}
           </div>
-          <Link to="/wallet" className="inline-flex items-center gap-1 rounded-full bg-relay-500 px-3.5 py-2 text-xs font-semibold text-white">
+          <Link to="/wallet" className="inline-flex items-center gap-1 rounded-full bg-handshake-500 px-3.5 py-2 text-xs font-semibold text-white">
             <ArrowUpRight size={14} /> {t("wallet.cashOut")}
           </Link>
         </Card>

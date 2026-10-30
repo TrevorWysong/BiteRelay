@@ -4,8 +4,8 @@ import { invitationFingerprint, isInvitation, sealedAccount } from "../src/lib/a
 
 // Made by the runtime (runtime/device/src/code.rs, `the_app_reads_the_same_codes`):
 // the app must read exactly what it writes.
-const SEALED = "relay-key:1:hCAkCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQldqCMwAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgIFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU";
-const INVITATION = "relay-move:1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+const SEALED = "handshake-key:1:hCAkCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQldqCMwAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgIFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU";
+const INVITATION = "handshake-move:1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 
 test("a sealed key names its account", () => {
   const account = sealedAccount(SEALED);
@@ -17,10 +17,10 @@ test("a sealed key names its account", () => {
 
 test("an invitation is told apart from everything else", () => {
   assert.ok(isInvitation(INVITATION));
-  for (const code of ["", INVITATION.slice(0, 20), SEALED, "relay-move:2:" + INVITATION.slice(13), "relay-account:uhCAkAAAA", INVITATION + "!"]) {
+  for (const code of ["", INVITATION.slice(0, 20), SEALED, "handshake-move:2:" + INVITATION.slice(13), "handshake-account:uhCAkAAAA", INVITATION + "!"]) {
     assert.equal(isInvitation(code), false, code);
   }
-  for (const code of ["", INVITATION, SEALED.slice(0, 60), "relay-key:1:AAAA"]) assert.equal(sealedAccount(code), null, code);
+  for (const code of ["", INVITATION, SEALED.slice(0, 60), "handshake-key:1:AAAA"]) assert.equal(sealedAccount(code), null, code);
 });
 
 test("an invitation's fingerprint is 48 bits of its key, in three groups", () => {

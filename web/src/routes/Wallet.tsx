@@ -75,7 +75,7 @@ export function Wallet() {
       <motion.div variants={fadeSlideUp}>
         <Card className="mb-4 p-5">
           <div className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-full bg-relay-100 text-relay-600 dark:bg-relay-900/30">
+            <span className="grid h-11 w-11 place-items-center rounded-full bg-handshake-100 text-handshake-600 dark:bg-handshake-900/30">
               <WalletIcon size={20} />
             </span>
             <div>
@@ -183,7 +183,7 @@ function IssuerRow({ issuer, agent, onAddFunds }: { issuer: IssuerView; agent: U
     setBusy(true);
     setError(null);
     try {
-      // To the processor's own page: bank details never touch Relay.
+      // To the processor's own page: bank details never touch HandShake.
       window.location.assign(await payoutSetupUrl(profile.service_url, issuer.issuer, agent));
     } catch (err) {
       setError(describeError(err));
@@ -252,7 +252,7 @@ function AddFundsSheet({ issuer, agent, onClose, onPaid }: { issuer: PayableIssu
             key={preset}
             type="button"
             onClick={() => setAmount(fromMinorUnits(preset).toFixed(2))}
-            className={`rounded-xl py-2.5 text-sm font-semibold transition ${cents === preset ? "bg-relay-500 text-white" : "bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200"}`}
+            className={`rounded-xl py-2.5 text-sm font-semibold transition ${cents === preset ? "bg-handshake-500 text-white" : "bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200"}`}
           >
             {formatCents(preset)}
           </button>
@@ -435,7 +435,7 @@ function CashOutSheet({
                 role="radio"
                 aria-checked={selected}
                 onClick={() => setIssuerHex(hex)}
-                className={`rounded-2xl border p-3 text-left transition ${selected ? "border-relay-500 bg-relay-50/50 dark:bg-relay-900/10" : "border-ink-100 dark:border-ink-800"}`}
+                className={`rounded-2xl border p-3 text-left transition ${selected ? "border-handshake-500 bg-handshake-50/50 dark:bg-handshake-900/10" : "border-ink-100 dark:border-ink-800"}`}
               >
                 <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{i.profile?.name ?? t("wallet.unnamedIssuer")}</p>
                 {i.profile && <p className="text-xs text-ink-500">{feeLabel(i.profile, formatCents)} · {t("wallet.usuallyDays", { count: i.profile.payout_days })}</p>}

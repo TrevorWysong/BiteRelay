@@ -1,8 +1,8 @@
-# Relay issuer service
+# HandShake issuer service
 
-A Relay network's issuer: the one party that turns real money into ledger credits and back. It is to a Relay network what a payment processor is to a shop. Relay itself never holds anyone's money.
+A HandShake network's issuer: the one party that turns real money into ledger credits and back. It is to a HandShake network what a payment processor is to a shop. HandShake itself never holds anyone's money.
 
-- **Adding funds.** A customer pays in Stripe's embedded card form inside the app (Apple Pay and Google Pay where the device and domain allow), so card data never touches Relay. Stripe signs a webhook; the service writes an `IssuerGrant` with the payment's id as its reference, once; the customer's app collects it. Checkout uses this for a balance that's short: pay the difference, and the order is placed.
+- **Adding funds.** A customer pays in Stripe's embedded card form inside the app (Apple Pay and Google Pay where the device and domain allow), so card data never touches HandShake. Stripe signs a webhook; the service writes an `IssuerGrant` with the payment's id as its reference, once; the customer's app collects it. Checkout uses this for a balance that's short: pay the difference, and the order is placed.
 - **Saved cards.** The card is saved to the customer's Stripe customer record, so the next payment is one tap (`/saved-card/charge`), granted at once. The app's auto top-up uses the same call. At most 6 saved-card charges per customer per day.
 - **Reconciliation.** Every 5 minutes the service checks Stripe's payments from the last 7 days and grants any whose webhook never arrived. Grants are idempotent by reference, so this is always safe.
 - **Payout accounts.** A store or driver sets one up on Stripe Connect Express, where Stripe does the identity checks and holds the bank details.
@@ -70,7 +70,7 @@ The Rust side and the cross-language signature are covered by `tests/tryorama/sr
 
 - **Legal review** of money transmission and prepaid access for the issuer's setup: see `docs/CARD_PAYMENTS.md`. Payouts through Stripe Connect run under Stripe's licences.
 - **A conductor of the issuer's own**, always on, whose agent key is on the network's issuer roster (`deploy/properties.json`). `scripts/conductor.mjs` runs it, and `scripts/provision.mjs` makes the key and installs the network's bundle. docs/DEPLOYMENT.md, "Run the network's servers", has the steps and a Docker Compose setup.
-- **`APP_ORIGINS`**: the origins the Relay app's requests come from, in its runtime (Kangaroo's or Tauri's). After setting up a payout account, Stripe returns people to this service's own `/payouts/done` page.
+- **`APP_ORIGINS`**: the origins the HandShake app's requests come from, in its runtime (Kangaroo's or Tauri's). After setting up a payout account, Stripe returns people to this service's own `/payouts/done` page.
 - **Hosting:** the service behind https (`PUBLIC_URL`), with its database backed up.
 - **Stripe Radar rules** on (see *Card risk*), and the limits tuned to the issuer's appetite for loss.
 - **Apple Pay:** register the app's https domain in Stripe (Settings → Payment methods → Apple Pay). It never shows on localhost.

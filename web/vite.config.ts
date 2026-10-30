@@ -23,7 +23,7 @@ const CONTENT_SECURITY_POLICY = [
 
 function contentSecurityPolicy(): Plugin {
   return {
-    name: 'relay-content-security-policy',
+    name: 'handshake-content-security-policy',
     apply: 'build',
     transformIndexHtml: (html) => html.replace('<head>', `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CONTENT_SECURITY_POLICY}" />`),
   }
@@ -39,6 +39,6 @@ export default defineConfig(({ mode }) => ({
     // Whether this build carries the dev host's identity code (Admin API,
     // passkeys) -- see src/holochain/host.ts. A literal, so production
     // builds drop that code entirely.
-    __DEV_HOST__: JSON.stringify(mode === 'development' || process.env.VITE_RELAY_DEV_HOST === 'true'),
+    __DEV_HOST__: JSON.stringify(mode === 'development' || process.env.VITE_HANDSHAKE_DEV_HOST === 'true'),
   },
 }))

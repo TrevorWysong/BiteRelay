@@ -129,7 +129,7 @@ function OrderCard({ row, showTime, children }: { row: OrderRow; showTime?: bool
     <Card className="flex items-center gap-2 p-4">
       <Link to={customerOrderPath(row)} className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
-          <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-relay-600" : "text-presence-600")}>
+          <span className={clsx("flex items-center gap-1", row.kind === "Delivery" ? "text-handshake-600" : "text-presence-600")}>
             {row.kind === "Delivery" ? <Bike size={11} /> : <ShoppingBag size={11} />}
             {t(row.kind === "Delivery" ? "cart.delivery" : "cart.pickup")}
           </span>
@@ -200,7 +200,7 @@ function PendingClaims() {
   return (
     <div className="mb-5">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-        <PackageOpen size={13} className="text-relay-500" /> {t("orders.pendingClaims")}
+        <PackageOpen size={13} className="text-handshake-500" /> {t("orders.pendingClaims")}
       </p>
       <div className="flex flex-col gap-2">
         {claims.map((claim) => (

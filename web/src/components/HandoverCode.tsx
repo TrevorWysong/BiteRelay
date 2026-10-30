@@ -40,7 +40,7 @@ export function HandoverCode({ orderRef, secret, giver = "customer" }: { orderRe
       <button
         onClick={() => setShowQr((v) => !v)}
         aria-expanded={showQr}
-        className="flex w-full items-center justify-center gap-2 border-t border-ink-100 py-3.5 text-sm font-semibold text-relay-600 transition hover:bg-relay-50/60 dark:border-ink-800 dark:text-relay-400 dark:hover:bg-relay-900/20"
+        className="flex w-full items-center justify-center gap-2 border-t border-ink-100 py-3.5 text-sm font-semibold text-handshake-600 transition hover:bg-handshake-50/60 dark:border-ink-800 dark:text-handshake-400 dark:hover:bg-handshake-900/20"
       >
         <QrCode size={16} />
         {showQr ? t("code.hide") : t(copy.reveal)}

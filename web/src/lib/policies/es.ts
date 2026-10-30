@@ -36,7 +36,7 @@ function sections(t: NetworkTerms): PolicySection[] {
     {
       id: "payments",
       title: "Pagos y depósito",
-      summary: "El dinero se reserva en cada paso y solo se mueve con una prueba o con la decisión de la tienda sobre el pedido. Relay no cobra comisión.",
+      summary: "El dinero se reserva en cada paso y solo se mueve con una prueba o con la decisión de la tienda sobre el pedido. HandShake no cobra comisión.",
       points: [
         "Cuando una tienda acepta tu pedido, el precio de la comida se reserva de tu saldo. Cuando aceptas la oferta de un repartidor, también se reservan su tarifa y tu propina.",
         "El repartidor reserva el valor de la comida al comprometerse con el pedido, antes de que la tienda empiece a cocinar. Esa es su garantía: vuelve a ser suya cuando el pedido se entrega.",
@@ -57,10 +57,10 @@ function sections(t: NetworkTerms): PolicySection[] {
         "Añades fondos pagando con tarjeta a uno de los emisores de la red, que suma exactamente ese importe a tu saldo: añadir fondos es gratis. Tu saldo funciona como una tarjeta regalo para toda la red.",
         "Cada tienda fija su propio impuesto sobre ventas o IVA, como vendedora. El pago y tu recibo lo muestran: añadido al precio o ya incluido.",
         "Lo que puedes añadir con tarjeta crece con tu cuenta: una cuenta nueva puede añadir un poco al día, y más a medida que pide. El primer pago con una tarjeta puede pedir a tu banco que confirme que eres tú.",
-        "Si a tu saldo le falta dinero al pagar, pagas la diferencia con tarjeta en ese momento, y tu pedido se hace en cuanto se paga. La tarjeta se guarda en el emisor, nunca en Relay, así que la próxima vez es un toque; también puedes recargar el saldo automáticamente cuando baje.",
+        "Si a tu saldo le falta dinero al pagar, pagas la diferencia con tarjeta en ese momento, y tu pedido se hace en cuanto se paga. La tarjeta se guarda en el emisor, nunca en HandShake, así que la próxima vez es un toque; también puedes recargar el saldo automáticamente cuando baje.",
         `Para retirar, pides a un emisor que te pague parte de tu saldo fuera de la red. Puedes retirar ${formatCents(t.min_redemption_cents)} o más, hasta lo que haya en tu saldo; el dinero reservado para pedidos y el crédito nunca se pueden retirar.`,
         "Cada emisor publica su comisión de retiro, que cubre sus costes de tarjeta y transferencia, y cuánto tardan los pagos; la app te muestra lo que recibirás antes de confirmar.",
-        "Configuras tu cuenta de cobro en el procesador de tu emisor una sola vez, demostrando con tu propia clave que es tuya. Tus datos bancarios nunca pasan por Relay. Un retiro vuelve primero a las tarjetas con las que pagaste, y solo lo que quede después, lo que ganaste, va a tu banco. El primer pago bancario de una cuenta nueva espera alrededor de una semana.",
+        "Configuras tu cuenta de cobro en el procesador de tu emisor una sola vez, demostrando con tu propia clave que es tuya. Tus datos bancarios nunca pasan por HandShake. Un retiro vuelve primero a las tarjetas con las que pagaste, y solo lo que quede después, lo que ganaste, va a tu banco. El primer pago bancario de una cuenta nueva espera alrededor de una semana.",
         "Si disputas un pago con tarjeta ante tu banco, el emisor pausa los ingresos y los retiros de tu cuenta hasta que se resuelva la disputa.",
         "Tu emisor registra una sola vez qué hizo con cada retiro: pagado, con su referencia de pago, o rechazado. Un retiro rechazado vuelve a tu saldo automáticamente.",
         "Los datos de cobro que añades se sellan para que solo ese emisor pueda leerlos.",
@@ -252,7 +252,7 @@ function sections(t: NetworkTerms): PolicySection[] {
         "Cambiar de teléfono: el teléfono antiguo traspasa la cuenta al nuevo, con tu saldo, valoraciones e historial. El antiguo ya no puede gastar después.",
         "Perder el teléfono: tu frase de recuperación (doce palabras que apuntas) o suficientes de tus guardianes (personas que eliges y que avalan tu nuevo teléfono) te devuelven la cuenta.",
         "Tras una recuperación, el emisor de la red vuelve a emitir tu saldo en tu nuevo teléfono, cuando tu teléfono antiguo lleva sin usarse el periodo de espera del emisor. Así nadie con tu teléfono antiguo puede gastar el mismo dinero dos veces.",
-        "Cualquiera con tu frase de recuperación puede quedarse con tu cuenta. Guárdala en papel, no la compartas nunca, y nadie de Relay te la pedirá jamás.",
+        "Cualquiera con tu frase de recuperación puede quedarse con tu cuenta. Guárdala en papel, no la compartas nunca, y nadie de HandShake te la pedirá jamás.",
         "Los guardianes no pueden tocar tu cuenta por su cuenta: solo suficientes de ellos juntos, para un teléfono en el que estás recuperándola. Tu plan publica sus claves, nunca sus nombres.",
         "Cuando la red pasa a una nueva versión, mueves tu cuenta a ella desde la app antigua: el emisor traslada tu saldo, y tus datos, tiendas y valoraciones vienen contigo. La versión antigua deja de funcionar para tu cuenta una vez te mueves.",
       ],
@@ -274,12 +274,12 @@ function sections(t: NetworkTerms): PolicySection[] {
 /// Lo que podría salir mal, claramente.
 function risks(t: NetworkTerms): string[] {
   return [
-    "Relay es software que gestionan sus usuarios, no una empresa que respalde tus pedidos. Nadie puede revertir un pago que la red ha liquidado, y no hay servicio de atención al cliente.",
+    "HandShake es software que gestionan sus usuarios, no una empresa que respalde tus pedidos. Nadie puede revertir un pago que la red ha liquidado, y no hay servicio de atención al cliente.",
     "Cuando cliente y repartidor no están de acuerdo sobre una entrega, decide la tienda. Una tienda podría ponerse del lado de un cliente contra un repartidor que sí entregó; no gana nada con ello y su decisión es pública, pero la red no puede anularla. Los repartidores se protegen entregando con el código del cliente.",
     "Un pedido dejado en la puerta se considera entregado al dejarlo. Si alguien se lo lleva después, la pérdida es del cliente, como un paquete dejado sin firma.",
     "Nada obliga a una tienda a responder a un informe de artículos que faltan antes de liquidar el pedido; una tienda que liquida antes, o que rechaza injustamente, responde ante sus reseñas.",
     `Una tienda podría negarse a hacer el check-in de un repartidor y después quedarse con su garantía si se va y no viene otro. La red no puede distinguir una tienda que no hace el check-in de un repartidor que nunca llegó, así que se pone del lado de la tienda, la parte que más tiene que perder. Los repartidores pueden informar de ello; los informes de repartidores que han entregado para al menos ${t.min_reporter_stores} tiendas distintas aparecen en el historial de la tienda, y las apps de los repartidores pueden evitar las tiendas señaladas.`,
-    "Los saldos son créditos emitidos por los emisores de esta red. Lo que vale un saldo fuera de Relay depende de esos emisores, no de Relay.",
+    "Los saldos son créditos emitidos por los emisores de esta red. Lo que vale un saldo fuera de HandShake depende de esos emisores, no de HandShake.",
     "Si pierdes el teléfono sin haber configurado una frase de recuperación ni guardianes, nadie puede recuperar tu cuenta ni su saldo. Un teléfono que encuentre otra persona aún puede gastar hasta que recuperes la cuenta.",
     "Todo lo que publicas es permanente y se copia por toda la red. Las reseñas, valoraciones y registros de pedidos no se pueden borrar.",
     "Es público a qué tienda pidió una clave de cliente, y aproximadamente dónde. Usar una sola identidad para todo vincula esos pedidos entre sí.",

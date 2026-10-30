@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { REPO } from "./devEnv.mjs";
 
-const DNA_MANIFEST = path.join(REPO, "dnas/relay/workdir/dna.yaml");
+const DNA_MANIFEST = path.join(REPO, "dnas/handshake/workdir/dna.yaml");
 const WASM_DIR = path.join(REPO, "target/wasm32-unknown-unknown/release");
 
 /// `[{ name, integrity }]` for every coordinator zome in dna.yaml -- read

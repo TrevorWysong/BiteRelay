@@ -41,8 +41,8 @@ jobs:
         # query() loads the caller's whole chain whatever its filter
         # (docs/DEVELOPMENT.md, "Writing zome code"): read with chain::mine.
         run: |
-          if git grep -nE '^[^/]*([^_[:alnum:]]|^)query\(' -- ':(glob)dnas/relay/zomes/*/coordinator/**/*.rs' ':(glob)dnas/relay/coordinator_support/**/*.rs'; then
-            echo "A coordinator calls query(): read the chain with relay_coordinator_support::chain::mine instead."
+          if git grep -nE '^[^/]*([^_[:alnum:]]|^)query\(' -- ':(glob)dnas/handshake/zomes/*/coordinator/**/*.rs' ':(glob)dnas/handshake/coordinator_support/**/*.rs'; then
+            echo "A coordinator calls query(): read the chain with handshake_coordinator_support::chain::mine instead."
             exit 1
           fi
       - name: Every refusal people can meet is in the catalogs
@@ -58,7 +58,7 @@ jobs:
       - name: The production UI carries no dev-host (Admin API) code
         working-directory: web
         run: |
-          if grep -l "relay.happ\|listNodeIdentities\|provisionNewIdentity" dist/assets/*.js; then
+          if grep -l "handshake.happ\|listNodeIdentities\|provisionNewIdentity" dist/assets/*.js; then
             echo "A production build must not contain the dev host's identity code -- see src/holochain/host.ts"
             exit 1
           fi
@@ -112,7 +112,7 @@ jobs:
       - name: Build and pack the hApp
         run: |
           cargo build --release --target wasm32-unknown-unknown
-          hc dna pack dnas/relay/workdir
+          hc dna pack dnas/handshake/workdir
           hc app pack workdir
       - name: Lint and test
         working-directory: runtime/device
@@ -149,7 +149,7 @@ jobs:
       - name: Build and pack the hApp
         run: |
           cargo build --release --target wasm32-unknown-unknown
-          hc dna pack dnas/relay/workdir
+          hc dna pack dnas/handshake/workdir
           hc app pack workdir
       - name: Run the suite
         working-directory: tests/tryorama

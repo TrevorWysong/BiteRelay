@@ -90,7 +90,7 @@ function DriverForm({ driver, onDone }: { driver: AgentPubKey; onDone: () => voi
           {t("verify.withdraw")}
         </Button>
       )}
-      <button className="text-xs font-semibold text-relay-600" onClick={onDone}>
+      <button className="text-xs font-semibold text-handshake-600" onClick={onDone}>
         {t("verify.another")}
       </button>
     </Card>

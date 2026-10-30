@@ -27,7 +27,7 @@ import {
   PID_FILE,
   dnaHashOf,
   hashB64,
-  relayCells,
+  handShakeCells,
   readDevNetwork,
   DEV_NETWORK,
   tryConnectAdmin,
@@ -121,7 +121,7 @@ async function printStatus() {
   const adminWs = await tryConnectAdmin();
   if (!adminWs) return;
   try {
-    const cells = await relayCells(adminWs);
+    const cells = await handShakeCells(adminWs);
     const built = existsSync(DNA_PATH) ? dnaHashOf(DNA_PATH) : null;
     // The seeded network's DNA carries its issuer in its properties, so its
     // hash differs from the bare build's: an identity is current if it's on

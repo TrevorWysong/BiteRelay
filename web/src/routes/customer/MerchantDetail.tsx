@@ -190,7 +190,7 @@ function StorePage({ hash }: { hash: string }) {
         {catalog.banner_data_uri ? (
           <img src={catalog.banner_data_uri} alt="" className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full items-center justify-center bg-gradient-to-br from-relay-400 to-relay-600 text-5xl">🍽️</div>
+          <div className="flex h-full items-center justify-center bg-gradient-to-br from-handshake-400 to-handshake-600 text-5xl">🍽️</div>
         )}
         <motion.button whileTap={{ scale: 0.9 }} onClick={() => navigate(-1)} className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow backdrop-blur-sm">
           <ArrowLeft size={18} className="text-ink-900" />
@@ -234,7 +234,7 @@ function StorePage({ hash }: { hash: string }) {
         {bags.length > 0 && (
           <motion.div variants={fadeSlideUp} className="mt-6">
             <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-ink-400">
-              <PackageOpen size={13} className="text-relay-500" /> {t("store.bags")}
+              <PackageOpen size={13} className="text-handshake-500" /> {t("store.bags")}
             </p>
             <div className="flex flex-col gap-2">
               {bags.map((row) => {
@@ -247,7 +247,7 @@ function StorePage({ hash }: { hash: string }) {
                       {row.bag.photo_data_uri ? (
                         <img src={row.bag.photo_data_uri} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
                       ) : (
-                        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-relay-500 text-xl">🎁</div>
+                        <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-handshake-500 text-xl">🎁</div>
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{row.bag.title}</p>
@@ -278,7 +278,7 @@ function StorePage({ hash }: { hash: string }) {
                                     key={f}
                                     onClick={() => setClaimFulfillment(f)}
                                     className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                                      claimFulfillment === f ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"
+                                      claimFulfillment === f ? "bg-handshake-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"
                                     }`}
                                   >
                                     {t(f === "Pickup" ? "cart.pickup" : "cart.delivery")}
@@ -407,7 +407,7 @@ function StorePage({ hash }: { hash: string }) {
             <motion.button
               whileTap={{ scale: 0.97 }}
               onClick={() => navigate("/customer/cart")}
-              className="flex w-full items-center justify-between rounded-full bg-relay-500 px-5 py-3.5 font-semibold text-white shadow-[var(--shadow-glow)]"
+              className="flex w-full items-center justify-between rounded-full bg-handshake-500 px-5 py-3.5 font-semibold text-white shadow-[var(--shadow-glow)]"
             >
               <span className="flex items-center gap-2">
                 <ShoppingBag size={18} />

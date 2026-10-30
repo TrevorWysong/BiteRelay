@@ -47,7 +47,7 @@ export function HandoffStep({ orderRef, order, location, onDone }: { orderRef: U
   const onScan = useCallback(
     async (text: string) => {
       const parsed = decodeHandoverCode(text);
-      if (!parsed) return setScanProblem(translate("scan.notRelay"));
+      if (!parsed) return setScanProblem(translate("scan.notHandShake"));
       if (parsed.orderHex !== orderHex) return setScanProblem(translate("scan.otherOrder"));
       // Checked here first, so a wrong code is caught on the spot; the
       // network checks it again.
@@ -244,7 +244,7 @@ function PinField({ value, onChange }: { value: string; onChange: (pin: string) 
             <span
               key={i}
               className={`grid h-14 flex-1 place-items-center rounded-xl border-2 bg-white font-mono text-2xl font-black text-ink-900 transition dark:bg-ink-900 dark:text-ink-50 ${
-                active ? "border-ink-200 group-focus-within:border-relay-500 dark:border-ink-700" : value[i] ? "border-ink-300 dark:border-ink-600" : "border-ink-200 dark:border-ink-700"
+                active ? "border-ink-200 group-focus-within:border-handshake-500 dark:border-ink-700" : value[i] ? "border-ink-300 dark:border-ink-600" : "border-ink-200 dark:border-ink-700"
               }`}
             >
               {value[i] ?? ""}

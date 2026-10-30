@@ -54,7 +54,7 @@ async function connectAs(adminUrl: string, installedAppId: string, agentPubKey: 
 /// A brand-new identity on the node at `adminUrl`, connected. Call
 /// `rememberIdentity` once its profile exists.
 export async function provisionAndConnect(adminUrl: string): Promise<{ installedAppId: string; agentPubKey: Uint8Array }> {
-  const installedAppId = `relay-${crypto.randomUUID()}`;
+  const installedAppId = `handshake-${crypto.randomUUID()}`;
   const identity = await provisionNewIdentity(adminUrl, installedAppId);
   await connect({ url: identity.appUrl, token: new Uint8Array(identity.token) });
   setRestorer(async () => {

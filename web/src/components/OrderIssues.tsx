@@ -44,7 +44,7 @@ export function OrderIssues({ orderRef, role }: { orderRef: Uint8Array; role: Ro
   return (
     <Card className="mt-4 overflow-hidden">
       <div className="flex items-start gap-3 p-4">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-relay-50 text-relay-600 dark:bg-relay-900/30 dark:text-relay-400">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-handshake-50 text-handshake-600 dark:bg-handshake-900/30 dark:text-handshake-400">
           <PackageX size={20} />
         </span>
         <div className="min-w-0 flex-1">
@@ -294,7 +294,7 @@ function ReportIssueSheet({
           const d = draft[position];
           const units = d?.quantity ?? 0;
           return (
-            <li key={position} className={`rounded-2xl border p-3 transition ${units > 0 ? "border-relay-400 bg-relay-50/40 dark:bg-relay-900/10" : "border-ink-100 dark:border-ink-800"} ${max <= 0 ? "opacity-50" : ""}`}>
+            <li key={position} className={`rounded-2xl border p-3 transition ${units > 0 ? "border-handshake-400 bg-handshake-50/40 dark:bg-handshake-900/10" : "border-ink-100 dark:border-ink-800"} ${max <= 0 ? "opacity-50" : ""}`}>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{line.name}</p>
@@ -356,7 +356,7 @@ function Stepper({ value, max, onChange }: { value: number; max: number; onChang
         <Minus size={15} />
       </button>
       <span className="w-5 text-center text-sm font-bold tabular-nums text-ink-900 dark:text-ink-50">{value}</span>
-      <button aria-label={t("item.more")} className={`${button} bg-relay-500 text-white hover:bg-relay-600`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+      <button aria-label={t("item.more")} className={`${button} bg-handshake-500 text-white hover:bg-handshake-600`} disabled={value >= max} onClick={() => onChange(value + 1)}>
         <Plus size={15} />
       </button>
     </div>

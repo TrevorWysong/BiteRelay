@@ -1,6 +1,6 @@
-# Relay push relay
+# HandShake push relay
 
-Wakes a customer's closed Relay app when their store or driver changes their order, without learning who they are or what they ordered. docs/MOBILE.md, "Waking a closed app", has the design; this is the service.
+Wakes a customer's closed HandShake app when their store or driver changes their order, without learning who they are or what they ordered. docs/MOBILE.md, "Waking a closed app", has the design; this is the service.
 
 ```sh
 cp .env.example .env

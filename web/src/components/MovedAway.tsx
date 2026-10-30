@@ -11,13 +11,13 @@ import { Button } from "./ui";
 import { useT } from "../i18n";
 
 /// `to`: the key it moved to -- `null` when it moved to the new version of
-/// Relay (docs/MIGRATION.md).
+/// HandShake (docs/MIGRATION.md).
 export function MovedAway({ to }: { to: Uint8Array | null }) {
   const t = useT();
   const signOut = useSession((s) => s.signOut);
   return (
     <div className="mesh-hero flex min-h-svh flex-col items-center justify-center gap-4 px-8 text-center text-white">
-      <div className="grid h-16 w-16 place-items-center rounded-3xl bg-white text-relay-600 shadow-xl">
+      <div className="grid h-16 w-16 place-items-center rounded-3xl bg-white text-handshake-600 shadow-xl">
         <Smartphone size={28} />
       </div>
       <h1 className="text-xl font-black">{to ? t("moved.title") : t("moved.newVersionTitle")}</h1>
@@ -32,7 +32,7 @@ export function MovedAway({ to }: { to: Uint8Array | null }) {
         <p className="max-w-sm text-sm text-white/80">{t("moved.newVersionDetail")}</p>
       )}
       {HOST === "dev" ? (
-        <Button variant="ghost" className="bg-white text-relay-600" onClick={signOut}>
+        <Button variant="ghost" className="bg-white text-handshake-600" onClick={signOut}>
           {t("moved.signOut")}
         </Button>
       ) : (

@@ -65,7 +65,7 @@ await runScenario(async (scenario) => {
     console.error(`  synced in ${((performance.now() - syncStart) / 1000).toFixed(0)} s`);
     const successor = successors[i];
     const head = await retryUntil(() => call(successor, "account")<Uint8Array | null>("latest_action_of", predecessor.agentPubKey), (h) => !!h, 60, 1000);
-    const message = new Uint8Array([...new TextEncoder().encode("relay-recovery:v1:"), ...predecessor.agentPubKey, 58, ...successor.agentPubKey, 58, ...head!]);
+    const message = new Uint8Array([...new TextEncoder().encode("handshake-recovery:v1:"), ...predecessor.agentPubKey, 58, ...successor.agentPubKey, 58, ...head!]);
     const started = performance.now();
     const outcome = await call(successor, "account")("take_over", { predecessor: predecessor.agentPubKey, authority: { Phrase: { plan: plan.plan, head, signature: phrase.sign(message) } } }).then(
       () => `${(performance.now() - started).toFixed(0)}`,

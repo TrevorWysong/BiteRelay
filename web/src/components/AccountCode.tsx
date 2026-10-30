@@ -36,7 +36,7 @@ export function CodeCard({ code, fingerprint, note }: { code: string; fingerprin
       <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-400">{t("code.fingerprint")}</p>
       <p className="font-mono text-lg font-black tracking-widest text-ink-900 dark:text-ink-50">{fingerprint}</p>
       <p className="mt-2 max-w-xs text-xs leading-relaxed text-ink-500 dark:text-ink-400">{note}</p>
-      <button type="button" onClick={copy} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-relay-600 hover:underline dark:text-relay-400">
+      <button type="button" onClick={copy} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-handshake-600 hover:underline dark:text-handshake-400">
         {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? t("code.copied") : t("code.copy")}
       </button>
     </div>
@@ -91,5 +91,5 @@ export function AccountCode({ agent, note }: { agent: AgentPubKey; note: string 
 /// Reads an account code, and hands over its key.
 export function AccountCodeReader({ onKey, prompt }: { onKey: (key: AgentPubKey) => void; prompt: string }) {
   const t = useT();
-  return <CodeReader accepts={(code) => readAccountCode(code) !== null} onCode={(code) => onKey(readAccountCode(code)!)} prompt={prompt} refusal={t("code.notAccount")} placeholder="relay-account:uhCAk…" />;
+  return <CodeReader accepts={(code) => readAccountCode(code) !== null} onCode={(code) => onKey(readAccountCode(code)!)} prompt={prompt} refusal={t("code.notAccount")} placeholder="handshake-account:uhCAk…" />;
 }

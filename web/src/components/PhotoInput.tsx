@@ -45,7 +45,7 @@ export function PhotoInput({ value, onChange, shape = "circle", className }: Pro
                 "h-36 w-full rounded-2xl border-2",
                 value
                   ? "border-transparent"
-                  : "border-dashed border-ink-200 dark:border-ink-700 bg-ink-50/80 dark:bg-ink-800/50 hover:border-relay-400 hover:bg-relay-50/40 dark:hover:bg-relay-900/10",
+                  : "border-dashed border-ink-200 dark:border-ink-700 bg-ink-50/80 dark:bg-ink-800/50 hover:border-handshake-400 hover:bg-handshake-50/40 dark:hover:bg-handshake-900/10",
               )
             : "h-24 w-24 rounded-full bg-ink-100 dark:bg-ink-800 hover:opacity-90",
         )}

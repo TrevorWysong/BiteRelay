@@ -8,7 +8,7 @@
 import { bytesToHex, hexToBytes } from "../../holochain/decode";
 import { HANDOFF_CODE_DIGITS, type PinSecret } from "../../holochain/types";
 
-const PREFIX = "relay-handover:1";
+const PREFIX = "handshake-handover:1";
 /// The order, the code's digits and its 16-byte salt.
 const HANDOVER_PATTERN = new RegExp(`^${PREFIX}:([0-9a-f]+):(\\d{${HANDOFF_CODE_DIGITS}}):([0-9a-f]{32})$`);
 
@@ -35,7 +35,7 @@ export async function matchesCommitment(secret: PinSecret, commitment: Uint8Arra
   return digest.length === commitment.length && digest.every((byte, i) => byte === commitment[i]);
 }
 
-const PICKUP_PREFIX = "relay-pickup:1";
+const PICKUP_PREFIX = "handshake-pickup:1";
 const PICKUP_PATTERN = new RegExp(`^${PICKUP_PREFIX}:([0-9a-f]+):([0-9a-f]+)$`);
 
 /// A driver's pickup, as a QR code on their screen: the order and their

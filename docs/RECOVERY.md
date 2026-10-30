@@ -1,18 +1,18 @@
 # Accounts and recovery
 
-How someone keeps their Relay account when they change phones, and gets it back when they lose one, on a network with no company that could reset a password.
+How someone keeps their HandShake account when they change phones, and gets it back when they lose one, on a network with no company that could reset a password.
 
 ## The problem
 
-A Relay account is an agent key. Its private half lives in the keystore of the person's device (the Holochain runtime's lair), and the app never sees it. Changing phones, the old one can send the key on. Lose the device, though, and the key is gone: nothing peer-to-peer can bring it back, and nobody has a copy. With balances now real money, that loss can't be left to chance.
+A HandShake account is an agent key. Its private half lives in the keystore of the person's device (the Holochain runtime's lair), and the app never sees it. Changing phones, the old one can send the key on. Lose the device, though, and the key is gone: nothing peer-to-peer can bring it back, and nobody has a copy. With balances now real money, that loss can't be left to chance.
 
 ## Moving to a new phone: the same key
 
 Moving to a new phone while the old one still works keeps the account's **own key**. The old phone sends the key to the new one, sealed so only the new phone can open it. The new phone then rebuilds the account's chain from the network (Holochain 0.7.1's `restore_from_dht`). It's the same account afterwards: the same balance, stores, listings, ratings, history and orders in progress. Nothing moves to a different key, so nothing has to be re-listed, handed on or reissued.
 
-1. **The new phone invites.** Its keystore makes a one-time encryption key, and it shows the public half as a code (`relay-move:1:…`) with a fingerprint.
+1. **The new phone invites.** Its keystore makes a one-time encryption key, and it shows the public half as a code (`handshake-move:1:…`) with a fingerprint.
 2. **The old phone waits for the network.** It scans the code, and the person checks the fingerprint matches on both screens. The account zome's `ready_to_move` then has to say the network's authorities hold this device's latest action. A new phone restores only what the network holds, so nothing the old phone wrote can be left behind.
-3. **The old phone stops.** The runtime disables the app: no zome calls, no background work, no answers to other devices. It then shows the account's key sealed to the invitation (`relay-key:1:…`). The keystore seals it (lair's seed export, a crypto_box from the account key's encryption half to the invitation key), so the key is never readable in between. A photo of the code is useless without the new phone's keystore.
+3. **The old phone stops.** The runtime disables the app: no zome calls, no background work, no answers to other devices. It then shows the account's key sealed to the invitation (`handshake-key:1:…`). The keystore seals it (lair's seed export, a crypto_box from the account key's encryption half to the invitation key), so the key is never readable in between. A photo of the code is useless without the new phone's keystore.
 4. **The new phone takes it in.** Its keystore opens the key, checks it's the account the code names, and keeps it exportable, so it can move again. The runtime installs the app for that key with its chain restored, and enables it.
 5. **The new phone sets itself up.** A restore brings back the chain but not what was private to the old device. The grants that let signals and handoff codes reach the device are private entries, and background work is the conductor's own state. Each zome's `prepare_device` writes them where they're missing, and nothing where they aren't; the app calls it on every start.
 6. **The old phone lets go.** Once the person says the new phone has the account, the old one removes the app. Until then it can take the account back (`stay`), which it offers only with a warning: only if the new phone never finished.
@@ -21,7 +21,7 @@ Moving to a new phone while the old one still works keeps the account's **own ke
 
 **What the network needs.** Holochain restores only a chain head at least two peers agree on (`restore_chain_quorum`), so a phone can't be fed a made-up history by one. With the old phone stopped, that means two other people's apps online that hold the account's history. On a live network they always are. A restore that can't find them yet keeps waiting, and the new phone says so. It also means a single node can't restore at all, so the development host stands in for this step (`web/src/holochain/devDevice.ts`). HOLOCHAIN_ISSUES.md #10 has the details.
 
-**What a phone needs.** The keystore and the conductor's admin side are out of the UI's reach. The runtime hosting the app does this natively (`runtime/device`, the `relay_device` crate) and gives the UI six commands as `window.__RELAY_DEVICE__` (see `web/src/holochain/device.ts`). The runtime also creates the account's key itself, exportable, because the conductor's own agent keys can't be exported. A runtime without these commands offers recovery instead.
+**What a phone needs.** The keystore and the conductor's admin side are out of the UI's reach. The runtime hosting the app does this natively (`runtime/device`, the `handshake_device` crate) and gives the UI six commands as `window.__HANDSHAKE_DEVICE__` (see `web/src/holochain/device.ts`). The runtime also creates the account's key itself, exportable, because the conductor's own agent keys can't be exported. A runtime without these commands offers recovery instead.
 
 ## Recovery: an account is a line of keys
 
@@ -59,7 +59,7 @@ Around that, honest apps treat a key whose account has moved on as finished:
 
 | Risk | Why it remains | What limits it |
 |---|---|---|
-| A thief with an unlocked lost phone spends its balance before recovery | The device's own key is still valid until the owner acts | The phone's lock, plus Relay's passkey gate in development; recover promptly. |
+| A thief with an unlocked lost phone spends its balance before recovery | The device's own key is still valid until the owner acts | The phone's lock, plus HandShake's passkey gate in development; recover promptly. |
 | A thief keeps spending at a colluding store after recovery | Validation can't see the recovery | Honest stores refuse the key. The issuer's wait restarts on activity and it won't cash out a recovered key. Money only leaves through issuers. |
 | Both phones use the account at once | A modified app, or taking the account back after the new phone already has it | The old phone stops before its key leaves and offers to take it back only with a warning. The network refuses a forked account: the person recovers it as they would a lost phone's. |
 | Someone else uses the phrase or the guardians | The phrase *is* the account; guardians are trusted | The old device sees "Your account has moved". The issuer's wait gives the owner time to see it. Guardians are asked to vouch only after speaking to the person. A threshold over half means two different recoveries would each need a guardian who vouched for both, which their chain forbids. |
@@ -86,17 +86,17 @@ Moving to a new phone keeps the key, so everything stays. On a recovery:
 
 ## Where it lives
 
-- `dnas/relay/zomes/account/`: the plan, vouches, successions and parcels, with their validation.
-- `dnas/relay/zomes/catalog/coordinator/src/moves.rs`: moving a store (`StoreSuccession`).
-- `dnas/relay/zomes/account/coordinator/src/device.rs`: `ready_to_move`; each zome's `prepare_device`.
+- `dnas/handshake/zomes/account/`: the plan, vouches, successions and parcels, with their validation.
+- `dnas/handshake/zomes/catalog/coordinator/src/moves.rs`: moving a store (`StoreSuccession`).
+- `dnas/handshake/zomes/account/coordinator/src/device.rs`: `ready_to_move`; each zome's `prepare_device`.
 - `runtime/device/`: the runtime's side of moving to a new phone: keys, codes, restore.
-- `dnas/relay/zomes/ledger/`: `standing_at`.
-- `dnas/relay/zomes/dispatch/coordinator/src/accounts.rs`: honest apps refuse moved keys.
-- `dnas/relay/zomes/reputation/coordinator`: reputation follows the account's lineage.
+- `dnas/handshake/zomes/ledger/`: `standing_at`.
+- `dnas/handshake/zomes/dispatch/coordinator/src/accounts.rs`: honest apps refuse moved keys.
+- `dnas/handshake/zomes/reputation/coordinator`: reputation follows the account's lineage.
 - `issuer/src/recovery.ts`: the reissue sweep; `payouts.ts` declines recovered keys' cash-outs.
 - `web/src/routes/Account.tsx`: Account & recovery.
 - `web/src/components/RestoreAccount.tsx`: "I already have an account".
-- `web/src/lib/account/recoveryPhrase.ts`: BIP-39 words in ten languages, and HKDF under Relay's own label to Ed25519.
+- `web/src/lib/account/recoveryPhrase.ts`: BIP-39 words in ten languages, and HKDF under HandShake's own label to Ed25519.
 - `web/src/holochain/device.ts`: the runtime's commands to the UI; `devDevice.ts`, development's stand-in.
 - `web/src/components/Departure.tsx`: the old phone, once it has sent its key.
 - Tests:

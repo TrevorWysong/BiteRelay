@@ -1,6 +1,6 @@
 # Upgrading the network
 
-How Relay ships a change to its rules without stranding anyone's money, history or store.
+How HandShake ships a change to its rules without stranding anyone's money, history or store.
 
 ## Two kinds of change
 
@@ -16,13 +16,13 @@ Holochain 0.7 provides the primitives:
 - the network's agent-activity authorities reject anything after it;
 - init properties can seed a new chain.
 
-Relay builds account migration on top of them.
+HandShake builds account migration on top of them.
 
-Holochain 0.7.1 adds a fourth, which Relay uses within a network rather than between them: installing an app with `restore_from_dht` rebuilds an existing key's chain on a new device -- how an account moves to a new phone with its key (RECOVERY.md).
+Holochain 0.7.1 adds a fourth, which HandShake uses within a network rather than between them: installing an app with `restore_from_dht` rebuilds an existing key's chain on a new device -- how an account moves to a new phone with its key (RECOVERY.md).
 
 ### 1. Announcing the new network
 
-The issuer runs on both networks (the same key, on both rosters). On the old network, it publishes its profile with `next_network`, the new DNA's hash. The service does this itself when `PREVIOUS_ISSUER_APP_ID` names its app there. Old apps then show "A new version of Relay is out" (a banner, plus Account & recovery → New version).
+The issuer runs on both networks (the same key, on both rosters). On the old network, it publishes its profile with `next_network`, the new DNA's hash. The service does this itself when `PREVIOUS_ISSUER_APP_ID` names its app there. Old apps then show "A new version of HandShake is out" (a banner, plus Account & recovery → New version).
 
 ### 2. Leaving the old network
 
@@ -65,11 +65,11 @@ A release made while people move carries the previous network as a second app ro
 
 ## For the operator, step by step
 
-1. Build the new release with the changed integrity zomes and the same issuers in `deploy/properties.json`. Use a new network seed, such as `relay-2027`, and carry the previous release:
-   - `npm run package -- --network-seed relay-2027 --previous deploy/releases/relay-2026`
-   - Every release writes `deploy/relay.happ` and `deploy/relay.network.json`. Keep both for each release, in `deploy/releases/<name>/`.
+1. Build the new release with the changed integrity zomes and the same issuers in `deploy/properties.json`. Use a new network seed, such as `handshake-2027`, and carry the previous release:
+   - `npm run package -- --network-seed handshake-2027 --previous deploy/releases/handshake-2026`
+   - Every release writes `deploy/handshake.happ` and `deploy/handshake.network.json`. Keep both for each release, in `deploy/releases/<name>/`.
 2. On the issuer's machine:
-   - install the new network for the issuer's key: `node issuer/scripts/provision.mjs install deploy/relay.happ`, with a new `ISSUER_APP_ID`;
+   - install the new network for the issuer's key: `node issuer/scripts/provision.mjs install deploy/handshake.happ`, with a new `ISSUER_APP_ID`;
    - set `PREVIOUS_ISSUER_APP_ID` to the old app's id;
    - restart the service. It announces the new network on the old one and carries balances over.
 3. Ship the new release. People move when they open it.
@@ -77,10 +77,10 @@ A release made while people move carries the previous network as a second app ro
 
 ## Where it lives
 
-- `dnas/relay/zomes/account/coordinator/src/migration.rs`: `migrate_out`, `chain_closed`, `get_migration_requests`, `arrive`, `arrived_from`. The `Migration` and `Arrival` entries are in `account_types`.
-- `dnas/relay/zomes/ledger/integrity`: refuses ledger entries after a chain close.
-- `dnas/relay/zomes/catalog/coordinator/src/moves.rs`: `import_store`, `imported_from` (and the shared store copy).
-- `dnas/relay/zomes/reputation/coordinator`: adds the previous network's summaries.
+- `dnas/handshake/zomes/account/coordinator/src/migration.rs`: `migrate_out`, `chain_closed`, `get_migration_requests`, `arrive`, `arrived_from`. The `Migration` and `Arrival` entries are in `account_types`.
+- `dnas/handshake/zomes/ledger/integrity`: refuses ledger entries after a chain close.
+- `dnas/handshake/zomes/catalog/coordinator/src/moves.rs`: `import_store`, `imported_from` (and the shared store copy).
+- `dnas/handshake/zomes/reputation/coordinator`: adds the previous network's summaries.
 - `issuer/src/migrations.ts`: carries balances over.
 - `web/scripts/package.mjs`: `--previous`.
 - Web:

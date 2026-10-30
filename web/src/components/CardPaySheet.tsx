@@ -1,6 +1,6 @@
 // Paying by card into the caller's balance, without leaving the app: the
 // card they saved last time in one tap, or the issuer's embedded card form
-// (Stripe's own, in its own frame -- card details never touch Relay; Apple
+// (Stripe's own, in its own frame -- card details never touch HandShake; Apple
 // Pay and Google Pay show where the device and domain allow). Then it waits
 // for the funds to land, and says so.
 import { useCallback, useState } from "react";
@@ -153,7 +153,7 @@ export function CardPaySheet({
     >
       {waiting ? (
         <div className="flex flex-col items-center py-8 text-center">
-          {step.kind === "landing" ? <Loader2 size={28} className="animate-spin text-relay-500" /> : <CreditCard size={28} className="text-ink-400" />}
+          {step.kind === "landing" ? <Loader2 size={28} className="animate-spin text-handshake-500" /> : <CreditCard size={28} className="text-ink-400" />}
           <p className="mt-3 text-sm font-semibold text-ink-900 dark:text-ink-50">{step.kind === "landing" ? t("card.adding", { amount: formatCents(amount) }) : t("card.wentThrough")}</p>
           <p className="mt-1 max-w-xs text-xs text-ink-500">
             {step.kind === "landing" ? t("card.fewSeconds") : t("card.slow")}

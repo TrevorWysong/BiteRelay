@@ -4,7 +4,7 @@
 
 import { forget, readStoredJson, store } from "../lib/util/storage";
 
-const STORAGE_KEY = "relay.identity.v1";
+const STORAGE_KEY = "handshake.identity.v1";
 
 export interface StoredIdentity {
   adminUrl: string;

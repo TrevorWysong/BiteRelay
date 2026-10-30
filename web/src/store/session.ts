@@ -19,11 +19,11 @@ import { nowMicros } from "../lib/ui/format";
 /// The development host's identity code (Admin API, passkeys), loaded only
 /// where it exists -- see `holochain/host.ts`.
 async function devHost() {
-  if (!__DEV_HOST__) throw new Error("Relay runs inside the Relay app -- open it there.");
+  if (!__DEV_HOST__) throw new Error("HandShake runs inside the HandShake app -- open it there.");
   return import("../holochain/devHost");
 }
 
-const LOCATION_STORAGE_KEY = "relay.location.v1";
+const LOCATION_STORAGE_KEY = "handshake.location.v1";
 
 /// Where the app starts when nothing has been chosen yet (St. Petersburg,
 /// FL -- also where the backend tests place their stores). Onboarding shows
@@ -219,7 +219,7 @@ export const useSession = create<SessionState>((set, get) => ({
       } else {
         const dev = await devHost();
         const identity = await dev.provisionAndConnect(devAdminUrl ?? "");
-        hasDeviceLock = await dev.rememberIdentity(devAdminUrl ?? "", identity.installedAppId, identity.agentPubKey, "Relay");
+        hasDeviceLock = await dev.rememberIdentity(devAdminUrl ?? "", identity.installedAppId, identity.agentPubKey, "HandShake");
       }
       await useNetwork.getState().load();
       set({ status: "connected", agentPubKey: myAgentPubKey(), profile: null, profileActionHash: null, movedTo: null, hasDeviceLock });

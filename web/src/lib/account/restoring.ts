@@ -7,7 +7,7 @@ import { forget, readStored, store } from "../util/storage";
 export type Method = "device" | "phrase" | "guardians" | "previous";
 
 /// Where it's kept: the method chosen.
-const RESTORING_KEY = "relay.restoring.v1";
+const RESTORING_KEY = "handshake.restoring.v1";
 
 export function isRestoring(): boolean {
   return readStored(RESTORING_KEY) !== null;

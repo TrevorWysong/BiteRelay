@@ -1,0 +1,18 @@
+[package]
+name = "catalog_integrity"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hdi.workspace = true
+serde.workspace = true
+holochain_serialized_bytes.workspace = true
+handshake_types.workspace = true
+catalog_types.workspace = true
+ledger_types.workspace = true
+account_types.workspace = true
+handshake_integrity_support.workspace = true
+handshake_governance.workspace = true

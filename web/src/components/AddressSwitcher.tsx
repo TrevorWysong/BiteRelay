@@ -164,9 +164,9 @@ export function AddressSwitcher({
     <>
       <button
         onClick={openSheet}
-        className="mb-3 flex w-full items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 text-left transition hover:border-relay-300"
+        className="mb-3 flex w-full items-center gap-2 rounded-full border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 px-4 py-2.5 text-left transition hover:border-handshake-300"
       >
-        <MapPin size={16} className="shrink-0 text-relay-500" />
+        <MapPin size={16} className="shrink-0 text-handshake-500" />
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-900 dark:text-ink-50">{pillText}</span>
         <ChevronDown size={16} className="shrink-0 text-ink-400" />
       </button>
@@ -198,8 +198,8 @@ export function AddressSwitcher({
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-3">
                   {current?.components.street && (
-                    <div className="mb-4 rounded-xl bg-relay-50 dark:bg-relay-900/20 p-3">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-relay-600 dark:text-relay-400">{t("address.current")}</p>
+                    <div className="mb-4 rounded-xl bg-handshake-50 dark:bg-handshake-900/20 p-3">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-handshake-600 dark:text-handshake-400">{t("address.current")}</p>
                       <p className="text-sm font-semibold text-ink-900 dark:text-ink-50">{current.components.street}</p>
                       <p className="text-xs text-ink-400">{cityStateZip(current.components)}</p>
                     </div>
@@ -222,7 +222,7 @@ export function AddressSwitcher({
                     </div>
                   )}
                   {picked && (
-                    <button onClick={() => pickAddress(picked.point)} className="mt-2 text-xs font-semibold text-relay-600 underline-offset-2 hover:underline">
+                    <button onClick={() => pickAddress(picked.point)} className="mt-2 text-xs font-semibold text-handshake-600 underline-offset-2 hover:underline">
                       {t("address.useOnce")}
                     </button>
                   )}
@@ -252,7 +252,7 @@ export function AddressSwitcher({
                         return (
                           <div key={hex} className="flex items-center gap-2 py-3">
                             <button onClick={() => pickAddress(row.address.location)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                              <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${isCurrent ? "bg-relay-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}>
+                              <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${isCurrent ? "bg-handshake-500 text-white" : "bg-ink-100 dark:bg-ink-800 text-ink-500"}`}>
                                 <MapPin size={15} />
                               </div>
                               <div className="min-w-0">

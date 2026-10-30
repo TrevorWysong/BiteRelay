@@ -3,16 +3,16 @@
 // show a fingerprint the person compares on both screens. The runtime makes
 // and opens them (runtime/device/src/code.rs, which this must agree with):
 //
-//   - the new phone's invitation, `relay-move:1:` and the public half of a
+//   - the new phone's invitation, `handshake-move:1:` and the public half of a
 //     one-time encryption key in its keystore;
-//   - the old phone's sealed key, `relay-key:1:` and the account, the key
+//   - the old phone's sealed key, `handshake-key:1:` and the account, the key
 //     sealed to that invitation.
 //
 // Both base64url, unpadded.
 import type { AgentPubKey } from "../../holochain/types";
 
-export const INVITATION_PREFIX = "relay-move:1:";
-export const SEALED_KEY_PREFIX = "relay-key:1:";
+export const INVITATION_PREFIX = "handshake-move:1:";
+export const SEALED_KEY_PREFIX = "handshake-key:1:";
 
 /// Holochain's prefix for an agent key.
 const AGENT_PREFIX = [0x84, 0x20, 0x24];
