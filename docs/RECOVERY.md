@@ -62,6 +62,7 @@ Around that, honest apps treat a key whose account has moved on as finished:
 |---|---|---|
 | A thief with an unlocked lost phone spends its balance before recovery | The device's own key is still valid until the owner acts | The phone's lock, plus HandShake's passkey gate in development; recover promptly. |
 | A thief keeps spending at a colluding store after recovery | Validation can't see the recovery | Honest stores refuse the key. The issuer's wait restarts on activity and it won't cash out a recovered key. Money only leaves through issuers. |
+| The old key collects a part the issuer already reissued | Validation can't see the reissue, and the issuer can't see the future | It's reissued only after the old key's been quiet for the wait, and the watch stops at its first new action. What it collects lands in a balance that's frozen in practice: this issuer won't cash it out and honest stores won't take its orders. |
 | Both phones use the account at once | A modified app, or taking the account back after the new phone already has it | The old phone stops before its key leaves and offers to take it back only with a warning. The network refuses a forked account: the person recovers it as they would a lost phone's. |
 | Someone else uses the phrase or the guardians | The phrase *is* the account; guardians are trusted | The old device sees "Your account has moved". The issuer's wait gives the owner time to see it. Guardians are asked to vouch only after speaking to the person. A threshold over half means two different recoveries would each need a guardian who vouched for both, which their chain forbids. |
 | An issuer reissues dishonestly | Issuers are trusted for money in and out | Their grants are public, and they're on the network's roster. |
@@ -94,7 +95,11 @@ Money for an order sits in holds until each party collects their part, from thei
 Moving to a new phone keeps the key, so everything stays. On a recovery:
 
 - **Money owed to the lost key that comes due more than 30 days after its balance was reissued.** The watch ends then.
-- **Refunds that wait on the lost key.** A part its recipient must give back (an order a store cancelled) moves only when the recipient waives it, and a lost key never will. Letting the new key waive in its place is safe on its own, since giving money back can't create any, but not alongside the reissue above: the same part could then reach the payer *and* be reissued. Doing both needs the issuer to skip any part that's been waived, by either key.
+- **Refunds that wait on the lost key.** A part its recipient must give back (an order a store cancelled) moves only when the recipient waives it, and a lost key never will, so the customer's money stays held. Letting the new key waive in its place looks harmless, since a waiver gives money back, but it isn't:
+  - **The old key may still collect the same part.** A found or stolen phone collects a part it's entitled to while the new key waives that part to a friendly payer, who collects it too. Validation can't see the old key's future, so that's money from nothing, with no issuer in the way.
+  - **The issuer may reissue it too.** A part the new key waived to the payer and the issuer reissued to the new key is paid twice.
+
+  So a waiver by the new key can be valid only with proof that the old key could *never* collect that part: a basis (a store's cancellation, an order the store never answered) under which `validate_collect` refuses the recipient for good, and which no later record can overturn. The issuer would then skip any part with a waiver from either key. That's a change to the ledger's validation (a new kind of waiver citing the `Succession` and that basis), so it changes the DNA. It needs the full matrix of bases checked against `validate_collect`, and its own tests of each forgery, before it ships.
 - **A store's decisions.** Everyone's pay on a delivered order rests on the store's decision about it (`dispatch_types::issues`). If the store's key is lost before it decides, nothing on that order can settle.
 - **Goodie bags** are short-lived and aren't copied.
 

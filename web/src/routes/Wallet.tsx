@@ -20,6 +20,7 @@ import { currencySymbol, formatCents, fromMinorUnits, toMinorUnits } from "../li
 import { fadeSlideUp, staggerContainer } from "../lib/ui/motion";
 import { POLL } from "../lib/network/poll";
 import { useResource } from "../lib/hooks/useResource";
+import { RecoveryNudge } from "../components/RecoveryNudge";
 import { cashOutStatusLabel, collectIncoming, feeLabel, payoutAfterFees } from "../lib/money/wallet";
 import { isPayable, MAX_CARD_PAYMENT_CENTS, MIN_CARD_PAYMENT_CENTS, payoutSetupUrl, savedCard, type PayableIssuer } from "../lib/money/issuerService";
 import { useSession } from "../store/session";
@@ -95,6 +96,10 @@ export function Wallet() {
             </p>
           )}
         </Card>
+      </motion.div>
+
+      <motion.div variants={fadeSlideUp}>
+        <RecoveryNudge />
       </motion.div>
 
       <motion.div variants={fadeSlideUp}>
@@ -262,6 +267,7 @@ function AddFundsSheet({ issuer, agent, onClose, onPaid }: { issuer: PayableIssu
         <Input type="number" inputMode="decimal" min={0} step={0.01} value={amount} onChange={(e) => setAmount(e.target.value)} prefix={currencySymbol()} />
       </Field>
       <p className="mt-3 text-xs text-ink-400">{t("wallet.addNote")}</p>
+      <RecoveryNudge compact />
     </Sheet>
   );
 }
