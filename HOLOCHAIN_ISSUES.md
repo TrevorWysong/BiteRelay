@@ -10,6 +10,7 @@ The 0.7.1 changelog was read in full for the 0.7.1 bump: nothing in it
 touches #1–#8 (its fixes are to publishing with no peers, entry/hash
 checking on receipt, validation receipts, capability grants, direct
 signals and DHT indexes), so they stand as written until re-run. #9 and #10 are new.
+The last section lists what the 0.8 upgrade will change here.
 
 These are things found in Holochain itself (or its immediate dependencies)
 while building this project — not bugs in this project's own zome code.
@@ -583,3 +584,18 @@ replaced with a first-party mechanism.
 **In this project:** moving to a new phone (RECOVERY.md).
 
 **Workaround:** each zome's `prepare_device` writes its grants where the device doesn't hold them, and schedules its background work; init and the app's every start call it. A grant written again has the same entry as the old one, so the old grant's action counts again too. The dev host moves the identity, not the chain, because it is one node. Tests restore across separate conductors, with enough peers.
+
+## Upgrading to 0.8: what will change here
+
+Read against `holochain 0.8.0-dev.13`, `holochain-hdk 0.9.0-dev.4` and `holochain-hdi 0.9.0-dev.9` (2026-10-29), so the upgrade is a known list, not a surprise. Re-read the changelogs at the release candidate; anything below may have moved.
+
+- **The HDK and HDI live in their own repositories** ([holochain-hdk](https://github.com/holochain/holochain-hdk), [holochain-hdi](https://github.com/holochain/holochain-hdi)) and no longer share Holochain's version: `hdk 0.9`, `hdi 0.9`, not `0.8.x`. The crate names stay; `Cargo.toml`'s pins change, and `hdk_version_req` in `holochain --build-info` says which pair a conductor expects.
+- **`ChainStatus::Closed(head)`** -- a valid chain whose head is a `CloseChain` -- takes precedence over `Valid`. Two places match `Valid` only:
+  - `coordinator_support::chain::chain_head_of` falls back to `highest_observed` for anything else. Add `Closed(head)` beside `Valid(head)` so a closed chain's head is read from its status, as it is today.
+  - `account::device::ready_to_move` reports a closed chain as not ready, which is right (a closed chain doesn't move to a new phone; it migrates). Count `Closed` in `seen` the same way.
+  - `account::migration` reads the old chain's head through `chain_head_of`, so the first fix covers it. `tests/tryorama/src/migration.test.ts` checks it end to end.
+- **The v2 action and op model.** The HDI is staging a v2 data model (`dht_v2`, `flat_op_v2`), with `TypedAction` narrowing (`try_from_action`) to replace hand-matching `ActionData`. When it becomes the default, every integrity zome's `validate` changes shape. Ours all go through `relay_integrity_support::classify`, so most of the change is there -- and its `TypedAction` helpers may let several zomes' validation shrink.
+- **`UpdateCoordinators` leaves the public admin API** (the coordinator-upgrades design, `docs/design/coordinator_upgrades.md`, draft): an app-level `update_app` replaces it. Two things of ours use it -- `web/scripts/lib/coordinators.mjs` (`npm run backend`'s hot-swap) and `tests/tryorama/src/helpers.ts` (`useTestCoordinators`) -- and so does the runtime behind MIGRATION.md's "ship a new app version, and runtimes swap the new code in": a launcher on 0.8 does that through `update_app`. Check the runtime's release notes when picking one. Both move to `update_app` once it ships; until it does, stay on 0.7 or keep using whatever per-DNA path remains.
+- **Removed, unused here:** `Action::signer` (actions are signed by their author, always), `Entry::app_fancy` and `Entry::entry_type` (`Action::entry_type` stays, and is what we call).
+- **Clients and tooling:** `@holochain/client` 0.22 and Tryorama's 0.8 line; `hc export-ts-bindings` can generate the conductor API's TypeScript, which may replace a hand-kept type or two in `web/src/holochain/`.
+- **Every upgrade so far has been a new network** (wire or integrity changes): plan 0.8 as a migration (MIGRATION.md) unless chain continuation (`docs/design/dna_migration_chain_continuation.md`, draft) has shipped by then.

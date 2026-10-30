@@ -86,6 +86,14 @@ Validation can't read sealed fields, so rules that need them (the delivery radiu
 
 **Backend (Tryorama)** -- `cd tests/tryorama && npm test` runs every `src/*.test.ts` against `workdir/relay.happ` (which `npm run backend` keeps current), one file at a time. `node run.mjs reviews chat` runs just those files. Each file's output goes to `tests/tryorama/.logs/`; a failure is retried once and reported as flaky if it then passes. `link-validation` needs the test-only coordinators first: `npm run build:test-coordinators`.
 
+**Where a Tryorama file's time goes.** Each player is a conductor of its own, and each conductor compiles every zome: about 10s starting and installing, then about 15s on its first zome call (the coordinators, and every zome's `init`). A three-player file spends over a minute before its first assertion; `dhtSync` waits are a few seconds. Measured in October 2026: faster gossip changes nothing, and two files at a time is barely faster and much flakier, so the suite runs one file at a time. Fewer players per file is the lever that works.
+
+**A test that fails on timing is a finding, not noise.** On a network, the same correct result can arrive by a different path in a different order, and a slow runner finds the paths a fast laptop doesn't. Before retrying or raising a timeout, read the log and decide which it is:
+- the app did something wrong, and that gets fixed;
+- or it took another valid path (another party's app acted first, a sweep saw an outcome before its cause), and the test's expectation gets widened to that path and nothing more.
+
+A longer timeout is right only when the step is genuinely slow, never to make a race rarer.
+
 **Browser smoke tests (Playwright)** -- `npm run test:e2e` (from `web/`) signs in as the seeded people and walks each role's main screens against the dev conductor, so run `npm run dev:reset` first. They add an order or two to the seeded world.
 
 **Unit tests** -- `npm test` (from `web/`) for the UI's pure logic (`web/test/`); `cargo test --workspace --lib` from the repo root for Rust.
