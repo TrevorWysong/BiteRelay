@@ -29,6 +29,8 @@ export async function requestDelivery(input: {
   door_risk_accepted?: boolean;
   /// A driver of the customer's own: one carrying no other order.
   priority?: boolean;
+  /// A reward of the store's rewards program to spend points on (its id).
+  reward?: number | null;
   /// Let the app choose a driver from the bids, by the network's rule
   /// (`rankBids`).
   auto_match?: boolean;
@@ -308,6 +310,8 @@ export async function requestPickupOrder(input: {
   age_confirmed?: boolean;
   /// A wake token from the network's push relay (lib/network/push.ts).
   wake_for_store?: string | null;
+  /// A reward of the store's rewards program to spend points on (its id).
+  reward?: number | null;
 }): Promise<HcRecord> {
   return callZome("dispatch", "request_pickup_order", {
     kitchen_notes: "",

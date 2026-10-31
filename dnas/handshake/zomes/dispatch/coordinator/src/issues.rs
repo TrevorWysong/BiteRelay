@@ -265,6 +265,13 @@ pub struct OrderDecisions {
     pub claim_decided_after: Option<Timestamp>,
 }
 
+/// The store's settlement of `order` (any version), if it's settled --
+/// what its customer earns rewards points on (the rewards zome).
+#[hdk_extern]
+pub fn order_settlement(order: ActionHash) -> ExternResult<Option<ActionHash>> {
+    Ok(decisions_of(&original_action_of(order)?)?.settlement.map(|(settlement, _)| settlement))
+}
+
 /// How `order` stands with its store.
 #[hdk_extern]
 pub fn get_order_decisions(order: ActionHash) -> ExternResult<OrderDecisions> {

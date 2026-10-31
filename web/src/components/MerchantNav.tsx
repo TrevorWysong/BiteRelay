@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { BellRing, ClipboardList, Store } from "lucide-react";
+import { BellRing, ClipboardList, Gift, Store } from "lucide-react";
 import { useMyStores } from "../store/merchantStores";
 import { awaitsAnswer, fetchActiveQueue, storesKey } from "../store/merchantQueue";
 import { useResource } from "../lib/hooks/useResource";
@@ -46,6 +46,7 @@ export function MerchantNav() {
       </AnimatePresence>
       <BottomNavLink to="/merchant" icon={ClipboardList} label={t("nav.orders")} badge={waiting} />
       <BottomNavLink to="/merchant/catalog" icon={Store} label={t("nav.menu")} />
+      <BottomNavLink to="/merchant/rewards" icon={Gift} label={t("nav.rewards")} />
     </>
   );
 }

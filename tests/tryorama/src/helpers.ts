@@ -184,6 +184,7 @@ const WARM_UP: Record<string, (player: PlayerApp) => [string, unknown]> = {
   attestation: () => ["prepare_device", null],
   profiles: () => ["get_my_name", null],
   account: () => ["my_recovery_plan", null],
+  rewards: () => ["my_birth_month", null],
 };
 
 /// What a call can meet while a swapped-in coordinator settles: compiling

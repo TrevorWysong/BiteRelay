@@ -48,6 +48,22 @@ export interface WorldStore {
   groups?: WorldChoiceGroup[];
   menu: WorldMenuItem[];
   promos: { code: string; requirement: unknown; reward: unknown; auto_apply?: boolean }[];
+  /// Its rewards program (`rewards_types::RewardsProgram`), items named
+  /// by their menu names -- set up before any of its orders, so they earn.
+  rewards?: {
+    name: string;
+    points_name: string;
+    tagline: string;
+    accent: string;
+    points_per_dollar: number;
+    welcome_bonus: number;
+    item_bonuses: { item: string; percent: number }[];
+    happy_hours: { days: number; start_minute: number; end_minute: number; percent: number }[];
+    tiers: { name: string; threshold: number; percent: number; perk: string }[];
+    rewards: { name: string; cost: number; free?: string; flat_off?: number; min_tier?: number }[];
+    birthday_points: number;
+    expiry_days: number | null;
+  };
   goodieBag?: { title: string; original: number; price: number; quantity: number };
 }
 
@@ -140,6 +156,28 @@ export const WORLD: { people: WorldPerson[]; stores: WorldStore[]; orders: World
         { name: "Lentil Soup", price: 795, category: "Lunch", dietary_tags: ["Vegan", "Gluten-free"] },
       ],
       promos: [{ code: "REGULAR", requirement: { LoyaltyOrderCount: 3 }, reward: { PercentOffSubtotal: 15 }, auto_apply: true }],
+      rewards: {
+        name: "Café Club",
+        points_name: "beans",
+        tagline: "Every cup gets you closer to a free one",
+        accent: "Citrus",
+        points_per_dollar: 10,
+        welcome_bonus: 100,
+        item_bonuses: [{ item: "Lentil Soup", percent: 200 }],
+        happy_hours: [{ days: 0b0011111, start_minute: 14 * 60, end_minute: 16 * 60, percent: 200 }],
+        tiers: [
+          { name: "Gold", threshold: 1500, percent: 125, perk: "Free extra shot, always" },
+          { name: "Platinum", threshold: 4000, percent: 150, perk: "First taste of every new pastry" },
+        ],
+        rewards: [
+          { name: "Free Almond Croissant", cost: 300, free: "Almond Croissant" },
+          { name: "Free Latte", cost: 450, free: "Latte" },
+          { name: "$5 off", cost: 600, flat_off: 500 },
+          { name: "Free Panini", cost: 1100, free: "Chicken Pesto Panini", min_tier: 1 },
+        ],
+        birthday_points: 250,
+        expiry_days: 365,
+      },
       goodieBag: { title: "End-of-day pastry bag", original: 1800, price: 600, quantity: 4 },
     },
   ],

@@ -195,6 +195,29 @@ async function seedStore(store: WorldStore, owner: Agent, center: Point): Promis
   for (const promo of store.promos) {
     await owner.call("catalog", "create_promo_code", { catalog_ref: ref, code: promo.code, requirement: promo.requirement, reward: promo.reward, expires_at: null, auto_apply: promo.auto_apply ?? false });
   }
+  if (store.rewards) {
+    const r = store.rewards;
+    const item = (name: string) => {
+      const found = items.get(name);
+      if (!found) throw new Error(`${store.name}'s rewards name ${name}, which isn't on its menu`);
+      return found.ref;
+    };
+    await owner.call("rewards", "save_program", {
+      catalog_ref: ref,
+      active: true,
+      name: r.name,
+      points_name: r.points_name,
+      tagline: r.tagline,
+      accent: r.accent,
+      earn: { points_per_dollar: r.points_per_dollar, min_order_cents: 0, max_per_order: null, welcome_bonus: r.welcome_bonus, item_bonuses: r.item_bonuses.map((b) => ({ item_ref: item(b.item), percent: b.percent })), happy_hours: r.happy_hours },
+      tiers: r.tiers,
+      rewards: r.rewards.map((reward, i) => ({ id: i + 1, name: reward.name, cost: reward.cost, benefit: reward.free ? { FreeItem: { item_ref: item(reward.free), quantity: 1 } } : { FlatOffSubtotal: reward.flat_off }, min_tier: reward.min_tier ?? 0 })),
+      birthday_points: r.birthday_points,
+      expiry_days: r.expiry_days,
+      max_balance: null,
+      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    });
+  }
   if (store.goodieBag) {
     const start = now();
     await owner.call("catalog", "create_goodie_bag", {

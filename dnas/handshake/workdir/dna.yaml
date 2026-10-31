@@ -18,6 +18,8 @@ integrity:
       path: ../../../target/wasm32-unknown-unknown/release/reputation_integrity.wasm
     - name: account_integrity
       path: ../../../target/wasm32-unknown-unknown/release/account_integrity.wasm
+    - name: rewards_integrity
+      path: ../../../target/wasm32-unknown-unknown/release/rewards_integrity.wasm
 coordinator:
   zomes:
     - name: profiles
@@ -48,3 +50,7 @@ coordinator:
       path: ../../../target/wasm32-unknown-unknown/release/account.wasm
       dependencies:
         - name: account_integrity
+    - name: rewards
+      path: ../../../target/wasm32-unknown-unknown/release/rewards.wasm
+      dependencies:
+        - name: rewards_integrity

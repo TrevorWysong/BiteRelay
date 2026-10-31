@@ -1,0 +1,22 @@
+[package]
+name = "rewards_coordinator"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "rewards"
+
+[dependencies]
+hdk.workspace = true
+serde.workspace = true
+rewards_integrity = { path = "../integrity" }
+handshake_coordinator_support.workspace = true
+handshake_integrity_support.workspace = true
+catalog_types.workspace = true
+dispatch_types.workspace = true
+
+[features]
+# Raw entry and link externs for validation tests; only ever hot-swapped
+# into test conductors, never packed into the hApp.
+test-utils = []

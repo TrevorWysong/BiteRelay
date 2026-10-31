@@ -697,8 +697,19 @@ fn candidates(days: i64) -> ExternResult<Vec<ActionHash>> {
 /// Settles each candidate in a zome call of its own: a write that doesn't
 /// validate yet (its basis still gossiping here) fails only that order's
 /// call, never the rest of the sweep.
+///
+/// Then the order's rewards, each in a call of its own too: a customer
+/// earns the points it's settled for, and a store gives back the points it
+/// spent once the store's given its food back (the rewards zome).
 fn sweep(days: i64) -> u32 {
-    candidates(days).unwrap_or_default().into_iter().map(|order| handshake_coordinator_support::isolated::<_, u32>("settle_order", order).unwrap_or(0)).sum()
+    let mut decided = 0;
+    for order in candidates(days).unwrap_or_default() {
+        decided += handshake_coordinator_support::isolated::<_, u32>("settle_order", order.clone()).unwrap_or(0);
+        for function in ["earn_for_order", "restore_for_order"] {
+            let _ = call(CallTargetCell::Local, "rewards", function.into(), None, order.clone());
+        }
+    }
+    decided
 }
 
 use crate::order_queues::QueueOwnerExt;

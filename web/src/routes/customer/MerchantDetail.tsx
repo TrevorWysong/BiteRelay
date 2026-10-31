@@ -15,6 +15,7 @@ import { useTerms } from "../../store/network";
 import { useT } from "../../i18n";
 import { AddressSearch } from "../../components/AddressSearch";
 import { StarRating } from "../../components/StarRating";
+import { StoreRewardsStrip } from "./Rewards";
 import { ItemSheet } from "../../components/ItemSheet";
 import { fadeSlideUp, staggerContainer } from "../../lib/ui/motion";
 import { fetchMenu, groupByCategory } from "../../lib/menu/menu";
@@ -230,6 +231,8 @@ function StorePage({ hash }: { hash: string }) {
             </span>
           )}
         </div>
+
+        {hash && <StoreRewardsStrip catalogHex={hash} />}
 
         {bags.length > 0 && (
           <motion.div variants={fadeSlideUp} className="mt-6">

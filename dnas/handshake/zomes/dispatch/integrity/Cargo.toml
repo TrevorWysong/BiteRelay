@@ -15,5 +15,6 @@ dispatch_types.workspace = true
 attestation_types.workspace = true
 ledger_types.workspace = true
 catalog_types.workspace = true
+rewards_types.workspace = true
 handshake_governance.workspace = true
 handshake_integrity_support.workspace = true

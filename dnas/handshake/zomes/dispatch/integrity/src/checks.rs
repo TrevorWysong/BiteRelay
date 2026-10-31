@@ -9,7 +9,7 @@
 //! coordinator pre-checks (`request_delivery`/`request_pickup_order`).
 
 use super::*;
-use catalog_types::{order_tax, order_total, total_with_tax, BagClaimStatus, GoodieBag, MenuItem, PricedLine, TaxableLine};
+use catalog_types::{order_tax, order_total, total_with_tax, BagClaimStatus, GoodieBag, MenuItem, PricedLine, PromoRequirement, PromoReward, TaxableLine};
 use dispatch_types::LinePricer;
 use handshake_integrity_support::limits::{MAX_LINE_QUANTITY, MAX_ORDER_CHOICES, MAX_ORDER_LINES};
 use handshake_integrity_support::{decode, original_creation};
@@ -24,6 +24,11 @@ pub(crate) struct OrderPricing<'a> {
     pub promo_code_ref: Option<&'a ActionHash>,
     pub bag_claim_ref: Option<&'a ActionHash>,
     pub loyalty_proof: &'a [ActionHash],
+    /// The rewards program it joins, and any reward it redeems.
+    pub rewards: Option<&'a OrderRewards>,
+    /// The customer's action before the order: where the walk proving each
+    /// redemption pays for one order starts.
+    pub prev_action: Option<&'a ActionHash>,
     pub placed_at: Timestamp,
     /// The store as it stood when the order was placed (the version it
     /// cites): its minimum order and its tax rates.
@@ -71,6 +76,14 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
     let repeated = order.lines.iter().enumerate().any(|(i, line)| order.lines[..i].iter().any(|l| l.item_ref == line.item_ref && l.selections == line.selections));
     if repeated {
         return Ok(Some("the same item with the same choices is one line".into()));
+    }
+
+    let reward = match check_rewards(&order)? {
+        Ok(reward) => reward,
+        Err(reason) => return Ok(Some(reason)),
+    };
+    if reward.is_some() && (order.promo_code_ref.is_some() || order.bag_claim_ref.is_some()) {
+        return Ok(Some("a reward takes the place of any promo, and isn't spent on a goodie bag".into()));
     }
 
     if let Some(claim_ref) = order.bag_claim_ref {
@@ -128,8 +141,20 @@ pub(crate) fn check_pricing(order: OrderPricing<'_>) -> ExternResult<Option<Stri
         Ok(count) => count,
         Err(reason) => return Ok(Some(reason)),
     };
-    let Some(food) = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), completed) else {
-        return Ok(Some("the promo code's requirement isn't met by this order".into()));
+    let food = match &reward {
+        // A reward is priced as a promo with no requirement would be -- and
+        // must take something off, or its points would be spent for nothing.
+        Some(benefit) => {
+            let food = order_total(&priced, Some((&PromoRequirement::None, benefit)), 0).unwrap_or(0);
+            if food >= catalog_types::subtotal(&priced) {
+                return Ok(Some("that reward takes nothing off this order".into()));
+            }
+            food
+        }
+        None => match order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), completed) {
+            Some(food) => food,
+            None => return Ok(Some("the promo code's requirement isn't met by this order".into())),
+        },
     };
     let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
     Ok(check_taxed_total(&order, food, &taxable, "the lines at their priced versions, less any promo discount"))
@@ -182,6 +207,47 @@ fn check_bag_order_price(order: &OrderPricing<'_>, claim_ref: &ActionHash) -> Ex
     }
     // A bag is food at the store's default rate.
     Ok(check_taxed_total(order, bag.price_cents, &[TaxableLine { category: "", total: bag.price_cents }], "the bag's price"))
+}
+
+/// The rewards an order cites, checked: a version of its own store's
+/// program, running; and a redemption that's the customer's own, at that
+/// version, written just before the order (`REDEMPTION_WINDOW_SECS`), and
+/// paying for no other order of theirs -- every order is on its customer's
+/// own chain, so a walk back to the redemption sees them all. What the
+/// reward takes off, or why the order can't have it.
+fn check_rewards(order: &OrderPricing<'_>) -> ExternResult<Result<Option<PromoReward>, String>> {
+    let Some(rewards) = order.rewards else { return Ok(Ok(None)) };
+    let program = match rewards_types::program_at(&rewards.program, order.catalog_ref)? {
+        Ok(program) => program,
+        Err(reason) => return Ok(Err(reason.into())),
+    };
+    if !program.active {
+        return Ok(Err("an order joins a rewards program only while it runs".into()));
+    }
+    let Some(redemption) = &rewards.redemption else { return Ok(Ok(None)) };
+    let record = must_get_valid_record(redemption.clone())?;
+    let spent = decode::<rewards_types::PointsEntry>(&record).filter(|e| record.action().author() == order.requester && &e.catalog_ref == order.catalog_ref);
+    let Some(rewards_types::PointsKind::Redeem { program: version, reward }) = spent.map(|e| e.kind) else {
+        return Ok(Err("an order's redemption is its customer's own, at its store".into()));
+    };
+    if version != rewards.program {
+        return Ok(Err("a redemption pays for an order under the same version of the program".into()));
+    }
+    let Some(reward) = program.reward(reward) else { return Ok(Err("that program has no such reward".into())) };
+    let redeemed_at = record.action().timestamp();
+    let window = rewards_types::REDEMPTION_WINDOW_SECS * 1_000_000;
+    if order.placed_at < redeemed_at || order.placed_at.as_micros() - redeemed_at.as_micros() > window {
+        return Ok(Err("a redemption pays for an order placed right after it".into()));
+    }
+    let Some(prev) = order.prev_action else { return Ok(Err("an order can't open a chain".into())) };
+    let cites = |bytes: SerializedBytes| {
+        let cited = DeliveryOrder::try_from(bytes.clone()).ok().and_then(|o| o.rewards).or_else(|| PickupOrder::try_from(bytes).ok().and_then(|o| o.rewards));
+        cited.and_then(|r| r.redemption).as_ref() == Some(redemption)
+    };
+    if entries_since(order.requester, prev, redeemed_at, &order_types()?)?.into_iter().any(cites) {
+        return Ok(Err("a redemption pays for one order".into()));
+    }
+    Ok(Ok(Some(reward.benefit.clone())))
 }
 
 /// How many distinct earlier orders at this store `proof` shows the

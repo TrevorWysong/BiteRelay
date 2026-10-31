@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Sparkles } from "lucide-react";
+import { Home, ClipboardList, ShoppingCart, User, Car, DollarSign, Sparkles, Gift } from "lucide-react";
 import { useSession, type Mode } from "../store/session";
 import { useCart } from "../store/cart";
 import { pageVariants } from "../lib/ui/motion";
@@ -107,6 +107,7 @@ export function AppShell() {
             <BottomNavLink to="/customer" icon={Home} label={t("nav.browse")} />
             <BottomNavLink to="/customer/cart" icon={ShoppingCart} label={t("nav.cart")} badge={cartCount} />
             <BottomNavLink to="/customer/orders" icon={ClipboardList} label={t("nav.orders")} />
+            <BottomNavLink to="/rewards" icon={Gift} label={t("nav.rewards")} />
           </>
         )}
         {mode === "driver" && (

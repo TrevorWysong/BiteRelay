@@ -18,6 +18,8 @@ import { Earnings } from "./routes/driver/Earnings";
 import { Wallet } from "./routes/Wallet";
 import { MerchantOrders } from "./routes/merchant/Orders";
 import { MerchantCatalog } from "./routes/merchant/Catalog";
+import { MerchantRewards } from "./routes/merchant/Rewards";
+import { RewardsDetail, RewardsPage } from "./routes/customer/Rewards";
 import { NewStore } from "./routes/merchant/NewStore";
 import { ProfilePage } from "./routes/Profile";
 import { Transparency } from "./routes/Transparency";
@@ -216,6 +218,9 @@ export default function App() {
           <Route path="/driver/earnings" element={<Earnings />} />
           <Route path="/merchant" element={<MerchantOrders />} />
           <Route path="/merchant/catalog" element={<MerchantCatalog />} />
+          <Route path="/merchant/rewards" element={<MerchantRewards />} />
+          <Route path="/rewards" element={<RewardsPage />} />
+          <Route path="/rewards/:hash" element={<RewardsDetail />} />
           <Route path="/merchant/stores/new" element={<NewStore />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/transparency" element={<Transparency />} />

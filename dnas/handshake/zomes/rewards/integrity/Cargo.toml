@@ -1,0 +1,16 @@
+[package]
+name = "rewards_integrity"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hdi.workspace = true
+serde.workspace = true
+holochain_serialized_bytes.workspace = true
+handshake_integrity_support.workspace = true
+catalog_types.workspace = true
+dispatch_types.workspace = true
+rewards_types.workspace = true

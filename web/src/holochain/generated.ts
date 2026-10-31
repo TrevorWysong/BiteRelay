@@ -19,6 +19,11 @@ export type Timestamp = number;
 export type XSalsa20Poly1305EncryptedData = { nonce: Uint8Array; encrypted_data: Uint8Array };
 
 /**
+ * The colour a program's card is drawn in.
+ */
+export type Accent = "Ember" | "Citrus" | "Forest" | "Ocean" | "Berry" | "Midnight";
+
+/**
  * A customer's own named address book -- "Home," "Work," "Mom's house" --
  * decoupled from `location` (the client-only, device-local "where am I
  * browsing from right now" pointer in `session.ts`). DoorDash/UberEats'
@@ -220,6 +225,17 @@ export interface Bid {
 export type BidStatus = "Open" | "Accepted" | "Withdrawn" | "Expired" | "Rejected";
 
 /**
+ * The month a member was born in -- set once, ever, for every store's
+ * birthday reward. Only the month.
+ */
+export interface BirthMonth {
+  /**
+   * 1 (January) to 12.
+   */
+  month: number;
+}
+
+/**
  * Why an order was cancelled. Validation checks each reason against its
  * author, so the customer's view of what happened can be trusted.
  */
@@ -258,6 +274,35 @@ export type Cancellation =
    * collateral pays for the food.
    */
   | "NoDriver";
+
+/**
+ * A member's card at a store: where they stand now, and lately.
+ */
+export interface CardView {
+  catalog_ref: ActionHash;
+  store_name: string;
+  program: ProgramView | null;
+  /**
+   * As of their latest entry.
+   */
+  state: PointsState | null;
+  /**
+   * What they can spend now -- after any expiry since.
+   */
+  balance: number;
+  /**
+   * Their tier now (0 the base).
+   */
+  tier: number;
+  /**
+   * When their points expire, if they do.
+   */
+  expires_at: Timestamp | null;
+  /**
+   * Newest first, at most `HISTORY`.
+   */
+  history: PointsLine[];
+}
 
 /**
  * A cash-out the caller, an issuer, has been asked to pay.
@@ -558,6 +603,11 @@ export interface DeliveryOrder {
    */
   loyalty_proof: ActionHash[];
   /**
+   * The store's rewards program this order joins: what it earns, and
+   * the reward it redeems, if any (`rewards_types`). Fixed when placed.
+   */
+  rewards: OrderRewards | null;
+  /**
    * Why the order was cancelled -- set by the update that cancels it,
    * and checked against who wrote it. `None` until then.
    */
@@ -837,6 +887,37 @@ export interface DropoffShare {
   sealed: XSalsa20Poly1305EncryptedData;
 }
 
+/**
+ * How points are earned.
+ */
+export interface EarnRules {
+  /**
+   * Points per dollar of food paid -- after discounts and any refund,
+   * before tax.
+   */
+  points_per_dollar: number;
+  /**
+   * Food below this earns nothing.
+   */
+  min_order_cents: number;
+  /**
+   * The most one order earns, before any welcome. `None`: no cap.
+   */
+  max_per_order: number | null;
+  /**
+   * Added to a member's first order here.
+   */
+  welcome_bonus: number;
+  /**
+   * Items that earn faster.
+   */
+  item_bonuses: ItemBonus[];
+  /**
+   * Times that earn faster.
+   */
+  happy_hours: HappyHour[];
+}
+
 export interface GeoPoint {
   lat: number;
   lon: number;
@@ -874,6 +955,40 @@ export interface GoodieBag {
   hold_minutes: number;
 }
 
+export interface GrantInput {
+  to: AgentPubKey;
+  catalog_ref: ActionHash;
+  points: number;
+  note: string;
+}
+
+export type GrantReason =
+  /**
+   * The store's own word ("Sorry about the wait!").
+   */
+  | {
+      Goodwill: {
+        note: string;
+      };
+    }
+  /**
+   * The points an order (its original action) spent, back: the store
+   * gave its food back.
+   */
+  | {
+      Restore: {
+        order: ActionHash;
+      };
+    }
+  /**
+   * A member's birthday month, in `year`.
+   */
+  | {
+      Birthday: {
+        year: number;
+      };
+    };
+
 /**
  * Digits in a handoff code -- what a giver reads out, and a driver types.
  */
@@ -888,6 +1003,22 @@ export interface HandoffEvidence {
    * An inline image, or empty for none.
    */
   photo_data_uri: string;
+}
+
+/**
+ * A window each week earning at `percent` of the usual rate.
+ */
+export interface HappyHour {
+  /**
+   * Which days: bit 0 Monday ... bit 6 Sunday.
+   */
+  days: number;
+  /**
+   * Minutes after local midnight it starts, and ends (exclusive).
+   */
+  start_minute: number;
+  end_minute: number;
+  percent: number;
 }
 
 /**
@@ -1112,6 +1243,17 @@ export interface IssuerView {
    * `None` until it publishes one: it can still pay out.
    */
   profile: IssuerProfile | null;
+}
+
+/**
+ * A menu item earning at `percent` of the usual rate (200: double).
+ */
+export interface ItemBonus {
+  /**
+   * The item (its original action).
+   */
+  item_ref: ActionHash;
+  percent: number;
 }
 
 /**
@@ -1396,6 +1538,15 @@ export const MAX_DESCRIPTION_CHARS = 2000;
  */
 export const MAX_DIETARY_TAGS = 32;
 
+export const MAX_EXPIRY_DAYS = 1095;
+
+export const MAX_GRANT_NOTE_CHARS = 200;
+
+/**
+ * The most a store grants at once, or welcomes or celebrates with.
+ */
+export const MAX_GRANT_POINTS = 100000;
+
 /**
  * Options in one choice group.
  */
@@ -1407,9 +1558,27 @@ export const MAX_GROUP_OPTIONS = 30;
 export const MAX_GUARDIANS = 7;
 
 /**
+ * The most happy hours.
+ */
+export const MAX_HAPPY_HOURS = 7;
+
+export const MAX_HAPPY_PERCENT = 500;
+
+/**
+ * The most menu items with their own earn rate.
+ */
+export const MAX_ITEM_BONUSES = 20;
+
+/**
  * Choice groups on one menu item ("Size", "Milk", "Extras").
  */
 export const MAX_ITEM_GROUPS = 10;
+
+/**
+ * A multiplier, in percent: an item's at most 10x, a happy hour's 5x, a
+ * tier's 3x. Each at least 1x.
+ */
+export const MAX_ITEM_PERCENT = 1000;
 
 /**
  * A short label: a cuisine, a menu category, a person's display name.
@@ -1472,6 +1641,8 @@ export const MAX_ORDER_LINES = 100;
  */
 export const MAX_PARCEL_BYTES = 65536;
 
+export const MAX_PERK_CHARS = 120;
+
 export const MAX_PHONE_CHARS = 30;
 
 /**
@@ -1479,7 +1650,25 @@ export const MAX_PHONE_CHARS = 30;
  */
 export const MAX_PLACE_CHARS = 100;
 
+/**
+ * The most points anything holds, costs or grants -- far beyond any real
+ * program, and far below where arithmetic could overflow.
+ */
+export const MAX_POINTS = 1000000000;
+
+export const MAX_POINTS_NAME_CHARS = 20;
+
+/**
+ * Points per dollar of food, at most.
+ */
+export const MAX_POINTS_PER_DOLLAR = 100;
+
 export const MAX_POSTAL_CODE_CHARS = 20;
+
+/**
+ * The shortest a program's text fields may be, and the longest.
+ */
+export const MAX_PROGRAM_NAME_CHARS = 40;
 
 export const MAX_PROMO_CODE_CHARS = 40;
 
@@ -1487,6 +1676,23 @@ export const MAX_PROMO_CODE_CHARS = 40;
  * An issuer's reference for a grant (its payment's id).
  */
 export const MAX_REFERENCE_CHARS = 100;
+
+/**
+ * The most rewards a program offers.
+ */
+export const MAX_REWARDS = 24;
+
+/**
+ * The most a single reward costs.
+ */
+export const MAX_REWARD_COST = 1000000;
+
+export const MAX_REWARD_NAME_CHARS = 60;
+
+/**
+ * The most units a reward's item part covers.
+ */
+export const MAX_REWARD_QUANTITY = 10;
 
 /**
  * A small sealed field -- a note, a name, an address, a phone number, a
@@ -1497,10 +1703,21 @@ export const MAX_SEALED_BYTES = 8192;
 
 export const MAX_STREET_CHARS = 200;
 
+export const MAX_TAGLINE_CHARS = 120;
+
 /**
  * Units a recurring order places each time.
  */
 export const MAX_TEMPLATE_ITEMS = 500;
+
+/**
+ * The most tiers above the base one.
+ */
+export const MAX_TIERS = 4;
+
+export const MAX_TIER_NAME_CHARS = 24;
+
+export const MAX_TIER_PERCENT = 300;
 
 /**
  * An IANA time zone name.
@@ -1508,6 +1725,11 @@ export const MAX_TEMPLATE_ITEMS = 500;
 export const MAX_TIME_ZONE_CHARS = 64;
 
 export const MAX_VEHICLE_CHARS = 100;
+
+/**
+ * The fewest and most days points last without an order.
+ */
+export const MIN_EXPIRY_DAYS = 30;
 
 export interface MenuItem {
   catalog_ref: ActionHash;
@@ -2018,6 +2240,23 @@ export interface OrderOutcome {
 }
 
 /**
+ * An order's part in its store's rewards program.
+ */
+export interface OrderRewards {
+  /**
+   * The program's version the order is placed under -- what it earns at,
+   * and what its reward costs. The store accepts only its current one.
+   */
+  program: ActionHash;
+  /**
+   * The customer's redemption (`rewards_types::PointsKind::Redeem`) that
+   * pays for a reward on this order. Its discount is in `order_total`, in
+   * place of any promo.
+   */
+  redemption: ActionHash | null;
+}
+
+/**
  * Which side of an order a signal's recipient is on.
  */
 export type OrderRole = "Customer" | "Store" | "Driver";
@@ -2210,6 +2449,11 @@ export interface PickupOrder {
    */
   loyalty_proof: ActionHash[];
   /**
+   * The store's rewards program this order joins: what it earns, and
+   * the reward it redeems, if any (`rewards_types`). Fixed when placed.
+   */
+  rewards: OrderRewards | null;
+  /**
    * The customer's word that they're old enough for the order's
    * age-restricted items, and will show ID at the counter -- required
    * when it has any.
@@ -2263,6 +2507,136 @@ export interface PlanView {
   guardians: AgentPubKey[];
   threshold: number;
   published_at: Timestamp;
+}
+
+/**
+ * One change to a member's points at a store, on their own chain.
+ */
+export interface PointsEntry {
+  /**
+   * The store.
+   */
+  catalog_ref: ActionHash;
+  kind: PointsKind;
+  /**
+   * How many points it moved.
+   */
+  points: number;
+  /**
+   * Where it leaves them -- what validation recomputes.
+   */
+  state: PointsState;
+  /**
+   * Their previous entry at this store -- `None` only for their first.
+   */
+  previous: ActionHash | null;
+}
+
+/**
+ * Points a store gives a member, from its own chain: a welcome back, a
+ * birthday, points returned for an order it cancelled. The member collects
+ * it (`PointsKind::Gift`).
+ */
+export interface PointsGrant {
+  to: AgentPubKey;
+  catalog_ref: ActionHash;
+  /**
+   * The program version in force -- whose limits the points arrive under.
+   */
+  program: ActionHash;
+  points: number;
+  reason: GrantReason;
+}
+
+export type PointsKind =
+  /**
+   * Points for an order (its original action) the store settled
+   * (`settlement`, its `ItemSettlement`). Under the program version the
+   * order cites.
+   */
+  | {
+      Earn: {
+        order: ActionHash;
+        settlement: ActionHash;
+      };
+    }
+  /**
+   * Points spent on `reward` of the program at version `program` -- cited
+   * by the one order it pays for.
+   */
+  | {
+      Redeem: {
+        program: ActionHash;
+        reward: number;
+      };
+    }
+  /**
+   * A store's grant (`PointsGrant`), collected.
+   */
+  | {
+      Gift: {
+        grant: ActionHash;
+      };
+    }
+  /**
+   * The member's own redemption that no order used, back -- once its
+   * window (`REDEMPTION_WINDOW_SECS`) has passed with none citing it,
+   * after which none can.
+   */
+  | {
+      Unspend: {
+        redemption: ActionHash;
+      };
+    };
+
+/**
+ * One line of a member's history at a store.
+ */
+export interface PointsLine {
+  entry: ActionHash;
+  at: Timestamp;
+  kind: PointsKind;
+  /**
+   * Points in (positive) or out (negative).
+   */
+  points: number;
+  /**
+   * What a grant said, if it said anything.
+   */
+  note: string | null;
+}
+
+/**
+ * Where a member stands at a store after an entry.
+ */
+export interface PointsState {
+  /**
+   * What they can spend.
+   */
+  balance: number;
+  /**
+   * The calendar year (the program's local time) the counts below are for.
+   */
+  year: number;
+  /**
+   * Points earned in `year`, and in the year before -- what their tier
+   * rests on. Grants don't count.
+   */
+  earned_this_year: number;
+  earned_last_year: number;
+  /**
+   * Every point they've earned here.
+   */
+  lifetime_earned: number;
+  /**
+   * How many orders have earned.
+   */
+  orders: number;
+  /**
+   * When their first and latest earning orders were settled.
+   */
+  first_earned_at: Timestamp | null;
+  last_earned_at: Timestamp | null;
 }
 
 /**
@@ -2329,6 +2703,45 @@ export interface Profile {
    * The person's name, sealed to themselves.
    */
   sealed_name: XSalsa20Poly1305EncryptedData | null;
+}
+
+/**
+ * How a store's program is doing, from its members' own links.
+ */
+export interface ProgramStats {
+  /**
+   * Members who've earned here.
+   */
+  members: number;
+  /**
+   * Of them, those who earned in the last 30 days.
+   */
+  active_members: number;
+  points_earned: number;
+  redemptions: number;
+}
+
+/**
+ * One version of a program, as its store's chain holds it.
+ */
+export interface ProgramVersion {
+  action: ActionHash;
+  written_at: Timestamp;
+}
+
+/**
+ * A store's program at its current version.
+ */
+export interface ProgramView {
+  /**
+   * The program's identity (its original action).
+   */
+  original: ActionHash;
+  /**
+   * Its current version -- what an order placed now cites.
+   */
+  version: ActionHash;
+  program: RewardsProgram;
 }
 
 /**
@@ -2462,6 +2875,12 @@ export interface ProviderCredential {
   license_plate: string;
   photo_data_uri: string;
 }
+
+/**
+ * How long before its order a redemption may be written, at most, in
+ * seconds: an honest app writes both in one commit.
+ */
+export const REDEMPTION_WINDOW_SECS = 3600;
 
 /**
  * One bid as the matching rule weighs it.
@@ -2806,6 +3225,87 @@ export type ReviewTarget =
   | { Store: ActionHash }
   | { Driver: AgentPubKey };
 
+/**
+ * Something points buy.
+ */
+export interface Reward {
+  /**
+   * Its identity across versions of the program, unique within one.
+   */
+  id: number;
+  /**
+   * "Free chips & guac".
+   */
+  name: string;
+  cost: number;
+  /**
+   * What it takes off the order -- a promo's shapes, priced the same way
+   * (`catalog_types::pricing`).
+   */
+  benefit: PromoReward;
+  /**
+   * The tier it needs: 0 for everyone, 1 for the first tier above, ...
+   */
+  min_tier: number;
+}
+
+/**
+ * A store's rewards program, as one version of it stands.
+ */
+export interface RewardsProgram {
+  /**
+   * The store (its original action).
+   */
+  catalog_ref: ActionHash;
+  /**
+   * Whether it's running: an order earns, and redeems, only under an
+   * active version. Points already earned stay.
+   */
+  active: boolean;
+  /**
+   * "Mo's Rewards".
+   */
+  name: string;
+  /**
+   * What its points are called ("points", "beans", "stars").
+   */
+  points_name: string;
+  /**
+   * A line for its card ("Every bowl gets you closer to a free one").
+   */
+  tagline: string;
+  accent: Accent;
+  earn: EarnRules;
+  /**
+   * Status above the base tier, lowest first: reached by points earned
+   * in a calendar year, kept through the next.
+   */
+  tiers: Tier[];
+  /**
+   * What points buy.
+   */
+  rewards: Reward[];
+  /**
+   * What the store gives in a member's birthday month, once a year --
+   * none if 0. Granted by the store's app (`PointsGrant`).
+   */
+  birthday_points: number;
+  /**
+   * Points left without an order this many days expire. `None`: never.
+   */
+  expiry_days: number | null;
+  /**
+   * The most a member holds; what's earned past it is lost. `None`: no
+   * limit but `MAX_POINTS`.
+   */
+  max_balance: number | null;
+  /**
+   * The IANA time zone its hours, years and birthdays are in
+   * ("America/New_York").
+   */
+  time_zone: string;
+}
+
 export type RoleTag = "Requester" | "Provider" | "Merchant";
 
 /**
@@ -3016,6 +3516,28 @@ export interface TemplateDetails {
    * Each order asks for a driver of its own (`DeliveryOrder::priority`).
    */
   priority: boolean;
+}
+
+/**
+ * A status level.
+ */
+export interface Tier {
+  /**
+   * "Gold".
+   */
+  name: string;
+  /**
+   * Points earned in a calendar year that reach it.
+   */
+  threshold: number;
+  /**
+   * What it earns at, in percent of the usual rate (150: 1.5x).
+   */
+  percent: number;
+  /**
+   * What else it brings, in words ("Free guac, always").
+   */
+  perk: string;
 }
 
 /**

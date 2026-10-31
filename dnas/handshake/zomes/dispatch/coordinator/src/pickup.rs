@@ -39,6 +39,9 @@ pub struct RequestPickupOrderInput {
     /// see `RequestDeliveryInput::wake_for_store`.
     #[serde(default)]
     pub wake_for_store: Option<String>,
+    /// A reward of the store's rewards program to spend points on -- its id.
+    #[serde(default)]
+    pub reward: Option<u16>,
 }
 
 /// No matching/signal-fanout step here unlike `orders::request_delivery` --
@@ -61,7 +64,10 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
 
     // The store as it is now: the terms this order is placed under.
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
-    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+    // The store's rewards program, and any reward chosen, priced in.
+    let joining = crate::pricing::joining(&input.catalog_ref, input.reward)?;
+    let reward = joining.as_ref().and_then(|j| j.reward.as_ref().map(|(_, benefit)| benefit));
+    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), reward, input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
     crate::pricing::ensure_age_rules(&priced, false, input.age_confirmed)?;
     // Open now -- a goodie bag runs on its own pickup window instead.
@@ -91,6 +97,7 @@ pub fn request_pickup_order(input: RequestPickupOrderInput) -> ExternResult<Reco
         promo_code_ref: input.promo_code_ref,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
+        rewards: crate::pricing::join(&catalog_ref, joining)?,
         cancellation: None,
         ready_by: None,
         food_hold: None,
@@ -126,6 +133,7 @@ pub fn accept_pickup_order(input: AcceptOrderInput) -> ExternResult<Record> {
     crate::accounts::ensure_not_moved(&order.requester, "This customer")?;
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
     ensure_current_terms(&order_original_action, &order.catalog_ref, &order.catalog_version)?;
+    crate::pricing::ensure_current_program(&order_original_action, &order.catalog_ref, order.rewards.as_ref())?;
     if let Some(claim_ref) = &order.bag_claim_ref {
         crate::claims::redeem_bag_claim(claim_ref)?;
     }

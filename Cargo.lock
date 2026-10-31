@@ -386,6 +386,7 @@ dependencies = [
  "handshake_types",
  "hdi",
  "hdk",
+ "rewards_types",
  "serde",
  "serde_json",
 ]
@@ -403,6 +404,7 @@ dependencies = [
  "hdi",
  "holochain_serialized_bytes",
  "ledger_types",
+ "rewards_types",
  "serde",
 ]
 
@@ -1137,6 +1139,46 @@ dependencies = [
 name = "reputation_integrity"
 version = "0.1.0"
 dependencies = [
+ "dispatch_types",
+ "handshake_integrity_support",
+ "hdi",
+ "holochain_serialized_bytes",
+ "serde",
+]
+
+[[package]]
+name = "rewards_coordinator"
+version = "0.1.0"
+dependencies = [
+ "catalog_types",
+ "dispatch_types",
+ "handshake_coordinator_support",
+ "handshake_integrity_support",
+ "hdk",
+ "rewards_integrity",
+ "serde",
+]
+
+[[package]]
+name = "rewards_integrity"
+version = "0.1.0"
+dependencies = [
+ "catalog_types",
+ "dispatch_types",
+ "handshake_integrity_support",
+ "hdi",
+ "holochain_serialized_bytes",
+ "rewards_types",
+ "serde",
+]
+
+[[package]]
+name = "rewards_types"
+version = "0.1.0"
+dependencies = [
+ "catalog_types",
+ "chrono",
+ "chrono-tz",
  "dispatch_types",
  "handshake_integrity_support",
  "hdi",

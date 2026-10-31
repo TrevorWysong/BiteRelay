@@ -11,9 +11,13 @@ import { useCart, cartItems, lineKey, type CartLine } from "../../store/cart";
 import { ItemSheet } from "../../components/ItemSheet";
 import { useSession } from "../../store/session";
 import { requestDelivery, requestPickupOrder, createRecurringTemplate, countMyCompletedOrders } from "../../holochain/zomes/dispatch";
+import { myCard } from "../../holochain/zomes/rewards";
+import { ACCENTS, earnedFor, orderPoints, rewardDiscount } from "../../lib/rewards/rewards";
+import { RewardRail, RewardTile } from "../../components/rewards/RewardPieces";
+import { Sparkles as RewardsIcon } from "lucide-react";
 import { wakeTokensForOrder } from "../../lib/network/push";
 import { getCatalog, listLivePromoCodes } from "../../holochain/zomes/catalog";
-import { actionHash, bytesToHex, decodeEntry } from "../../holochain/decode";
+import { actionHash, bytesToHex, decodeEntry, hexToBytes } from "../../holochain/decode";
 import { currencySymbol, formatCents, formatDistance, fromMinorUnits, nowMicros, toMinorUnits } from "../../lib/ui/format";
 import { useCustomerSettings } from "../../store/roleSettings";
 import { useTerms } from "../../store/network";
@@ -276,7 +280,14 @@ export function Cart() {
     () => (autoPromoDismissed ? null : bestAutoApplyPromo(promoCodes, cart.lines, cartTotal, completedOrderCount)),
     [autoPromoDismissed, promoCodes, cart.lines, cartTotal, completedOrderCount],
   );
-  const appliedPromo = manualPromo ?? autoPromo;
+  // The store's rewards program: a reward chosen takes the place of any
+  // promo (the network allows one discount an order).
+  const catalogHex = cart.catalogRef ? bytesToHex(cart.catalogRef) : null;
+  const { data: rewardsCard } = useResource(catalogHex ? `rewards:card:${catalogHex}` : null, () => myCard(hexToBytes(catalogHex!)));
+  const rewardsProgram = rewardsCard?.program?.program.active ? rewardsCard.program.program : null;
+  const [rewardId, setRewardId] = useState<number | null>(null);
+  const chosenReward = rewardsProgram?.rewards.find((r) => r.id === rewardId) ?? null;
+  const appliedPromo = chosenReward ? null : (manualPromo ?? autoPromo);
 
   const itemName = (hex: string) => menuItems.find((m) => bytesToHex(m.hash) === hex)?.item.name;
 
@@ -309,7 +320,8 @@ export function Cart() {
   // added), and the summary should reflect that live, not the stale state
   // from when "Apply" was clicked.
   const promoEvaluation = appliedPromo ? evaluatePromo(appliedPromo.promo, cart.lines, cart.total(), completedOrderCount) : null;
-  const promoDiscountCents = promoEvaluation?.effect.subtotalDiscountCents ?? 0;
+  const rewardDiscountCents = chosenReward ? rewardDiscount(chosenReward.benefit, cart.lines) : 0;
+  const promoDiscountCents = chosenReward ? rewardDiscountCents : (promoEvaluation?.effect.subtotalDiscountCents ?? 0);
   const promoRewardNeedsItem = appliedPromo ? "FreeItem" in appliedPromo.promo.reward || "PercentOffItem" in appliedPromo.promo.reward : false;
   const promoAwaitingRewardItem = !!appliedPromo && !!promoEvaluation?.eligible && promoRewardNeedsItem && promoEvaluation.effect.itemEffects.length === 0;
   const discountedSubtotalCents = cart.total() - promoDiscountCents;
@@ -333,6 +345,11 @@ export function Cart() {
   );
   /// What the store is paid: the food, and its tax.
   const orderTotalCents = totalWithTax(discountedSubtotalCents, taxCents, taxIncluded);
+  // What it earns, as the program will count it once the store settles:
+  // the food paid, without tax.
+  const pointsPreview = rewardsProgram
+    ? earnedFor(rewardsProgram, rewardsCard?.state ?? null, orderPoints(rewardsProgram, cart.lines.map((l) => ({ itemRef: l.itemRef, totalCents: l.priceCents * l.quantity })), discountedSubtotalCents - (taxIncluded ? taxCents : 0), now.getTime() * 1000))
+    : 0;
   // The store's limit on what may be left at a door; above it, the order is
   // handed over whatever was chosen.
   // The store's minimum is on the menu prices, before any promo.
@@ -384,6 +401,7 @@ export function Cart() {
           order_total: orderTotalCents,
           kitchen_notes: kitchenNotes.trim(),
           promo_code_ref: appliedPromo?.hash ?? null,
+          reward: chosenReward?.id ?? null,
           age_confirmed: ageRestricted && ageConfirmed,
           wake_for_store: wakeTokensForOrder().wake_for_store,
         });
@@ -404,6 +422,7 @@ export function Cart() {
         tip_cents: tipCents,
         requested_delivery_time: requestedDeliveryTime,
         promo_code_ref: appliedPromo?.hash ?? null,
+        reward: chosenReward?.id ?? null,
         dropoff_preference: dropoffPreference,
         door_risk_accepted: dropoffPreference === "LeaveAtDoor" && doorRiskAccepted,
         priority,
@@ -735,7 +754,28 @@ export function Cart() {
         </Section>
       )}
 
-      <Section title={t("cart.promo.title")}>
+      {rewardsProgram && rewardsProgram.rewards.length > 0 && (
+        <Section
+          title={rewardsProgram.name}
+          right={
+            <span className="text-xs font-black tabular-nums" style={{ color: ACCENTS[rewardsProgram.accent].to }}>
+              {rewardsCard!.balance.toLocaleString()} {rewardsProgram.points_name}
+            </span>
+          }
+        >
+          <RewardRail>
+            {[...rewardsProgram.rewards]
+              .sort((a, b) => a.cost - b.cost)
+              .map((reward) => (
+                <RewardTile key={reward.id} program={rewardsProgram} reward={reward} balance={rewardsCard!.balance} tier={rewardsCard!.tier} menu={menuItems} selected={rewardId === reward.id} onSelect={() => setRewardId(rewardId === reward.id ? null : reward.id)} />
+              ))}
+          </RewardRail>
+          {chosenReward && rewardDiscountCents === 0 && <p className="mt-1 text-xs text-amber-600">{t("rewards.addItemToUse")}</p>}
+          {chosenReward && rewardDiscountCents > 0 && <p className="mt-1 text-xs text-ink-500">{t("rewards.usingInstead")}</p>}
+        </Section>
+      )}
+
+      {!chosenReward && <Section title={t("cart.promo.title")}>
         <AnimatePresence mode="wait">
           {appliedPromo ? (
             <motion.div
@@ -775,7 +815,7 @@ export function Cart() {
           )}
         </AnimatePresence>
         {promoError && <p className="mt-1 text-xs text-red-600">{promoError}</p>}
-      </Section>
+      </Section>}
 
       <motion.div variants={fadeSlideUp}>
         <Card className="mt-4 flex flex-col gap-1.5 p-4 text-sm">
@@ -787,6 +827,12 @@ export function Cart() {
             <div className="flex justify-between text-presence-600 dark:text-presence-400">
               <span>{t("cart.promoLine", { code: appliedPromo.promo.code })}</span>
               <span>-{formatCents(promoDiscountCents)}</span>
+            </div>
+          )}
+          {chosenReward && rewardDiscountCents > 0 && (
+            <div className="flex justify-between font-semibold" style={{ color: ACCENTS[rewardsProgram!.accent].to }}>
+              <span>{chosenReward.name}</span>
+              <span>-{formatCents(rewardDiscountCents)}</span>
             </div>
           )}
           {taxRates.length > 0 && !taxIncluded && (
@@ -818,6 +864,11 @@ export function Cart() {
           {taxRates.length > 0 && taxIncluded && taxCents > 0 && (
             <p className="text-right text-xs text-ink-400">
               {t("cart.includesTax", { amount: formatCents(taxCents), tax: taxRates[0].label || t("cart.taxLower") })}
+            </p>
+          )}
+          {rewardsProgram && pointsPreview > 0 && (
+            <p className="mt-1 flex items-center justify-end gap-1 text-xs font-bold" style={{ color: ACCENTS[rewardsProgram.accent].to }}>
+              <RewardsIcon size={12} /> {t("rewards.willEarn", { points: pointsPreview.toLocaleString(), name: rewardsProgram.points_name })}
             </p>
           )}
         </Card>

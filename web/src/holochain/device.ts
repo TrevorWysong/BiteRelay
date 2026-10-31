@@ -65,5 +65,5 @@ export async function canReceiveAccount(): Promise<boolean> {
 /// isn't, so the app does this on every start. Each zome on its own, so
 /// one's trouble doesn't stop the others.
 export async function prepareDevice(): Promise<void> {
-  await Promise.allSettled(["dispatch", "catalog", "attestation"].map((zome) => callZome(zome, "prepare_device", null)));
+  await Promise.allSettled(["dispatch", "catalog", "attestation", "rewards"].map((zome) => callZome(zome, "prepare_device", null)));
 }

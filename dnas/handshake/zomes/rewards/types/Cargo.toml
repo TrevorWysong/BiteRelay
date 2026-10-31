@@ -1,0 +1,17 @@
+[package]
+name = "rewards_types"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+hdi.workspace = true
+serde.workspace = true
+holochain_serialized_bytes.workspace = true
+handshake_integrity_support.workspace = true
+catalog_types.workspace = true
+dispatch_types.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+chrono-tz = { version = "0.10", default-features = false }

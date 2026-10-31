@@ -181,14 +181,14 @@ pub fn advance_template(input: AdvanceInput) -> ExternResult<ActionHash> {
 fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternResult<()> {
     let (_, store) = crate::stores::current_catalog_version(&template.catalog_ref)?;
     let mut items = template.items.clone();
-    items.retain(|item| price_menu_order(&template.catalog_ref, &store, std::slice::from_ref(item), None).is_ok());
+    items.retain(|item| price_menu_order(&template.catalog_ref, &store, std::slice::from_ref(item), None, None).is_ok());
     if items.is_empty() {
         return Ok(());
     }
     let promo = template.promo_code_ref.clone().filter(|promo| ensure_promo_usable(promo, &template.catalog_ref).is_ok());
-    let (priced, promo) = match price_menu_order(&template.catalog_ref, &store, &items, promo.as_ref()) {
+    let (priced, promo) = match price_menu_order(&template.catalog_ref, &store, &items, promo.as_ref(), None) {
         Ok(priced) => (priced, promo),
-        Err(_) if promo.is_some() => (price_menu_order(&template.catalog_ref, &store, &items, None)?, None),
+        Err(_) if promo.is_some() => (price_menu_order(&template.catalog_ref, &store, &items, None, None)?, None),
         Err(err) => return Err(err),
     };
     request_delivery(RequestDeliveryInput {
@@ -211,6 +211,7 @@ fn fire(template: &RecurringOrderTemplate, details: &TemplateDetails) -> ExternR
         auto_match: true,
         bag_claim_ref: None,
         wake_for_store: None,
+        reward: None,
         wake_for_driver: None,
     })?;
     Ok(())

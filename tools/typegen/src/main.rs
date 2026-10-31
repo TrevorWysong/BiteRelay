@@ -90,6 +90,10 @@ const SOURCES: &[Source] = &[
     renamed("dnas/handshake/zomes/catalog/coordinator/src/signals.rs", &["LocalSignal"], &[("LocalSignal", "CatalogLocalSignal")]),
     only("dnas/handshake/integrity_support/src/sealed.rs", &["SealedChunks"]),
     consts("dnas/handshake/integrity_support/src/limits.rs"),
+    all("dnas/handshake/zomes/rewards/types/src/lib.rs"),
+    only("dnas/handshake/zomes/rewards/types/src/points.rs", &["PointsState"]),
+    consts("dnas/handshake/zomes/rewards/types/src/lib.rs"),
+    only("dnas/handshake/zomes/rewards/coordinator/src/lib.rs", &["ProgramView", "ProgramVersion", "PointsLine", "CardView", "ProgramStats", "GrantInput"]),
 ];
 
 /// Holochain types, emitted once as aliases at the top of the output.

@@ -453,6 +453,10 @@ pub struct DeliveryOrder {
     /// validation counts. Empty otherwise.
     #[serde(default)]
     pub loyalty_proof: Vec<ActionHash>,
+    /// The store's rewards program this order joins: what it earns, and
+    /// the reward it redeems, if any (`rewards_types`). Fixed when placed.
+    #[serde(default)]
+    pub rewards: Option<OrderRewards>,
     /// Why the order was cancelled -- set by the update that cancels it,
     /// and checked against who wrote it. `None` until then.
     #[serde(default)]
@@ -732,6 +736,10 @@ pub struct PickupOrder {
     /// validation counts. Empty otherwise.
     #[serde(default)]
     pub loyalty_proof: Vec<ActionHash>,
+    /// The store's rewards program this order joins: what it earns, and
+    /// the reward it redeems, if any (`rewards_types`). Fixed when placed.
+    #[serde(default)]
+    pub rewards: Option<OrderRewards>,
     /// The customer's word that they're old enough for the order's
     /// age-restricted items, and will show ID at the counter -- required
     /// when it has any.
@@ -749,6 +757,18 @@ pub struct PickupOrder {
     /// accepts the order -- see `DeliveryOrder::food_hold`.
     #[serde(default)]
     pub food_hold: Option<ActionHash>,
+}
+
+/// An order's part in its store's rewards program.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct OrderRewards {
+    /// The program's version the order is placed under -- what it earns at,
+    /// and what its reward costs. The store accepts only its current one.
+    pub program: ActionHash,
+    /// The customer's redemption (`rewards_types::PointsKind::Redeem`) that
+    /// pays for a reward on this order. Its discount is in `order_total`, in
+    /// place of any promo.
+    pub redemption: Option<ActionHash>,
 }
 
 #[cfg(test)]

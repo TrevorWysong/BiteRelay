@@ -225,7 +225,7 @@ There is no password to reset and no company to call, so HandShake gives people 
 | Path | What it is |
 | --- | --- |
 | [`dnas/handshake/`](dnas/handshake) | The network's rules and its API: one DNA. |
-| [`dnas/handshake/zomes/`](dnas/handshake/zomes) | One module per concern, each an **integrity** crate (record types and validation) and a **coordinator** crate (what the app calls): `profiles`, `catalog` (stores, menus, promos, goodie bags), `dispatch` (orders, drivers, bids), `attestation` (handoffs), `ledger` (money), `reputation` (ratings), `account` (recovery, new phones, new networks). |
+| [`dnas/handshake/zomes/`](dnas/handshake/zomes) | One module per concern, each an **integrity** crate (record types and validation) and a **coordinator** crate (what the app calls): `profiles`, `catalog` (stores, menus, promos, goodie bags), `dispatch` (orders, drivers, bids), `attestation` (handoffs), `ledger` (money), `reputation` (ratings), `account` (recovery, new phones, new networks), `rewards` (stores' rewards programs and members' points). |
 | [`dnas/handshake/governance/`](dnas/handshake/governance) | The network's settings: currency, deadlines, limits, issuers, services. |
 | [`web/`](web) | The app, in React and TypeScript, speaking only to the device's own Holochain node. |
 | [`tests/tryorama/`](tests/tryorama) | The integration suite: real Holochain nodes running the real rules, one scenario per file. |
@@ -270,5 +270,5 @@ Not yet: signed desktop installers, the phone builds, which wait on Holochain's 
 | | |
 | --- | --- |
 | **Running it** | [Development](docs/DEVELOPMENT.md) &nbsp;&middot;&nbsp; [Deployment](docs/DEPLOYMENT.md) &nbsp;&middot;&nbsp; [Upgrading the network](docs/MIGRATION.md) &nbsp;&middot;&nbsp; [Phones](docs/MOBILE.md) |
-| **How it works** | [Security](docs/SECURITY.md) &nbsp;&middot;&nbsp; [Accounts and recovery](docs/RECOVERY.md) &nbsp;&middot;&nbsp; [Languages](docs/I18N.md) &nbsp;&middot;&nbsp; [Holochain notes](docs/HOLOCHAIN_ISSUES.md) |
+| **How it works** | [Security](docs/SECURITY.md) &nbsp;&middot;&nbsp; [Accounts and recovery](docs/RECOVERY.md) &nbsp;&middot;&nbsp; [Rewards](docs/REWARDS.md) &nbsp;&middot;&nbsp; [Languages](docs/I18N.md) &nbsp;&middot;&nbsp; [Holochain notes](docs/HOLOCHAIN_ISSUES.md) |
 | **Plans** | [Card payments](docs/CARD_PAYMENTS.md) &nbsp;&middot;&nbsp; [Payment rails](docs/PAYMENT_RAILS.md) &nbsp;&middot;&nbsp; [Menu choices](docs/MENU_CUSTOMIZATION.md) &nbsp;&middot;&nbsp; [Sales tax](docs/SALES_TAX.md) &nbsp;&middot;&nbsp; [Tax reporting](docs/TAX_REPORTING.md) |

@@ -24,6 +24,9 @@ members = [
     "dnas/handshake/zomes/account/types",
     "dnas/handshake/zomes/account/integrity",
     "dnas/handshake/zomes/account/coordinator",
+    "dnas/handshake/zomes/rewards/types",
+    "dnas/handshake/zomes/rewards/integrity",
+    "dnas/handshake/zomes/rewards/coordinator",
 ]
 
 [workspace.package]
@@ -49,6 +52,7 @@ dispatch_types = { path = "dnas/handshake/zomes/dispatch/types" }
 catalog_types = { path = "dnas/handshake/zomes/catalog/types" }
 ledger_types = { path = "dnas/handshake/zomes/ledger/types" }
 account_types = { path = "dnas/handshake/zomes/account/types" }
+rewards_types = { path = "dnas/handshake/zomes/rewards/types" }
 
 [profile.release]
 opt-level = "z"

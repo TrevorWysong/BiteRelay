@@ -77,6 +77,9 @@ pub struct RequestDeliveryInput {
     pub wake_for_store: Option<String>,
     #[serde(default)]
     pub wake_for_driver: Option<String>,
+    /// A reward of the store's rewards program to spend points on -- its id.
+    #[serde(default)]
+    pub reward: Option<u16>,
 }
 
 /// Once the store accepts a delivery, it's listed under its drop-off's cell
@@ -272,7 +275,10 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
     // and its share of the delivery fee, which this order records as the
     // split it was placed under.
     let (catalog_version, catalog) = current_catalog_version(&input.catalog_ref)?;
-    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), input.order_total)?;
+    // The store's rewards program, and any reward chosen, priced in.
+    let joining = crate::pricing::joining(&input.catalog_ref, input.reward)?;
+    let reward = joining.as_ref().and_then(|j| j.reward.as_ref().map(|(_, benefit)| benefit));
+    let priced = price_order(&input.catalog_ref, &catalog, &input.items, input.promo_code_ref.as_ref(), input.bag_claim_ref.as_ref(), reward, input.order_total)?;
     ensure_store_minimum(&catalog, &priced)?;
     crate::pricing::ensure_age_rules(&priced, true, false)?;
     let distance = handshake_types::distance_km(catalog.location, input.dropoff);
@@ -325,6 +331,7 @@ pub fn request_delivery(input: RequestDeliveryInput) -> ExternResult<Record> {
         priority: input.priority,
         bag_claim_ref: input.bag_claim_ref,
         loyalty_proof: priced.loyalty_proof,
+        rewards: crate::pricing::join(&catalog_ref, joining)?,
         cancellation: None,
         ready_by: None,
         food_hold: None,
@@ -409,6 +416,7 @@ pub fn accept_delivery_order(input: AcceptOrderInput) -> ExternResult<Record> {
     crate::accounts::ensure_not_moved(&order.requester, "This customer")?;
     ensure_priced_from_current_menu(&order_original_action, &order.lines, order.bag_claim_ref.as_ref(), order.promo_code_ref.as_ref())?;
     ensure_current_terms(&order_original_action, &order.catalog_ref, &order.catalog_version)?;
+    crate::pricing::ensure_current_program(&order_original_action, &order.catalog_ref, order.rewards.as_ref())?;
     if let Some(claim_ref) = &order.bag_claim_ref {
         crate::claims::redeem_bag_claim(claim_ref)?;
     }

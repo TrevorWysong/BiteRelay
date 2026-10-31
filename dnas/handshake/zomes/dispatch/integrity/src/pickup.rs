@@ -46,6 +46,8 @@ pub(crate) fn validate_new_pickup_order(order: &PickupOrder, author: &AgentPubKe
         promo_code_ref: order.promo_code_ref.as_ref(),
         bag_claim_ref: order.bag_claim_ref.as_ref(),
         loyalty_proof: &order.loyalty_proof,
+        rewards: order.rewards.as_ref(),
+        prev_action,
         placed_at: action_timestamp,
         store: &store,
         tax_cents: order.tax_cents,
@@ -144,6 +146,7 @@ pub(crate) fn validate_pickup_order_transition(
         && prior.catalog_version == order.catalog_version
         && prior.lines == order.lines
         && prior.loyalty_proof == order.loyalty_proof
+        && prior.rewards == order.rewards
         && prior.order_total == order.order_total
         && prior.requested_at == order.requested_at
         && prior.kitchen_note == order.kitchen_note

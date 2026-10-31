@@ -334,21 +334,23 @@ struct WaitingOrder {
     catalog_ref: ActionHash,
     /// The store terms it was placed under.
     catalog_version: ActionHash,
+    /// The rewards program version it joined.
+    rewards: Option<OrderRewards>,
 }
 
 impl WaitingOrder {
     fn from_entry(entry: &OrderEntry) -> Option<Self> {
-        let (lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version) = match entry.kind {
+        let (lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version, rewards) = match entry.kind {
             OrderKind::Delivery => {
                 let order = decode_or::<DeliveryOrder>(&entry.record).filter(|o| o.status == DeliveryStatus::Placed)?;
-                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version, order.rewards)
             }
             OrderKind::Pickup => {
                 let order = decode_or::<PickupOrder>(&entry.record).filter(|o| o.status == PickupStatus::Placed)?;
-                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version)
+                (order.lines, order.bag_claim_ref, order.promo_code_ref, order.catalog_ref, order.catalog_version, order.rewards)
             }
         };
-        Some(Self { kind: entry.kind, bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version })
+        Some(Self { kind: entry.kind, bag_order: bag_claim_ref.is_some(), lines, bag_claim_ref, promo_code_ref, catalog_ref, catalog_version, rewards })
     }
 
     /// Accepts it, with the store's usual prep time -- or declines it if
@@ -360,7 +362,7 @@ impl WaitingOrder {
             Some(DeclineReason::Closed)
         } else if self.bag_claim_ref.as_ref().map(crate::claims::bag_hold_lapsed).transpose()?.unwrap_or(false) {
             Some(DeclineReason::BagHoldLapsed)
-        } else if crate::pricing::terms_outdated(order_ref, &self.catalog_ref, &self.catalog_version)? {
+        } else if crate::pricing::terms_outdated(order_ref, &self.catalog_ref, &self.catalog_version)? || crate::pricing::rewards_outdated(order_ref, &self.catalog_ref, self.rewards.as_ref())? {
             Some(DeclineReason::TermsChanged)
         } else if outdated_item(order_ref, &self.lines, self.bag_claim_ref.as_ref(), self.promo_code_ref.as_ref())?.is_some() {
             Some(DeclineReason::OutdatedPrices)

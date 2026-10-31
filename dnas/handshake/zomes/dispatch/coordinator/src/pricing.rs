@@ -5,7 +5,7 @@
 //! the order is refused with the new total rather than charged silently.
 
 use crate::order_queues::my_completions_at;
-use catalog_types::{order_tax, order_total, total_with_tax, BagClaim, GoodieBag, MerchantCatalog, MenuItem, PricedLine, PromoCode, TaxableLine};
+use catalog_types::{order_tax, order_total, total_with_tax, BagClaim, GoodieBag, MerchantCatalog, MenuItem, PricedLine, PromoCode, PromoRequirement, PromoReward, TaxableLine};
 use handshake_coordinator_support::{decode_or, guest, original_action_of, resolve_latest};
 use dispatch_integrity::*;
 use hdk::prelude::*;
@@ -70,11 +70,15 @@ pub(crate) fn bag_order_total(store: &MerchantCatalog, price: u64) -> u64 {
 /// (`bag_claim_ref`) is the claimed bag at its own price; anything else is
 /// priced from the menu. Fails if an item isn't on this store's menu or is
 /// sold out, if a promo's requirement isn't met, or if the total isn't
-/// `expected_total`.
-pub(crate) fn price_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, expected_total: u64) -> ExternResult<PricedOrder> {
+/// `expected_total`. A `reward` (what a rewards redemption takes off) is
+/// priced in place of any promo.
+pub(crate) fn price_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>, bag_claim_ref: Option<&ActionHash>, reward: Option<&PromoReward>, expected_total: u64) -> ExternResult<PricedOrder> {
+    if reward.is_some() && (promo_ref.is_some() || bag_claim_ref.is_some()) {
+        return Err(guest("A reward can't be combined with a promo code or a goodie bag."));
+    }
     let priced = match bag_claim_ref {
         Some(claim_ref) => price_bag_order(catalog_ref, store, claim_ref, promo_ref)?,
-        None => price_menu_order(catalog_ref, store, items, promo_ref)?,
+        None => price_menu_order(catalog_ref, store, items, promo_ref, reward)?,
     };
     if priced.order_total != expected_total {
         return Err(guest(format!(
@@ -109,7 +113,7 @@ fn price_bag_order(catalog_ref: &ActionHash, store: &MerchantCatalog, claim_ref:
 /// An order from the menu at current prices, less `promo_ref` -- what
 /// `price_order` checks a client's total against, and what a recurring
 /// order is placed at (`recurring::fire`).
-pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>) -> ExternResult<PricedOrder> {
+pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog, items: &[OrderItem], promo_ref: Option<&ActionHash>, reward: Option<&PromoReward>) -> ExternResult<PricedOrder> {
     // One line per item and its choices, however the client listed them.
     let mut merged: Vec<OrderItem> = Vec::new();
     for item in items {
@@ -153,8 +157,18 @@ pub(crate) fn price_menu_order(catalog_ref: &ActionHash, store: &MerchantCatalog
     };
     let needed = promo.as_ref().map_or(0, |p| p.requirement.completed_orders_needed()) as usize;
     let loyalty_proof: Vec<ActionHash> = if needed > 0 { my_completions_at(catalog_ref)?.into_iter().take(needed).collect() } else { Vec::new() };
-    let food = order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32)
-        .ok_or(guest("This order doesn't meet the promo code's requirement."))?;
+    let food = match reward {
+        // As validation prices it: a promo with no requirement, which must
+        // take something off.
+        Some(benefit) => {
+            let food = order_total(&priced, Some((&PromoRequirement::None, benefit)), 0).unwrap_or(0);
+            if food >= catalog_types::subtotal(&priced) {
+                return Err(guest("That reward doesn't apply to what's in your cart."));
+            }
+            food
+        }
+        None => order_total(&priced, promo.as_ref().map(|p| (&p.requirement, &p.reward)), loyalty_proof.len() as u32).ok_or(guest("This order doesn't meet the promo code's requirement."))?,
+    };
     let taxable: Vec<TaxableLine> = priced.iter().zip(&categories).map(|(line, category)| TaxableLine { category, total: line.total() }).collect();
     let (order_total, tax_cents) = taxed(store, food, &taxable);
     let menu_subtotal = priced.iter().map(|line| line.unit_price * u64::from(line.quantity)).sum();
@@ -311,6 +325,87 @@ fn store_at(version: &ActionHash) -> ExternResult<Option<catalog_types::Merchant
 pub(crate) fn ensure_current_terms(order_ref: &ActionHash, catalog_ref: &ActionHash, catalog_version: &ActionHash) -> ExternResult<()> {
     if terms_outdated(order_ref, catalog_ref, catalog_version)? {
         return Err(guest("This order was placed under your store's earlier terms (its minimum, delivery area or fee share), so it can't be accepted -- decline it."));
+    }
+    Ok(())
+}
+
+// --- rewards ---
+
+/// Mirrors `rewards::ProgramView`.
+#[derive(Deserialize, Debug)]
+struct ProgramViewWire {
+    version: ActionHash,
+    program: rewards_types::RewardsProgram,
+}
+
+fn rewards_call<I: Serialize + std::fmt::Debug, O: serde::de::DeserializeOwned + std::fmt::Debug>(function: &str, input: I) -> ExternResult<O> {
+    match call(CallTargetCell::Local, "rewards", function.into(), None, input)? {
+        ZomeCallResponse::Ok(io) => io.decode().map_err(|e| wasm_error!(e)),
+        other => Err(guest(format!("rewards {function}: {other:?}"))),
+    }
+}
+
+/// How an order placed now joins its store's rewards program: its current
+/// version, if it's running -- and the reward chosen, if any, with what it
+/// takes off. Without a reward, a program that can't be read is no reason
+/// to hold the order up: it just earns nothing.
+pub(crate) struct Joining {
+    pub program: ActionHash,
+    pub reward: Option<(u16, PromoReward)>,
+}
+
+pub(crate) fn joining(catalog_ref: &ActionHash, reward: Option<u16>) -> ExternResult<Option<Joining>> {
+    let view = match rewards_call::<_, Option<ProgramViewWire>>("program_of", catalog_ref.clone()) {
+        Ok(view) => view.filter(|v| v.program.active),
+        Err(_) if reward.is_none() => None,
+        Err(err) => return Err(err),
+    };
+    let Some(view) = view else {
+        return match reward {
+            Some(_) => Err(guest("This store's rewards program isn't running.")),
+            None => Ok(None),
+        };
+    };
+    let reward = match reward {
+        Some(id) => Some((id, view.program.reward(id).ok_or(guest("That reward isn't offered anymore."))?.benefit.clone())),
+        None => None,
+    };
+    Ok(Some(Joining { program: view.version, reward }))
+}
+
+/// The order's rewards, once priced: spending the points for its reward
+/// now, in the same commit as the order that cites it.
+pub(crate) fn join(catalog_ref: &ActionHash, joining: Option<Joining>) -> ExternResult<Option<OrderRewards>> {
+    let Some(joining) = joining else { return Ok(None) };
+    #[derive(Serialize, Debug)]
+    struct RedeemWire<'a> {
+        catalog_ref: &'a ActionHash,
+        program: &'a ActionHash,
+        reward: u16,
+    }
+    let redemption = match joining.reward {
+        Some((reward, _)) => Some(rewards_call::<_, ActionHash>("redeem", RedeemWire { catalog_ref, program: &joining.program, reward })?),
+        None => None,
+    };
+    Ok(Some(OrderRewards { program: joining.program, redemption }))
+}
+
+/// Whether an order joined the store's rewards program under a version
+/// that's since been replaced, and didn't just race the change. Validation
+/// can check only that it's a running version, not the current one -- an
+/// old version might earn faster or price a reward lower -- so, as with
+/// prices, the store checks against its own chain before accepting.
+pub(crate) fn rewards_outdated(order_ref: &ActionHash, catalog_ref: &ActionHash, rewards: Option<&OrderRewards>) -> ExternResult<bool> {
+    let Some(rewards) = rewards else { return Ok(false) };
+    let versions: Vec<ItemVersionWire> = rewards_call("get_my_program_versions", catalog_ref.clone())?;
+    Ok(!honoured(&versions, &rewards.program, placement_time(order_ref)?)?)
+}
+
+/// Refuses an order placed under the rewards program's earlier terms --
+/// see `rewards_outdated`.
+pub(crate) fn ensure_current_program(order_ref: &ActionHash, catalog_ref: &ActionHash, rewards: Option<&OrderRewards>) -> ExternResult<()> {
+    if rewards_outdated(order_ref, catalog_ref, rewards)? {
+        return Err(guest("This order was placed under your rewards program's earlier terms, so it can't be accepted -- decline it."));
     }
     Ok(())
 }
