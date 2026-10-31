@@ -2,7 +2,7 @@
 // `rewards_types::points`, which validation enforces. The same cases run in
 // web/test/rewards.test.ts and the Rust tests; keep them in step.
 import type { CartLine } from "../../store/cart";
-import type { Accent, PointsState, PromoReward, Reward, RewardsProgram } from "../../holochain/types";
+import type { Accent, PointsState, PointsStatus, PromoReward, Reward, RewardsProgram } from "../../holochain/types";
 import { bytesToHex } from "../../holochain/decode";
 import { computePromoEffect } from "../menu/promotions";
 import type { Translate } from "../../i18n";
@@ -157,5 +157,17 @@ export function describeHappyHour(days: number, start: number, end: number, t: T
   const clock = (minute: number) => new Date(2000, 0, 1, Math.floor(minute / 60), minute % 60).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const when = days === 0b111_1111 ? t("rewards.everyDay") : named.join(", ");
   return `${when} · ${clock(start)}–${clock(end)}`;
+}
+
+
+export const shortDate = (micros: number) => new Date(micros / 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/// Where a pending order's points stand, in a few words.
+export function pendingLine(status: PointsStatus, t: Translate): string {
+  if (status === "Settling") return t("rewards.pending.settling");
+  if (status === "InReview") return t("rewards.pending.review");
+  if (status === "Arriving") return t("rewards.pending.arriving");
+  if (status === "Earned") return t("rewards.pending.earned");
+  return t("rewards.pending.arrives", { date: shortDate(status.RefundPeriod.until) });
 }
 

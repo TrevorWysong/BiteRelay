@@ -25,7 +25,9 @@ The program is versioned: changing it writes a new version. Each order cites the
 Points are entries on the member's own chain, one running line per store (`PointsEntry`, in `rewards_types`). Each entry carries the state it leaves them in and points at their previous entry at that store. That state is their balance, both years' earnings, lifetime earnings, order count, and first and last earning times. Validation walks their chain to check nothing was skipped. It then recomputes the state with the same pure functions the app uses (`rewards_types::points`), so nobody can state their own balance, tier or expiry.
 
 - **Earn.** Cites the member's own order at that store, placed under an active program version, and the store's settlement of it (`ItemSettlement`, which only the store can write, once).
-  - Points come from the food paid, after discounts and the refund, without tax, split across the lines. Bonus items earn faster, then a happy hour by when the order was placed, then the member's tier, then the per-order cap, then the welcome bonus on their first order.
+  - **Only once the refund period is over.** That's the network's window to appeal the settlement (`appeal_window_secs`, 14 days by default), on a network with arbiters. Until then the points show as pending: on the card, in an "On the way" list, and on the order's page. Validation enforces it, because nobody can date an entry ahead of now, so an earning dated after the window was written after it. An appeal must come within the window, so every appeal there will ever be is already on the customer's chain.
+  - **An appealed order** waits for the arbiter's ruling, and earns on what the customer kept paying: the award is taken off. It must cite the ruling, and an order that wasn't appealed can't cite one.
+  - Points come from the food paid, after discounts, the refund and any award, without tax, split across the lines. Bonus items earn faster, then a happy hour by when the *store* accepted the order, then the member's tier, then the per-order cap, then the welcome bonus on their first order.
   - Each order earns once. The earning is dated by the store's settlement.
 - **Redeem.** Spends exactly a reward's cost at an active program version, if the member has the points and the level.
   - The order that uses it cites it, and its total must take exactly that reward off, priced like a promo with no requirement.
@@ -45,8 +47,8 @@ Points are entries on the member's own chain, one running line per store (`Point
 People choose their own entries' timestamps, so no rule depends on one where faking it would pay:
 
 - **Earning** is dated by the store's settlement, not the customer. That decides expiry and which year counts toward their tier.
-- **Happy hours** use the order's own time. The store accepts an order only within minutes of when it's dated, so the order can't be backdated into a happy hour.
-- **A redemption** must be followed by its order within the hour, and the store's acceptance pins that order to the real time. A redemption backdated to slip past an expiry buys nothing.
+- **Happy hours** are judged by when the store accepted the order: the store's own update, on its own clock. The earning cites that acceptance, and validation checks it really is the store's update from `Placed`.
+- **A redemption** must be followed by its order within the hour, and the store's acceptance pins that order to the real time. A redemption backdated to slip past an expiry buys nothing. A scheduled order is accepted against when it opens, not when it was written, so it can't carry a reward.
 - **Gifts** don't count as activity, so a grant can't keep points from expiring.
 - **Birthdays** are granted by the store's own app in the member's month, once a year, and only to members who first earned there at least 30 days before. The member sets their birth month once, ever (`BirthMonth`), and only the month is shared. A customer can't claim a birthday themselves: they could cite an older, more generous program version, and nothing could stop that.
 
@@ -65,11 +67,14 @@ People choose their own entries' timestamps, so no rule depends on one where fak
 | Granting points for someone else's store | Only the store's owner may grant |
 | Fake accounts farming welcome or birthday points | A welcome needs a settled, paid order that earns on its own. Birthdays need 30 days of membership, once a year. Points are only good at that store, for its food, so farming costs the store and nobody else |
 | A store and a customer colluding | They can only give away the store's own food |
+| Earning on an order, then getting it refunded | Points are earned only after the refund period, on what was finally paid, less any arbiter's award |
+| Backdating an order into a happy hour, or a redemption past an expiry | Happy hours are dated by the store's acceptance; rewards aren't spent on scheduled orders, whose own date bounds nothing |
+| A stranger's store filling someone's chain and wallet with gifts | Only gifts from stores they've ordered from (or points back for their own order) are collected by themselves. Others wait in "Gifts from stores", to accept or ignore. Only the newest 100 grants are read |
+| Linking a birth month to a store over and over | The store's app handles each member once a sweep, and reads its own grants once |
 | Faking a store's members or redemptions | Every rewards link is written by the author of the record it points to, under the store that record is about. A birth month linked to a store many times is still celebrated once a year |
 
 ## What's left
 
-- **Refunds won on appeal.** The arbiter's award is paid after settlement, so an order earns on what the store settled. Points from a refund won on appeal stay with the customer.
 - **A lost store key.** When an issuer refunds a lost store's food (docs/RECOVERY.md), the points spent on that order don't come back, because only the store can return them.
 - **Branched orders.** A store whose order history branches still decides from what its app sees. That's the same as the rest of settlement.
 

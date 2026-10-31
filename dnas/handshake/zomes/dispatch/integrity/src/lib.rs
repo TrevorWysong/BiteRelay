@@ -114,7 +114,7 @@ pub enum LinkTypes {
 const _: () = assert!(LinkTypes::Version as u8 == handshake_integrity_support::versions::VERSION_LINK_TYPE, "Version must be the first link type");
 // `rewards_integrity` finds a member's orders on their chain by these
 // indexes, to prove a redemption paid for none (`PointsKind::Unspend`).
-const _: () = assert!(UnitEntryTypes::DeliveryOrder as u8 == 0 && UnitEntryTypes::PickupOrder as u8 == 3, "rewards_integrity reads the order types' indexes");
+const _: () = assert!(UnitEntryTypes::DeliveryOrder as u8 == 0 && UnitEntryTypes::PickupOrder as u8 == 3 && UnitEntryTypes::Appeal as u8 == 11, "rewards_integrity reads these entry types' indexes");
 
 /// An order (or recurring template) names both a `merchant` and the store
 /// (`catalog_ref`) it's from -- and every per-store thing downstream (the
@@ -156,7 +156,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             EntryTypes::DeliveryOrder(order) => validate_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
             EntryTypes::Bid(bid) => validate_bid_update(&bid, action.author(), &action.original_action_address),
             EntryTypes::RecurringOrderTemplate(template) => validate_recurring_template_update(&template, action.author(), &action.original_action_address),
-            EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp()),
+            EntryTypes::PickupOrder(order) => validate_pickup_order_transition(&order, action.author(), &action.original_action_address, action.timestamp(), action.prev_action()),
             EntryTypes::ItemIssue(_) | EntryTypes::IssueResponse(_) | EntryTypes::OrderOutcome(_) | EntryTypes::ItemSettlement(_) | EntryTypes::CollectRequest(_) | EntryTypes::DropoffShare(_) => {
                 Ok(ValidateCallbackResult::Invalid("issues, requests and an order's settlement can't be changed".into()))
             }

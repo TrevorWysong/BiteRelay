@@ -189,16 +189,26 @@ fn validate_points(entry: &PointsEntry, author: &AgentPubKey, at: Timestamp, pre
         Err(reason) => return invalid(reason),
     };
     let (program, event) = match &entry.kind {
-        PointsKind::Earn { order, settlement } => {
-            let earning = match earning(order, settlement)? {
+        PointsKind::Earn { order, settlement, accepted, ruling } => {
+            let earning = match earning(order, settlement, accepted, ruling.as_ref())? {
                 Ok(earning) => earning,
                 Err(reason) => return invalid(reason),
             };
             if &earning.order.requester != author || earning.order.catalog_ref != entry.catalog_ref {
                 return invalid("points are earned by the order's own customer, at its store");
             }
-            if at < earning.settled_at {
-                return invalid("points are earned after the store settles the order");
+            // Only once the refund period is over: nobody can date an entry
+            // ahead of now, so this one was written after it -- and an
+            // appeal must come within it, so every appeal there will ever
+            // be is already on the customer's chain, before this.
+            let ended = if earning.available_at > earning.settled_at { at > earning.available_at } else { at >= earning.settled_at };
+            if !ended {
+                return invalid("points are earned once the order's refund period is over");
+            }
+            let appealed = appeal_of(author, prev_action, earning.settled_at, order)?;
+            let cited = ruling.as_ref().map(|r| decode::<dispatch_types::Ruling>(&must_get_valid_record(r.clone())?).map(|r| r.appeal).ok_or(wasm_error!(WasmErrorInner::Guest("not a ruling".into())))).transpose()?;
+            if appealed != cited {
+                return invalid("an appealed order earns on its arbiter's ruling, and only an appealed one");
             }
             let placed = must_get_action(order.clone())?.hashed.content.timestamp();
             if wrote_points(author, prev_action, placed, |e| matches!(&e.kind, PointsKind::Earn { order: o, .. } if o == order))? {
@@ -278,6 +288,24 @@ fn validate_points(entry: &PointsEntry, author: &AgentPubKey, at: Timestamp, pre
     }
 }
 
+/// The member's appeal of `order`, if they made one, from `chain_top` back
+/// to `since` (the settlement it appeals): its action.
+fn appeal_of(author: &AgentPubKey, chain_top: &ActionHash, since: Timestamp, order: &ActionHash) -> ExternResult<Option<ActionHash>> {
+    let Some(appeal_type) = dispatch_order_type("Appeal")? else { return Ok(None) };
+    for item in handshake_integrity_support::chain::activity_since(author, chain_top, since)? {
+        let action = &item.action.hashed.content;
+        if !handshake_integrity_support::chain::creates_one_of(action, &[appeal_type]) {
+            continue;
+        }
+        let Some(entry_hash) = action.entry_hash() else { continue };
+        let Entry::App(bytes) = entry_of(&item, entry_hash)? else { continue };
+        if dispatch_types::Appeal::try_from(SerializedBytes::from(bytes)).is_ok_and(|a| &a.order == order) {
+            return Ok(Some(item.action.hashed.hash.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// The dispatch zome's entry type `name` -- found by the zome's name in
 /// this DNA, so a walk can pick out its orders.
 /// Its indexes are asserted in `dispatch_integrity`.
@@ -286,6 +314,7 @@ pub fn dispatch_order_type(name: &str) -> ExternResult<Option<ScopedEntryDefInde
     let index = match name {
         "DeliveryOrder" => 0,
         "PickupOrder" => 3,
+        "Appeal" => 11,
         _ => return Ok(None),
     };
     Ok(Some(ScopedEntryDefIndex { zome_index: ZomeIndex(zome as u8), zome_type: EntryDefIndex(index) }))

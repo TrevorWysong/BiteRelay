@@ -17,6 +17,8 @@ export interface Config {
   wakesPerDay: number;
   requestsPerIpPerHour: number;
   appOrigins: string[];
+  /// Whether the service is behind one proxy that adds the caller's address
+  /// to X-Forwarded-For -- whose entry, the last, it then trusts.
   trustProxy: boolean;
 }
 

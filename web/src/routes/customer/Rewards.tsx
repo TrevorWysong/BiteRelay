@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Cake, ChevronRight, Gift, Minus, Plus, ShoppingBag, Sparkles } from "lucide-react";
 import clsx from "clsx";
-import { myBirthMonth, myCard, myCards, setBirthMonth } from "../../holochain/zomes/rewards";
+import { acceptGift, giftOffers, myBirthMonth, myCard, myCards, setBirthMonth } from "../../holochain/zomes/rewards";
+import { PendingList } from "../../components/rewards/PendingPoints";
 import { bytesToHex, hexToBytes } from "../../holochain/decode";
 import { useResource } from "../../lib/hooks/useResource";
 import { fetchMenu } from "../../lib/menu/menu";
@@ -54,15 +55,93 @@ export function RewardsPage() {
           ?.filter((card) => card.program)
           .map((card) => (
             <motion.div key={bytesToHex(card.catalog_ref)} variants={fadeSlideUp}>
-              <RewardsCard compact program={card.program!.program} storeName={card.store_name} balance={card.balance} tier={card.tier} onClick={() => navigate(`/rewards/${bytesToHex(card.catalog_ref)}`)} />
+              <RewardsCard compact program={card.program!.program} storeName={card.store_name} balance={card.balance} tier={card.tier} pendingPoints={card.pending_points} onClick={() => navigate(`/rewards/${bytesToHex(card.catalog_ref)}`)} />
             </motion.div>
           ))}
       </div>
 
       <motion.div variants={fadeSlideUp} className="mt-6">
+        <GiftOffers />
+      </motion.div>
+
+      <motion.div variants={fadeSlideUp} className="mt-6">
         <BirthdayCard />
       </motion.div>
     </motion.div>
+  );
+}
+
+const IGNORED_GIFTS = "rewards.ignoredGifts";
+
+function ignoredGifts(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(IGNORED_GIFTS) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+/// Points from stores the customer doesn't belong to: theirs to take or
+/// leave -- never added by themselves, so a stranger can't fill a wallet.
+function GiftOffers() {
+  const t = useT();
+  const { data: offers, reload } = useResource("rewards:gift-offers", giftOffers);
+  const [hidden, setHidden] = useState<string[]>(ignoredGifts);
+  const [busy, setBusy] = useState<string | null>(null);
+  const shown = (offers ?? []).filter((o) => !hidden.includes(bytesToHex(o.grant)));
+  if (shown.length === 0) return null;
+  const hide = (hex: string) => {
+    const next = [...hidden, hex];
+    setHidden(next);
+    try {
+      localStorage.setItem(IGNORED_GIFTS, JSON.stringify(next.slice(-200)));
+    } catch {
+      // Hidden for this visit only.
+    }
+  };
+  return (
+    <div>
+      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-ink-400">{t("rewards.gifts.title")}</h2>
+      <div className="flex flex-col gap-3">
+        {shown.map((offer) => {
+          const hex = bytesToHex(offer.grant);
+          return (
+            <Card key={hex} className="p-4">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-handshake-400 to-handshake-600 text-white">
+                  <Gift size={18} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-ink-900 dark:text-ink-50">{t("rewards.gifts.offer", { points: offer.points.toLocaleString(), store: offer.store_name || t("rewards.gifts.aStore") })}</p>
+                  {offer.note && <p className="mt-0.5 line-clamp-2 text-xs text-ink-500">“{offer.note}”</p>}
+                  <p className="mt-1 text-[11px] text-ink-400">{t("rewards.gifts.unknown")}</p>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button variant="ghost" className="flex-1 py-2" onClick={() => hide(hex)}>
+                  {t("rewards.gifts.ignore")}
+                </Button>
+                <Button
+                  className="flex-1 py-2"
+                  loading={busy === hex}
+                  onClick={async () => {
+                    setBusy(hex);
+                    try {
+                      await acceptGift(offer.grant);
+                      await reload();
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                >
+                  {t("rewards.gifts.accept")}
+                </Button>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -168,7 +247,7 @@ export function RewardsDetail() {
         <ArrowLeft size={16} /> {t("common.back")}
       </motion.button>
       <motion.div variants={fadeSlideUp}>
-        <RewardsCard program={program} storeName={card.store_name} balance={card.balance} tier={card.tier} expiresAt={card.expires_at ?? expiresAt(program, card.state)} />
+        <RewardsCard program={program} storeName={card.store_name} balance={card.balance} tier={card.tier} pendingPoints={card.pending_points} expiresAt={card.expires_at ?? expiresAt(program, card.state)} />
       </motion.div>
 
       <motion.div variants={fadeSlideUp} className="mt-4">
@@ -176,6 +255,13 @@ export function RewardsDetail() {
           <ShoppingBag size={16} /> {t("rewards.orderFrom", { store: card.store_name })}
         </Button>
       </motion.div>
+
+      {card.pending.length > 0 && (
+        <motion.section variants={fadeSlideUp} className="mt-7">
+          <SectionTitle>{t("rewards.pending.title")}</SectionTitle>
+          <PendingList program={program} pending={card.pending} />
+        </motion.section>
+      )}
 
       {rewards.length > 0 && (
         <motion.section variants={fadeSlideUp} className="mt-7">
@@ -257,7 +343,7 @@ export function StoreRewardsStrip({ catalogHex }: { catalogHex: string }) {
   const colors = ACCENTS[program.accent];
   const tier = card.state ? tierOf(program, card.state) : 0;
   const next = [...program.rewards].filter((r) => r.min_tier <= tier && r.cost > card.balance).sort((a, b) => a.cost - b.cost)[0];
-  const joined = card.state !== null;
+  const joined = card.state !== null || card.pending.length > 0;
   return (
     <motion.button
       type="button"
@@ -271,7 +357,10 @@ export function StoreRewardsStrip({ catalogHex }: { catalogHex: string }) {
         <Sparkles size={18} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-black">{joined ? t("rewards.stripBalance", { points: card.balance.toLocaleString(), name: program.points_name }) : program.name}</p>
+        <p className="truncate text-sm font-black">
+          {joined ? t("rewards.stripBalance", { points: card.balance.toLocaleString(), name: program.points_name }) : program.name}
+          {card.pending_points > 0 && <span className="ml-2 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold">{t("rewards.pendingChip", { points: card.pending_points.toLocaleString(), name: program.points_name })}</span>}
+        </p>
         <p className="truncate text-xs text-white/85">
           {joined
             ? next

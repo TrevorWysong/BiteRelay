@@ -141,6 +141,19 @@ Peers choose their own action timestamps. Holochain only requires each agent's t
 
 The tests in `tests/tryorama/src/security-regressions.test.ts` and `ledger-rules.test.ts` replay these attacks.
 
+## 2026-10-31 review: findings and fixes
+
+| Finding | Severity | Fix |
+| --- | --- | --- |
+| A customer could cancel on the version of an order from before the store accepted it, as if the store never had, and get the food back after it was cooked (and keep a driver they'd taken from their fee) | Medium | A store whose own chain shows it started cooking, and never called the order off itself, is paid for the food whichever version was cancelled (`ledger_integrity::store_cooked`); a driver the customer had taken keeps their fee unless the driver left. A customer who cancelled writes nothing more on the order: no taking a driver, collecting it, or cancelling again elsewhere |
+| Points could be earned on an order later refunded, through an appeal | Low | Points are earned only after the refund period (the appeal window), on what was finally paid less any award; pending until then (docs/REWARDS.md) |
+| A scheduled order could be dated back, with its redemption, to dodge an expiry or land in a happy hour | Low | Happy hours are dated by the store's acceptance; rewards aren't spent on scheduled orders |
+| Anyone running a store could fill a customer's chain and Rewards wallet with gifts, collected automatically | Low | Only gifts from stores the customer has ordered from, or points back for their own order, are collected automatically; the rest wait to be accepted |
+| A member linking their birth month to a store over and over cost its app a year of grants re-read per link | Low | Each member once a sweep, and the store's grants read once |
+| Behind a proxy that appends to `X-Forwarded-For`, the issuer and push relay rate-limited the address the client wrote | Low | They take the last entry, the one the trusted proxy added |
+
+The cancellation fix has a cost, by design: a customer who cancels in the seconds before their store's acceptance reaches them still pays for the food if the store started on it. The app says so by the cancel button. Neither side's clock can settle which came first, because both choose their own timestamps. So the store's record of cooking decides, as it does on DoorDash once a restaurant confirms.
+
 ## What remains
 
 - **The store decides disputed deliveries.** A store could side with a customer against a driver who did deliver, by deciding an order never arrived. It gains nothing (it's paid for the food either way), and the decision is public and recorded against the driver, but the network can't overturn it. A driver is fully protected by completing the delivery with the customer's code or confirmation before the claim is decided.

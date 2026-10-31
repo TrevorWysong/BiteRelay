@@ -168,8 +168,8 @@ const request = (n: number, amount: number, redeemer: Uint8Array): CashOutReques
 const payoutDeps = (store: Store, ledger: IssuerLedger, rail: PaymentRail): PayoutDeps => ({ store, ledger, rail, fee: FEE, policy: POLICY, format });
 
 /// The HTTP service on a free port, with a way to call it.
-function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100, noncesPerIpPerHour = 1000) {
-  const server = serve({ store, ledger, rail, appOrigins: ["http://app.test"], publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, noncesPerIpPerHour, trustProxy: false, format }, 0);
+function running(store: Store, ledger: IssuerLedger, rail: PaymentRail, topUpsPerIpPerHour = 100, noncesPerIpPerHour = 1000, trustProxy = false) {
+  const server = serve({ store, ledger, rail, appOrigins: ["http://app.test"], publishableKey: "pk_test_x", policy: POLICY, topUpsPerIpPerHour, noncesPerIpPerHour, trustProxy, format }, 0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -649,6 +649,22 @@ test("a card's first payment is verified with its bank; later ones aren't asked 
     await grantPayment(store, ledger, { payment: "pi_first", agent: agentId(me.key), amount: 2000 });
     await service.post("/topups", await service.signed(me, "TopUp", { amount: 2000 }));
     assert.deepEqual(sessions.map((s) => s.verify), [true, false]);
+  } finally {
+    service.close();
+  }
+});
+
+test("behind a proxy, an address is the one the proxy saw -- not one the client wrote", async () => {
+  const store = new Store(":memory:");
+  const { ledger } = fakeLedger([], noAccounts());
+  const { rail } = fakeRail({});
+  const service = running(store, ledger, rail, 100, 3, true);
+  try {
+    const agent = agentId(identity().key);
+    const asks = [];
+    // A client writing a new address each time; the proxy appends the real one.
+    for (let i = 0; i < 4; i++) asks.push((await service.post("/nonce", { agent }, { "X-Forwarded-For": `10.0.0.${i}, 203.0.113.7` })).status);
+    assert.deepEqual(asks, [200, 200, 200, 429], "limited by the address the proxy added");
   } finally {
     service.close();
   }

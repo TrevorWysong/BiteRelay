@@ -29,6 +29,8 @@ pub(crate) struct OrderPricing<'a> {
     /// The customer's action before the order: where the walk proving each
     /// redemption pays for one order starts.
     pub prev_action: Option<&'a ActionHash>,
+    /// Whether it's a delivery scheduled for later.
+    pub scheduled: bool,
     pub placed_at: Timestamp,
     /// The store as it stood when the order was placed (the version it
     /// cites): its minimum order and its tax rates.
@@ -225,6 +227,12 @@ fn check_rewards(order: &OrderPricing<'_>) -> ExternResult<Result<Option<PromoRe
         return Ok(Err("an order joins a rewards program only while it runs".into()));
     }
     let Some(redemption) = &rewards.redemption else { return Ok(Ok(None)) };
+    // A scheduled order is accepted against when it opens, not when it was
+    // written -- so its own date bounds nothing, and a redemption dated with
+    // it could dodge an expiry. Rewards are spent on orders placed now.
+    if order.scheduled {
+        return Ok(Err("a reward is spent on an order placed now, not a scheduled one".into()));
+    }
     let record = must_get_valid_record(redemption.clone())?;
     let spent = decode::<rewards_types::PointsEntry>(&record).filter(|e| record.action().author() == order.requester && &e.catalog_ref == order.catalog_ref);
     let Some(rewards_types::PointsKind::Redeem { program: version, reward }) = spent.map(|e| e.kind) else {

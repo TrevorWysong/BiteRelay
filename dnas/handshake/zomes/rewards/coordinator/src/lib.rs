@@ -154,6 +154,9 @@ pub struct CardView {
     pub expires_at: Option<Timestamp>,
     /// Newest first, at most `HISTORY`.
     pub history: Vec<PointsLine>,
+    /// Orders still to earn here, oldest first -- and what they'll bring.
+    pub pending: Vec<OrderPoints>,
+    pub pending_points: u64,
 }
 
 const HISTORY: usize = 30;
@@ -161,7 +164,7 @@ const HISTORY: usize = 30;
 /// A member's entries at a store, newest first: each one's hash and time.
 type Entries = Vec<(ActionHash, Timestamp, PointsEntry)>;
 
-fn card_of(catalog_ref: ActionHash, entries: Entries) -> ExternResult<CardView> {
+fn card_of(catalog_ref: ActionHash, entries: Entries, pending: Vec<OrderPoints>) -> ExternResult<CardView> {
     let program = program_of(catalog_ref.clone())?;
     let store_name = store(&catalog_ref).map(|s| s.business_name).unwrap_or_default();
     let state = entries.first().map(|(_, _, e)| e.state.clone());
@@ -186,7 +189,8 @@ fn card_of(catalog_ref: ActionHash, entries: Entries) -> ExternResult<CardView> 
         };
         history.push(PointsLine { entry, at, points: if matches!(e.kind, PointsKind::Redeem { .. }) { -points } else { points }, kind: e.kind, note });
     }
-    Ok(CardView { catalog_ref, store_name, program, state, balance, tier, expires_at, history })
+    let pending_points = pending.iter().map(|p| p.points).sum();
+    Ok(CardView { catalog_ref, store_name, program, state, balance, tier, expires_at, history, pending, pending_points })
 }
 
 fn my_entries() -> ExternResult<Entries> {
@@ -198,7 +202,8 @@ fn my_entries() -> ExternResult<Entries> {
 #[hdk_extern]
 pub fn my_card(catalog_ref: ActionHash) -> ExternResult<CardView> {
     let entries = my_entries()?.into_iter().filter(|(_, _, e)| e.catalog_ref == catalog_ref).collect();
-    card_of(catalog_ref, entries)
+    let pending = pending_by_store()?.into_iter().find(|(store, _)| store == &catalog_ref).map(|(_, p)| p).unwrap_or_default();
+    card_of(catalog_ref, entries, pending)
 }
 
 /// Every card the caller holds, most recently used first.
@@ -211,44 +216,273 @@ pub fn my_cards(_: ()) -> ExternResult<Vec<CardView>> {
             None => stores.push((item.2.catalog_ref.clone(), vec![item])),
         }
     }
-    stores.into_iter().map(|(store, entries)| card_of(store, entries)).collect()
+    // A store whose first order is still pending has a card too.
+    let mut pending = pending_by_store()?;
+    for (store, _) in &pending {
+        if !stores.iter().any(|(s, _)| s == store) {
+            stores.push((store.clone(), Vec::new()));
+        }
+    }
+    stores
+        .into_iter()
+        .map(|(store, entries)| {
+            let mine = pending.iter().position(|(s, _)| s == &store).map(|i| pending.swap_remove(i).1).unwrap_or_default();
+            card_of(store, entries, mine)
+        })
+        .collect()
 }
 
 // --- earning ---
 
-/// Earns what one of the caller's orders (any version) earns, once the
-/// store has settled it. `None` if there's nothing to earn yet -- or ever:
-/// it didn't join a program, earns nothing, or already earned. Safe to
-/// repeat; dispatch's sweep calls it for every recent order.
+/// Where an order's points stand, for the customer who placed it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum PointsStatus {
+    /// On its way, or waiting on the store to settle it.
+    Settling,
+    /// Settled: earned once its refund period ends, at `until`.
+    RefundPeriod { until: Timestamp },
+    /// Appealed: earned once the arbiter rules.
+    InReview,
+    /// Its refund period is over: it's earned at the next sweep.
+    Arriving,
+    /// Earned.
+    Earned,
+}
+
+/// An order's points: what it earns (an estimate, until it's earned) and
+/// where that stands.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OrderPoints {
+    pub order: ActionHash,
+    pub catalog_ref: ActionHash,
+    pub placed_at: Timestamp,
+    pub points: u64,
+    pub status: PointsStatus,
+}
+
+/// Mirrors dispatch's `AppealView`, as far as needed.
+#[derive(Deserialize, Debug)]
+struct AppealWire {
+    ruling: Option<RulingWire>,
+}
+
+#[derive(Deserialize, Debug)]
+struct RulingWire {
+    ruling: ActionHash,
+}
+
+/// What earning an order would cite, once it's due.
+struct Due {
+    settlement: ActionHash,
+    accepted: ActionHash,
+    ruling: Option<ActionHash>,
+}
+
+/// One of the caller's orders, as its points stand.
+struct Prospect {
+    catalog_ref: ActionHash,
+    program: RewardsProgram,
+    /// Before tier, cap and welcome: exact once settled, else estimated
+    /// from what was paid.
+    base: u64,
+    status: PointsStatus,
+    /// Set once it's earnable now.
+    due: Option<Due>,
+}
+
+/// Every version of an order, across any branches.
+fn versions_of(order: &ActionHash) -> ExternResult<Vec<Record>> {
+    let mut out = Vec::new();
+    let mut frontier = vec![order.clone()];
+    while let Some(hash) = frontier.pop() {
+        let Some(Details::Record(details)) = get_details(hash, GetOptions::default())? else { continue };
+        frontier.extend(details.updates.iter().map(|u| u.action_address().clone()));
+        out.push(details.record);
+    }
+    Ok(out)
+}
+
+/// The store's acceptance of an order among its versions: its earliest
+/// update from `Placed` (see `rewards_types::accepted_at`).
+fn acceptance(order: &ActionHash, merchant: &AgentPubKey, versions: &[Record]) -> ExternResult<Option<ActionHash>> {
+    let mut found: Option<(Timestamp, ActionHash)> = None;
+    for record in versions.iter().filter(|r| r.action().author() == merchant && matches!(r.action().data, ActionData::Update(_))) {
+        if accepted_at(order, merchant, record.action_address())?.is_ok() && found.as_ref().is_none_or(|(at, _)| record.action().timestamp() < *at) {
+            found = Some((record.action().timestamp(), record.action_address().clone()));
+        }
+    }
+    Ok(found.map(|(_, hash)| hash))
+}
+
+/// Whether the caller has earned on `order` already.
+fn earned_on(order: &ActionHash, since: Timestamp) -> ExternResult<bool> {
+    mine(&points_entries()?).since(since).any(|r| decode_or::<PointsEntry>(r).is_some_and(|e| matches!(&e.kind, PointsKind::Earn { order: o, .. } if o == order)))
+}
+
+/// Where one of the caller's orders (its original action) stands for
+/// points -- `None` if it never earns any: not theirs, no program, called
+/// off, or nothing to earn.
+fn prospect(order: &ActionHash) -> ExternResult<Option<Prospect>> {
+    let Some(record) = get(order.clone(), GetOptions::default())? else { return Ok(None) };
+    let Some(placed) = OrderForRewards::of(&record) else { return Ok(None) };
+    if placed.requester != me()? {
+        return Ok(None);
+    }
+    let Ok((order_info, _, program)) = joined(order)? else { return Ok(None) };
+    let placed_at = record.action().timestamp();
+    let catalog_ref = order_info.catalog_ref.clone();
+    let versions = versions_of(order)?;
+    let accepted = acceptance(order, &order_info.merchant, &versions)?;
+    let settlement = dispatch::<_, Option<ActionHash>>("order_settlement", order.clone())?;
+    let (Some(settlement), Some(accepted)) = (settlement, accepted.clone()) else {
+        // Not settled yet: none for an order called off, else an estimate
+        // from what was paid.
+        let cancelled = versions.iter().any(|r| decode_or::<dispatch_types::DeliveryOrder>(r).map(|o| o.cancellation.is_some()).or_else(|| decode_or::<dispatch_types::PickupOrder>(r).map(|o| o.cancellation.is_some())).unwrap_or(false));
+        if cancelled {
+            return Ok(None);
+        }
+        let Ok(lines) = line_totals(&order_info)? else { return Ok(None) };
+        let at = match &accepted {
+            Some(hash) => get(hash.clone(), GetOptions::default())?.map_or(placed_at, |r| r.action().timestamp()),
+            None => placed_at,
+        };
+        let base = rewards_integrity::order_points(&program, &lines, order_info.order_total.saturating_sub(order_info.tax_cents), at);
+        return Ok((base > 0).then_some(Prospect { catalog_ref, program, base, status: PointsStatus::Settling, due: None }));
+    };
+    let appeal = dispatch::<_, Option<AppealWire>>("get_appeal_for_order", order.clone())?;
+    let ruling = appeal.as_ref().and_then(|a| a.ruling.as_ref().map(|r| r.ruling.clone()));
+    let Ok(earning) = earning(order, &settlement, &accepted, ruling.as_ref())? else { return Ok(None) };
+    if earning.base == 0 {
+        return Ok(None);
+    }
+    let now = sys_time()?;
+    let ended = if earning.available_at > earning.settled_at { now > earning.available_at } else { now >= earning.settled_at };
+    let status = match (&appeal, &ruling) {
+        (Some(_), None) => PointsStatus::InReview,
+        _ if !ended => PointsStatus::RefundPeriod { until: earning.available_at },
+        _ => PointsStatus::Arriving,
+    };
+    let due = (status == PointsStatus::Arriving).then_some(Due { settlement, accepted, ruling });
+    Ok(Some(Prospect { catalog_ref, program, base: earning.base, status, due }))
+}
+
+/// Earns what one of the caller's orders (any version) earns, once its
+/// refund period is over. `None` if there's nothing to earn yet -- or ever.
+/// Safe to repeat; the sweeps call it for every recent order.
 #[hdk_extern]
 pub fn earn_for_order(order: ActionHash) -> ExternResult<Option<ActionHash>> {
     let order = original_action_of(order)?;
     let Some(record) = get(order.clone(), GetOptions::default())? else { return Ok(None) };
-    let Some(placed) = OrderForRewards::of(&record) else { return Ok(None) };
-    if placed.requester != me()? || placed.rewards.is_none() {
+    // Most orders a sweep passes aren't the caller's to earn on at all.
+    let me = me()?;
+    if !OrderForRewards::of(&record).is_some_and(|o| o.requester == me && o.rewards.is_some()) {
         return Ok(None);
     }
-    let since = record.action().timestamp();
-    let earned = mine(&points_entries()?).since(since).any(|r| decode_or::<PointsEntry>(r).is_some_and(|e| matches!(&e.kind, PointsKind::Earn { order: o, .. } if o == &order)))?;
-    if earned {
+    if earned_on(&order, record.action().timestamp())? {
         return Ok(None);
     }
-    let Some(settlement) = dispatch::<_, Option<ActionHash>>("order_settlement", order.clone())? else { return Ok(None) };
-    let earning = match earning(&order, &settlement)? {
-        Ok(earning) => earning,
-        Err(_) => return Ok(None),
-    };
-    let catalog_ref = earning.order.catalog_ref.clone();
-    let event = Event::Earn { at: earning.settled_at, base: earning.base };
-    // An order that earns nothing (below the minimum, all refunded) is
-    // simply skipped.
-    if step(&earning.program, my_latest(&catalog_ref)?.as_ref().map(|(_, e)| &e.state), event).is_err() {
+    let Some(Prospect { catalog_ref, program, base, due: Some(due), .. }) = prospect(&order)? else { return Ok(None) };
+    let settled_at = get(due.settlement.clone(), GetOptions::default())?.ok_or(guest("settlement not found"))?.action().timestamp();
+    let event = Event::Earn { at: settled_at, base };
+    if step(&program, my_latest(&catalog_ref)?.as_ref().map(|(_, e)| &e.state), event).is_err() {
         return Ok(None);
     }
-    let (hash, entry) = append(&catalog_ref, PointsKind::Earn { order, settlement }, &earning.program, event)?;
+    let kind = PointsKind::Earn { order, settlement: due.settlement, accepted: due.accepted, ruling: due.ruling };
+    let (hash, entry) = append(&catalog_ref, kind, &program, event)?;
     create_link(catalog_ref.clone(), hash.clone(), LinkTypes::CatalogToMember, LinkTag::new(entry.points.to_be_bytes().to_vec()))?;
     link_birthday(&catalog_ref)?;
     Ok(Some(hash))
+}
+
+/// How far back the caller's orders are looked through for points.
+const PENDING_DAYS: i64 = 60;
+
+/// The caller's orders of the last `PENDING_DAYS` that joined a program,
+/// newest first: each one's original action, and its store.
+fn my_recent_orders() -> ExternResult<Vec<(ActionHash, ActionHash)>> {
+    let types: Vec<ScopedEntryDefIndex> = [dispatch_order_type("DeliveryOrder")?, dispatch_order_type("PickupOrder")?].into_iter().flatten().collect();
+    let since = Timestamp::from_micros(sys_time()?.as_micros() - PENDING_DAYS * 86_400_000_000);
+    let head = agent_info()?.chain_head.0;
+    let mut orders = Vec::new();
+    for item in handshake_integrity_support::chain::activity_since(&me()?, &head, since)? {
+        let action = &item.action.hashed.content;
+        if !matches!(action.data, ActionData::Create(_)) || !handshake_integrity_support::chain::creates_one_of(action, &types) {
+            continue;
+        }
+        let Some(entry_hash) = action.entry_hash() else { continue };
+        let Entry::App(bytes) = handshake_integrity_support::chain::entry_of(&item, entry_hash)? else { continue };
+        let bytes = SerializedBytes::from(bytes);
+        let joined = dispatch_types::DeliveryOrder::try_from(bytes.clone()).ok().map(|o| (o.catalog_ref, o.rewards)).or_else(|| dispatch_types::PickupOrder::try_from(bytes).ok().map(|o| (o.catalog_ref, o.rewards)));
+        if let Some((catalog_ref, Some(_))) = joined {
+            orders.push((item.action.hashed.hash.clone(), catalog_ref));
+        }
+    }
+    Ok(orders)
+}
+
+/// One order still to earn: it, when it was placed, and where it stands.
+type Pending = (ActionHash, Timestamp, Prospect);
+
+/// The caller's orders still to earn at each store, oldest first, with what
+/// each should earn -- in turn, so a welcome counts once.
+fn pending_by_store() -> ExternResult<Vec<(ActionHash, Vec<OrderPoints>)>> {
+    let mut by_store: Vec<(ActionHash, Vec<Pending>)> = Vec::new();
+    for (order, catalog_ref) in my_recent_orders()?.into_iter().rev() {
+        let placed = get(order.clone(), GetOptions::local())?.map(|r| r.action().timestamp()).unwrap_or(Timestamp::from_micros(0));
+        if earned_on(&order, placed)? {
+            continue;
+        }
+        let Some(p) = prospect(&order)? else { continue };
+        match by_store.iter_mut().find(|(store, _)| store == &catalog_ref) {
+            Some((_, list)) => list.push((order, placed, p)),
+            None => by_store.push((catalog_ref, vec![(order, placed, p)])),
+        }
+    }
+    let now = sys_time()?;
+    let mut out = Vec::new();
+    for (catalog_ref, prospects) in by_store {
+        let mut state = my_latest(&catalog_ref)?.map(|(_, e)| e.state);
+        let mut pending = Vec::new();
+        for (order, placed_at, p) in prospects {
+            let Ok((next, points)) = step(&p.program, state.as_ref(), Event::Earn { at: now, base: p.base }) else { continue };
+            state = Some(next);
+            pending.push(OrderPoints { order, catalog_ref: p.catalog_ref, placed_at, points, status: p.status });
+        }
+        if !pending.is_empty() {
+            out.push((catalog_ref, pending));
+        }
+    }
+    Ok(out)
+}
+
+/// One of the caller's orders, as its points stand -- for its order page.
+/// `None` if it earns none.
+#[hdk_extern]
+pub fn order_points(order: ActionHash) -> ExternResult<Option<OrderPoints>> {
+    let order = original_action_of(order)?;
+    let Some(record) = get(order.clone(), GetOptions::default())? else { return Ok(None) };
+    let placed_at = record.action().timestamp();
+    let earned = mine(&points_entries()?).since(placed_at).find(|r| decode_or::<PointsEntry>(r).is_some_and(|e| matches!(&e.kind, PointsKind::Earn { order: o, .. } if o == &order)))?;
+    if let Some(entry) = earned.and_then(|r| decode_or::<PointsEntry>(&r)) {
+        return Ok(Some(OrderPoints { order, catalog_ref: entry.catalog_ref, placed_at, points: entry.points, status: PointsStatus::Earned }));
+    }
+    let Some(p) = prospect(&order)? else { return Ok(None) };
+    let state = my_latest(&p.catalog_ref)?.map(|(_, e)| e.state);
+    let Ok((_, points)) = step(&p.program, state.as_ref(), Event::Earn { at: sys_time()?, base: p.base }) else { return Ok(None) };
+    Ok(Some(OrderPoints { order, catalog_ref: p.catalog_ref, placed_at, points, status: p.status }))
+}
+
+/// Earns every recent order whose refund period is over -- each in a call
+/// of its own. Returns how many.
+#[hdk_extern]
+pub fn earn_due(_: ()) -> ExternResult<u32> {
+    let mut count = 0;
+    for (order, _) in my_recent_orders()? {
+        if handshake_coordinator_support::isolated::<_, Option<ActionHash>>("earn_for_order", order).flatten().is_some() {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 // --- redeeming ---
@@ -433,16 +667,71 @@ fn food_given_back(order: &ActionHash) -> ExternResult<bool> {
 #[hdk_extern]
 pub fn collect_grants(_: ()) -> ExternResult<u32> {
     let mut count = 0;
-    for link in get_links(LinkQuery::try_new(me()?, LinkTypes::AgentToGrant)?, GetStrategy::default())? {
-        let Some(grant) = link.target.into_action_hash() else { continue };
-        if collected(&grant, link.timestamp)? {
-            continue;
-        }
-        if handshake_coordinator_support::isolated::<_, ActionHash>("collect_grant", grant).is_some() {
+    for (grant, store_known) in uncollected_grants()? {
+        if store_known && handshake_coordinator_support::isolated::<_, ActionHash>("collect_grant", grant).is_some() {
             count += 1;
         }
     }
     Ok(count)
+}
+
+/// How many of the newest grants to the caller are looked at: anyone who
+/// runs a store can grant to anyone, so a flood of them is read no further.
+const MAX_GRANTS_READ: usize = 100;
+
+/// Grants made to the caller that they haven't collected, newest first --
+/// and whether each is from a store they already belong to (or returns
+/// points they spent there). Only those are collected by themselves: anyone
+/// can open a store and grant to anyone, and a stranger's grants would fill
+/// the caller's chain and wallet. Others wait to be accepted (`gift_offers`).
+fn uncollected_grants() -> ExternResult<Vec<(ActionHash, bool)>> {
+    let me = me()?;
+    let mut links = get_links(LinkQuery::try_new(me.clone(), LinkTypes::AgentToGrant)?, GetStrategy::default())?;
+    links.sort_by_key(|l| std::cmp::Reverse(l.timestamp));
+    let mut out = Vec::new();
+    for link in links.into_iter().take(MAX_GRANTS_READ) {
+        let Some(grant_ref) = link.target.into_action_hash() else { continue };
+        if collected(&grant_ref, link.timestamp)? {
+            continue;
+        }
+        let Some(grant) = get(grant_ref.clone(), GetOptions::default())?.and_then(|r| decode_or::<PointsGrant>(&r)) else { continue };
+        let member = my_latest(&grant.catalog_ref)?.is_some();
+        let returned = matches!(&grant.reason, GrantReason::Restore { order } if get(order.clone(), GetOptions::default())?.and_then(|r| OrderForRewards::of(&r)).is_some_and(|o| o.requester == me));
+        out.push((grant_ref, member || returned));
+    }
+    Ok(out)
+}
+
+/// A grant from a store the caller doesn't belong to, for them to accept.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GiftOffer {
+    pub grant: ActionHash,
+    pub catalog_ref: ActionHash,
+    pub store_name: String,
+    pub points: u32,
+    pub note: String,
+    pub at: Timestamp,
+}
+
+/// Grants waiting for the caller to accept them (`collect_grant`): from
+/// stores they don't belong to yet.
+#[hdk_extern]
+pub fn gift_offers(_: ()) -> ExternResult<Vec<GiftOffer>> {
+    let mut offers = Vec::new();
+    for (grant_ref, store_known) in uncollected_grants()? {
+        if store_known {
+            continue;
+        }
+        let Some(record) = get(grant_ref.clone(), GetOptions::default())? else { continue };
+        let Some(grant) = decode_or::<PointsGrant>(&record) else { continue };
+        let note = match grant.reason {
+            GrantReason::Goodwill { note } => note,
+            _ => String::new(),
+        };
+        let store_name = store(&grant.catalog_ref).map(|s| s.business_name).unwrap_or_default();
+        offers.push(GiftOffer { grant: grant_ref, catalog_ref: grant.catalog_ref, store_name, points: grant.points, note, at: record.action().timestamp() });
+    }
+    Ok(offers)
 }
 
 /// Whether the caller has collected `grant`, linked at `linked_at` -- read
@@ -519,16 +808,34 @@ pub fn celebrate_birthdays(_: ()) -> ExternResult<u32> {
     let types = [EntryType::try_from(UnitEntryTypes::RewardsProgram)?];
     let now = sys_time()?;
     let a_year_ago = Timestamp::from_micros(now.as_micros() - 366 * 86_400_000_000);
+    // This year's birthday grants, read once -- not once a member.
+    let grant_types = [EntryType::try_from(UnitEntryTypes::PointsGrant)?];
+    let celebrated: Vec<(ActionHash, AgentPubKey, i32)> = mine(&grant_types)
+        .since(a_year_ago)
+        .records()?
+        .iter()
+        .filter_map(decode_or::<PointsGrant>)
+        .filter_map(|g| match g.reason {
+            GrantReason::Birthday { year } => Some((g.catalog_ref, g.to, year)),
+            _ => None,
+        })
+        .collect();
     let mut given = 0;
     for original in mine(&types).creates().records()? {
         let Some(program) = decode_or::<RewardsProgram>(&original) else { continue };
         let Some(current) = my_current_version(original.action_address().clone())? else { continue };
         let Some(program) = decode_or::<RewardsProgram>(&current.record).filter(|p| p.active && p.birthday_points > 0 && p.catalog_ref == program.catalog_ref) else { continue };
         let local = local_time(now, &program.time_zone);
+        // Each member once, however many times they've linked their month.
+        let mut seen: Vec<AgentPubKey> = Vec::new();
         for link in get_links(LinkQuery::try_new(program.catalog_ref.clone(), LinkTypes::CatalogToBirthday)?, GetStrategy::default())? {
             let member = link.author.clone();
+            if seen.contains(&member) || celebrated.iter().any(|(store, to, year)| store == &program.catalog_ref && to == &member && *year == local.year) {
+                continue;
+            }
+            seen.push(member.clone());
             let Some(month) = link.target.into_action_hash().and_then(|h| get(h, GetOptions::default()).ok().flatten()).and_then(|r| decode_or::<BirthMonth>(&r)) else { continue };
-            if month.month != local.month || granted(&member, a_year_ago, |r| matches!(r, GrantReason::Birthday { year } if *year == local.year))? {
+            if month.month != local.month {
                 continue;
             }
             // A member who's earned here, the first time a while ago.
@@ -569,6 +876,7 @@ pub fn rewards_periodically(_: Option<Schedule>) -> Option<Schedule> {
     let _ = celebrate_birthdays(());
     let _ = collect_grants(());
     let _ = reclaim_unspent(());
+    let _ = earn_due(());
     Some(Schedule::Persisted("0 7 */3 * * * *".into()))
 }
 

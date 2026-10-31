@@ -205,9 +205,12 @@ pub struct PointsEntry {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum PointsKind {
     /// Points for an order (its original action) the store settled
-    /// (`settlement`, its `ItemSettlement`). Under the program version the
-    /// order cites.
-    Earn { order: ActionHash, settlement: ActionHash },
+    /// (`settlement`, its `ItemSettlement`), once its refund period is over.
+    /// Under the program version the order cites; its happy hours judged by
+    /// when the store accepted it (`accepted`, the store's update of it from
+    /// `Placed`). An appealed order cites the arbiter's `ruling`, whose
+    /// award it doesn't earn on.
+    Earn { order: ActionHash, settlement: ActionHash, accepted: ActionHash, ruling: Option<ActionHash> },
     /// Points spent on `reward` of the program at version `program` -- cited
     /// by the one order it pays for.
     Redeem { program: ActionHash, reward: u16 },

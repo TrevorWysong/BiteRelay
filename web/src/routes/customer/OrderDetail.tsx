@@ -29,6 +29,7 @@ import { carryRefusal, customerRefusal, describeLoad } from "../../lib/driving/d
 import { useTerms } from "../../store/network";
 import { POLL, isOrderSignal } from "../../lib/network/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderPointsBadge } from "../../components/rewards/PendingPoints";
 import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
 import { useT, type MessageKey } from "../../i18n";
@@ -614,6 +615,8 @@ export function OrderDetail() {
           </Button>
         </motion.div>
       )}
+
+      <OrderPointsBadge orderRef={orderRef} />
 
       {received(order.status) && (
         <motion.div variants={fadeSlideUp}>

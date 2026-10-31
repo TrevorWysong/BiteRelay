@@ -871,6 +871,9 @@ export function Cart() {
               <RewardsIcon size={12} /> {t("rewards.willEarn", { points: pointsPreview.toLocaleString(), name: rewardsProgram.points_name })}
             </p>
           )}
+          {rewardsProgram && pointsPreview > 0 && (
+            <p className="text-right text-[11px] text-ink-400">{t("rewards.arriveAfterRefunds")}</p>
+          )}
         </Card>
       </motion.div>
 

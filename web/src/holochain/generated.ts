@@ -302,6 +302,11 @@ export interface CardView {
    * Newest first, at most `HISTORY`.
    */
   history: PointsLine[];
+  /**
+   * Orders still to earn here, oldest first -- and what they'll bring.
+   */
+  pending: OrderPoints[];
+  pending_points: number;
 }
 
 /**
@@ -921,6 +926,18 @@ export interface EarnRules {
 export interface GeoPoint {
   lat: number;
   lon: number;
+}
+
+/**
+ * A grant from a store the caller doesn't belong to, for them to accept.
+ */
+export interface GiftOffer {
+  grant: ActionHash;
+  catalog_ref: ActionHash;
+  store_name: string;
+  points: number;
+  note: string;
+  at: Timestamp;
 }
 
 /**
@@ -2240,6 +2257,18 @@ export interface OrderOutcome {
 }
 
 /**
+ * An order's points: what it earns (an estimate, until it's earned) and
+ * where that stands.
+ */
+export interface OrderPoints {
+  order: ActionHash;
+  catalog_ref: ActionHash;
+  placed_at: Timestamp;
+  points: number;
+  status: PointsStatus;
+}
+
+/**
  * An order's part in its store's rewards program.
  */
 export interface OrderRewards {
@@ -2551,13 +2580,18 @@ export interface PointsGrant {
 export type PointsKind =
   /**
    * Points for an order (its original action) the store settled
-   * (`settlement`, its `ItemSettlement`). Under the program version the
-   * order cites.
+   * (`settlement`, its `ItemSettlement`), once its refund period is over.
+   * Under the program version the order cites; its happy hours judged by
+   * when the store accepted it (`accepted`, the store's update of it from
+   * `Placed`). An appealed order cites the arbiter's `ruling`, whose
+   * award it doesn't earn on.
    */
   | {
       Earn: {
         order: ActionHash;
         settlement: ActionHash;
+        accepted: ActionHash;
+        ruling: ActionHash | null;
       };
     }
   /**
@@ -2638,6 +2672,35 @@ export interface PointsState {
   first_earned_at: Timestamp | null;
   last_earned_at: Timestamp | null;
 }
+
+/**
+ * Where an order's points stand, for the customer who placed it.
+ */
+export type PointsStatus =
+  /**
+   * On its way, or waiting on the store to settle it.
+   */
+  | "Settling"
+  /**
+   * Settled: earned once its refund period ends, at `until`.
+   */
+  | {
+      RefundPeriod: {
+        until: Timestamp;
+      };
+    }
+  /**
+   * Appealed: earned once the arbiter rules.
+   */
+  | "InReview"
+  /**
+   * Its refund period is over: it's earned at the next sweep.
+   */
+  | "Arriving"
+  /**
+   * Earned.
+   */
+  | "Earned";
 
 /**
  * One part of a hold, collected or waived on its own.

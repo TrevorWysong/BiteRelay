@@ -35,7 +35,8 @@ export interface Config {
   /// Card forms one address may open an hour -- against card testing.
   topUpsPerIpPerHour: number;
   noncesPerIpPerHour: number;
-  /// Whether the service is behind a proxy that sets X-Forwarded-For.
+  /// Whether the service is behind one proxy that adds the caller's address
+  /// to X-Forwarded-For -- whose entry, the last, it then trusts.
   trustProxy: boolean;
 }
 

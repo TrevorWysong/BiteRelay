@@ -4,6 +4,7 @@ import { Crown, Sparkles } from "lucide-react";
 import clsx from "clsx";
 import type { RewardsProgram } from "../../holochain/types";
 import { ACCENTS } from "../../lib/rewards/rewards";
+import { PendingChip } from "./PendingPoints";
 import { useT } from "../../i18n";
 
 /// A number that counts up to `value` when it changes.
@@ -33,6 +34,7 @@ export function RewardsCard({
   balance,
   tier,
   expiresAt,
+  pendingPoints = 0,
   compact = false,
   onClick,
 }: {
@@ -41,6 +43,8 @@ export function RewardsCard({
   balance: number;
   tier: number;
   expiresAt?: number | null;
+  /// Points on their way, still in their refund period.
+  pendingPoints?: number;
   compact?: boolean;
   onClick?: () => void;
 }) {
@@ -91,6 +95,11 @@ export function RewardsCard({
         <CountUp value={balance} className={clsx("font-black leading-none tracking-tight", compact ? "text-4xl" : "text-6xl")} />
         <span className="pb-1 text-sm font-semibold text-white/80">{program.points_name}</span>
       </div>
+      {pendingPoints > 0 && (
+        <div className="mt-2">
+          <PendingChip points={pendingPoints} name={program.points_name} />
+        </div>
+      )}
 
       {marks.length > 0 && (
         <div className={compact ? "mt-4" : "mt-6"}>

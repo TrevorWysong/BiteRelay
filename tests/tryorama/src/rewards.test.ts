@@ -118,8 +118,13 @@ await runScenario(async (scenario) => {
   };
   const settlement = await call(customer, "dispatch")<ActionHash | null>("order_settlement", firstRef);
   const before = (await latest()).state;
-  await assert.rejects(forge(customer, { Earn: { order: firstRef, settlement } }, 230, { balance: before.balance + 230 }), /earns once/, "the same order twice");
-  await assert.rejects(forge(stranger, { Earn: { order: firstRef, settlement } }, 230, { balance: 230 }, null), /own customer/, "someone else's order");
+  // What the real earning cited: the store's acceptance of the order.
+  const earnedLine = (await card()).history.find((line) => "Earn" in line.kind)!;
+  const { accepted } = (earnedLine.kind as { Earn: { accepted: ActionHash } }).Earn;
+  const earn = { Earn: { order: firstRef, settlement, accepted, ruling: null } };
+  await assert.rejects(forge(customer, earn, 230, { balance: before.balance + 230 }), /earns once/, "the same order twice");
+  await assert.rejects(forge(stranger, earn, 230, { balance: 230 }, null), /own customer/, "someone else's order");
+  await assert.rejects(forge(customer, { Earn: { ...earn.Earn, accepted: firstRef } }, 230, { balance: before.balance + 230 }), /store accepting/, "happy hours are judged by the store's acceptance, not a version the customer picks");
   await assert.rejects(forge(customer, { Gift: { grant: firstRef } }, 1000, { balance: before.balance + 1000 }), /store's grant/, "a gift nobody gave");
   await assert.rejects(forge(customer, { Redeem: { program: (await card()).program!.version, reward: 1 } }, 100, { balance: before.balance }), /must follow/, "spending without paying");
   await assert.rejects(forge(customer, { Redeem: { program: (await card()).program!.version, reward: 1 } }, 100, { balance: before.balance - 100 }, null), /latest entry/, "nor by starting over");
@@ -171,6 +176,16 @@ await runScenario(async (scenario) => {
   assert.equal((await card()).balance, 255);
   await assert.rejects(forge(customer, { Gift: { grant: goodwill } }, 25, { balance: 280 }), /collected once/);
   console.log("[PASS] a store's grant is its owner's, collected once");
+
+  // ===== A stranger's store can offer points, but they wait to be accepted =====
+  await rewards(stranger)("save_program", { ...program, catalog_ref: elsewhere, name: "Free Points!", rewards: [], earn: { ...program.earn, item_bonuses: [] } });
+  await rewards(stranger)("grant_points", { to: customer.agentPubKey, catalog_ref: elsewhere, points: 500, note: "Claim your prize" });
+  await sync();
+  assert.equal(await rewards(customer)("collect_grants", null), 0, "never added by themselves");
+  const offers = await retryUntil(() => rewards(customer)<{ store_name: string; points: number }[]>("gift_offers", null), (o) => o.length === 1);
+  assert.deepEqual([offers[0].store_name, offers[0].points], ["Elsewhere", 500]);
+  assert.equal((await rewards(customer)<unknown[]>("my_cards", null)).length, 1, "the wallet holds only stores they've ordered from");
+  console.log("[PASS] a store the customer never ordered from can only offer points, for them to accept");
 
   // ===== Unspent points come back only once nothing could use them =====
   const cardNow = await card();

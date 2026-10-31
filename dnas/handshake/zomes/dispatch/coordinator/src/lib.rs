@@ -163,6 +163,21 @@ mod test_utils {
         crate::order_queues::enqueue(&action_hash, &catalog_ref, &requester, sys_time()?)?;
         written(action_hash)
     }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct RawPickupUpdateInput {
+        /// The version to update -- any, not just the current one: a
+        /// modified client writing on an older branch of the order.
+        pub version: ActionHash,
+        pub order: PickupOrder,
+    }
+
+    /// Writes an update of a pickup order exactly as given, on whichever
+    /// version it names -- for proving what validation does with a branch.
+    #[hdk_extern]
+    pub fn update_raw_pickup_order_for_testing(input: RawPickupUpdateInput) -> ExternResult<ActionHash> {
+        update_entry(input.version, &EntryTypes::PickupOrder(input.order))
+    }
     use handshake_coordinator_support::{guest, written};
 
     #[derive(Serialize, Deserialize, Debug)]

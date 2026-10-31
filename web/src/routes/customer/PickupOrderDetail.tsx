@@ -18,6 +18,7 @@ import { describeError } from "../../lib/ui/errors";
 import type { PickupOrder, Review } from "../../holochain/types";
 import { POLL, isOrderSignal } from "../../lib/network/poll";
 import { OrderReceipt } from "../../components/OrderReceipt";
+import { OrderPointsBadge } from "../../components/rewards/PendingPoints";
 import { OrderSummary } from "../../components/OrderLines";
 import { OrderIssues } from "../../components/OrderIssues";
 import { MAX_DESCRIPTION_CHARS } from "../../holochain/types";
@@ -211,6 +212,8 @@ export function PickupOrderDetail() {
           )}
         </motion.div>
       )}
+
+      <OrderPointsBadge orderRef={orderRef} />
 
       {order.status === "PickedUp" && (
         <motion.div variants={fadeSlideUp}>

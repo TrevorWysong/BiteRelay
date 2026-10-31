@@ -82,6 +82,7 @@ pub(crate) fn validate_new_order(order: &DeliveryOrder, author: &AgentPubKey, ac
         loyalty_proof: &order.loyalty_proof,
         rewards: order.rewards.as_ref(),
         prev_action,
+        scheduled: order.status == DeliveryStatus::Scheduled,
         placed_at: action_timestamp,
         store: &store,
         tax_cents: order.tax_cents,
@@ -267,6 +268,12 @@ fn transition_problem(order: &DeliveryOrder, author: &AgentPubKey, original_acti
     }
     let step = Step::of(&prior.status, &order.status, prior.accepted_bid.is_some());
     let order_original = resolve_original_creation(original_action_hash.clone())?;
+    // A customer who cancelled an order -- on any version of it -- writes
+    // nothing more on it: no taking a driver, collecting it, or cancelling
+    // again on another version for a better refund.
+    if is_requester && lineage::wrote_any(author, prev_action, &order_original, |v| v.cancellation().is_some())? {
+        return Ok(Some("a customer who cancelled an order writes nothing more on it".into()));
+    }
     let update = OrderUpdate {
         requester: &prior.requester,
         merchant: &prior.merchant,

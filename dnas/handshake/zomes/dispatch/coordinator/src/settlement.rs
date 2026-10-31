@@ -144,6 +144,13 @@ struct Facts {
     /// How many versions, across every branch of its history, cancel it.
     /// More than one, and `cancellation` is only one of them.
     cancellations: usize,
+    /// The store started cooking it -- on any branch -- and never called it
+    /// off itself: a customer's cancellation then owes the food
+    /// (`ledger_integrity::store_cooked`).
+    store_cooked: bool,
+    /// Every driver's bid the customer accepted, on any branch: a driver
+    /// they took is owed their fee if they cancel (`customer_took`).
+    customer_took: Vec<ActionHash>,
 }
 
 /// Every version of an order, original first then each update, across any
@@ -173,7 +180,28 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
     let all = versions(order)?;
     let Some(original) = all.first() else { return Ok(None) };
     let delivery = decode_or::<DeliveryOrder>(original).is_some();
-    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None, releases: Vec::new(), replaced: Vec::new(), finished: false, cancellations: 0 };
+    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None, releases: Vec::new(), replaced: Vec::new(), finished: false, cancellations: 0, store_cooked: false, customer_took: Vec::new() };
+    let (requester, merchant) = match (decode_or::<DeliveryOrder>(original), decode_or::<PickupOrder>(original)) {
+        (Some(o), _) => (o.requester, o.merchant),
+        (None, Some(o)) => (o.requester, o.merchant),
+        _ => return Ok(None),
+    };
+    let mut store_cancelled = false;
+    for record in &all {
+        let author = record.action().author();
+        let version = decode_or::<DeliveryOrder>(record).map(|o| (o.ready_by, o.cancellation, o.accepted_bid)).or_else(|| decode_or::<PickupOrder>(record).map(|o| (o.ready_by, o.cancellation, None)));
+        let Some((ready_by, cancellation, bid)) = version else { continue };
+        if author == &merchant {
+            facts.store_cooked |= ready_by.is_some();
+            store_cancelled |= matches!(cancellation, Some(Cancellation::ByStore(_)));
+        }
+        if author == &requester && matches!(record.action().data, ActionData::Update(_)) {
+            if let Some(bid) = bid.filter(|b| !facts.customer_took.contains(b)) {
+                facts.customer_took.push(bid);
+            }
+        }
+    }
+    facts.store_cooked &= !store_cancelled;
     let prior_of = |record: &Record| match &record.action().data {
         ActionData::Update(update) => all.iter().find(|r| r.action_address() == &update.original_action_address),
         _ => None,
@@ -299,6 +327,9 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
             }
             let c = cancelled?;
             match c.by {
+                // The store's own chain says it cooked: whichever version the
+                // customer cancelled, they owe the food.
+                Cancellation::ByCustomer | Cancellation::StoreDidNotRespond if recipient && facts.store_cooked => collect(&c.version),
                 Cancellation::ByCustomer if recipient => Some(if c.cooking && !matches!(c.from, Stage::Waiting | Stage::Other) { Decision::Collect(c.version.clone()) } else { Decision::Waive }),
                 Cancellation::NotCollected if recipient => collect(&c.version),
                 Cancellation::StoreLate | Cancellation::NoDriver if payer => collect(&c.version),
@@ -329,8 +360,18 @@ fn decide(me: &AgentPubKey, hold: &HoldWire, share: &ShareWire, facts: &Facts) -
                 }
                 return if payer { collect(&release.version) } else { recipient.then_some(Decision::Waive) };
             }
-            let c = cancelled.filter(|c| ours(&c.bid))?;
+            // A customer who cancels owes the fee of a driver they took --
+            // whichever version they cancelled.
+            let took = |c: &&Cancelled| c.by == Cancellation::ByCustomer && hold_bid.is_some_and(|b| facts.customer_took.contains(b));
+            let c = cancelled.filter(|c| ours(&c.bid) || took(c))?;
             let store_fee = matches!(hold.purpose, HoldPurpose::Subsidy { .. });
+            if took(&c) && !ours(&c.bid) && !store_fee {
+                return match portion {
+                    Portion::Fee if recipient => collect(&c.version),
+                    _ if recipient => Some(Decision::Waive),
+                    _ => None,
+                };
+            }
             match (&c.by, store_fee) {
                 (Cancellation::StoreLate, false) if payer => collect(&c.version),
                 (Cancellation::StoreLate, true) if recipient => collect(&c.version),

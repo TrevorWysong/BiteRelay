@@ -21,6 +21,7 @@ export function WaitingForStore({ writtenAt, now, cancelling, onCancel }: { writ
       <Button variant="ghost" className="mt-3 w-full py-2 text-xs" loading={cancelling} onClick={onCancel}>
         {t("order.cancel")}
       </Button>
+      <p className="mt-2 text-center text-[11px] text-ink-400">{t("waiting.cancelNote")}</p>
     </Card>
   );
 }

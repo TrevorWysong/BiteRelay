@@ -93,7 +93,7 @@ const SOURCES: &[Source] = &[
     all("dnas/handshake/zomes/rewards/types/src/lib.rs"),
     only("dnas/handshake/zomes/rewards/types/src/points.rs", &["PointsState"]),
     consts("dnas/handshake/zomes/rewards/types/src/lib.rs"),
-    only("dnas/handshake/zomes/rewards/coordinator/src/lib.rs", &["ProgramView", "ProgramVersion", "PointsLine", "CardView", "ProgramStats", "GrantInput"]),
+    only("dnas/handshake/zomes/rewards/coordinator/src/lib.rs", &["ProgramView", "ProgramVersion", "PointsLine", "CardView", "ProgramStats", "GrantInput", "PointsStatus", "OrderPoints", "GiftOffer"]),
 ];
 
 /// Holochain types, emitted once as aliases at the top of the output.

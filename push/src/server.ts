@@ -100,7 +100,9 @@ export function handler(deps: Deps) {
       for (const [device, times] of wokenAt) if (times.every((at) => at <= now - DAY_MS)) wokenAt.delete(device);
       swept = now;
     }
-    const forwarded = deps.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
+    // The address the trusted proxy saw -- the last it added. Anything
+    // before it came from the client, who can write what they like.
+    const forwarded = deps.trustProxy ? (String(req.headers["x-forwarded-for"] ?? "").split(",").pop() ?? "").trim() : "";
     const address = forwarded || req.socket.remoteAddress || "unknown";
     const recent = (requestsByAddress.get(address) ?? []).filter((at) => at > now - HOUR_MS);
     if (recent.length >= deps.requestsPerIpPerHour) throw new HttpError(429, "Too many requests from here. Try again later.");

@@ -613,6 +613,9 @@ struct Cancelled {
     bid: Option<ActionHash>,
     /// For `NoDriver`: the bid of the driver who answers for the food.
     liable: Option<ActionHash>,
+    /// The version that cancels it, and who wrote it.
+    version: ActionHash,
+    author: AgentPubKey,
 }
 
 /// How far an order had got when it was cancelled.
@@ -694,7 +697,7 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
         return Ok(match (order.cancellation, from) {
             (Some(by), Some(from)) => {
                 let cooking = from == Stage::Accepted;
-                Ok(Basis::Cancelled(Cancelled { by, from, cooking, bid: None, liable: None }))
+                Ok(Basis::Cancelled(Cancelled { by, from, cooking, bid: None, liable: None, version: basis_ref.clone(), author: record.action().author().clone() }))
             }
             _ => Err("that version of the order doesn't entitle anyone to collect"),
         });
@@ -734,7 +737,31 @@ fn basis_of(basis_ref: &ActionHash, hold: &HoldContext) -> ExternResult<Result<B
         return Ok(Err("that version of the order doesn't entitle anyone to collect"));
     }
     let liable = if by == Cancellation::NoDriver { lineage::liable_release(&prior)?.map(|(_, bid)| bid) } else { None };
-    Ok(Ok(Basis::Cancelled(Cancelled { by, from: delivery_stage(&prior.order.status), cooking: prior.order.ready_by.is_some(), bid: prior.order.accepted_bid.clone(), liable })))
+    let author = version.author().clone();
+    Ok(Ok(Basis::Cancelled(Cancelled { by, from: delivery_stage(&prior.order.status), cooking: prior.order.ready_by.is_some(), bid: prior.order.accepted_bid.clone(), liable, version: basis_ref.clone(), author })))
+}
+
+/// Whether `store`'s own chain, from `chain_top` back, shows it started
+/// cooking `order` -- and never called it off itself. What a customer
+/// cancelling on an older version of the order can't undo: validation sees
+/// only the version a cancellation updates, but the store's chain holds
+/// every version it wrote.
+fn store_cooked(store: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash) -> ExternResult<bool> {
+    if !lineage::wrote_any(store, chain_top, order, |v| v.ready_by().is_some())? {
+        return Ok(false);
+    }
+    Ok(!lineage::wrote_any(store, chain_top, order, |v| matches!(v.cancellation(), Some(Cancellation::ByStore(_))))?)
+}
+
+/// Whether the customer who cancelled had taken the driver behind
+/// `hold_bid` -- accepted their bid, on their own chain, before cancelling
+/// -- and the driver (`driver`, collecting) never left it themselves.
+fn customer_took(c: &Cancelled, order: &ActionHash, hold_bid: Option<&ActionHash>, driver: &AgentPubKey, chain_top: &ActionHash) -> ExternResult<bool> {
+    let Some(bid) = hold_bid else { return Ok(false) };
+    if !lineage::wrote_any(&c.author, &c.version, order, |v| v.accepted_bid() == Some(bid))? {
+        return Ok(false);
+    }
+    Ok(!lineage::wrote(driver, chain_top, order, |v, p| v.released(p).as_ref() == Some(bid))?)
 }
 
 /// The version an update replaced, as `T`.
@@ -824,9 +851,13 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
         (portion, Basis::Cancelled(c)) => match c.by {
             // A customer who cancels once the store is cooking owes the food;
             // once a driver is assigned, their fee too.
+            // A customer who cancels once the store is cooking owes the
+            // food; once a driver is assigned, their fee too -- whichever
+            // version of the order they cancelled: the store's own chain
+            // says it cooked, and the customer's that they took the driver.
             Cancellation::ByCustomer => match portion {
-                Portion::Food => is_recipient && c.cooking && c.from != Stage::Waiting && c.from != Stage::Other,
-                Portion::Fee => is_recipient && driver_pay && matches!(c.from, Stage::DriverAssigned | Stage::AtStore) && ours(&c.bid),
+                Portion::Food => is_recipient && ((c.cooking && c.from != Stage::Waiting && c.from != Stage::Other) || store_cooked(author, prev_action, &hold.order)?),
+                Portion::Fee => is_recipient && driver_pay && ((matches!(c.from, Stage::DriverAssigned | Stage::AtStore) && ours(&c.bid)) || customer_took(&c, &hold.order, hold_bid, author, prev_action)?),
                 _ => false,
             },
             // A store calling it off with the driver at its counter pays them
@@ -857,7 +888,10 @@ fn validate_collect(entry: &LedgerEntry, hold_ref: &ActionHash, portion: Portion
                 Portion::Collateral => is_recipient && c.liable.as_ref() == hold_bid,
                 _ => false,
             },
-            Cancellation::StoreDidNotRespond => false,
+            // The customer saying the store never answered -- on a version
+            // from before it did: a store whose own chain says it accepted
+            // and cooked in time answered, and is paid for the food.
+            Cancellation::StoreDidNotRespond => portion == Portion::Food && is_recipient && store_cooked(author, prev_action, &hold.order)?,
         },
         // A part its recipient gave back.
         (_, Basis::Waived { by, hold: waived, portion: p }) => is_payer && by == share.recipient && &waived == hold_ref && p == portion,

@@ -129,7 +129,9 @@ export function handler(deps: Deps) {
         for (const [address, times] of recentByAddress) if (times.every((at) => at <= now - HOUR_MS)) recentByAddress.delete(address);
         swept = now;
       }
-      const forwarded = deps.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
+      // The address the trusted proxy saw -- the last it added. Anything
+      // before it came from the client, who can write what they like.
+      const forwarded = deps.trustProxy ? (String(req.headers["x-forwarded-for"] ?? "").split(",").pop() ?? "").trim() : "";
       const address = forwarded || req.socket.remoteAddress || "unknown";
       const recent = (recentByAddress.get(address) ?? []).filter((at) => at > now - HOUR_MS);
       if (recent.length >= perHour) throw new HttpError(429, refusal);

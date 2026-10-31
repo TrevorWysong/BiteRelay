@@ -10,7 +10,7 @@
 //! up, a store can't both move a driver on and check them in, a customer
 //! can't both cancel (owing the driver) and take the driver's pay back.
 
-use super::{Beacon, Bid, CollectRequest, DeliveryOrder, DeliveryStatus};
+use super::{Beacon, Bid, Cancellation, CollectRequest, DeliveryOrder, DeliveryStatus, PickupOrder};
 use hdi::prelude::*;
 use handshake_integrity_support::chain::{activity_since, entry_of};
 
@@ -134,6 +134,67 @@ pub fn updates_by(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHa
         versions.extend(Version::at(&item.action.hashed.hash)?);
     }
     Ok(versions)
+}
+
+/// A version of an order of either kind, as `wrote_any` hands it over.
+// Built once per action walked and dropped -- boxing the large order would
+// only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum AnyVersion {
+    Delivery(DeliveryOrder),
+    Pickup(PickupOrder),
+}
+
+impl AnyVersion {
+    /// When the store said it'd be ready: set once it started cooking (a
+    /// delivery) or accepted (a pickup).
+    pub fn ready_by(&self) -> Option<Timestamp> {
+        match self {
+            AnyVersion::Delivery(o) => o.ready_by,
+            AnyVersion::Pickup(o) => o.ready_by,
+        }
+    }
+
+    pub fn cancellation(&self) -> Option<&Cancellation> {
+        match self {
+            AnyVersion::Delivery(o) => o.cancellation.as_ref(),
+            AnyVersion::Pickup(o) => o.cancellation.as_ref(),
+        }
+    }
+
+    /// The driver's bid it has, for a delivery.
+    pub fn accepted_bid(&self) -> Option<&ActionHash> {
+        match self {
+            AnyVersion::Delivery(o) => o.accepted_bid.as_ref(),
+            AnyVersion::Pickup(_) => None,
+        }
+    }
+}
+
+/// Whether `author` wrote an update of `order` -- a delivery or a pickup --
+/// for which `matches` holds, from `chain_top` back to the order's
+/// placement. An order's history can branch, so what someone wrote on one
+/// branch still binds them on another: this is how validation sees it.
+pub fn wrote_any(author: &AgentPubKey, chain_top: &ActionHash, order: &ActionHash, matches: impl Fn(&AnyVersion) -> bool) -> ExternResult<bool> {
+    let placed = must_get_action(order.clone())?.hashed.content.header.timestamp;
+    let mut belongs: std::collections::HashMap<ActionHash, bool> = std::collections::HashMap::new();
+    belongs.insert(order.clone(), true);
+    for item in activity_since(author, chain_top, placed)? {
+        let ActionData::Update(update) = &item.action.hashed.content.data else { continue };
+        let Entry::App(bytes) = entry_of(&item, &update.entry_hash)? else { continue };
+        let bytes = SerializedBytes::from(bytes);
+        let version = match DeliveryOrder::try_from(bytes.clone()) {
+            Ok(order) => AnyVersion::Delivery(order),
+            Err(_) => match PickupOrder::try_from(bytes) {
+                Ok(order) => AnyVersion::Pickup(order),
+                Err(_) => continue,
+            },
+        };
+        if matches(&version) && of_order(&update.original_action_address, &mut belongs)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `version` is a version of the order `belongs` was seeded with,
