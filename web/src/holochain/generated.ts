@@ -891,6 +891,17 @@ export interface HandoffEvidence {
 }
 
 /**
+ * A part of a hold its recipient would give back to its payer, but can't:
+ * the recipient's key is lost, and `succession` is the new key that took
+ * over their account (docs/RECOVERY.md).
+ */
+export interface HeldPart {
+  hold: ActionHash;
+  portion: Portion;
+  succession: ActionHash;
+}
+
+/**
  * What a hold on an order is for. The bid, where there is one, fixes the
  * driver and the fee.
  */
@@ -1018,6 +1029,12 @@ export interface IssuerGrant {
    * The issuer's own reference (a payment id), so a grant is unique.
    */
   reference: string;
+  /**
+   * For a grant in place of a part of a hold: the part, which its
+   * payer collects this instead of (`LedgerKind::Returned`) -- never as a
+   * plain deposit, so never both.
+   */
+  in_place_of: HeldPart | null;
 }
 
 /**
@@ -1268,6 +1285,20 @@ export type LedgerKind =
       Reclaim: {
         redemption: ActionHash;
         outcome: ActionHash;
+      };
+    }
+  /**
+   * The author, a hold's payer, collecting an issuer's grant made in place
+   * of a part of it that would have come back to them, but whose
+   * recipient's key is lost (`IssuerGrant::in_place_of`). Credit. It
+   * decides that part for the author, as collecting it would: they can't
+   * also collect it from the hold, nor this grant twice.
+   */
+  | {
+      Returned: {
+        grant: ActionHash;
+        hold: ActionHash;
+        portion: Portion;
       };
     };
 

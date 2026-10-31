@@ -26,7 +26,15 @@
 // before each grant, against the head the balance was reissued at, and the
 // zome reads what's owed as of that same head -- so a part the old key
 // collected is never also reissued.
-import { agentId, agentKey, type IssuerLedger } from "./ledger.ts";
+//
+// The same watch grants what the old key would have given *back* and never
+// did -- a refund on an order its store called off, a driver's pay on one
+// cancelled -- to the payer it was owed to, in the part's place
+// (`HeldPart`). The network itself keeps the payer from being paid twice:
+// they collect such a grant instead of the part, on their own chain, and
+// whichever comes first rules the other out. The part's reference is shared
+// with what's reissued to the new key, so each part goes one way, once.
+import { agentId, agentKey, type HeldPart, type IssuerLedger } from "./ledger.ts";
 import type { Store } from "./store.ts";
 
 const CURSOR = "reissue_cursor";
@@ -100,8 +108,9 @@ export async function reissueSweep(store: Store, ledger: IssuerLedger, waitMs: n
 }
 
 /// What recovered accounts' old keys were owed and never collected,
-/// reissued to their new keys a part at a time. Returns how many parts it
-/// granted.
+/// reissued to their new keys a part at a time -- and what they'd have
+/// given back, granted to its payers in its place. Returns how many parts
+/// it granted.
 async function reissueOwed(store: Store, ledger: IssuerLedger, reviewAboveCents: number, log: (message: string) => void): Promise<number> {
   let granted = 0;
   for (const recovery of store.watchedRecoveries(Date.now() - WATCH_DAYS * DAY_MS)) {
@@ -119,22 +128,33 @@ async function reissueOwed(store: Store, ledger: IssuerLedger, reviewAboveCents:
       log(`recovery of ${recovery.predecessor}: recovered onto another key since -- left for review`);
       continue;
     }
-    let owed;
+    // Each part: what the old key was owed, to the new key; or what it
+    // would have given back, to its payer in the part's place.
+    let parts: { reference: string; portion: string; amount: number; to: string; inPlaceOf?: HeldPart }[];
     try {
-      owed = await ledger.uncollectedBy(predecessor, Buffer.from(recovery.head, "hex"), OWED_DAYS);
+      const head = Buffer.from(recovery.head, "hex");
+      const [owed, unreturned] = await Promise.all([ledger.uncollectedBy(predecessor, head, OWED_DAYS), ledger.unreturnedBy(predecessor, head, OWED_DAYS)]);
+      const reference = (hold: Uint8Array, portion: string) => `recovery:${recovery.predecessor}:${hex(hold)}:${portion}`;
+      parts = [
+        ...owed.map((p) => ({ reference: reference(p.hold, p.portion), portion: p.portion, amount: p.amount, to: recovery.successor })),
+        ...unreturned.map((p) => ({ reference: reference(p.hold, p.portion), portion: p.portion, amount: p.amount, to: agentId(p.payer), inPlaceOf: { hold: p.hold, portion: p.portion, succession: new Uint8Array(Buffer.from(recovery.succession, "hex")) } })),
+      ];
     } catch (err) {
       // Its history couldn't be read in full (not here yet, or too long to
       // check): nothing's reissued on a partial read. Tried again next sweep.
       log(`recovery of ${recovery.predecessor}: what it was owed couldn't be read (${err instanceof Error ? err.message : err})`);
       continue;
     }
-    for (const part of owed) {
-      const reference = `recovery:${recovery.predecessor}:${hex(part.hold)}:${part.portion}`;
-      const seen = store.recoveryPart(reference);
-      if (seen === "review") continue;
+    for (const part of parts) {
+      // A part read both ways is one whose order says two things: neither.
+      if (parts.filter((p) => p.reference === part.reference).length > 1) continue;
+      const seen = store.recoveryPart(part.reference);
+      if (seen?.status === "review") continue;
+      // Granted already, to someone else: never again, to anyone else.
+      if (seen && (seen.to ?? recovery.successor) !== part.to) continue;
       // Right before any grant: the old key still hasn't acted since the
       // head everything here was read at. If it has, it may have collected
-      // this very part.
+      // (or given back) this very part.
       const latest = await ledger.latestActionOf(predecessor);
       if (!latest || hex(latest) !== recovery.head) {
         store.stopWatching(recovery.succession, "contested");
@@ -145,22 +165,22 @@ async function reissueOwed(store: Store, ledger: IssuerLedger, reviewAboveCents:
         // Once a part is left for a person, so is the rest: they look at
         // the account as a whole before any more of it moves.
         if (store.recoveryUnderReview(recovery.succession)) continue;
-        // Everything reissued for the account counts toward review, so it
+        // Everything granted for the account counts toward review, so it
         // can't be slipped through in small parts.
         const total = (recovery.amount ?? 0) + store.recoveryPartsGranted(recovery.succession) + part.amount;
         if (total > reviewAboveCents) {
-          store.recordRecoveryPart(reference, recovery.succession, part.amount, "review");
-          log(`recovery of ${recovery.predecessor}: ${part.amount} owed on an order would bring it to ${total} -- left for a person`);
+          store.recordRecoveryPart(part.reference, recovery.succession, part.amount, "review", part.to);
+          log(`recovery of ${recovery.predecessor}: ${part.amount} on an order would bring it to ${total} -- left for a person`);
           continue;
         }
-        store.recordRecoveryPart(reference, recovery.succession, part.amount, "granted");
+        store.recordRecoveryPart(part.reference, recovery.succession, part.amount, "granted", part.to);
       }
       // Granted (or recorded, then interrupted): granting again is a no-op
       // by its reference, so a grant that didn't go through is retried.
-      await ledger.issueGrant(agentKey(recovery.successor), part.amount, reference);
+      await ledger.issueGrant(agentKey(part.to), part.amount, part.reference, part.inPlaceOf);
       if (seen === null) {
         granted++;
-        log(`reissued ${part.amount} owed to recovered ${recovery.predecessor} (${part.portion}) to ${recovery.successor}`);
+        log(part.inPlaceOf ? `granted ${part.amount} that recovered ${recovery.predecessor} would have given back (${part.portion}) to ${part.to}` : `reissued ${part.amount} owed to recovered ${recovery.predecessor} (${part.portion}) to ${recovery.successor}`);
       }
     }
   }

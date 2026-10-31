@@ -924,6 +924,7 @@ dependencies = [
 name = "ledger_integrity"
 version = "0.1.0"
 dependencies = [
+ "account_types",
  "catalog_types",
  "dispatch_types",
  "handshake_governance",

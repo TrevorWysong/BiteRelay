@@ -72,7 +72,7 @@ pub(crate) fn append(kind: LedgerKind, amount: u64) -> ExternResult<ActionHash> 
             balance - signed
         }
         LedgerKind::Waive { .. } | LedgerKind::Forfeit { .. } => balance,
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => balance + signed,
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } | LedgerKind::Returned { .. } => balance + signed,
     };
     create_entry(&EntryTypes::LedgerEntry(LedgerEntry { kind, amount, balance, in_hand, previous }))
 }
@@ -87,7 +87,7 @@ fn in_hand_after(prior: InHand, kind: &LedgerKind) -> ExternResult<InHand> {
         }
         // The caller's own collateral, back or forfeited (holds are written
         // by their payers).
-        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => {
+        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Returned { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => {
             let record = get(hold.clone(), GetOptions::default())?.ok_or(guest("hold not found"))?;
             if record.action().author() != &agent_info()?.agent_initial_pubkey {
                 return Ok(prior);
@@ -114,6 +114,10 @@ pub struct IssueGrantInput {
     pub to: AgentPubKey,
     pub amount: u64,
     pub reference: String,
+    /// For a grant in place of a part of a hold whose recipient's key is
+    /// lost: the part (see `IssuerGrant::in_place_of`).
+    #[serde(default)]
+    pub in_place_of: Option<HeldPart>,
 }
 
 /// An issuer (see `handshake_governance::is_issuer`) crediting an agent -- the
@@ -131,7 +135,7 @@ pub fn issue_grant(input: IssueGrantInput) -> ExternResult<ActionHash> {
         return Ok(existing);
     }
     let to = input.to.clone();
-    let hash = create_entry(&EntryTypes::IssuerGrant(IssuerGrant { to: input.to, amount: input.amount, reference: input.reference }))?;
+    let hash = create_entry(&EntryTypes::IssuerGrant(IssuerGrant { to: input.to, amount: input.amount, reference: input.reference, in_place_of: input.in_place_of }))?;
     create_link(to, hash.clone(), LinkTypes::AgentToGrant, tag)?;
     Ok(hash)
 }
@@ -166,7 +170,19 @@ pub fn collect_grant(grant_ref: ActionHash) -> ExternResult<ActionHash> {
     if grant.to != agent_info()?.agent_initial_pubkey {
         return Err(guest("that grant is someone else's"));
     }
-    let deposit = append(LedgerKind::Deposit { grant: grant_ref.clone() }, grant.amount)?;
+    // One in place of a part of a hold decides that part: taken only if it
+    // isn't decided already (collected from the hold, say), and then never
+    // collected from the hold as well.
+    let kind = match grant.in_place_of {
+        Some(part) => {
+            if my_decision(&part.hold, part.portion)?.is_some() {
+                return Err(guest("that part of the hold has already been decided"));
+            }
+            LedgerKind::Returned { grant: grant_ref.clone(), hold: part.hold, portion: part.portion }
+        }
+        None => LedgerKind::Deposit { grant: grant_ref.clone() },
+    };
+    let deposit = append(kind, grant.amount)?;
     create_link(grant_ref, deposit.clone(), LinkTypes::GrantToDeposit, ())?;
     Ok(deposit)
 }
@@ -286,7 +302,7 @@ pub fn holds_for_order(order: ActionHash) -> ExternResult<Vec<HoldView>> {
 /// The part of a hold a ledger entry decides, if it decides one.
 fn decided_by(kind: &LedgerKind) -> Option<(&ActionHash, Portion)> {
     match kind {
-        LedgerKind::Collect { hold, portion, .. } | LedgerKind::Waive { hold, portion } => Some((hold, *portion)),
+        LedgerKind::Collect { hold, portion, .. } | LedgerKind::Waive { hold, portion } | LedgerKind::Returned { hold, portion, .. } => Some((hold, *portion)),
         LedgerKind::Forfeit { hold, .. } => Some((hold, Portion::Collateral)),
         _ => None,
     }

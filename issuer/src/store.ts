@@ -57,6 +57,12 @@ export class Store {
     if (!(this.db.prepare("SELECT 1 FROM pragma_table_info('recoveries') WHERE name = 'settled_at'").get())) {
       this.db.exec("ALTER TABLE recoveries ADD COLUMN settled_at INTEGER");
     }
+    // Added after the table: who a part was granted to -- the new key, or a
+    // payer the old key would have given it back to. A part's grant is
+    // retried only to them.
+    if (!(this.db.prepare("SELECT 1 FROM pragma_table_info('recovery_parts') WHERE name = 'granted_to'").get())) {
+      this.db.exec("ALTER TABLE recovery_parts ADD COLUMN granted_to TEXT");
+    }
   }
 
   /// Records a payment as granted -- `false` if it already was, so a
@@ -232,17 +238,18 @@ export class Store {
     this.db.prepare("UPDATE recoveries SET status = ? WHERE succession = ?").run(status, succession);
   }
 
-  /// A part of what the old key was owed, by its grant reference -- `null`
-  /// if it hasn't been looked at.
-  recoveryPart(reference: string): "granted" | "review" | null {
-    const row = this.db.prepare("SELECT status FROM recovery_parts WHERE reference = ?").get(reference) as { status: "granted" | "review" } | undefined;
-    return row?.status ?? null;
+  /// A part of what the old key was owed or would have given back, by its
+  /// grant reference, and who it went to -- `null` if it hasn't been looked
+  /// at. (`to` is `null` for a part recorded before it was kept: the new key.)
+  recoveryPart(reference: string): { status: "granted" | "review"; to: string | null } | null {
+    const row = this.db.prepare("SELECT status, granted_to AS \"to\" FROM recovery_parts WHERE reference = ?").get(reference) as { status: "granted" | "review"; to: string | null } | undefined;
+    return row ?? null;
   }
 
-  /// Records a part, before it's granted: a crash between the two retries
-  /// the grant, which is idempotent by the same reference.
-  recordRecoveryPart(reference: string, succession: string, amount: number, status: "granted" | "review"): void {
-    this.db.prepare("INSERT OR IGNORE INTO recovery_parts (reference, succession, amount, status, at) VALUES (?, ?, ?, ?, ?)").run(reference, succession, amount, status, Date.now());
+  /// Records a part, before it's granted to `to`: a crash between the two
+  /// retries the grant, which is idempotent by the same reference.
+  recordRecoveryPart(reference: string, succession: string, amount: number, status: "granted" | "review", to: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO recovery_parts (reference, succession, amount, status, at, granted_to) VALUES (?, ?, ?, ?, ?, ?)").run(reference, succession, amount, status, Date.now(), to);
   }
 
   /// Whether any of a recovery's parts is left for a person.

@@ -283,6 +283,7 @@ export const es: Catalog = {
   "ledger.stake": "Depósito para publicar la tienda",
   "ledger.redeem": "Retirado",
   "ledger.reclaim": "Retiro rechazado: devuelto",
+  "ledger.returned": "Devuelto por el emisor: {portion}",
   "ledger.unstake": "Depósito de la tienda devuelto",
   "merchantOrders.acceptBy": "Acéptalo antes de las {time}",
   "decline.label.TooBusy": "Demasiado ocupada",

@@ -26,5 +26,7 @@ export function describeLedgerEntry(entry: LedgerEntry): { label: string; direct
   if ("Stake" in kind) return { label: t("ledger.stake"), direction: "out" };
   if ("Redeem" in kind) return { label: t("ledger.redeem"), direction: "out" };
   if ("Reclaim" in kind) return { label: t("ledger.reclaim"), direction: "in" };
+  // An issuer's grant in place of a part its recipient's lost key can't give back.
+  if ("Returned" in kind) return { label: t("ledger.returned", { portion: portionLabel(kind.Returned.portion) }), direction: "in" };
   return { label: t("ledger.unstake"), direction: "in" };
 }

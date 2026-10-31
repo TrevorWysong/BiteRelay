@@ -50,6 +50,12 @@ pub enum LedgerKind {
     /// The author taking back a cash-out its issuer declined (`outcome`, the
     /// issuer's `RedemptionOutcome`). Credit, of what the cash-out took.
     Reclaim { redemption: ActionHash, outcome: ActionHash },
+    /// The author, a hold's payer, collecting an issuer's grant made in place
+    /// of a part of it that would have come back to them, but whose
+    /// recipient's key is lost (`IssuerGrant::in_place_of`). Credit. It
+    /// decides that part for the author, as collecting it would: they can't
+    /// also collect it from the hold, nor this grant twice.
+    Returned { grant: ActionHash, hold: ActionHash, portion: Portion },
 }
 
 #[hdk_entry_helper]
@@ -82,6 +88,21 @@ pub struct IssuerGrant {
     pub amount: u64,
     /// The issuer's own reference (a payment id), so a grant is unique.
     pub reference: String,
+    /// For a grant in place of a part of a hold: the part, which its
+    /// payer collects this instead of (`LedgerKind::Returned`) -- never as a
+    /// plain deposit, so never both.
+    #[serde(default)]
+    pub in_place_of: Option<HeldPart>,
+}
+
+/// A part of a hold its recipient would give back to its payer, but can't:
+/// the recipient's key is lost, and `succession` is the new key that took
+/// over their account (docs/RECOVERY.md).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HeldPart {
+    pub hold: ActionHash,
+    pub portion: Portion,
+    pub succession: ActionHash,
 }
 
 /// What an issuer did with a cash-out: paid it outside the network, or

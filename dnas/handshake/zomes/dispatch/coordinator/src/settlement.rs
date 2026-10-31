@@ -141,6 +141,9 @@ struct Facts {
     replaced: Vec<(ActionHash, ActionHash)>,
     /// Whether the order is over: delivered, collected or cancelled.
     finished: bool,
+    /// How many versions, across every branch of its history, cancel it.
+    /// More than one, and `cancellation` is only one of them.
+    cancellations: usize,
 }
 
 /// Every version of an order, original first then each update, across any
@@ -170,7 +173,7 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
     let all = versions(order)?;
     let Some(original) = all.first() else { return Ok(None) };
     let delivery = decode_or::<DeliveryOrder>(original).is_some();
-    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None, releases: Vec::new(), replaced: Vec::new(), finished: false };
+    let mut facts = Facts { decisions: crate::issues::decisions_of(order)?, cancellation: None, releases: Vec::new(), replaced: Vec::new(), finished: false, cancellations: 0 };
     let prior_of = |record: &Record| match &record.action().data {
         ActionData::Update(update) => all.iter().find(|r| r.action_address() == &update.original_action_address),
         _ => None,
@@ -186,6 +189,7 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
                 _ => Stage::Other,
             });
             if let (Some(by), Some(from)) = (o.cancellation, from) {
+                facts.cancellations += 1;
                 let cooking = from == Stage::Accepted;
                 facts.cancellation = Some(Cancelled { version: record.action_address().clone(), by, from, cooking, bid: None, liable: None });
             }
@@ -209,6 +213,7 @@ fn facts(order: &ActionHash) -> ExternResult<Option<Facts>> {
             })?;
         }
         if let (Some(by), true) = (version.order.cancellation.clone(), prior.order.status != DeliveryStatus::Cancelled) {
+            facts.cancellations += 1;
             let liable = if by == Cancellation::NoDriver { lineage::liable_release(&prior)?.map(|(_, bid)| bid) } else { None };
             facts.cancellation = Some(Cancelled {
                 version: record.action_address().clone(),
@@ -487,6 +492,93 @@ pub struct Uncollected {
 /// old key has done nothing since `head`.
 #[hdk_extern]
 pub fn uncollected_by(input: UncollectedInput) -> ExternResult<Vec<Uncollected>> {
+    let Some(open) = open_parts(&input)? else { return Ok(Vec::new()) };
+    let agent = &input.agent;
+    let mut owed = Vec::new();
+    for (order, hold, share, facts) in open.parts() {
+        let decision = match decide(agent, hold, share, facts) {
+            None if &hold.payer == agent => waived(hold, share)?,
+            decided => decided,
+        };
+        let Some(Decision::Collect(basis)) = decision else { continue };
+        let Ok(basis_record) = must_get_valid_record(basis.clone()) else { continue };
+        // As `ledger::collect` prices it: a store's settlement splits
+        // the food between the store and the customer's refund.
+        let refund = basis_record.entry().to_app_option::<ItemSettlement>().ok().flatten().map(|s| s.refund);
+        let amount = match refund {
+            Some(refund) if share.portion == Portion::Food => {
+                if &hold.payer == agent {
+                    refund
+                } else {
+                    share.amount.saturating_sub(refund)
+                }
+            }
+            _ => share.amount,
+        };
+        if amount > 0 {
+            owed.push(Uncollected { order: order.clone(), hold: hold.hold.clone(), portion: share.portion, amount, basis });
+        }
+    }
+    Ok(owed)
+}
+
+/// A part of a hold that `agent`, its recipient, would have given back to
+/// its payer and hadn't.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct Unreturned {
+    pub order: ActionHash,
+    pub hold: ActionHash,
+    pub portion: Portion,
+    /// The whole part: what its payer collects once it's given back.
+    pub amount: u64,
+    pub payer: AgentPubKey,
+}
+
+/// What `agent` would have given back on their orders by `head` and never
+/// did: a refund that waits on a lost key -- a store's cancellation, a
+/// driver's pay for an order called off -- which an issuer grants its payer
+/// in its place once the account is recovered (`IssuerGrant::in_place_of`).
+/// Read as `uncollected_by` reads, and stricter, since paying it means
+/// deciding against the lost key: only on an order that's over, with one
+/// cancellation across every branch of its history (or none), where the
+/// payer has no way to collect it themselves.
+///
+/// What it can't overstate is the payer's: they take such a grant instead
+/// of the part, on their own chain, never both (`ledger_integrity`).
+#[hdk_extern]
+pub fn unreturned_by(input: UncollectedInput) -> ExternResult<Vec<Unreturned>> {
+    let Some(open) = open_parts(&input)? else { return Ok(Vec::new()) };
+    let agent = &input.agent;
+    let mut owed = Vec::new();
+    for (order, hold, share, facts) in open.parts() {
+        if &share.recipient != agent || !facts.finished || facts.cancellations > 1 {
+            continue;
+        }
+        if !matches!(decide(agent, hold, share, facts), Some(Decision::Waive)) || decide(&hold.payer, hold, share, facts).is_some() {
+            continue;
+        }
+        owed.push(Unreturned { order: order.clone(), hold: hold.hold.clone(), portion: share.portion, amount: share.amount, payer: hold.payer.clone() });
+    }
+    Ok(owed)
+}
+
+/// The parts of holds on `agent`'s recent orders that are theirs and that
+/// they hadn't decided by `head`, with what's known about each order.
+struct OpenParts {
+    parts: Vec<(ActionHash, HoldWire, ShareWire)>,
+    facts: Vec<(ActionHash, Facts)>,
+}
+
+impl OpenParts {
+    fn parts(&self) -> impl Iterator<Item = (&ActionHash, &HoldWire, &ShareWire, &Facts)> {
+        self.parts.iter().filter_map(|(order, hold, share)| self.facts.iter().find(|(o, _)| o == order).map(|(_, facts)| (order, hold, share, facts)))
+    }
+}
+
+/// `agent`'s history from `input.head` back, the way validation reads it
+/// (or an error), and every part of a valid hold on an order in it that's
+/// theirs -- as payer or recipient, never both -- and undecided by then.
+fn open_parts(input: &UncollectedInput) -> ExternResult<Option<OpenParts>> {
     let days = input.days.clamp(1, MAX_OWED_DAYS);
     let since = Timestamp::from_micros(sys_time()?.as_micros() - days * 86_400_000_000);
     let history = handshake_integrity_support::chain::activity_since(&input.agent, &input.head, since)?;
@@ -509,6 +601,21 @@ pub fn uncollected_by(input: UncollectedInput) -> ExternResult<Vec<Uncollected>>
         };
         orders.extend(order);
     }
+    // An order a store never answered isn't in its history at all -- and
+    // its refund is the likeliest to wait on a lost store -- so its queues
+    // are read too.
+    let today = history_day(sys_time()?);
+    for store in crate::stores::stores_of(&input.agent)? {
+        let owner = QueueOwner::Store(&store);
+        for day in (today - days)..=today {
+            orders.extend(owner.orders_on_day(day)?);
+        }
+        orders.sort();
+        orders.dedup();
+        if orders.len() > MAX_OWED_ORDERS {
+            return Err(guest("that account has too many orders to check here"));
+        }
+    }
     orders.sort();
     orders.dedup();
     if orders.len() > MAX_OWED_ORDERS {
@@ -526,50 +633,28 @@ pub fn uncollected_by(input: UncollectedInput) -> ExternResult<Vec<Uncollected>>
         }
     }
     if held.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let decided: Vec<DecideWire> = ledger("decisions_of", DecisionsOfWire { agent: agent.clone(), head: input.head.clone(), holds: held.iter().map(|(_, h)| h.hold.clone()).collect() })?;
 
-    let mut owed = Vec::new();
-    let mut known: Vec<(ActionHash, Option<Facts>)> = Vec::new();
-    for (order, hold) in &held {
+    let mut open = OpenParts { parts: Vec::new(), facts: Vec::new() };
+    for (order, hold) in held {
         // A hold this node won't vouch for owes nothing here.
         if must_get_valid_record(hold.hold.clone()).is_err() {
             continue;
         }
         for share in &hold.shares {
-            if !theirs(hold, share) || decided.contains(&DecideWire { hold: hold.hold.clone(), portion: share.portion }) {
+            if !theirs(&hold, share) || decided.contains(&DecideWire { hold: hold.hold.clone(), portion: share.portion }) {
                 continue;
             }
-            if !known.iter().any(|(o, _)| o == order) {
-                known.push((order.clone(), facts(order)?));
+            if !open.facts.iter().any(|(o, _)| o == &order) {
+                let Some(facts) = facts(&order)? else { continue };
+                open.facts.push((order.clone(), facts));
             }
-            let Some(Some(facts)) = known.iter().find(|(o, _)| o == order).map(|(_, f)| f) else { continue };
-            let decision = match decide(agent, hold, share, facts) {
-                None if &hold.payer == agent => waived(hold, share)?,
-                decided => decided,
-            };
-            let Some(Decision::Collect(basis)) = decision else { continue };
-            let Ok(basis_record) = must_get_valid_record(basis.clone()) else { continue };
-            // As `ledger::collect` prices it: a store's settlement splits
-            // the food between the store and the customer's refund.
-            let refund = basis_record.entry().to_app_option::<ItemSettlement>().ok().flatten().map(|s| s.refund);
-            let amount = match refund {
-                Some(refund) if share.portion == Portion::Food => {
-                    if &hold.payer == agent {
-                        refund
-                    } else {
-                        share.amount.saturating_sub(refund)
-                    }
-                }
-                _ => share.amount,
-            };
-            if amount > 0 {
-                owed.push(Uncollected { order: order.clone(), hold: hold.hold.clone(), portion: share.portion, amount, basis });
-            }
+            open.parts.push((order.clone(), hold.clone(), share.clone()));
         }
     }
-    Ok(owed)
+    Ok(Some(open))
 }
 
 #[derive(Serialize, Debug)]

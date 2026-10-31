@@ -38,6 +38,16 @@ pub(crate) fn my_stores() -> ExternResult<Vec<ActionHash>> {
     Ok(stores.into_iter().map(|store| store.original_action).collect())
 }
 
+/// Every store `owner` has published, by identity -- an account's, seen
+/// from someone else's node.
+pub(crate) fn stores_of(owner: &AgentPubKey) -> ExternResult<Vec<ActionHash>> {
+    let ZomeCallResponse::Ok(io) = call(CallTargetCell::Local, "catalog", "catalogs_of".into(), None, owner.clone())? else {
+        return Err(guest("listing that account's stores failed"));
+    };
+    let stores: Vec<StoreView> = io.decode().map_err(|e| wasm_error!(e))?;
+    Ok(stores.into_iter().map(|store| store.original_action).collect())
+}
+
 /// When an order the store accepts now will be ready: `prep_minutes` from
 /// now if the store chose a time for it, else its usual prep time, plus
 /// its busy extra while it's busy.

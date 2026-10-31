@@ -49,6 +49,7 @@ So a recovered account's balance is **reissued by an issuer**, the party that al
 - **After a wait.** The old key must stay quiet for the issuer's published `recovery_wait_days` (default 7) from when the issuer first saw the request. Any activity on the old key restarts the wait.
 - **For what the old key holds then, never more.**
 - **Then what it was owed, a part at a time.** For 30 days after, the issuer also reissues what the old key was owed on its orders and never collected: a store's payment for food in flight, a driver's pay, a refund. See *Money owed to a lost key*.
+- **And what it owed back, to whoever it was owed to.** Over the same 30 days, the issuer grants the payers of refunds the old key never gave back (a store's cancellation, say) their money, in the refund's place. See *Refunds that wait on a lost key*.
 
 Around that, honest apps treat a key whose account has moved on as finished:
 
@@ -62,7 +63,8 @@ Around that, honest apps treat a key whose account has moved on as finished:
 |---|---|---|
 | A thief with an unlocked lost phone spends its balance before recovery | The device's own key is still valid until the owner acts | The phone's lock, plus HandShake's passkey gate in development; recover promptly. |
 | A thief keeps spending at a colluding store after recovery | Validation can't see the recovery | Honest stores refuse the key. The issuer's wait restarts on activity and it won't cash out a recovered key. Money only leaves through issuers. |
-| The old key collects a part the issuer already reissued | Validation can't see the reissue, and the issuer can't see the future; a modified app ignores the old device's own stop | It's reissued only after the old key's been quiet for the wait, and the watch stops at its first new action. An honest old device stops collecting once it sees the move. What it collects lands in a balance that's frozen in practice: this issuer won't cash it out and honest stores won't take its orders. |
+| The old key collects a part the issuer already reissued, or granted its payer in its place | Validation can't see the reissue, and the issuer can't see the future; a modified app ignores the old device's own stop | It's reissued only after the old key's been quiet for the wait, and the watch stops at its first new action. An honest old device stops collecting once it sees the move. What it collects lands in a balance that's frozen in practice: this issuer won't cash it out and honest stores won't take its orders. A colluding store could still take its orders and cash out, so the issuer's grants are public, and its review limit counts everything paid out for the account. |
+| A payer is paid twice for a refund the old key never gave back: the issuer's grant, and the part itself | -- | Ruled out by validation. The payer takes the grant *as* that part, on their own chain; whichever they write first, the other is refused. |
 | Both phones use the account at once | A modified app, or taking the account back after the new phone already has it | The old phone stops before its key leaves and offers to take it back only with a warning. The network refuses a forked account: the person recovers it as they would a lost phone's. |
 | Someone else uses the phrase or the guardians | The phrase *is* the account; guardians are trusted | The old device sees "Your account has moved". The issuer's wait gives the owner time to see it. Guardians are asked to vouch only after speaking to the person. A threshold over half means two different recoveries would each need a guardian who vouched for both, which their chain forbids. |
 | An issuer reissues dishonestly | Issuers are trusted for money in and out | Their grants are public, and they're on the network's roster. |
@@ -89,18 +91,41 @@ Money for an order sits in holds until each party collects their part, from thei
 - **Only while the old key stays lost.** Before each grant, the issuer checks the old key has done nothing since that head. If it has, the watch stops and the recovery is left for a person: the key could collect what it's owed itself.
 - **Once per part.** The grant's reference is `recovery:<old key>:<hold>:<part>`, recorded before it's granted, so a retry can't grant twice.
 - **Review counts the whole account.** The balance and every part add up against the issuer's review limit, so an account can't come through in small parts; once a part is left for review, so is everything after it.
-- **Bounded.** 60 days of orders, at most 500 of them, 20,000 actions of history; past that, a person looks.
+- **Bounded.** 60 days of orders, at most 500 of them, 20,000 actions of history; past that, a person looks. The orders are the ones in the old key's history, and every order in its stores' queues: an order a store never answered appears nowhere in its own history. Anyone can place orders in a store's queue, so someone could flood one past the cap. That only stops the sweep: nothing is reissued for the account until a person looks, and nothing moves wrongly.
+
+### Refunds that wait on a lost key
+
+Some parts come back to their payer only when the recipient gives them back (`Waive`): the food of an order the store cancelled, never answered, or was called off before it cooked; a driver's pay on an order cancelled; the collateral of a driver who doesn't answer for the food. A lost key never will, so the payer's money would stay held for good.
+
+**The new key can't give it back in the old key's place.** That looks harmless, since a waiver gives money back, but it would let money be made from nothing. A waiver by the new key could be safe only if the old key could *never* collect that part, and validation can't prove that. An order's history can branch: anyone who may update an order can update an older version of it, and validation sees only the version updated. So a found or stolen old phone, working with a customer or a driver, can usually build a branch on which the store is owed after all (the customer picking the order up, say). The old key would collect the part on that branch while the payer collected it on the new key's waiver.
+
+**So the issuer pays the payer, and the payer's own chain keeps it to once.** The issuer grants the payer exactly the part, as a grant **in place of** it (`IssuerGrant::in_place_of`). The payer collects that grant *as* the part (`LedgerKind::Returned`), and validation treats it like collecting the part (`ledger_integrity`):
+
+- **Never both.** Taking the grant decides the part for the payer: a later collection of the part from the hold, on any basis, is refused. And a grant for a part they've already collected is refused too. Both checks read the payer's own chain, so they hold whatever any other chain says.
+- **Never twice.** A second grant in place of the same part, from this issuer or another, is refused the same way. Such a grant can't be collected as a plain deposit either.
+- **Only the payer's own money.** Validation checks the grant itself, even from an issuer on the roster:
+  - it goes to the hold's payer;
+  - it's for exactly the part;
+  - it cites a `Succession` taking over the recipient's account.
+
+  So no issuer can pay a part around a recipient who was never recovered.
+- **A driver's collateral settles the order in hand**, as the collateral coming back from the hold would, so the driver isn't left at their limit.
+
+The issuer decides *which* parts with the same care as what was owed (`dispatch::unreturned_by`):
+- It reads the same history, from the same head, or reads nothing.
+- It takes only parts the old key would give back and hadn't, on an order that's over.
+- It skips an order with more than one cancellation across its branches.
+- It skips a part the payer can collect on their own.
+
+Each part's reference is shared with what's reissued to the new key, `recovery:<old key>:<hold>:<part>`, so a part goes one way, once, to one party. A part that reads as both owed and given back goes neither way. The grant is retried only to the party it was first recorded for. Each grant also counts toward the account's review limit, and stops at the old key's first new action, like everything else here.
+
+What this leaves is the residual risk above: an old key, found and working with others, can still collect a part the payer was granted in its place, into its own frozen balance. The issuer's grant is then money the hold never released. That's the issuer's loss, bounded by its wait and its review limit, and never a payer paid twice.
 
 ## What doesn't move yet
 
 Moving to a new phone keeps the key, so everything stays. On a recovery:
 
-- **Money owed to the lost key that comes due more than 30 days after its balance was reissued.** The watch ends then.
-- **Refunds that wait on the lost key.** A part its recipient must give back (an order a store cancelled) moves only when the recipient waives it, and a lost key never will, so the customer's money stays held. Letting the new key waive in its place looks harmless, since a waiver gives money back, but it isn't:
-  - **The old key may still collect the same part.** A found or stolen phone collects a part it's entitled to while the new key waives that part to a friendly payer, who collects it too. Validation can't see the old key's future, so that's money from nothing, with no issuer in the way.
-  - **The issuer may reissue it too.** A part the new key waived to the payer and the issuer reissued to the new key is paid twice.
-
-  So a waiver by the new key can be valid only with proof that the old key could *never* collect that part: a basis (a store's cancellation, an order the store never answered) under which `validate_collect` refuses the recipient for good, and which no later record can overturn. The issuer would then skip any part with a waiver from either key. That's a change to the ledger's validation (a new kind of waiver citing the `Succession` and that basis), so it changes the DNA. It needs the full matrix of bases checked against `validate_collect`, and its own tests of each forgery, before it ships.
+- **Money owed to (or owed back by) the lost key that comes due more than 30 days after its balance was reissued.** The watch ends then.
 - **A store's decisions.** Everyone's pay on a delivered order rests on the store's decision about it (`dispatch_types::issues`). If the store's key is lost before it decides, nothing on that order can settle.
 - **Goodie bags** are short-lived and aren't copied.
 
@@ -114,7 +139,8 @@ Moving to a new phone keeps the key, so everything stays. On a recovery:
 - `dnas/handshake/zomes/dispatch/coordinator/src/accounts.rs`: honest apps refuse moved keys.
 - `dnas/handshake/zomes/reputation/coordinator`: reputation follows the account's lineage.
 - `issuer/src/recovery.ts`: the reissue sweep, the balance then what was owed; `payouts.ts` declines recovered keys' cash-outs.
-- `dnas/handshake/zomes/dispatch/coordinator/src/settlement.rs`: `uncollected_by`; `ledger`'s `decisions_of`.
+- `dnas/handshake/zomes/dispatch/coordinator/src/settlement.rs`: `uncollected_by`, `unreturned_by`; `ledger`'s `decisions_of`.
+- `dnas/handshake/zomes/ledger/integrity`: a grant in place of a part (`validate_in_place_of`), and its payer taking it (`validate_returned`).
 - `web/src/routes/Account.tsx`: Account & recovery.
 - `web/src/components/RestoreAccount.tsx`: "I already have an account".
 - `web/src/lib/account/recoveryPhrase.ts`: BIP-39 words in ten languages, and HKDF under HandShake's own label to Ed25519.
@@ -126,6 +152,7 @@ Moving to a new phone keeps the key, so everything stays. On a recovery:
   - `web/test/deviceMove.test.ts`: the codes, as the runtime writes them;
   - `tests/tryorama/src/account.test.ts`: every authority, and the forgeries a modified app would try;
   - `tests/tryorama/src/store-move.test.ts`: a faithful copy, the move's forgeries;
-  - `issuer/test/service.test.ts`: reissue rules, and what was owed: once per part, stopped by the old key acting, reviewed as a whole, never from a partial read;
+  - `issuer/test/service.test.ts`: reissue rules, and what was owed or owed back: once per part, one way only, stopped by the old key acting, reviewed as a whole, never from a partial read;
   - `tests/tryorama/src/uncollected.test.ts`: what a lost key was owed, from its own history: what it collected isn't owed, what it couldn't is, priced right, read only from its own chain;
+  - `tests/tryorama/src/returned.test.ts`: refunds that wait on a lost store: found even on orders it never answered; a grant in a part's place only for exactly that part, to its payer, for a recovered recipient, from an issuer; never collected as well as the part, in either order, nor twice;
   - `web/test/recoveryPhrase.test.ts`.

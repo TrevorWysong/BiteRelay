@@ -23,6 +23,12 @@
 //!   that, a cancellation settles what the canceller owes, and a recipient
 //!   can always waive a part back. Each party decides each part once --
 //!   entries on their own chain, which validation walks.
+//! - **A part its recipient's lost key can't give back is paid once.** An
+//!   issuer may grant the payer exactly that part in its place, once the
+//!   recipient's account has been taken over by a new key
+//!   (`IssuerGrant::in_place_of`). The payer takes it *as* the part
+//!   (`Returned`), so their own chain decides it once: never the grant and
+//!   the part both (docs/RECOVERY.md).
 //!
 //! - **A driver carries a bounded number of orders.** Every entry carries
 //!   the orders its author has in hand (`InHand`), checked against their
@@ -122,10 +128,36 @@ fn validate_grant(grant: &IssuerGrant, author: &AgentPubKey) -> ExternResult<Val
     if let Some(problem) = handshake_integrity_support::amount_problem("amount", grant.amount) {
         return invalid(&problem);
     }
-    match first_problem([text_problem("reference", &grant.reference, handshake_integrity_support::limits::MAX_REFERENCE_CHARS)]) {
-        Some(problem) => Ok(problem),
+    if let Some(problem) = first_problem([text_problem("reference", &grant.reference, handshake_integrity_support::limits::MAX_REFERENCE_CHARS)]) {
+        return Ok(problem);
+    }
+    match &grant.in_place_of {
+        Some(part) => validate_in_place_of(grant, part),
         None => valid(),
     }
+}
+
+/// A grant in place of a part of a hold: to the hold's payer, for exactly
+/// what the part would return them, of a recipient whose account a new key
+/// has taken over -- so even an issuer can't pay a part's payer around a
+/// recipient who still has their key.
+fn validate_in_place_of(grant: &IssuerGrant, part: &HeldPart) -> ExternResult<ValidateCallbackResult> {
+    let hold = match hold_of(&part.hold)? {
+        Ok(hold) => hold,
+        Err(reason) => return invalid(reason),
+    };
+    let Some(share) = hold.shares.iter().find(|s| s.portion == part.portion) else {
+        return invalid("that hold has no such part");
+    };
+    if grant.to != hold.payer || share.recipient == hold.payer {
+        return invalid("a grant in place of a part goes to the hold's payer, from someone else");
+    }
+    if grant.amount != share.amount {
+        return invalid("a grant in place of a part is for exactly that part");
+    }
+    let succession = must_get_valid_record(part.succession.clone())?;
+    let took_over = decode::<account_types::Succession>(&succession).is_some_and(|s| s.predecessor == share.recipient);
+    require(took_over, "a grant in place of a part rests on a new key taking over its recipient's account")
 }
 
 fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &AnyLinkableHash, tag: &LinkTag, author: &AgentPubKey) -> ExternResult<ValidateCallbackResult> {
@@ -151,7 +183,7 @@ fn validate_create_link(link_type: LinkTypes, base: &AnyLinkableHash, target: &A
             grant => grant.map(|grant| grant.to.into()),
         },
         LinkTypes::GrantToDeposit => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
-            Some(LedgerKind::Deposit { grant }) => Some(grant.into()),
+            Some(LedgerKind::Deposit { grant } | LedgerKind::Returned { grant, .. }) => Some(grant.into()),
             _ => None,
         },
         LinkTypes::IssuerToRedemption => match decode::<LedgerEntry>(&record).map(|e| e.kind) {
@@ -258,7 +290,7 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
     // The arithmetic, and the credit limit on what's spent.
     let amount = i128::from(entry.amount);
     let (expected, debit) = match &entry.kind {
-        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } => (i128::from(prior_balance) + amount, false),
+        LedgerKind::Deposit { .. } | LedgerKind::Collect { .. } | LedgerKind::Unstake { .. } | LedgerKind::Reclaim { .. } | LedgerKind::Returned { .. } => (i128::from(prior_balance) + amount, false),
         LedgerKind::Hold { .. } | LedgerKind::Stake { .. } => (i128::from(prior_balance) - amount, true),
         // Credit is never cashed out: only money the author has.
         LedgerKind::Redeem { .. } => {
@@ -291,6 +323,7 @@ fn validate_entry(entry: &LedgerEntry, author: &AgentPubKey, at: Timestamp, prev
         LedgerKind::Unstake { stake, delisting } => validate_unstake(entry, stake, delisting, author, prev_action),
         LedgerKind::Redeem { issuer, instructions } => validate_redeem(entry, issuer, instructions.as_ref(), author),
         LedgerKind::Reclaim { redemption, outcome } => validate_reclaim(entry, redemption, outcome, author, prev_action),
+        LedgerKind::Returned { grant, hold, portion } => validate_returned(entry, grant, hold, *portion, author, at, prev_action),
     }?;
     if !matches!(kind_result, ValidateCallbackResult::Valid) {
         return Ok(kind_result);
@@ -313,8 +346,9 @@ fn in_hand_after(prior: InHand, kind: &LedgerKind, author: &AgentPubKey) -> Exte
             Ok((terms, _)) => prior.taking(terms.priority, handshake_governance::max_concurrent_deliveries()).map_err(CarryRefusal::rule),
             Err(reason) => Err(reason),
         },
-        // Settling one: the driver's collateral back, or forfeited.
-        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => match hold_of(hold)? {
+        // Settling one: the driver's collateral back (from the hold, or an
+        // issuer in its place), or forfeited.
+        LedgerKind::Collect { hold, portion: Portion::Collateral, .. } | LedgerKind::Returned { hold, portion: Portion::Collateral, .. } | LedgerKind::Forfeit { hold, .. } => match hold_of(hold)? {
             Ok(hold) if &hold.payer == author => prior.settling().ok_or("no order is in hand to settle"),
             Ok(_) => Ok(prior),
             Err(reason) => Err(reason),
@@ -328,6 +362,9 @@ fn validate_deposit(entry: &LedgerEntry, grant_ref: &ActionHash, author: &AgentP
     let Some(grant) = decode::<IssuerGrant>(&record) else { return invalid("a deposit must collect an issuer's grant") };
     if &grant.to != author || grant.amount != entry.amount {
         return invalid("a deposit must collect exactly a grant made to its author");
+    }
+    if grant.in_place_of.is_some() {
+        return invalid("a grant in place of a part of a hold is collected as that part");
     }
     let granted_at = record.action().timestamp();
     if at < granted_at {
@@ -413,13 +450,42 @@ fn hold_of(hold_ref: &ActionHash) -> ExternResult<Result<HoldContext, &'static s
 }
 
 /// Whether `author` has already collected or waived this part of the hold
-/// -- every such entry is on their own chain, after the hold was made.
+/// (or, as its payer, taken an issuer's grant in its place) -- every such
+/// entry is on their own chain, after the hold was made.
 fn already_decided(author: &AgentPubKey, prev_action: &ActionHash, hold_ref: &ActionHash, portion: Portion, held_at: Timestamp) -> ExternResult<bool> {
     Ok(ledger_since(author, prev_action, held_at)?.into_iter().any(|e| match &e.entry.kind {
-        LedgerKind::Collect { hold, portion: p, .. } | LedgerKind::Waive { hold, portion: p } => hold == hold_ref && *p == portion,
+        LedgerKind::Collect { hold, portion: p, .. } | LedgerKind::Waive { hold, portion: p } | LedgerKind::Returned { hold, portion: p, .. } => hold == hold_ref && *p == portion,
         LedgerKind::Forfeit { hold, .. } => hold == hold_ref && portion == Portion::Collateral,
         _ => false,
     }))
+}
+
+/// A payer taking an issuer's grant in place of a part of their hold
+/// (`IssuerGrant::in_place_of`): made to them, for that part, collected for
+/// what it grants -- and deciding the part, once, like collecting it. Their
+/// own chain is what keeps the two apart: whichever they write first, the
+/// other is refused, so the payer is never paid the same part twice.
+fn validate_returned(entry: &LedgerEntry, grant_ref: &ActionHash, hold_ref: &ActionHash, portion: Portion, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {
+    let record = must_get_valid_record(grant_ref.clone())?;
+    let Some(grant) = decode::<IssuerGrant>(&record) else { return invalid("a part's return collects an issuer's grant") };
+    let in_place = grant.in_place_of.as_ref().is_some_and(|part| &part.hold == hold_ref && part.portion == portion);
+    if &grant.to != author || grant.amount != entry.amount || !in_place {
+        return invalid("a part's return collects exactly a grant made to its author in place of that part");
+    }
+    let hold = match hold_of(hold_ref)? {
+        Ok(hold) => hold,
+        Err(reason) => return invalid(reason),
+    };
+    if &hold.payer != author {
+        return invalid("only a hold's payer takes a grant in place of its part");
+    }
+    if at < record.action().timestamp() || at < hold.held_at {
+        return invalid("a grant is collected after it's made");
+    }
+    if already_decided(author, prev_action, hold_ref, portion, hold.held_at)? {
+        return invalid("that part of the hold has already been decided");
+    }
+    valid()
 }
 
 fn validate_waive(hold_ref: &ActionHash, portion: Portion, author: &AgentPubKey, at: Timestamp, prev_action: &ActionHash) -> ExternResult<ValidateCallbackResult> {

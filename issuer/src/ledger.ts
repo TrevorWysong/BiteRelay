@@ -101,10 +101,29 @@ export interface Uncollected {
   basis: Uint8Array;
 }
 
+/// A part of a hold a recovered account's old key would have given back to
+/// its payer and never did -- what the issuer grants the payer in its place.
+export interface Unreturned {
+  order: Uint8Array;
+  hold: Uint8Array;
+  portion: string;
+  amount: number;
+  payer: AgentPubKey;
+}
+
+/// The part of a hold a grant is made in place of (`ledger_types::HeldPart`):
+/// its payer collects the grant instead of the part, never both.
+export interface HeldPart {
+  hold: Uint8Array;
+  portion: string;
+  /// The new key's taking over of the part's recipient's account.
+  succession: Uint8Array;
+}
+
 export interface IssuerLedger {
   /// The issuer's own agent key.
   readonly issuer: AgentPubKey;
-  issueGrant(to: AgentPubKey, amount: number, reference: string): Promise<void>;
+  issueGrant(to: AgentPubKey, amount: number, reference: string, inPlaceOf?: HeldPart): Promise<void>;
   cashOutRequests(after: number | null): Promise<CashOutRequestsPage>;
   decideCashOut(redemption: Uint8Array, outcome: PayoutOutcome): Promise<void>;
   setProfile(profile: IssuerProfile): Promise<void>;
@@ -120,6 +139,9 @@ export interface IssuerLedger {
   /// from the last `days` (`dispatch::uncollected_by`). Fails rather than
   /// answer from a history it couldn't read in full.
   uncollectedBy(agent: AgentPubKey, head: Uint8Array, days: number): Promise<Uncollected[]>;
+  /// What `agent` would have given back to its payers by `head` and never
+  /// did (`dispatch::unreturned_by`). Fails the same way.
+  unreturnedBy(agent: AgentPubKey, head: Uint8Array, days: number): Promise<Unreturned[]>;
   /// How long `agent`'s account has existed and how much it has done.
   standingOf(agent: AgentPubKey): Promise<AccountStanding>;
   /// The network's currency, an ISO 4217 code.
@@ -194,7 +216,7 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
 
   return {
     issuer: connection.agent,
-    issueGrant: async (to, amount, reference) => void (await call("issue_grant", { to, amount, reference })),
+    issueGrant: async (to, amount, reference, inPlaceOf) => void (await call("issue_grant", { to, amount, reference, in_place_of: inPlaceOf ?? null })),
     cashOutRequests: (after) => call<CashOutRequestsPage>("get_cash_out_requests", { after }),
     decideCashOut: async (redemption, outcome) => void (await call("decide_cash_out", { redemption, outcome })),
     setProfile: async (profile) => void (await call("set_issuer_profile", profile)),
@@ -203,6 +225,7 @@ export async function connectIssuerLedger(adminUrl: string, appId: string): Prom
     latestActionOf: (agent) => call<Uint8Array | null>("latest_action_of", agent, "account"),
     standingAt: (agent, head) => call<Standing>("standing_at", { agent, head }),
     uncollectedBy: (agent, head, days) => call<Uncollected[]>("uncollected_by", { agent, head, days }, "dispatch"),
+    unreturnedBy: (agent, head, days) => call<Unreturned[]>("unreturned_by", { agent, head, days }, "dispatch"),
     async standingOf(agent) {
       const completed = (target: unknown) => call<{ completed_count: number }>("get_reputation_summary", target, "reputation").then((s) => s.completed_count);
       const [since, asCustomer, asDriver] = await Promise.all([call<number | null>("account_since", agent, "account"), completed({ Customer: agent }), completed({ Driver: agent })]);

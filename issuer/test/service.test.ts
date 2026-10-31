@@ -9,7 +9,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { payoutAfterFees } from "../src/fees.ts";
-import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type RulingDue, type Standing, type Succession, type Uncollected } from "../src/ledger.ts";
+import { agentId, type CashOutRequest, type IssuerLedger, type MigrationRequest, type PayoutOutcome, type ReissueRequest, type RulingDue, type Standing, type Succession, type Uncollected, type Unreturned, type HeldPart } from "../src/ledger.ts";
 import { migrationSweep } from "../src/migrations.ts";
 import { linkMessage, verifyLink, type Purpose } from "../src/link.ts";
 import { decide, sweep, type PayoutDeps } from "../src/payouts.ts";
@@ -53,22 +53,26 @@ interface Accounts {
   /// What each account was owed and never collected; `unreadable`, those
   /// whose history can't be read in full yet.
   owed?: Map<string, Uncollected[]>;
+  /// What each would have given back to its payers and never did.
+  unreturned?: Map<string, Unreturned[]>;
   unreadable?: Set<string>;
 }
 
 function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { successions: [], reissues: [], latest: new Map(), standing: new Map() }) {
-  const grants: { to: string; amount: number; reference: string }[] = [];
+  const grants: { to: string; amount: number; reference: string; inPlaceOf?: HeldPart }[] = [];
   const decisions: { redemption: string; outcome: PayoutOutcome }[] = [];
   let failNextGrant = false;
   const ledger: IssuerLedger = {
     issuer: identity().key,
-    async issueGrant(to, amount, reference) {
+    async issueGrant(to, amount, reference, inPlaceOf) {
       if (failNextGrant) {
         failNextGrant = false;
         throw new Error("conductor unavailable");
       }
       // Idempotent by reference, as `issue_grant` is.
-      if (!grants.some((g) => g.reference === reference)) grants.push({ to: agentId(to), amount, reference });
+      // Idempotent by reference *and recipient*: one to someone else is a
+      // second grant -- what the service must never ask for.
+      if (!grants.some((g) => g.reference === reference && g.to === agentId(to))) grants.push({ to: agentId(to), amount, reference, ...(inPlaceOf ? { inPlaceOf } : {}) });
     },
     async cashOutRequests(after) {
       const page = requests.filter((r) => after === null || r.requested_at >= after);
@@ -90,6 +94,10 @@ function fakeLedger(requests: CashOutRequest[] = [], accounts: Accounts = { succ
     async uncollectedBy(agent) {
       if (accounts.unreadable?.has(agentId(agent))) throw new Error("That account's history isn't reachable yet.");
       return accounts.owed?.get(agentId(agent)) ?? [];
+    },
+    async unreturnedBy(agent) {
+      if (accounts.unreadable?.has(agentId(agent))) throw new Error("That account's history isn't reachable yet.");
+      return accounts.unreturned?.get(agentId(agent)) ?? [];
     },
     standingOf: async (agent) => accounts.standingOf?.get(agentId(agent)) ?? SEASONED,
     currency: async () => "USD",
@@ -341,7 +349,7 @@ test("an account recovered onto two keys is left for review", async () => {
 
 /// A part of a hold, owed to an account on an order.
 const owedPart = (n: number, amount: number, portion = "Food"): Uncollected => ({ order: new Uint8Array(39).fill(50 + n), hold: new Uint8Array(39).fill(60 + n), portion, amount, basis: new Uint8Array(39).fill(70 + n) });
-const partRef = (lost: Uint8Array, part: Uncollected) => `recovery:${agentId(lost)}:${Buffer.from(part.hold).toString("hex")}:${part.portion}`;
+const partRef = (lost: Uint8Array, part: { hold: Uint8Array; portion: string }) => `recovery:${agentId(lost)}:${Buffer.from(part.hold).toString("hex")}:${part.portion}`;
 
 test("what a recovered account was owed and never collected is reissued too, a part at a time, once each", async () => {
   const store = new Store(":memory:");
@@ -413,6 +421,71 @@ test("what's owed is reissued only from a history read in full, and a grant that
   await reissueSweep(store, ledger, 0, 100_000);
   await reissueSweep(store, ledger, 0, 100_000);
   assert.deepEqual(grants.map((g) => g.amount), [1200], "retried, and granted once");
+});
+
+/// A part of a hold the account would have given back to `payer`.
+const unreturnedPart = (n: number, amount: number, payer: Uint8Array, portion = "Food"): Unreturned => ({ order: new Uint8Array(39).fill(50 + n), hold: new Uint8Array(39).fill(60 + n), portion, amount, payer });
+
+test("what a recovered account would have given back is granted to its payer, in the part's place, once", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), unreturned: new Map<string, Unreturned[]>() };
+  const { lost, succession } = recovered(accounts, "Phrase", 1000, 13);
+  const customer = identity().key;
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  // The store called an order off; its phone was lost before it gave the
+  // customer's money back.
+  const refund = unreturnedPart(14, 1800, customer);
+  accounts.unreturned.set(agentId(lost), [refund]);
+  assert.equal(await reissueSweep(store, ledger, 0, 100_000), 1);
+  assert.deepEqual(grants[1], { to: agentId(customer), amount: 1800, reference: partRef(lost, refund), inPlaceOf: { hold: refund.hold, portion: "Food", succession } }, "to the payer, naming the part it's in place of and the recovery");
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 2, "once");
+});
+
+test("a part goes one way only: never to the new key and to its payer", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), owed: new Map<string, Uncollected[]>(), unreturned: new Map<string, Unreturned[]>() };
+  const { lost, found } = recovered(accounts, "Phrase", 0, 15);
+  const customer = identity().key;
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 100_000);
+  // An order whose branches say two things -- owed on one, given back on
+  // the other -- grants neither.
+  const owed = owedPart(16, 900);
+  accounts.owed.set(agentId(lost), [owed]);
+  accounts.unreturned.set(agentId(lost), [unreturnedPart(16, 900, customer)]);
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 0, "read both ways: neither");
+  // Read one way, granted; then read the other way, it's never granted again.
+  accounts.unreturned.set(agentId(lost), []);
+  await reissueSweep(store, ledger, 0, 100_000);
+  assert.deepEqual(grants.map((g) => g.to), [agentId(found)]);
+  accounts.owed.set(agentId(lost), []);
+  accounts.unreturned.set(agentId(lost), [unreturnedPart(16, 900, customer)]);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
+  assert.deepEqual(grants.map((g) => g.to), [agentId(found)], "not to the payer as well");
+});
+
+test("given back in place counts toward review, and stops when the old key acts", async () => {
+  const store = new Store(":memory:");
+  const accounts = { ...noAccounts(), unreturned: new Map<string, Unreturned[]>() };
+  const { lost } = recovered(accounts, "Guardians", 5000, 17);
+  const customer = identity().key;
+  const { ledger, grants } = fakeLedger([], accounts);
+  await reissueSweep(store, ledger, 0, 8_000);
+  await reissueSweep(store, ledger, 0, 8_000);
+  accounts.unreturned.set(agentId(lost), [unreturnedPart(18, 2000, customer), unreturnedPart(19, 2000, customer)]);
+  await reissueSweep(store, ledger, 0, 8_000);
+  assert.deepEqual(grants.map((g) => g.amount), [5000, 2000], "the next would pass 8000: left for a person");
+  const other = recovered(accounts, "Phrase", 0, 20);
+  await reissueSweep(store, ledger, 0, 100_000);
+  await reissueSweep(store, ledger, 0, 100_000);
+  accounts.latest.set(agentId(other.lost), new Uint8Array(39).fill(97));
+  accounts.unreturned.set(agentId(other.lost), [unreturnedPart(21, 500, customer)]);
+  for (let i = 0; i < 3; i++) await reissueSweep(store, ledger, 0, 100_000);
+  assert.equal(grants.length, 2, "the old key acted: it could give it back itself");
 });
 
 test("a recovery whose plan the person replaced reissues nothing", async () => {

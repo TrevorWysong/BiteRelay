@@ -288,6 +288,7 @@ export const en = {
   "ledger.stake": "Store listing deposit",
   "ledger.redeem": "Cashed out",
   "ledger.reclaim": "Cash-out declined: returned",
+  "ledger.returned": "Returned to you by the issuer: {portion}",
   "ledger.unstake": "Store listing deposit returned",
   "merchantOrders.acceptBy": "Accept by {time}",
   "decline.label.TooBusy": "Too busy",
